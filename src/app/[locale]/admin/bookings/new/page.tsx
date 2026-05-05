@@ -381,7 +381,7 @@ export default function AdminNewBookingPage() {
                   <div key={a.id} className="flex items-center gap-3 p-3 rounded-xl bg-white/40 border border-white/60">
                     <div className="flex-1">
                       <p className="font-semibold text-sm text-ink">{a.name[locale]}</p>
-                      <p className="text-xs text-ink-soft">{a.description[locale]}</p>
+                      <p className="text-xs text-ink-soft">{a.description?.[locale] || ''}</p>
                     </div>
                     <div className="flex items-center gap-1">
                       <button type="button" onClick={() => setAddOnQty({ ...addOnQty, [a.id]: Math.max(0, qty - 1) })} className="p-1.5 rounded-md bg-white/80 border border-charcoal/15"><Minus size={12} /></button>

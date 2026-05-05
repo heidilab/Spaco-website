@@ -281,11 +281,9 @@ export default function AdminDocumentsPage() {
       for (const addOn of b.addOns || []) {
         const cfg = addOnConfig.find((a) => a.id === addOn.id);
         if (!cfg) continue;
-        // Resolve venue-specific price override if any
-        const price =
-          typeof cfg.price === 'number'
-            ? cfg.price
-            : cfg.price?.[b.venueId] ?? 0;
+        // AddOn pricing is uniform across venues (pricing differences are
+        // already captured in the addOn description text).
+        const price = cfg.pricePerUnit;
         items.push({
           description: `${cfg.name.en} ${cfg.name.zh}`,
           quantity: addOn.quantity,
