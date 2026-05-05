@@ -1,0 +1,44 @@
+rules_version = '2';
+
+// SPACO Firebase Storage rules.
+// Replaces the expired test-mode defaults (storage rules expire alongside
+// Firestore test rules and need to be deployed manually).
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ───── Helpers ─────
+    function isAuthed() {
+      return request.auth != null;
+    }
+    function isStaff() {
+      return isAuthed()
+        && firestore.exists(/databases/(default)/documents/admin_users/$(request.auth.uid));
+    }
+    function isAdmin() {
+      return isStaff()
+        && firestore.get(/databases/(default)/documents/admin_users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // ───── Public site images ─────
+    // Anyone can READ (so the website renders), only admin can WRITE.
+    match /site-images/{file=**} {
+      allow read:  if true;
+      allow write: if isAdmin();
+    }
+
+    // ───── FPS payment receipts ─────
+    // Authenticated customers upload their own receipts.
+    // Admin / CS staff and the original uploader can read.
+    match /receipts/{file=**} {
+      allow read:   if isStaff() || isAuthed();
+      allow create: if isAuthed();
+      allow update, delete: if isStaff();
+    }
+
+    // Default deny — any path not listed above
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

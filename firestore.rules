@@ -1,0 +1,137 @@
+rules_version = '2';
+
+// SPACO Firestore security rules
+// Replaces the expired "test mode" defaults.
+//
+// Three tiers of access:
+//   1. Public (read-only)     — site content, images, blocked slots
+//   2. Authenticated users    — their own profile + their own bookings
+//   3. Staff (admin_users)    — full booking access, documents, content edits
+//
+// Bootstrap: the FIRST staff member must be added via Firebase Console
+// (admin_users/{your-uid}) with field { role: 'admin' }.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ───── Helpers ─────
+    function isAuthed() {
+      return request.auth != null;
+    }
+    function isStaff() {
+      return isAuthed()
+        && exists(/databases/$(database)/documents/admin_users/$(request.auth.uid));
+    }
+    function getStaffRole() {
+      return get(/databases/$(database)/documents/admin_users/$(request.auth.uid)).data.role;
+    }
+    function isAdmin() {
+      return isStaff() && getStaffRole() == 'admin';
+    }
+    function isOwner(userId) {
+      return isAuthed() && request.auth.uid == userId;
+    }
+
+    // ───── User profiles ─────
+    // Users can read/write their own profile. Staff can read any (for member admin).
+    match /users/{userId} {
+      allow read:  if isOwner(userId) || isStaff();
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId) || isStaff();
+      allow delete: if isAdmin();
+    }
+
+    // ───── Staff roster ─────
+    // Anyone authenticated can read their own admin doc (used by AuthContext
+    // to detect staff status). Only admins can grant/revoke staff roles.
+    match /admin_users/{userId} {
+      allow read:   if isOwner(userId) || isAdmin();
+      allow write:  if isAdmin();
+    }
+
+    // ───── Bookings ─────
+    // Owners + staff can read; owners can create their own; staff can edit any.
+    match /bookings/{bookingId} {
+      allow read:   if (isAuthed() && resource.data.userId == request.auth.uid) || isStaff();
+      allow create: if isAuthed() && request.resource.data.userId == request.auth.uid;
+      allow update: if (isAuthed() && resource.data.userId == request.auth.uid) || isStaff();
+      allow delete: if isStaff();
+    }
+
+    // ───── Booking drafts (staff-initiated → customer claims) ─────
+    // CS / admin pre-fills a booking; the draft URL is sent to the customer.
+    // The customer logs in, claims, and a real booking is created.
+    match /booking_drafts/{draftId} {
+      // Staff: full access. Customer: can read any draft (URL is unguessable
+      // and links are shared via WhatsApp). They can also claim a draft for
+      // themselves by writing claimedBy = their uid + status = 'claimed'.
+      allow read:   if isStaff() || isAuthed();
+      allow create, delete: if isStaff();
+      allow update: if isStaff()
+        || (isAuthed()
+            && resource.data.claimedBy == null
+            && resource.data.status == 'pending'
+            && request.resource.data.claimedBy == request.auth.uid
+            && request.resource.data.status == 'claimed');
+    }
+
+    // ───── Blocked slots ─────
+    // Public READ so that the booking page can show availability without login.
+    // Only staff can create/modify blocks (and the booking flow on the server).
+    match /blocked_slots/{slotId} {
+      allow read:  if true;
+      allow create: if isAuthed();   // booking flow auto-creates blocks
+      allow update, delete: if isStaff();
+    }
+
+    // ───── Site CMS ─────
+    // Public read so the website can render. Admin-only edits.
+    // (Collection names are snake_case to match the code in lib/content.ts.)
+    match /site_images/{id} {
+      allow read:  if true;
+      allow write: if isAdmin();
+    }
+    match /site_content/{id} {
+      allow read:  if true;
+      allow write: if isAdmin();
+    }
+    match /site_seo/{id} {
+      // Public read so generateMetadata (server-side, no auth) can fetch.
+      allow read:  if true;
+      allow write: if isAdmin();
+    }
+
+    // ───── Business documents (Quotation / Invoice / Receipt) ─────
+    // Staff-only end-to-end. No public access.
+    match /documents/{id} {
+      allow read, write: if isStaff();
+    }
+
+    // ───── Secrets (e.g. Google OAuth refresh tokens) ─────
+    // Admin-only. Server reads/writes these via the user's auth token; the
+    // client UI never reads the value back, only the connected/disconnected
+    // status.
+    match /secrets/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    // ───── System metadata (last sync time, feature flags, etc.) ─────
+    match /system/{id} {
+      allow read:  if isStaff();
+      allow write: if isAdmin();
+    }
+
+    // ───── Calendar events (site visits, deliveries) ─────
+    // Informational events scheduled by staff. Do NOT block bookings.
+    // Read/write via the admin UI (client SDK) needs staff role; the API
+    // routes that push to Google use Admin SDK so they bypass these rules.
+    match /calendar_events/{id} {
+      allow read, write: if isStaff();
+    }
+
+    // Default deny — fallthrough.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

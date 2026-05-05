@@ -1,0 +1,466 @@
+'use client';
+
+import { useEffect, useMemo, useState } from 'react';
+import { useLocale } from 'next-intl';
+import { Link } from '@/i18n/routing';
+import { useAuth } from '@/contexts/AuthContext';
+import { venues, getVenueBySlug } from '@/lib/venues';
+import { addOns as ALL_ADDONS, calculatePricing, calculateDeposit } from '@/lib/pricing';
+import { createBookingDraft, buildClaimUrl } from '@/lib/bookingDrafts';
+import { normalizeHkPhone, isValidHkPhone, formatHkPhone } from '@/lib/whatsapp';
+import {
+  Calendar, Clock, Users, Plus, Minus, Link as LinkIcon, Copy, Check, ArrowLeft, MessageCircle,
+  Loader2, AlertCircle,
+} from 'lucide-react';
+
+function toMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + (m || 0);
+}
+function toHHMM(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+export default function AdminNewBookingPage() {
+  const locale = useLocale() as 'zh' | 'en';
+  const { user, hasPermission } = useAuth();
+
+  // ── Booking content ───────────────────────────
+  const [venueId, setVenueId] = useState<string>('cwb');
+  const [date, setDate] = useState<string>('');
+  const [startTime, setStartTime] = useState<string>('14:00');
+  const [hours, setHours] = useState<number>(4);
+  const [guestCount, setGuestCount] = useState<number>(15);
+  const [addOnQty, setAddOnQty] = useState<Record<string, number>>({});
+  const [hasBYOFood, setHasBYOFood] = useState<boolean>(false);
+
+  // ── Customer info ───────────────────────────
+  const [customerName, setCustomerName] = useState('');
+  const [customerWhatsapp, setCustomerWhatsapp] = useState('');
+  const [customerEmail, setCustomerEmail] = useState('');
+  const [notes, setNotes] = useState('');
+
+  // ── Submit state ───────────────────────────
+  const [submitting, setSubmitting] = useState(false);
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  // Default the date to tomorrow on mount (avoids past-date submission)
+  useEffect(() => {
+    if (!date) {
+      const t = new Date();
+      t.setDate(t.getDate() + 1);
+      setDate(t.toISOString().split('T')[0]);
+    }
+  }, [date]);
+
+  // Permission gate
+  if (!hasPermission('bookings')) {
+    return (
+      <div className="text-center py-20 text-ink-soft">
+        {locale === 'zh' ? '無權限存取' : 'Access Denied'}
+      </div>
+    );
+  }
+
+  const venue = venues.find((v) => v.id === venueId);
+  const isWeekend = useMemo(() => {
+    if (!date) return false;
+    const d = new Date(date).getDay();
+    return d === 0 || d === 6;
+  }, [date]);
+
+  // Pricing
+  const selectedAddOnList = Object.entries(addOnQty)
+    .filter(([, q]) => q > 0)
+    .map(([id, quantity]) => ({ id, quantity }));
+
+  const pricing = venue
+    ? calculatePricing(venue, isWeekend, hours, guestCount, selectedAddOnList)
+    : null;
+  const deposit = pricing ? calculateDeposit(pricing.subtotal) : 0;
+
+  const endTime = useMemo(() => {
+    if (!startTime) return '';
+    return toHHMM(toMinutes(startTime) + hours * 60);
+  }, [startTime, hours]);
+
+  const branchSlug = useMemo(() => {
+    return venue?.slug || '';
+  }, [venue]);
+
+  // Validation
+  const whatsappValid = !customerWhatsapp || isValidHkPhone(customerWhatsapp);
+  const canSubmit = !!user && !!date && !!startTime && hours > 0 && guestCount > 0 && !!venue && !!pricing && whatsappValid && !submitting;
+
+  const handleSubmit = async () => {
+    if (!canSubmit || !user || !venue || !pricing) return;
+    setSubmitting(true);
+    try {
+      const id = await createBookingDraft({
+        createdBy: user.uid,
+        venueId,
+        branchSlug,
+        date,
+        startTime,
+        endTime,
+        hours,
+        guestCount,
+        isWeekend,
+        addOns: selectedAddOnList,
+        hasBYOFood,
+        pricing: {
+          baseCharge: pricing.baseCharge,
+          addOnTotal: pricing.addOnTotal,
+          subtotal: pricing.subtotal,
+          deposit,
+        },
+        ...(customerName ? { customerName } : {}),
+        ...(customerWhatsapp ? { customerWhatsapp: normalizeHkPhone(customerWhatsapp) || customerWhatsapp } : {}),
+        ...(customerEmail ? { customerEmail } : {}),
+        ...(notes ? { notes } : {}),
+      });
+      setDraftId(id);
+    } catch (err) {
+      alert((locale === 'zh' ? '建立預訂失敗：' : 'Failed to create draft: ') + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const claimUrl = draftId ? buildClaimUrl(draftId, locale) : '';
+
+  const handleCopy = async () => {
+    if (!claimUrl) return;
+    try {
+      await navigator.clipboard.writeText(claimUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      // Fallback
+      window.prompt(locale === 'zh' ? '複製此連結' : 'Copy this link', claimUrl);
+    }
+  };
+
+  const whatsappPrefilled = useMemo(() => {
+    if (!claimUrl) return '';
+    const customerLabel = customerName || (locale === 'zh' ? '你' : 'you');
+    const message =
+      locale === 'zh'
+        ? `Hi ${customerLabel}！我哋幫你預備好咗 SPACO 嘅預訂，請撳呢條 link 確認同付款：\n${claimUrl}\n\n⚠️ 重要事項：\n• 連結於 8 小時後失效\n• 本店不設任何留位形式，一切以付款作確認，先到先得\n• 如所訂之日子時間已被其他客人預訂，連結會即時失效\n\n如有問題請隨時 WhatsApp 我哋。`
+        : `Hi ${customerLabel}! We've prepared your SPACO booking. Please tap this link to confirm and pay:\n${claimUrl}\n\n⚠️ Important:\n• This link expires in 8 hours\n• We do not hold slots — first to pay confirms the booking\n• If someone else books this slot first, the link will be invalidated immediately\n\nLet us know if you have any questions.`;
+    if (customerWhatsapp && isValidHkPhone(customerWhatsapp)) {
+      const e164 = normalizeHkPhone(customerWhatsapp) || customerWhatsapp;
+      const num = e164.replace(/^\+/, '');
+      return `https://wa.me/${num}?text=${encodeURIComponent(message)}`;
+    }
+    return `https://wa.me/?text=${encodeURIComponent(message)}`;
+  }, [claimUrl, customerName, customerWhatsapp, locale]);
+
+  // ───────────────────────────────────────
+  // Success view (draft created)
+  // ───────────────────────────────────────
+  if (draftId) {
+    return (
+      <div className="max-w-2xl">
+        <div className="mb-6">
+          <Link href="/admin/bookings" className="inline-flex items-center gap-2 text-sm text-ink-soft hover:text-pink">
+            <ArrowLeft size={16} />
+            {locale === 'zh' ? '返回預訂列表' : 'Back to bookings'}
+          </Link>
+        </div>
+
+        <div className="glass-card p-7 md:p-8">
+          <div className="w-14 h-14 rounded-2xl bg-gradient-pink flex items-center justify-center text-white shadow-glow mb-5">
+            <Check size={26} />
+          </div>
+          <h1 className="text-2xl font-bold font-display text-ink mb-2">
+            {locale === 'zh' ? '預訂連結已產生' : 'Booking link created'}
+          </h1>
+          <p className="text-ink-soft mb-3">
+            {locale === 'zh'
+              ? '將條 link 經 WhatsApp 發畀客人，佢撳完登入就可以確認 + 付款。'
+              : 'Send this link to the customer via WhatsApp. They tap, log in, confirm, and pay.'}
+          </p>
+          <div className="mb-6 p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 space-y-1">
+            <p className="font-bold">⚠️ {locale === 'zh' ? '客人會睇到以下警示：' : 'Customer will see this warning:'}</p>
+            <p>• {locale === 'zh' ? '連結於 8 小時後失效' : 'Link expires in 8 hours'}</p>
+            <p>• {locale === 'zh' ? '本店不設任何留位形式，一切以付款作確認，先到先得' : 'No slot reservation — first to pay confirms'}</p>
+            <p>• {locale === 'zh' ? '如所訂之日子時間已被其他客人預訂，連結會即時失效' : 'Link invalidates immediately if the slot is booked by someone else'}</p>
+          </div>
+
+          <label className="text-xs uppercase tracking-wider font-bold text-ink-soft mb-2 block">
+            {locale === 'zh' ? '客人專屬連結' : 'Customer link'}
+          </label>
+          <div className="flex flex-col sm:flex-row gap-2 mb-6">
+            <input
+              type="text"
+              readOnly
+              value={claimUrl}
+              className="flex-1 px-3 py-2.5 rounded-xl border border-charcoal/15 text-sm font-mono bg-white/80 select-all"
+              onFocus={(e) => e.currentTarget.select()}
+            />
+            <button
+              onClick={handleCopy}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-accent text-white text-sm font-semibold hover:bg-accent/90"
+            >
+              {copied ? <Check size={14} /> : <Copy size={14} />}
+              {copied ? (locale === 'zh' ? '已複製' : 'Copied') : (locale === 'zh' ? '複製' : 'Copy')}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <a
+              href={whatsappPrefilled}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors"
+            >
+              <MessageCircle size={16} />
+              {locale === 'zh' ? '經 WhatsApp 發送' : 'Send via WhatsApp'}
+            </a>
+            <button
+              onClick={() => {
+                setDraftId(null);
+                setCopied(false);
+              }}
+              className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-white/80 border-2 border-charcoal/15 text-ink font-semibold hover:bg-white"
+            >
+              <Plus size={16} />
+              {locale === 'zh' ? '建立另一個' : 'Create another'}
+            </button>
+          </div>
+
+          {/* Summary recap */}
+          <div className="mt-6 pt-5 border-t border-charcoal/10 text-sm text-ink-soft space-y-1">
+            <p><strong className="text-ink">{venue?.name[locale]}</strong></p>
+            <p>{date} · {startTime}–{endTime} ({hours}h) · {guestCount} {locale === 'zh' ? '人' : 'pax'}</p>
+            {customerName && <p>{locale === 'zh' ? '客人：' : 'Customer: '}{customerName}{customerWhatsapp ? ` · ${formatHkPhone(customerWhatsapp)}` : ''}</p>}
+            <p className="text-ink font-semibold pt-1">
+              HK${pricing?.subtotal.toLocaleString()} + HK${deposit.toLocaleString()} {locale === 'zh' ? '可退按金' : 'deposit'}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ───────────────────────────────────────
+  // Form view
+  // ───────────────────────────────────────
+  return (
+    <div className="max-w-4xl">
+      <div className="mb-6">
+        <Link href="/admin/bookings" className="inline-flex items-center gap-2 text-sm text-ink-soft hover:text-pink">
+          <ArrowLeft size={16} />
+          {locale === 'zh' ? '返回預訂列表' : 'Back to bookings'}
+        </Link>
+      </div>
+
+      <div className="mb-6">
+        <span className="chip mb-3"><LinkIcon size={12} className="text-pink" /> {locale === 'zh' ? '替客人建立預訂' : 'Staff-initiated booking'}</span>
+        <h1 className="text-heading font-display">
+          <span className="text-ink">{locale === 'zh' ? '新增 ' : 'New '}</span>
+          <span className="text-gradient-pink">{locale === 'zh' ? '預訂連結' : 'Booking Link'}</span>
+        </h1>
+        <p className="text-ink-soft mt-3 max-w-2xl">
+          {locale === 'zh'
+            ? '幫 WhatsApp 客人預先填好預訂內容，產生條獨立 link 畀佢確認 + 付款。客人撳 link 之後會自動綁定佢個會員 account。'
+            : 'Pre-fill a booking for a WhatsApp customer. Generates a unique link they tap to confirm and pay — automatically bound to their member account.'}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-6">
+          {/* Venue */}
+          <div className="glass-card p-6">
+            <h3 className="text-base font-bold mb-4 text-ink">{locale === 'zh' ? '揀場地' : 'Venue'}</h3>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+              {venues.map((v) => (
+                <button
+                  key={v.id}
+                  type="button"
+                  onClick={() => setVenueId(v.id)}
+                  className={`px-3 py-2.5 rounded-xl text-sm font-semibold transition-all border-2 ${
+                    venueId === v.id
+                      ? 'bg-gradient-pink text-white border-transparent shadow-glow'
+                      : 'bg-white/85 text-ink border-charcoal/15 hover:border-pink/60'
+                  }`}
+                >
+                  {v.name[locale]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Date / time */}
+          <div className="glass-card p-6 space-y-4">
+            <h3 className="text-base font-bold text-ink flex items-center gap-2">
+              <Calendar size={16} className="text-pink" />
+              {locale === 'zh' ? '日期 + 時間' : 'Date + time'}
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="text-xs text-ink-soft mb-1 block">{locale === 'zh' ? '日期' : 'Date'}</label>
+                <input
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-ink-soft mb-1 block">{locale === 'zh' ? '開始時間' : 'Start time'}</label>
+                <input
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  step={1800}
+                  className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-ink-soft mb-1 block">{locale === 'zh' ? '時數' : 'Hours'}</label>
+                <div className="flex items-center gap-1">
+                  <button type="button" onClick={() => setHours(Math.max(1, hours - 1))} className="p-2 rounded-lg bg-white/85 border-2 border-charcoal/15"><Minus size={14} /></button>
+                  <input
+                    type="number"
+                    min={1}
+                    max={12}
+                    value={hours}
+                    onChange={(e) => setHours(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="w-full px-2 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85 text-center"
+                  />
+                  <button type="button" onClick={() => setHours(Math.min(12, hours + 1))} className="p-2 rounded-lg bg-white/85 border-2 border-charcoal/15"><Plus size={14} /></button>
+                </div>
+              </div>
+            </div>
+            {endTime && (
+              <p className="text-xs text-ink-soft">
+                {locale === 'zh' ? '時段：' : 'Session: '}<span className="font-bold text-ink">{startTime}–{endTime}</span>
+                {isWeekend && <span className="ml-2 chip text-[10px]">{locale === 'zh' ? '週末/假日價' : 'Weekend rate'}</span>}
+              </p>
+            )}
+          </div>
+
+          {/* Guests */}
+          <div className="glass-card p-6">
+            <h3 className="text-base font-bold mb-4 text-ink flex items-center gap-2">
+              <Users size={16} className="text-pink" />
+              {locale === 'zh' ? '人數' : 'Guests'}
+            </h3>
+            <div className="flex items-center gap-2 max-w-xs">
+              <button type="button" onClick={() => setGuestCount(Math.max(1, guestCount - 1))} className="p-2.5 rounded-lg bg-white/85 border-2 border-charcoal/15"><Minus size={14} /></button>
+              <input
+                type="number"
+                min={1}
+                value={guestCount}
+                onChange={(e) => setGuestCount(Math.max(1, parseInt(e.target.value) || 1))}
+                className="flex-1 px-3 py-2.5 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85 text-center font-bold"
+              />
+              <button type="button" onClick={() => setGuestCount(guestCount + 1)} className="p-2.5 rounded-lg bg-white/85 border-2 border-charcoal/15"><Plus size={14} /></button>
+            </div>
+            {venue && (guestCount < venue.capacity.min || guestCount > venue.capacity.max) && (
+              <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
+                <AlertCircle size={12} />
+                {locale === 'zh' ? `此場地容納 ${venue.capacity.min}-${venue.capacity.max} 人` : `Capacity ${venue.capacity.min}-${venue.capacity.max}`}
+              </p>
+            )}
+          </div>
+
+          {/* Add-ons */}
+          <div className="glass-card p-6">
+            <h3 className="text-base font-bold mb-4 text-ink">{locale === 'zh' ? '加購項目（可選）' : 'Add-ons (optional)'}</h3>
+            <div className="space-y-2">
+              {ALL_ADDONS.map((a) => {
+                const qty = addOnQty[a.id] || 0;
+                const max = a.maxQuantity ?? (a.unit === 'person' ? 1 : 5);
+                return (
+                  <div key={a.id} className="flex items-center gap-3 p-3 rounded-xl bg-white/40 border border-white/60">
+                    <div className="flex-1">
+                      <p className="font-semibold text-sm text-ink">{a.name[locale]}</p>
+                      <p className="text-xs text-ink-soft">{a.description[locale]}</p>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button type="button" onClick={() => setAddOnQty({ ...addOnQty, [a.id]: Math.max(0, qty - 1) })} className="p-1.5 rounded-md bg-white/80 border border-charcoal/15"><Minus size={12} /></button>
+                      <span className="w-7 text-center text-sm font-bold">{qty}</span>
+                      <button type="button" onClick={() => setAddOnQty({ ...addOnQty, [a.id]: Math.min(max, qty + 1) })} className="p-1.5 rounded-md bg-white/80 border border-charcoal/15"><Plus size={12} /></button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <label className="flex items-center gap-2 mt-4 text-sm cursor-pointer">
+              <input type="checkbox" checked={hasBYOFood} onChange={(e) => setHasBYOFood(e.target.checked)} className="w-4 h-4" />
+              <span className="text-ink-soft">{locale === 'zh' ? '客人會自攜食物（BYO）' : 'Customer is bringing their own food (BYO)'}</span>
+            </label>
+          </div>
+
+          {/* Customer info */}
+          <div className="glass-card p-6 space-y-3">
+            <h3 className="text-base font-bold text-ink">{locale === 'zh' ? '客人資料（選填）' : 'Customer info (optional)'}</h3>
+            <p className="text-xs text-ink-soft -mt-2">
+              {locale === 'zh' ? '只係畀 staff 內部記錄。客人撳 link 登入時，佢會用自己嘅電話 / email。' : 'For internal staff record only. Customer enters their own contact when they sign in.'}
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder={locale === 'zh' ? '客人姓名' : 'Customer name'} className="px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85" />
+              <input value={customerWhatsapp} onChange={(e) => setCustomerWhatsapp(e.target.value)} placeholder={locale === 'zh' ? 'WhatsApp（用嚟發 link）' : 'WhatsApp (to send link)'} className={`px-3 py-2 rounded-xl border-2 text-sm bg-white/85 ${customerWhatsapp && !whatsappValid ? 'border-rose-300' : 'border-charcoal/15'}`} />
+              <input value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} placeholder="Email" type="email" className="px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85 sm:col-span-2" />
+            </div>
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={locale === 'zh' ? '備註（會喺客人 claim 頁顯示）' : 'Notes (shown on the customer claim page)'} rows={3} className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85 resize-none" />
+          </div>
+        </div>
+
+        {/* Sticky pricing summary */}
+        <div className="lg:col-span-1">
+          <div className="glass-strong rounded-3xl p-6 lg:sticky lg:top-28">
+            <h3 className="text-base font-bold mb-3 text-ink">{locale === 'zh' ? '費用摘要' : 'Price summary'}</h3>
+            {pricing ? (
+              <>
+                <div className="space-y-1.5 text-sm mb-4">
+                  {pricing.breakdown.map((b, i) => (
+                    <div key={i} className="flex justify-between gap-2">
+                      <span className="text-ink-soft">{b.label[locale]}</span>
+                      <span className="font-medium text-ink">${b.amount.toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="border-t border-white/60 pt-3 space-y-1 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-ink-soft">{locale === 'zh' ? '小計' : 'Subtotal'}</span>
+                    <span className="font-bold text-ink">HK${pricing.subtotal.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-ink-soft">{locale === 'zh' ? '可退按金' : 'Deposit'}</span>
+                    <span className="font-medium text-ink">HK${deposit.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between text-base pt-2 border-t border-white/60">
+                    <span className="text-ink-soft">{locale === 'zh' ? '客人首期' : 'Customer pays'}</span>
+                    <span className="font-bold font-display text-gradient-pink">HK${(pricing.subtotal + deposit).toLocaleString()}</span>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-ink-soft">{locale === 'zh' ? '揀好所有資料先見到價錢' : 'Fill in details to see pricing'}</p>
+            )}
+
+            <button
+              onClick={handleSubmit}
+              disabled={!canSubmit}
+              className="btn-primary w-full justify-center mt-6 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {submitting ? <Loader2 size={16} className="animate-spin" /> : <LinkIcon size={16} />}
+              {submitting ? (locale === 'zh' ? '建立中…' : 'Creating…') : (locale === 'zh' ? '產生連結' : 'Generate link')}
+              {!submitting && <Clock size={14} className="opacity-70" />}
+            </button>
+            <p className="text-[11px] text-ink-soft mt-2 text-center">
+              {locale === 'zh' ? '連結 8 小時內有效；不設留位，先付款先得' : 'Link valid 8h; no slot hold, first to pay confirms'}
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

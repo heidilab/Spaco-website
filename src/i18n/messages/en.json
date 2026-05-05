@@ -1,0 +1,168 @@
+{
+  "meta": {
+    "title": "SPACO — Unleash Infinite Possibilities",
+    "description": "Premium self-service event spaces in Hong Kong with BBQ, Shisha, pool table, hotpot and more. Four branches across Causeway Bay, Wan Chai, Sheung Wan and TST."
+  },
+  "nav": {
+    "spaces": "Party Spaces",
+    "corporate": "Corporate",
+    "corporatePackage": "Corporate Package",
+    "family": "Family",
+    "faq": "FAQ",
+    "guidelines": "Guidelines",
+    "book": "Book Now"
+  },
+  "hero": {
+    "title": "GATHERING",
+    "subtitle": "SPACO — Unleash Infinite Possibilities",
+    "cta": "Explore Spaces"
+  },
+  "marquee": {
+    "text": "BESPOKE SPACES • PRIVATE EVENT • REFINED DESIGN • BESPOKE SPACES • PRIVATE EVENT • REFINED DESIGN •"
+  },
+  "filter": {
+    "title": "Find Your Ideal Space",
+    "capacity": "Capacity",
+    "vibe": "Vibe / Theme",
+    "amenities": "Amenities",
+    "reset": "Reset Filters",
+    "capacityOptions": {
+      "6-10": "6-10 guests",
+      "10-35": "10-35 guests",
+      "36-70": "36-70 guests",
+      "71-100": "71-100 guests"
+    },
+    "vibeOptions": {
+      "family": "Family Fun",
+      "corporate": "Corporate",
+      "chill": "Chill Gathering",
+      "poker": "Poker Night"
+    },
+    "amenityOptions": {
+      "bbq": "Outdoor BBQ",
+      "pool-table": "Pool Table",
+      "hotpot": "Hotpot",
+      "mahjong": "Mahjong",
+      "private-kitchen": "Private Kitchen"
+    }
+  },
+  "collection": {
+    "title": "Our Spaces",
+    "subtitle": "Every space, crafted for your gathering",
+    "viewDetails": "View Details",
+    "capacity": "Capacity",
+    "people": "pax",
+    "from": "From"
+  },
+  "fallback": {
+    "noResults": "No exact match found",
+    "bookNow": "Book Now",
+    "viewVenue": "View Venue"
+  },
+  "amenities": {
+    "title": "Premium Amenities",
+    "subtitle": "Elevate your event with world-class facilities",
+    "items": {
+      "audio": { "title": "Hi-Fi Audio System", "desc": "Professional-grade sound equipment for the perfect party atmosphere" },
+      "kitchen": { "title": "Open Kitchen", "desc": "Fully equipped professional kitchen for all your culinary needs" },
+      "furniture": { "title": "Designer Furniture", "desc": "Curated premium furniture to elevate your space" },
+      "lighting": { "title": "Ambient Lighting", "desc": "Adjustable mood lighting for any event theme" },
+      "bbq": { "title": "Outdoor BBQ", "desc": "Spacious outdoor barbecue area for alfresco dining" },
+      "games": { "title": "Entertainment", "desc": "Pool table, board games and more party entertainment" }
+    }
+  },
+  "branches": {
+    "title": "Our Branches",
+    "subtitle": "Four locations across Hong Kong's prime districts",
+    "cwb": "Causeway Bay",
+    "wanchai": "Wan Chai",
+    "sheungwan": "Sheung Wan",
+    "tst": "Tsim Sha Tsui"
+  },
+  "footer": {
+    "subscribe": "Stay Updated",
+    "emailPlaceholder": "Enter your email",
+    "subscribeBtn": "Subscribe",
+    "about": "About SPACO",
+    "aboutText": "SPACO is a premium self-service event space brand in Hong Kong, dedicated to delivering exceptional experiences for every gathering.",
+    "quickLinks": "Quick Links",
+    "contact": "Contact Us",
+    "phone": "Phone",
+    "email": "Email",
+    "address": "Address",
+    "copyright": "© 2024 SPACO. All rights reserved.",
+    "terms": "Terms & Conditions",
+    "privacy": "Privacy Policy"
+  },
+  "booking": {
+    "title": "Book a Space",
+    "selectDate": "Select Date",
+    "selectTime": "Select Time",
+    "startTime": "Start Time",
+    "endTime": "End Time",
+    "guests": "Guests",
+    "guestCount": "Number of Guests",
+    "addOns": "Add-On Services",
+    "byoFood": "Bring Your Own BBQ Food",
+    "byoFoodNote": "BYO BBQ food requires a paid grill rental; waived if you choose our BBQ package",
+    "summary": "Booking Summary",
+    "subtotal": "Subtotal",
+    "deposit": "Deposit",
+    "depositNote": "Deposit will be refunded after the event (less any deductions for damages)",
+    "installment": "50% deposit payment available",
+    "installmentNote": "Orders over $10,000 qualify for installment payment",
+    "cleaningBuffer": "Cleaning Time",
+    "cleaningBufferNote": "1-hour cleaning buffer automatically reserved after each session",
+    "minHours": "Minimum Hours",
+    "minGuests": "Minimum Guests",
+    "weekday": "Sun - Thu",
+    "weekend": "Fri/Sat/Public Holidays & Eve",
+    "perHead": "per person",
+    "proceed": "Confirm Booking",
+    "priceTable": "Price Table"
+  },
+  "corporate": {
+    "title": "Corporate Event Spaces",
+    "subtitle": "Professional spaces for your business events",
+    "hero": "From annual dinners to team building, SPACO offers flexible, premium venues for all your corporate needs.",
+    "benefits": {
+      "flexible": { "title": "Flexible Layout", "desc": "Configurable space to match your event size and format" },
+      "av": { "title": "Professional AV", "desc": "Projectors, sound systems, whiteboards and full business equipment" },
+      "catering": { "title": "Catering Options", "desc": "Arrange catering delivery or use our fully equipped kitchen" },
+      "privacy": { "title": "Private Space", "desc": "Exclusive venue booking ensures privacy and focus" }
+    },
+    "cta": "Contact Us for Custom Solutions"
+  },
+  "family": {
+    "title": "Family Party Room",
+    "subtitle": "Safe, fun, and unforgettable family moments",
+    "hero": "Create the perfect space for birthday parties and family gatherings — fun and safe for both kids and adults.",
+    "benefits": {
+      "safe": { "title": "Safe Environment", "desc": "Safety-first venue design suitable for children of all ages" },
+      "games": { "title": "Kids' Play", "desc": "Ball pit, building blocks and dedicated children's play areas" },
+      "space": { "title": "Spacious Area", "desc": "Ample room for kids to run, play and enjoy" },
+      "food": { "title": "Party Catering", "desc": "Kid-friendly BBQ and party food packages available" }
+    },
+    "cta": "Book a Family Party"
+  },
+  "faq": {
+    "title": "FAQ",
+    "subtitle": "Guest information and frequently asked questions",
+    "guestInfo": "Guest Guidelines",
+    "questions": "FAQ",
+    "guestRules": [
+      { "q": "Venue Usage Rules", "a": "Please keep the venue clean and turn off all appliances (AC, oven, lights) before leaving. Failure to comply will result in deposit deductions." },
+      { "q": "Food & Beverage Rules", "a": "BYO food welcome (BBQ grill rental required) or choose our BBQ packages. No food or drinks allowed in the ball pit area — violation incurs a $1,500 penalty." },
+      { "q": "Door Access Code", "a": "A one-time door access code will be sent via SMS 24-48 hours before your event. Please do not share the code with non-attendees." },
+      { "q": "Cancellation & Changes", "a": "Free cancellation or changes up to 7 days before; 3-7 days: 50% deposit forfeited; within 3 days: non-refundable." }
+    ],
+    "faqItems": [
+      { "q": "How do I book a venue?", "a": "Select your branch and time slot on our website, complete payment to confirm. We accept FPS, bank transfer and online payment." },
+      { "q": "How is the deposit refunded?", "a": "After the event, our team will inspect the venue. If no damage or violations, the full deposit will be refunded within 7 business days." },
+      { "q": "Can I bring pets?", "a": "Unfortunately, pets are not allowed at our venues for hygiene and safety reasons." },
+      { "q": "Is there parking?", "a": "Public parking is available near all branches. Please check each branch page for address details." },
+      { "q": "Can I extend my booking?", "a": "If the next slot is available, you can request an extension on-site. Extra time is charged at the original per-person hourly rate, deducted from the deposit." },
+      { "q": "How does the loyalty program work?", "a": "Members earn 1 point per $1 spent (excluding deposit). Every 100 points = $1 cash redemption. Points are credited after event completion and deposit settlement." }
+    ]
+  }
+}

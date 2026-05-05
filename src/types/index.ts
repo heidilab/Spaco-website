@@ -1,0 +1,361 @@
+export interface Venue {
+  id: string;
+  slug: string;
+  name: { zh: string; en: string };
+  subtitle: { zh: string; en: string };
+  description: { zh: string; en: string };
+  branch: string;
+  capacity: { min: number; max: number };
+  size: string;
+  vibes: string[];
+  amenities: string[];
+  images: string[];
+  pricing: {
+    weekday: PricingTier;
+    weekend: PricingTier;
+  };
+  minHours: { weekday: number; weekend: number };
+  minGuests: { weekday: number; weekend: number };
+}
+
+export interface PricingTier {
+  perHead: number;
+  roomCharge?: number;
+}
+
+export interface AddOn {
+  id: string;
+  name: { zh: string; en: string };
+  pricePerUnit: number;
+  unit: 'person' | 'flat' | 'item';
+  maxQuantity?: number;
+  description?: { zh: string; en: string };
+}
+
+export interface BookingState {
+  venueId: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  guestCount: number;
+  addOns: { id: string; quantity: number }[];
+}
+
+export interface FilterState {
+  capacity: string | null;
+  vibe: string | null;
+  amenities: string[];
+}
+
+export type DepositTier = {
+  threshold: number;
+  deposit: number;
+};
+
+// ============ Firebase Types ============
+
+export interface UserProfile {
+  uid: string;
+  email: string;
+  displayName: string;
+  photoURL: string;
+  phone: string;
+  /** WhatsApp contact number (HK format). Required for booking confirmation
+   *  so admin / CS can message the customer directly. */
+  whatsappPhone?: string;
+  loyaltyPoints: number;
+  createdAt: unknown;
+  lastLogin: unknown;
+}
+
+export interface BookingRecord {
+  id: string;
+  userId: string;
+  /** Customer's WhatsApp number captured at booking time. Stored on the
+   *  booking record so admin / CS can contact the customer even if the
+   *  user later updates their profile. */
+  whatsappPhone?: string;
+  venueId: string;
+  branchSlug: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  hours: number;
+  guestCount: number;
+  isWeekend: boolean;
+  addOns: { id: string; quantity: number }[];
+  hasBYOFood: boolean;
+  pricing: {
+    baseCharge: number;
+    addOnTotal: number;
+    subtotal: number;
+    deposit: number;
+  };
+  status: 'pending' | 'awaiting_payment' | 'confirmed' | 'completed' | 'cancelled';
+  paymentMethod: 'fps' | 'stripe' | null;
+  receiptUrl: string | null;
+  /** Outstanding balance (HK$). 0 ⇒ fully paid. Used for high-value
+   *  bookings where the customer paid only the 50% deposit upfront and
+   *  must clear the balance ≥ 2 days before the event. */
+  balanceDue?: number;
+  /** Date by which the balance must be cleared (typically T−2 days).
+   *  Stored as YYYY-MM-DD for display + comparison. */
+  balanceDueDate?: string;
+  /** Set by admin when the balance payment lands. Triggers immediate
+   *  TTLock passcode generation if the booking is within the lock window. */
+  balancePaidAt?: unknown;
+  /** Last time we sent the customer a "please pay your balance" email.
+   *  Used by the cron to avoid spamming the same reminder daily. */
+  balanceReminderSentAt?: unknown;
+  /** TTLock smart-lock passcode generated for this booking. The cron
+   *  generates it automatically once: (a) booking is fully paid, AND
+   *  (b) booking date is within 2 days. Cleared to undefined if the
+   *  booking is cancelled (passcode is also deleted on the lock). */
+  lockPasscode?: {
+    /** The actual passcode the customer types into the lock (4-9 digits) */
+    passcode: string;
+    /** TTLock-side passcode id — needed for delete / lookup */
+    ttlockPwdId: number;
+    /** Lock id this was generated for — venues can be remapped, this is the
+     *  ground truth at generation time. */
+    lockId: number;
+    /** Unix ms — passcode becomes valid (= booking start − 1 hour) */
+    validFrom: number;
+    /** Unix ms — passcode expires (= booking end) */
+    validTo: number;
+    /** Server timestamp the passcode was created */
+    generatedAt: unknown;
+    /** Server timestamp the customer email was sent. null = email pending. */
+    emailSentAt: unknown | null;
+  };
+  /** Package booking only — chosen free decoration style.
+   *  Optional so existing à-la-carte bookings stay valid. */
+  decorationStyle?: 'blue' | 'pink' | 'khaki';
+  /** Slug of the EventPackage if this is a package booking (e.g. 'birthday-cwb'). */
+  packageSlug?: string;
+  /** ID of the BookingDraft this booking was claimed from (transition workflow). */
+  draftId?: string;
+  /** Google Calendar event id once this booking has been pushed (sync direction A). */
+  googleEventId?: string;
+  createdAt: unknown;
+  updatedAt: unknown;
+  depositRefund: {
+    amount: number;
+    deductions: { label: string; amount: number }[];
+    refundedAt: unknown;
+  } | null;
+}
+
+// ============ BookingDraft (staff-initiated) ============
+//
+// CS / admin pre-fills a booking on behalf of a customer still on the
+// WhatsApp workflow. The draft has a unique URL — customer opens it,
+// logs in, reviews, and confirms; at that moment a real BookingRecord
+// is created and the draft marked `claimed`.
+export interface BookingDraft {
+  id: string;
+  createdBy: string;          // staff uid
+  createdAt: unknown;
+  expiresAt: unknown;         // 7 days from creation by default
+
+  claimedBy: string | null;   // customer uid after claim
+  claimedAt: unknown | null;
+  bookingId: string | null;   // bookings/{id} created at claim
+  status: 'pending' | 'claimed' | 'expired' | 'cancelled';
+
+  // Booking content (mirrors BookingRecord)
+  venueId: string;
+  branchSlug: string;
+  date: string;               // YYYY-MM-DD
+  startTime: string;          // HH:mm
+  endTime: string;
+  hours: number;
+  guestCount: number;
+  isWeekend: boolean;
+  addOns: { id: string; quantity: number }[];
+  hasBYOFood: boolean;
+  pricing: {
+    baseCharge: number;
+    addOnTotal: number;
+    subtotal: number;
+    deposit: number;
+  };
+
+  // Customer hint
+  customerName?: string;
+  customerWhatsapp?: string;  // E.164
+  customerEmail?: string;
+  notes?: string;
+}
+
+export interface BlockedSlot {
+  id: string;
+  venueId: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  /** 'gcal' = mirrored from a Google Calendar event we synced down. */
+  reason: 'booking' | 'cleaning' | 'admin_block' | 'gcal';
+  bookingId: string | null;
+  /** When `reason === 'gcal'`, identifies the source Google Calendar event so
+   *  the periodic sync can update / remove it cleanly. */
+  googleEventId?: string;
+  /** Calendar ID that hosted the source event ('cwb' | 'wc' | 'sw' | 'tst'). */
+  googleCalendarKey?: string;
+  /** Original event title from Google Calendar (only for reason='gcal'). */
+  googleEventTitle?: string;
+  /** Original event description from Google Calendar (only for reason='gcal'). */
+  googleEventDescription?: string;
+}
+
+// Informational events that admin/CS schedule (e.g. site visits, deliveries)
+// for staff coordination. Unlike BlockedSlot, these do NOT prevent customer
+// bookings — if a customer books over a site_visit, admin reschedules the
+// site visit, not the booking.
+//
+// Pushed to Google Calendar so cleaners/staff see them in their normal
+// workflow. English-only labels because cleaners don't read Chinese.
+export type CalendarEventType = 'site_visit' | 'delivery';
+
+export interface CalendarEvent {
+  id: string;
+  type: CalendarEventType;
+  venueId: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  notes?: string;
+  /** Google Calendar event id (set after push). null = not yet synced. */
+  googleEventId?: string | null;
+  createdAt: unknown;
+  updatedAt?: unknown;
+}
+
+// ============ CMS Types ============
+
+export type StaffRole = 'admin' | 'cs' | 'cleaner';
+
+export interface StaffMember {
+  uid: string;
+  role: StaffRole;
+  displayName: string;
+  email: string;
+  addedAt: unknown;
+  addedBy: string;
+}
+
+export interface SiteImage {
+  id: string;
+  key: string;
+  url: string;
+  alt: string;
+  section: string;
+  // Display order within a section. Lower = earlier. Optional for legacy
+  // single-slot images (hero, branch hero cards) where order is meaningless.
+  order?: number;
+  // Optional click-through URL — used by the homepage promo section so each
+  // promo card can deep-link to a package / branch / custom page. Plain
+  // images (branch photos, hero) leave this undefined.
+  linkUrl?: string;
+  uploadedAt: unknown;
+}
+
+export interface SiteContentSection {
+  [key: string]: { zh: string; en: string };
+}
+
+export interface SiteContent {
+  id: string;
+  sections: SiteContentSection;
+  updatedAt: unknown;
+  updatedBy: string;
+}
+
+// ============ Documents (Quotation / Invoice / Receipt) ============
+
+export type DocumentType = 'quotation' | 'invoice' | 'receipt';
+export type DocumentStatus = 'draft' | 'issued' | 'paid' | 'void';
+
+export interface DocumentLineItem {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  amount: number;
+}
+
+export interface DocumentRevision {
+  timestamp: unknown;
+  editedBy: string;
+  editedByEmail?: string;
+  changeSummary?: string;
+}
+
+export interface BusinessDocument {
+  id: string;
+  number: string;          // e.g. QUO-2026-0001
+  type: DocumentType;
+  status: DocumentStatus;
+
+  // Customer
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  customerAddress: string;
+
+  // Optional link to a booking
+  bookingId: string | null;
+  venueId: string | null;
+
+  // Line items + totals (HKD)
+  items: DocumentLineItem[];
+  subtotal: number;
+  discount: number;
+  discountType: 'amount' | 'percent';
+  tax: number;            // typically 0 in HK
+  total: number;
+
+  // Dates (YYYY-MM-DD)
+  issueDate: string;
+  dueDate: string;
+  paidDate: string | null;
+
+  // Free text
+  notes: string;
+  terms: string;
+
+  // Audit
+  createdAt: unknown;
+  createdBy: string;
+  createdByEmail?: string;
+  updatedAt: unknown;
+  updatedBy: string;
+  updatedByEmail?: string;
+  revisions: DocumentRevision[];
+}
+
+// Role permissions
+export const ROLE_PERMISSIONS: Record<StaffRole, string[]> = {
+  admin: ['content', 'seo', 'gcal', 'members', 'bookings', 'calendar', 'deposit', 'staff', 'documents'],
+  cs: ['members', 'bookings', 'calendar', 'deposit', 'documents'],
+  cleaner: ['calendar'],
+};
+
+// ============ SEO ============
+
+export interface SeoEntry {
+  // Per-page (or `_default`) doc in `site_seo` Firestore collection.
+  title?: { zh: string; en: string };
+  description?: { zh: string; en: string };
+  keywords?: { zh: string; en: string };  // comma-separated
+  ogImage?: string;                        // absolute URL
+  noindex?: boolean;
+}
+
+export interface SeoDefaults extends SeoEntry {
+  siteName?: { zh: string; en: string };
+  twitterHandle?: string;
+  themeColor?: string;
+  // Optional: org JSON-LD bits
+  orgUrl?: string;
+  orgPhone?: string;
+}

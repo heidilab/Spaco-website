@@ -1,0 +1,168 @@
+{
+  "meta": {
+    "title": "SPACO — 賦予專屬空間無限可能",
+    "description": "香港高級全自助多功能活動空間，設有 BBQ、Shisha、桌球、打邊爐等設施。銅鑼灣、灣仔、上環、尖沙咀四間分店。"
+  },
+  "nav": {
+    "spaces": "派對空間",
+    "corporate": "商務活動",
+    "corporatePackage": "企業包場",
+    "family": "親子派對",
+    "faq": "常見問題",
+    "guidelines": "預訂須知",
+    "book": "立即預訂"
+  },
+  "hero": {
+    "title": "GATHERING",
+    "subtitle": "SPACO — 賦予專屬空間無限可能",
+    "cta": "探索空間"
+  },
+  "marquee": {
+    "text": "專屬空間 • 私人活動 • 極致設計 • BESPOKE SPACES • PRIVATE EVENT • REFINED DESIGN •"
+  },
+  "filter": {
+    "title": "尋找您的理想空間",
+    "capacity": "容納人數",
+    "vibe": "氛圍 / 主題",
+    "amenities": "設施",
+    "reset": "重設篩選",
+    "capacityOptions": {
+      "6-10": "6-10 人",
+      "10-35": "10-35 人",
+      "36-70": "36-70 人",
+      "71-100": "71-100 人"
+    },
+    "vibeOptions": {
+      "family": "親子放電",
+      "corporate": "商業活動",
+      "chill": "Chill 聚會",
+      "poker": "Poker 局"
+    },
+    "amenityOptions": {
+      "bbq": "戶外 BBQ",
+      "pool-table": "桌球",
+      "hotpot": "火鍋 / 室內打邊爐",
+      "mahjong": "麻將",
+      "private-kitchen": "獨立廚房"
+    }
+  },
+  "collection": {
+    "title": "空間展示",
+    "subtitle": "每個空間，都為您的聚會而生",
+    "viewDetails": "查看詳情",
+    "capacity": "可容納",
+    "people": "人",
+    "from": "由"
+  },
+  "fallback": {
+    "noResults": "未找到完全匹配的空間",
+    "bookNow": "立即預訂",
+    "viewVenue": "查看場地"
+  },
+  "amenities": {
+    "title": "高品質設施",
+    "subtitle": "為您的活動注入無限可能",
+    "items": {
+      "audio": { "title": "Hi-Fi 音響系統", "desc": "專業級音響設備，營造完美派對氛圍" },
+      "kitchen": { "title": "開放式廚房", "desc": "設備齊全的專業廚房，滿足烹飪需求" },
+      "furniture": { "title": "設計師家具", "desc": "精選高端家具，提升空間質感" },
+      "lighting": { "title": "氛圍燈光", "desc": "可調式情境燈光，配合不同活動主題" },
+      "bbq": { "title": "戶外 BBQ", "desc": "寬敞的戶外燒烤區域，享受露天樂趣" },
+      "games": { "title": "娛樂設施", "desc": "桌球、棋牌遊戲及更多派對娛樂" }
+    }
+  },
+  "branches": {
+    "title": "分店導覽",
+    "subtitle": "四間分店，覆蓋港九核心地段",
+    "cwb": "銅鑼灣店",
+    "wanchai": "灣仔店",
+    "sheungwan": "上環海景旗艦店",
+    "tst": "尖沙咀店"
+  },
+  "footer": {
+    "subscribe": "訂閱最新消息",
+    "emailPlaceholder": "輸入電郵地址",
+    "subscribeBtn": "訂閱",
+    "about": "關於 SPACO",
+    "aboutText": "SPACO 是香港高級全自助多功能活動空間品牌，致力為每一場聚會提供極致體驗。",
+    "quickLinks": "快速連結",
+    "contact": "聯絡我們",
+    "phone": "電話",
+    "email": "電郵",
+    "address": "地址",
+    "copyright": "© 2024 SPACO. All rights reserved.",
+    "terms": "條款及細則",
+    "privacy": "私隱政策"
+  },
+  "booking": {
+    "title": "預訂空間",
+    "selectDate": "選擇日期",
+    "selectTime": "選擇時段",
+    "startTime": "開始時間",
+    "endTime": "結束時間",
+    "guests": "人數",
+    "guestCount": "預計人數",
+    "addOns": "加購服務",
+    "byoFood": "自攜燒烤食物",
+    "byoFoodNote": "如客戶自攜燒烤食物，需收租 BBQ 爐費用；join 本店 BBQ 套餐免收租爐費",
+    "summary": "預訂摘要",
+    "subtotal": "小計",
+    "deposit": "按金",
+    "depositNote": "按金將於活動結束後退還（扣除任何損壞費用）",
+    "installment": "此訂單支援先付 50% 訂金",
+    "installmentNote": "訂單總額超過 $10,000 可選擇分期付款",
+    "cleaningBuffer": "清潔時間",
+    "cleaningBufferNote": "每個時段後自動預留 1 小時清潔時間",
+    "minHours": "最低預訂時數",
+    "minGuests": "最低預訂人數",
+    "weekday": "星期日至四",
+    "weekend": "星期五/六/公眾假期及前夕",
+    "perHead": "每位",
+    "proceed": "確認預訂",
+    "priceTable": "價目表"
+  },
+  "corporate": {
+    "title": "商業活動場地",
+    "subtitle": "專業空間，助力企業活動",
+    "hero": "從公司年會到團隊建設，SPACO 為您的商務需求提供彈性且高品質的場地方案。",
+    "benefits": {
+      "flexible": { "title": "彈性空間", "desc": "可根據活動規模靈活配置場地佈局" },
+      "av": { "title": "專業設備", "desc": "投影儀、音響系統、白板等商務設備齊全" },
+      "catering": { "title": "餐飲服務", "desc": "可安排到會餐飲或使用場地廚房自理" },
+      "privacy": { "title": "私密空間", "desc": "獨立包場，確保活動私密性與專注度" }
+    },
+    "cta": "聯絡我們訂製方案"
+  },
+  "family": {
+    "title": "親子 Party Room",
+    "subtitle": "安全、有趣、難忘的親子時光",
+    "hero": "為孩子的生日派對、家庭聚會打造安全又好玩的活動空間，讓大人小孩都能盡情享受。",
+    "benefits": {
+      "safe": { "title": "安全環境", "desc": "場地設計以安全為先，適合各年齡層兒童" },
+      "games": { "title": "兒童遊樂", "desc": "波波池、積木區等兒童專屬遊樂設施" },
+      "space": { "title": "寬敞空間", "desc": "充足的活動空間，讓小朋友盡情玩耍" },
+      "food": { "title": "派對餐飲", "desc": "提供兒童友善的 BBQ 及派對餐飲方案" }
+    },
+    "cta": "預訂親子派對"
+  },
+  "faq": {
+    "title": "常見問題",
+    "subtitle": "客人須知及常見問題解答",
+    "guestInfo": "客人須知",
+    "questions": "常見問題",
+    "guestRules": [
+      { "q": "場地使用規則", "a": "請保持場地整潔，活動結束前請關閉所有電器設備（冷氣、焗爐、電燈）。如有違反將從按金中扣除相關費用。" },
+      { "q": "食物及飲品規則", "a": "歡迎自攜食物（需租用 BBQ 爐）或選購我們的 BBQ 套餐。波波池範圍嚴禁飲食，違者將扣款 $1,500。" },
+      { "q": "大門密碼", "a": "場地大門一次性密碼將於活動前 24-48 小時透過短訊發送。請勿將密碼轉發給非出席者。" },
+      { "q": "取消及更改政策", "a": "活動 7 天前可免費取消或更改；3-7 天前取消將扣除 50% 按金；3 天內取消恕不退款。" }
+    ],
+    "faqItems": [
+      { "q": "如何預訂場地？", "a": "透過本網站選擇分店及時段，完成付款後即可確認預訂。我們支援 FPS、銀行轉帳及線上付款。" },
+      { "q": "按金如何退還？", "a": "活動結束後，管理員將進行場地檢查。如無損壞或違規，按金將於 7 個工作天內全數退還。" },
+      { "q": "可以帶寵物嗎？", "a": "抱歉，為確保所有客人的衛生及安全，我們的場地暫不接受寵物進入。" },
+      { "q": "有停車位嗎？", "a": "各分店附近均有公眾停車場，請參考各分店頁面的地址資訊。" },
+      { "q": "可以延長使用時間嗎？", "a": "如下一時段無其他預訂，可於現場申請延長。加時費用為原定每位每小時費率，於按金中扣除。" },
+      { "q": "積分制度如何運作？", "a": "會員消費 $1 = 1 分（不計按金），每 100 分可抵 $1 現金。積分於活動結束並完成按金退還後入帳。" }
+    ]
+  }
+}

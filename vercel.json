@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/lock-passcodes",
+      "schedule": "0 1 * * *"
+    }
+  ]
+}
