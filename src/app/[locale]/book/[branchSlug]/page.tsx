@@ -16,8 +16,9 @@ import SplitHeading from '@/components/ui/SplitHeading';
 import { getHoliday } from '@/lib/hkHolidays';
 import HolidayDatePicker from '@/components/booking/HolidayDatePicker';
 import { useAuth } from '@/contexts/AuthContext';
-import { getUserProfile, updateUserWhatsapp } from '@/lib/firestore';
+import { getUserProfile, updateUserWhatsapp, createBooking } from '@/lib/firestore';
 import { isValidHkPhone, formatHkPhone, normalizeHkPhone } from '@/lib/whatsapp';
+import AuthModal from '@/components/auth/AuthModal';
 
 export default function BookingPage() {
   const params = useParams();
@@ -54,6 +55,11 @@ export default function BookingPage() {
   const [savedWhatsappPhone, setSavedWhatsappPhone] = useState('');
   // True once the user has explicitly confirmed (or changed) the saved number
   const [whatsappConfirmed, setWhatsappConfirmed] = useState(false);
+
+  // Booking submission state
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -916,22 +922,78 @@ export default function BookingPage() {
               {/* CTA */}
               <button
                 className="w-full bg-accent text-white py-4 rounded-xl font-bold text-lg hover:bg-accent/90 transition-colors flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-                disabled={!canProceed}
+                disabled={!canProceed || isSubmitting}
                 onClick={async () => {
-                  // Persist the customer's confirmed WhatsApp to their profile
-                  // so the next booking pre-fills it. (When the full payment
-                  // flow lands this should be paired with createBooking().)
-                  if (user && whatsappReady) {
+                  if (!user) {
+                    setAuthModalOpen(true);
+                    return;
+                  }
+                  setSubmitError(null);
+                  setIsSubmitting(true);
+                  try {
                     const e164 = normalizeHkPhone(whatsappPhone);
                     if (e164) {
                       try { await updateUserWhatsapp(user.uid, e164); } catch { /* non-blocking */ }
                     }
+
+                    const balanceDue = Math.max(0, pricing.subtotal - pricing.deposit);
+                    const bookingId = await createBooking({
+                      userId: user.uid,
+                      whatsappPhone: e164 || undefined,
+                      venueId: venue.id,
+                      branchSlug: slug,
+                      date: selectedDate,
+                      startTime,
+                      endTime,
+                      hours,
+                      guestCount,
+                      isWeekend,
+                      addOns: selectedAddOns,
+                      hasBYOFood,
+                      pricing: {
+                        baseCharge: pricing.baseCharge,
+                        addOnTotal: pricing.addOnTotal,
+                        subtotal: pricing.subtotal,
+                        deposit: pricing.deposit,
+                      },
+                      status: 'awaiting_payment',
+                      paymentMethod: 'stripe',
+                      receiptUrl: null,
+                      balanceDue,
+                      depositRefund: null,
+                    });
+
+                    const res = await fetch('/api/stripe/checkout', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        bookingId,
+                        amount: pricing.deposit,
+                        deposit: pricing.deposit,
+                        venueName: venue.name[locale],
+                        customerEmail: user.email,
+                      }),
+                    });
+                    if (!res.ok) throw new Error(`Checkout API ${res.status}`);
+                    const { sessionUrl } = await res.json();
+                    if (!sessionUrl) throw new Error('No checkout URL returned');
+
+                    window.location.href = sessionUrl;
+                  } catch (err) {
+                    console.error('Booking submission failed:', err);
+                    setSubmitError(
+                      locale === 'zh'
+                        ? '預訂提交失敗，請稍後再試或聯絡客服。'
+                        : 'Booking submission failed. Please try again or contact support.'
+                    );
+                    setIsSubmitting(false);
                   }
-                  // Booking submission not yet wired — see project TODOs.
                 }}
               >
-                {t('proceed')}
-                <ArrowRight size={18} />
+                {isSubmitting
+                  ? (locale === 'zh' ? '處理中…' : 'Processing…')
+                  : t('proceed')}
+                {!isSubmitting && <ArrowRight size={18} />}
               </button>
 
               {selectedDate && !whatsappReady && (
@@ -944,10 +1006,15 @@ export default function BookingPage() {
                   {locale === 'zh' ? '請先同意預訂須知' : 'Please agree to the Booking Guidelines'}
                 </p>
               )}
+              {submitError && (
+                <p className="text-xs text-red-500 mt-3 text-center">{submitError}</p>
+              )}
             </div>
           </div>
         </div>
       </div>
+
+      <AuthModal isOpen={authModalOpen} onClose={() => setAuthModalOpen(false)} />
     </div>
   );
 }
