@@ -394,9 +394,16 @@ export function calculatePricing(
   };
 }
 
+/**
+ * Amount the customer must pay UPFRONT to confirm a booking.
+ *  - subtotal ≤ HK$10,000 → full payment (deposit = subtotal, no balance)
+ *  - subtotal >  HK$10,000 → 50% deposit; remaining 50% due 2 days before event.
+ *
+ * Note: this is the "what to charge now" number, NOT the refundable
+ * security amount returned to the customer after the event (that's
+ * tracked separately on BookingRecord.depositRefund).
+ */
 export function calculateDeposit(total: number): number {
-  if (total > 20000) return 8000;
-  if (total > 10000) return 4000;
-  if (total > 4000) return 2000;
-  return 1000;
+  if (total <= 10000) return total;
+  return Math.round(total * 0.5);
 }

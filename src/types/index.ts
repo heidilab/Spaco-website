@@ -54,6 +54,21 @@ export type DepositTier = {
 
 // ============ Firebase Types ============
 
+/** Where to send the post-event security-deposit refund. Captured during
+ *  the booking flow because the deposit is refunded by FPS / bank transfer
+ *  (not via Stripe), so we need destination details upfront. */
+export interface RefundDetails {
+  method: 'fps' | 'bank';
+  /** FPS phone / FPS ID / email — whichever the customer registered. */
+  fpsIdentifier?: string;
+  /** Bank name (e.g. "BEA Bank", "HSBC"). */
+  bankName?: string;
+  /** Account holder English name (must match bank record). */
+  accountHolderName?: string;
+  /** Bank account number including branch code. */
+  accountNumber?: string;
+}
+
 export interface UserProfile {
   uid: string;
   email: string;
@@ -91,9 +106,20 @@ export interface BookingRecord {
     subtotal: number;
     deposit: number;
   };
-  status: 'pending' | 'awaiting_payment' | 'confirmed' | 'completed' | 'cancelled';
-  paymentMethod: 'fps' | 'stripe' | null;
+  status: 'pending' | 'awaiting_payment' | 'awaiting_review' | 'confirmed' | 'completed' | 'cancelled';
+  paymentMethod: 'fps' | 'stripe' | 'bank' | null;
   receiptUrl: string | null;
+  /** When the customer uploaded their offline-payment receipt screenshot.
+   *  null means not yet uploaded. */
+  paymentReceiptUploadedAt?: unknown;
+  /** When admin verified the offline payment and flipped status to confirmed. */
+  paymentVerifiedAt?: unknown;
+  /** ms-since-epoch deadline for `pending` bookings to be paid before the
+   *  cron auto-cancels them and frees the slot. Default: createdAt + 30 min. */
+  pendingExpiresAt?: number;
+  /** Customer-provided refund destination for the security-deposit refund
+   *  processed after the event ends. Captured on the confirmation page. */
+  refundDetails?: RefundDetails;
   /** Outstanding balance (HK$). 0 ⇒ fully paid. Used for high-value
    *  bookings where the customer paid only the 50% deposit upfront and
    *  must clear the balance ≥ 2 days before the event. */

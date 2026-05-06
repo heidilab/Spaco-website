@@ -19,12 +19,15 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getUserProfile, updateUserWhatsapp, createBooking } from '@/lib/firestore';
 import { isValidHkPhone, formatHkPhone, normalizeHkPhone } from '@/lib/whatsapp';
 import AuthModal from '@/components/auth/AuthModal';
+import { useRouter } from '@/i18n/routing';
+import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
 
 export default function BookingPage() {
   const params = useParams();
   const locale = useLocale() as 'zh' | 'en';
   const t = useTranslations('booking');
   const { user } = useAuth();
+  const router = useRouter();
   const slug = params.branchSlug as string;
   const venue = getVenueBySlug(slug);
 
@@ -937,6 +940,8 @@ export default function BookingPage() {
                     }
 
                     const balanceDue = Math.max(0, pricing.subtotal - pricing.deposit);
+                    const pendingExpiresAt =
+                      Date.now() + PAYMENT_DETAILS.pendingHoldMinutes * 60 * 1000;
                     const bookingId = await createBooking({
                       userId: user.uid,
                       whatsappPhone: e164 || undefined,
@@ -956,29 +961,17 @@ export default function BookingPage() {
                         subtotal: pricing.subtotal,
                         deposit: pricing.deposit,
                       },
-                      status: 'awaiting_payment',
-                      paymentMethod: 'stripe',
+                      status: 'pending',
+                      paymentMethod: null,
                       receiptUrl: null,
                       balanceDue,
+                      pendingExpiresAt,
                       depositRefund: null,
                     });
 
-                    const res = await fetch('/api/stripe/checkout', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        bookingId,
-                        amount: pricing.deposit,
-                        deposit: pricing.deposit,
-                        venueName: venue.name[locale],
-                        customerEmail: user.email,
-                      }),
-                    });
-                    if (!res.ok) throw new Error(`Checkout API ${res.status}`);
-                    const { sessionUrl } = await res.json();
-                    if (!sessionUrl) throw new Error('No checkout URL returned');
-
-                    window.location.href = sessionUrl;
+                    // Hand off to the confirmation page — it collects refund
+                    // details and the chosen payment method before any charge.
+                    router.push(`/book/${slug}/confirm/${bookingId}`);
                   } catch (err) {
                     console.error('Booking submission failed:', err);
                     setSubmitError(

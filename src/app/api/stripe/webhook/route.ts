@@ -27,14 +27,20 @@ export async function POST(request: NextRequest) {
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object;
       const bookingId = session.metadata?.bookingId;
+      const isBalancePayment = session.metadata?.isBalancePayment === 'true';
 
       if (bookingId) {
-        // 1. Mark booking confirmed (admin SDK — bypasses security rules).
+        // 1. Update booking — confirm + (if balance payment) clear balanceDue.
         const bookingRef = adminDb.collection('bookings').doc(bookingId);
-        await bookingRef.update({
+        const updates: Record<string, unknown> = {
           status: 'confirmed',
           updatedAt: FieldValue.serverTimestamp(),
-        });
+        };
+        if (isBalancePayment) {
+          updates.balanceDue = 0;
+          updates.balancePaidAt = FieldValue.serverTimestamp();
+        }
+        await bookingRef.update(updates);
 
         // 2. Send confirmation email to the customer.
         try {

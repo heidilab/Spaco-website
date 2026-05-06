@@ -3,7 +3,14 @@ import { stripe } from '@/lib/stripe';
 
 export async function POST(request: NextRequest) {
   try {
-    const { bookingId, amount, deposit, venueName, customerEmail } = await request.json();
+    const {
+      bookingId,
+      amount,
+      deposit,
+      venueName,
+      customerEmail,
+      isBalancePayment,
+    } = await request.json();
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -27,6 +34,9 @@ export async function POST(request: NextRequest) {
       metadata: {
         bookingId,
         deposit: String(deposit),
+        // Webhook uses this flag to decide whether to clear balanceDue
+        // (balance payment) or just confirm the booking (deposit payment).
+        isBalancePayment: isBalancePayment ? 'true' : 'false',
       },
     });
 

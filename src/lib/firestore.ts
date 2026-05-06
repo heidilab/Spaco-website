@@ -265,6 +265,59 @@ export async function updateUserWhatsapp(uid: string, whatsappPhone: string) {
   });
 }
 
+/**
+ * Patch arbitrary editable fields on the user profile (account page).
+ * Caller is responsible for restricting which fields are exposed in the UI.
+ */
+export async function updateUserProfile(
+  uid: string,
+  patch: Partial<{ displayName: string; phone: string; whatsappPhone: string }>
+) {
+  await updateDoc(doc(db, 'users', uid), {
+    ...patch,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+// ============ BOOKING — payment & refund updates (client SDK) ============
+
+/** Persist refund destination collected on the booking confirmation page. */
+export async function updateBookingRefundDetails(
+  bookingId: string,
+  refundDetails: import('@/types').RefundDetails
+) {
+  await updateDoc(doc(db, 'bookings', bookingId), {
+    refundDetails,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/** Set the customer-chosen payment method (online/offline) on the booking. */
+export async function updateBookingPaymentMethod(
+  bookingId: string,
+  paymentMethod: 'fps' | 'stripe' | 'bank'
+) {
+  const status = paymentMethod === 'stripe' ? 'awaiting_payment' : 'awaiting_payment';
+  await updateDoc(doc(db, 'bookings', bookingId), {
+    paymentMethod,
+    status,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/** Save uploaded offline-payment receipt URL + flip status to awaiting_review. */
+export async function updateBookingReceiptUploaded(
+  bookingId: string,
+  receiptUrl: string
+) {
+  await updateDoc(doc(db, 'bookings', bookingId), {
+    receiptUrl,
+    paymentReceiptUploadedAt: serverTimestamp(),
+    status: 'awaiting_review',
+    updatedAt: serverTimestamp(),
+  });
+}
+
 // ============ LOYALTY POINTS ============
 
 export async function creditLoyaltyPoints(userId: string, bookingTotal: number, deposit: number) {
