@@ -88,7 +88,13 @@ export default function PaymentMethodPage() {
         if (!sessionUrl) throw new Error('No checkout URL returned');
         window.location.href = sessionUrl;
       } else {
-        // Offline (FPS / bank transfer) — go to instructions page
+        // Offline (FPS / bank transfer) — go to instructions page.
+        // Fire the待付款 reminder email (non-blocking).
+        fetch('/api/email/offline-pending', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bookingId: booking.id }),
+        }).catch((err) => console.warn('[offline-pending email] failed:', err));
         router.push(`/book/${slug}/pay-offline/${booking.id}`);
       }
     } catch (err) {

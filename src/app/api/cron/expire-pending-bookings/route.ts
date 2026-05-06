@@ -6,12 +6,19 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * Sweeps `pending` bookings whose `pendingExpiresAt` has passed and:
+ * Sweeps expired bookings and:
  *   1. Marks them `cancelled` (status flips so the slot is logically released).
  *   2. Deletes any blocked_slots created for the booking so the slot is
  *      actually re-bookable by the next customer.
  *
- * Runs every 5 minutes via Vercel cron. Idempotent — re-running on the
+ * Two cases are swept:
+ *   a) `status='pending'` with no payment method picked yet (customer
+ *      abandoned the flow before reaching the payment-method step).
+ *   b) `status='awaiting_payment'` for offline payments (FPS / bank) where
+ *      the customer never uploaded a receipt within the 30-min hold. Stripe
+ *      bookings stay in awaiting_payment until the webhook resolves them.
+ *
+ * Runs every 15 minutes via Vercel cron. Idempotent — re-running on the
  * same expired booking is a no-op (status check filters them out).
  */
 export async function GET(request: NextRequest) {
@@ -23,14 +30,31 @@ export async function GET(request: NextRequest) {
 
   const now = Date.now();
 
-  const snap = await adminDb
+  const pendingSnap = await adminDb
     .collection('bookings')
     .where('status', '==', 'pending')
     .where('pendingExpiresAt', '<=', now)
     .get();
 
+  const offlineAwaitingSnap = await adminDb
+    .collection('bookings')
+    .where('status', '==', 'awaiting_payment')
+    .where('pendingExpiresAt', '<=', now)
+    .get();
+
   const cancelled: string[] = [];
-  for (const docSnap of snap.docs) {
+  const candidates = [
+    ...pendingSnap.docs,
+    // Offline-payment only: skip Stripe (its checkout webhook owns the state),
+    // and skip bookings where a receipt has already been uploaded (those go
+    // to admin review, not auto-cancel).
+    ...offlineAwaitingSnap.docs.filter((d) => {
+      const data = d.data();
+      return data.paymentMethod !== 'stripe' && !data.receiptUrl;
+    }),
+  ];
+
+  for (const docSnap of candidates) {
     const bookingId = docSnap.id;
     try {
       await docSnap.ref.update({
@@ -50,5 +74,8 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ scanned: snap.size, cancelled });
+  return NextResponse.json({
+    scanned: pendingSnap.size + offlineAwaitingSnap.size,
+    cancelled,
+  });
 }

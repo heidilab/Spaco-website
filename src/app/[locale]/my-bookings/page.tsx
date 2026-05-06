@@ -10,7 +10,7 @@ import { BookingRecord } from '@/types';
 import { venues } from '@/lib/venues';
 import { generateWhatsAppLink } from '@/lib/email';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
-import { CalendarDays, Clock, Users, Upload, MessageCircle, CreditCard } from 'lucide-react';
+import { CalendarDays, Clock, Users, Upload, MessageCircle, CreditCard, AlertCircle } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Link } from '@/i18n/routing';
 import AuthModal from '@/components/auth/AuthModal';
@@ -40,6 +40,13 @@ export default function MyBookingsPage() {
   const [loading, setLoading] = useState(true);
   const [authModalOpen, setAuthModalOpen] = useState(false);
 
+  // Re-render every second so countdown timers tick down live.
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => forceTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
   useEffect(() => {
     if (authLoading) return;
     if (!user) {
@@ -56,6 +63,25 @@ export default function MyBookingsPage() {
     if (!user) return;
     getUserBookings(user.uid).then(setBookings);
   }
+
+  // Hide bookings that should not appear in the customer's list:
+  //   1. Created but no payment method picked yet (status='pending' + paymentMethod=null)
+  //      — the customer abandoned the flow before committing to anything.
+  //   2. Offline-payment bookings whose 30-min hold expired without a receipt
+  //      — the cron will (or already did) auto-cancel them; hide immediately.
+  const now = Date.now();
+  const visibleBookings = bookings.filter((b) => {
+    if (b.status === 'pending' && !b.paymentMethod) return false;
+    if (b.status === 'cancelled') return false;
+    const isOfflineAwaiting =
+      b.status === 'awaiting_payment' &&
+      b.paymentMethod !== 'stripe' &&
+      !b.receiptUrl;
+    if (isOfflineAwaiting && typeof b.pendingExpiresAt === 'number' && b.pendingExpiresAt <= now) {
+      return false;
+    }
+    return true;
+  });
 
   if (authLoading || loading) {
     return (
@@ -105,7 +131,7 @@ export default function MyBookingsPage() {
           </h1>
         </div>
 
-        {bookings.length === 0 ? (
+        {visibleBookings.length === 0 ? (
           <div className="glass-card p-12 text-center max-w-md mx-auto">
             <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-white/60 flex items-center justify-center text-ink-soft">
               <CalendarDays size={28} />
@@ -114,7 +140,7 @@ export default function MyBookingsPage() {
           </div>
         ) : (
           <div className="space-y-4">
-            {bookings.map((booking, i) => (
+            {visibleBookings.map((booking, i) => (
               <BookingCard key={booking.id} booking={booking} index={i} locale={locale} onChange={refresh} />
             ))}
           </div>
@@ -167,6 +193,20 @@ function BookingCard({
     (booking.status === 'pending' || booking.status === 'awaiting_payment') && booking.paymentMethod !== 'stripe';
   const showPayBalance = booking.status === 'confirmed' && balanceDue > 0;
 
+  // Live 30-min countdown for offline-payment bookings awaiting a receipt.
+  // After expiry the row will be filtered out by the parent on the next render,
+  // and the server cron will flip the booking to `cancelled` shortly after.
+  const isOfflineAwaiting =
+    booking.status === 'awaiting_payment' &&
+    booking.paymentMethod !== 'stripe' &&
+    !booking.receiptUrl &&
+    typeof booking.pendingExpiresAt === 'number';
+  const msLeft = isOfflineAwaiting
+    ? Math.max(0, (booking.pendingExpiresAt as number) - Date.now())
+    : 0;
+  const minsLeft = Math.floor(msLeft / 60000);
+  const secsLeft = Math.floor((msLeft % 60000) / 1000);
+
   const whatsappMsg =
     locale === 'zh'
       ? `你好，預訂編號：${booking.id}\n金額：HK$${booking.pricing.deposit.toLocaleString()}`
@@ -216,6 +256,25 @@ function BookingCard({
           )}
         </div>
       </div>
+
+      {/* 30-min hold countdown for offline-payment bookings */}
+      {isOfflineAwaiting && msLeft > 0 && (
+        <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 mb-3 flex items-start gap-2.5">
+          <AlertCircle size={16} className="text-amber-600 mt-0.5 flex-shrink-0" />
+          <div className="flex-1 text-xs leading-relaxed">
+            <p className="font-semibold text-amber-800">
+              {locale === 'zh'
+                ? `預約將於 ${minsLeft} 分 ${secsLeft.toString().padStart(2, '0')} 秒後自動取消`
+                : `Booking auto-cancels in ${minsLeft}m ${secsLeft.toString().padStart(2, '0')}s`}
+            </p>
+            <p className="text-amber-700 mt-1">
+              {locale === 'zh'
+                ? '系統目前並未為閣下預留場地，以收到款項時間為準（先到先得）。請於 30 分鐘內完成付款並上載截圖，否則此預約會自動取消。'
+                : 'The slot is NOT reserved yet — first-come-first-served, based on payment receipt time. Complete payment and upload your receipt within 30 minutes or this booking will auto-cancel.'}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Action buttons */}
       {(showResumePayment || showUploadReceipt || showPayBalance) && (

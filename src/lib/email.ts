@@ -8,7 +8,7 @@ interface EmailParams {
 
 export async function sendEmail({ to, subject, html }: EmailParams) {
   const apiKey = process.env.RESEND_API_KEY;
-  const fromEmail = process.env.RESEND_FROM_EMAIL || 'noreply@spaco.hk';
+  const fromEmail = process.env.RESEND_FROM_EMAIL || 'noreply@spacohk.com';
 
   if (!apiKey || apiKey === 're_YOUR_KEY_HERE') {
     console.log('[Email] Skipping send (no API key configured):', { to, subject });
@@ -36,6 +36,217 @@ export async function sendEmail({ to, subject, html }: EmailParams) {
   }
 
   return response.json();
+}
+
+// ─────────────────────────────────────────────────────────────
+// Shared design tokens — keep colours/fonts in lockstep with the
+// website (pink gradient + cream background) so emails feel native.
+// ─────────────────────────────────────────────────────────────
+const EMAIL_BG    = '#FAF7F4';
+const EMAIL_INK   = '#1A1A1A';
+const EMAIL_PINK  = '#FF6B9D';
+const EMAIL_PEACH = '#FFB088';
+const EMAIL_FONT  = '"Helvetica Neue", Arial, sans-serif';
+
+function emailHeader(subtitle: string): string {
+  return `
+    <div style="background: linear-gradient(135deg, ${EMAIL_PINK} 0%, ${EMAIL_PEACH} 100%); padding: 36px 24px; border-radius: 20px; text-align: center; margin-bottom: 20px;">
+      <h1 style="margin: 0; font-size: 32px; font-weight: 800; color: white; letter-spacing: 0.02em;">SPACO</h1>
+      <p style="margin: 6px 0 0; color: rgba(255,255,255,0.92); font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase;">${subtitle}</p>
+    </div>
+  `;
+}
+
+function emailFooter(): string {
+  return `
+    <p style="text-align: center; color: #999; font-size: 12px; margin-top: 24px;">
+      © SPACO · <a href="https://spacohk.com" style="color: ${EMAIL_PINK}; text-decoration: none;">spacohk.com</a> ·
+      <a href="https://instagram.com/spacohk" style="color: ${EMAIL_PINK}; text-decoration: none;">@spacohk</a>
+    </p>
+  `;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Welcome email — sent on first sign-up.
+// ─────────────────────────────────────────────────────────────
+export function buildWelcomeEmail(params: { customerName: string }) {
+  return {
+    subject: `歡迎加入 SPACO 🎉 Welcome aboard`,
+    html: `
+      <div style="font-family: ${EMAIL_FONT}; max-width: 600px; margin: 0 auto; background: ${EMAIL_BG}; padding: 40px 20px;">
+        ${emailHeader('歡迎加入 · WELCOME')}
+        <div style="background: white; padding: 32px; border-radius: 20px; margin-bottom: 16px;">
+          <p style="margin: 0 0 16px; font-size: 16px; color: ${EMAIL_INK};">Hi ${params.customerName},</p>
+          <p style="margin: 0 0 16px; color: #666; line-height: 1.7;">
+            多謝你註冊成為 <strong>SPACO</strong> 會員！我哋有 4 間獨立 Party Room（銅鑼灣、灣仔、上環、尖沙咀），你可以隨時上網預約最啱嘅場地。
+          </p>
+          <div style="background: #FFF0F5; border-radius: 14px; padding: 18px 20px; margin: 20px 0;">
+            <p style="margin: 0 0 6px; font-size: 13px; color: ${EMAIL_PINK}; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;">會員福利</p>
+            <ul style="margin: 0; padding-left: 18px; color: #444; font-size: 14px; line-height: 1.8;">
+              <li>每次預約自動賺取積分（HK$1 = 1 分）</li>
+              <li>下次預訂可即時抵扣現金</li>
+              <li>生日月份限定優惠</li>
+              <li>會員專屬優先預約時段</li>
+            </ul>
+          </div>
+          <div style="text-align: center; margin: 24px 0 8px;">
+            <a href="https://spacohk.com" style="display: inline-block; background: ${EMAIL_INK}; color: white; padding: 12px 28px; border-radius: 999px; text-decoration: none; font-weight: 600; font-size: 14px;">
+              立即預約 Book now →
+            </a>
+          </div>
+        </div>
+        ${emailFooter()}
+      </div>
+    `,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Offline-payment pending email — sent when customer picks FPS / bank.
+// Includes payment instructions + 30-min hold + WhatsApp deeplink.
+// ─────────────────────────────────────────────────────────────
+export function buildOfflinePaymentPendingEmail(params: {
+  customerName: string;
+  venueName: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  amountDue: number;
+  fpsNumber: string;
+  bankName: string;
+  bankAccount: string;
+  bankHolder: string;
+  bookingId: string;
+  whatsappLink: string;
+}) {
+  return {
+    subject: `⏰ SPACO 待付款提示 — 請於 30 分鐘內完成付款`,
+    html: `
+      <div style="font-family: ${EMAIL_FONT}; max-width: 600px; margin: 0 auto; background: ${EMAIL_BG}; padding: 40px 20px;">
+        ${emailHeader('待付款 · PAYMENT PENDING')}
+        <div style="background: white; padding: 32px; border-radius: 20px; margin-bottom: 16px;">
+          <p style="margin: 0 0 16px;">Hi ${params.customerName},</p>
+          <p style="margin: 0 0 18px; color: #666; line-height: 1.7;">
+            多謝你預約 <strong>${params.venueName}</strong>。請於 <strong>30 分鐘內</strong> 完成付款並 WhatsApp 上傳入數紙截圖，否則此預約會自動取消（系統暫未為閣下預留場地，以收到款項時間為準）。
+          </p>
+
+          <div style="background: linear-gradient(135deg, #FFF0F5 0%, #FFF5EB 100%); border-radius: 16px; padding: 20px; margin-bottom: 18px;">
+            <p style="margin: 0 0 4px; font-size: 11px; color: ${EMAIL_PINK}; letter-spacing: 0.1em; text-transform: uppercase; font-weight: 700;">應付金額</p>
+            <p style="margin: 0; font-size: 32px; font-weight: 800; color: ${EMAIL_INK}; font-family: 'Courier New', monospace;">
+              HK$${params.amountDue.toLocaleString()}
+            </p>
+          </div>
+
+          <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999;">場地</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.venueName}</td></tr>
+            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999;">日期</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.date}</td></tr>
+            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999;">時段</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.startTime} – ${params.endTime}</td></tr>
+            <tr><td style="padding: 8px 0; color: #999;">預訂編號</td><td style="padding: 8px 0; text-align: right; font-family: 'Courier New', monospace; font-size: 12px;">${params.bookingId}</td></tr>
+          </table>
+
+          <div style="background: #F8F8F8; border-radius: 14px; padding: 18px 20px; margin: 20px 0 0; font-size: 14px;">
+            <p style="margin: 0 0 8px; font-weight: 700; color: ${EMAIL_INK};">💸 付款方式</p>
+            <p style="margin: 4px 0; color: #444;">FPS 轉數快：<strong>${params.fpsNumber}</strong></p>
+            <p style="margin: 4px 0; color: #444;">銀行：<strong>${params.bankName}</strong></p>
+            <p style="margin: 4px 0; color: #444;">戶口：<strong>${params.bankAccount}</strong> (${params.bankHolder})</p>
+          </div>
+
+          <div style="text-align: center; margin: 24px 0 4px;">
+            <a href="${params.whatsappLink}" style="display: inline-block; background: #25D366; color: white; padding: 12px 28px; border-radius: 999px; text-decoration: none; font-weight: 600; font-size: 14px;">
+              💬 WhatsApp 上傳入數紙
+            </a>
+          </div>
+        </div>
+        ${emailFooter()}
+      </div>
+    `,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Post-event email — sent ~3 days after the event ends.
+// Surfaces loyalty point balance + nudges customer to follow IG.
+// ─────────────────────────────────────────────────────────────
+export function buildPostEventEmail(params: {
+  customerName: string;
+  venueName: string;
+  date: string;
+  pointsEarned: number;
+  pointsBalance: number;
+}) {
+  return {
+    subject: `🎈 多謝你選擇 SPACO — 你已賺取 ${params.pointsEarned} 積分`,
+    html: `
+      <div style="font-family: ${EMAIL_FONT}; max-width: 600px; margin: 0 auto; background: ${EMAIL_BG}; padding: 40px 20px;">
+        ${emailHeader('THANK YOU · 多謝你嘅光臨')}
+        <div style="background: white; padding: 32px; border-radius: 20px; margin-bottom: 16px;">
+          <p style="margin: 0 0 14px;">Hi ${params.customerName},</p>
+          <p style="margin: 0 0 18px; color: #666; line-height: 1.7;">
+            希望你 ${params.date} 喺 <strong>${params.venueName}</strong> 嘅活動順利！多謝信任 SPACO，下次再見 💕
+          </p>
+
+          <div style="background: linear-gradient(135deg, ${EMAIL_PINK} 0%, ${EMAIL_PEACH} 100%); border-radius: 16px; padding: 22px; color: white; text-align: center; margin: 20px 0;">
+            <p style="margin: 0 0 6px; font-size: 12px; opacity: 0.9; letter-spacing: 0.1em; text-transform: uppercase;">是次活動賺取</p>
+            <p style="margin: 0 0 12px; font-size: 36px; font-weight: 800; font-family: 'Courier New', monospace;">+${params.pointsEarned}</p>
+            <div style="border-top: 1px solid rgba(255,255,255,0.4); padding-top: 12px; font-size: 14px;">
+              累計積分結餘：<strong style="font-size: 18px;">${params.pointsBalance.toLocaleString()}</strong> 分
+            </div>
+            <p style="margin: 8px 0 0; font-size: 12px; opacity: 0.85;">下次預訂可直接抵扣現金</p>
+          </div>
+
+          <div style="background: #FFF0F5; border-radius: 14px; padding: 18px 20px;">
+            <p style="margin: 0 0 8px; font-weight: 700; color: ${EMAIL_PINK};">📸 一齊喺 Instagram 留低</p>
+            <p style="margin: 0 0 12px; color: #444; font-size: 14px; line-height: 1.6;">
+              Tag <strong>@spacohk</strong> 同 #spacohk，我哋會喺 IG story repost，同你嘅朋友一齊回顧今日嘅快樂時光！
+            </p>
+            <a href="https://instagram.com/spacohk" style="display: inline-block; background: ${EMAIL_INK}; color: white; padding: 10px 22px; border-radius: 999px; text-decoration: none; font-weight: 600; font-size: 13px;">
+              Follow @spacohk →
+            </a>
+          </div>
+        </div>
+        ${emailFooter()}
+      </div>
+    `,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Birthday email — sent on first day of customer's birth month.
+// ─────────────────────────────────────────────────────────────
+export function buildBirthdayEmail(params: {
+  customerName: string;
+  promoCode?: string;
+  discountText?: string;
+}) {
+  const code = params.promoCode || 'BIRTHDAY';
+  const discount = params.discountText || '88 折';
+  return {
+    subject: `🎂 ${params.customerName}，SPACO 祝你生日快樂！`,
+    html: `
+      <div style="font-family: ${EMAIL_FONT}; max-width: 600px; margin: 0 auto; background: ${EMAIL_BG}; padding: 40px 20px;">
+        ${emailHeader('HAPPY BIRTHDAY · 生日快樂')}
+        <div style="background: white; padding: 32px; border-radius: 20px; margin-bottom: 16px; text-align: center;">
+          <p style="font-size: 60px; margin: 0 0 4px; line-height: 1;">🎂</p>
+          <p style="margin: 0 0 12px; font-size: 22px; font-weight: 700; color: ${EMAIL_INK};">Hi ${params.customerName}!</p>
+          <p style="margin: 0 0 22px; color: #666; line-height: 1.7;">
+            生日月份用以下優惠碼預約場地，整月慶祝都可以！
+          </p>
+          <div style="background: linear-gradient(135deg, ${EMAIL_PINK} 0%, ${EMAIL_PEACH} 100%); border-radius: 18px; padding: 24px; color: white; margin: 20px 0;">
+            <p style="margin: 0 0 6px; font-size: 12px; opacity: 0.9; letter-spacing: 0.1em; text-transform: uppercase;">生日專屬優惠</p>
+            <p style="margin: 0 0 12px; font-size: 28px; font-weight: 800;">${discount}</p>
+            <div style="background: white; color: ${EMAIL_INK}; display: inline-block; padding: 10px 22px; border-radius: 999px; font-family: 'Courier New', monospace; font-weight: 700; letter-spacing: 0.15em; font-size: 18px;">
+              ${code}
+            </div>
+            <p style="margin: 12px 0 0; font-size: 11px; opacity: 0.85;">優惠有效期至生日月底</p>
+          </div>
+          <a href="https://spacohk.com" style="display: inline-block; background: ${EMAIL_INK}; color: white; padding: 12px 28px; border-radius: 999px; text-decoration: none; font-weight: 600; font-size: 14px;">
+            立即預約 →
+          </a>
+        </div>
+        ${emailFooter()}
+      </div>
+    `,
+  };
 }
 
 export function buildBookingConfirmationEmail(params: {

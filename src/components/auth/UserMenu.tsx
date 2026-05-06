@@ -5,7 +5,7 @@ import { useLocale } from 'next-intl';
 import { Link } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
 import { signOut } from '@/lib/auth';
-import { LogOut, CalendarDays, Shield, ChevronDown } from 'lucide-react';
+import { LogOut, CalendarDays, Shield, ChevronDown, User } from 'lucide-react';
 
 export default function UserMenu() {
   const { user, isAdminUser } = useAuth();
@@ -61,6 +61,15 @@ export default function UserMenu() {
 
           {/* Links */}
           <div className="py-1">
+            <Link
+              href="/account"
+              onClick={() => setOpen(false)}
+              className="flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-cream transition-colors"
+            >
+              <User size={16} className="text-muted" />
+              {locale === 'zh' ? '會員中心' : 'Member Centre'}
+            </Link>
+
             <Link
               href="/my-bookings"
               onClick={() => setOpen(false)}

@@ -7,6 +7,10 @@
     {
       "path": "/api/cron/expire-pending-bookings",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/post-event-emails",
+      "schedule": "0 3 * * *"
     }
   ]
 }

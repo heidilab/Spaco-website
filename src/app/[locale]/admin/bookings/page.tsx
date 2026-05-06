@@ -20,11 +20,12 @@ import { useAuth } from '@/contexts/AuthContext';
 
 type View = 'bookings' | 'drafts';
 
-const statusOptions = ['all', 'pending', 'awaiting_payment', 'confirmed', 'completed', 'cancelled'];
+const statusOptions = ['all', 'pending', 'awaiting_payment', 'awaiting_review', 'confirmed', 'completed', 'cancelled'];
 const statusLabels: Record<string, { zh: string; en: string }> = {
   all: { zh: '全部', en: 'All' },
   pending: { zh: '待處理', en: 'Pending' },
   awaiting_payment: { zh: '待付款', en: 'Awaiting Payment' },
+  awaiting_review: { zh: '待核實入數', en: 'Awaiting Review' },
   confirmed: { zh: '已確認', en: 'Confirmed' },
   completed: { zh: '已完成', en: 'Completed' },
   cancelled: { zh: '已取消', en: 'Cancelled' },
@@ -32,6 +33,7 @@ const statusLabels: Record<string, { zh: string; en: string }> = {
 const statusColors: Record<string, string> = {
   pending: 'bg-amber-100/80 text-amber-700 border-amber-200',
   awaiting_payment: 'bg-orange-100/80 text-orange-700 border-orange-200',
+  awaiting_review: 'bg-violet-100/80 text-violet-700 border-violet-200',
   confirmed: 'bg-emerald-100/80 text-emerald-700 border-emerald-200',
   completed: 'bg-sky-100/80 text-sky-700 border-sky-200',
   cancelled: 'bg-rose-100/80 text-rose-700 border-rose-200',
@@ -293,9 +295,17 @@ export default function AdminBookingsPage() {
                 {filteredBookings.map((booking) => {
                   const venue = venues.find((v) => v.id === booking.venueId);
                   return (
-                    <tr key={booking.id} className="border-b border-white/40 last:border-0 hover:bg-white/40 transition-colors">
+                    <tr key={booking.id} className="border-b border-white/40 last:border-0 hover:bg-white/40 transition-colors cursor-pointer" onClick={(e) => {
+                      // Ignore clicks that originate inside the actions cell
+                      // (buttons + WhatsApp link) — they have their own handlers.
+                      const target = e.target as HTMLElement;
+                      if (target.closest('button') || target.closest('a')) return;
+                      window.location.href = `/${locale}/admin/bookings/${booking.id}`;
+                    }}>
                       <td className="px-6 py-4">
-                        <p className="font-medium text-sm text-ink">{venue?.name[locale] || booking.venueId}</p>
+                        <Link href={`/admin/bookings/${booking.id}`} className="font-medium text-sm text-ink hover:text-pink hover:underline">
+                          {venue?.name[locale] || booking.venueId}
+                        </Link>
                       </td>
                       <td className="px-6 py-4 text-sm text-ink">{booking.date}</td>
                       <td className="px-6 py-4 text-sm text-ink">{booking.startTime} - {booking.endTime}</td>

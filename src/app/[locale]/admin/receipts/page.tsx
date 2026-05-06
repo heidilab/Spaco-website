@@ -24,13 +24,36 @@ export default function AdminReceiptsPage() {
   }, [canAccess]);
 
   const loadBookings = async () => {
-    const data = await getAllBookings('awaiting_payment');
-    setBookings(data);
-    setLoading(false);
+    try {
+      // 'awaiting_review' = customer uploaded receipt, awaiting admin verify.
+      // 'awaiting_payment' = chose offline payment but no receipt yet —
+      // those should still surface here so admin can chase them.
+      const [review, awaiting] = await Promise.all([
+        getAllBookings('awaiting_review'),
+        getAllBookings('awaiting_payment'),
+      ]);
+      // Show receipts uploaded first (highest priority for admin), then
+      // awaiting-payment offline bookings without receipt yet.
+      setBookings([
+        ...review,
+        ...awaiting.filter((b) => b.paymentMethod !== 'stripe' && !b.receiptUrl),
+      ]);
+    } catch (err) {
+      console.error('[admin/receipts] load failed:', err);
+      setBookings([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleApprove = async (bookingId: string) => {
     await updateBookingStatus(bookingId, 'confirmed');
+    // Send the booking-confirmation email (mirrors Stripe webhook flow).
+    fetch('/api/email/payment-confirmed', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bookingId }),
+    }).catch((err) => console.warn('[payment-confirmed email] failed:', err));
     // Trigger TTLock passcode generation. The API does eligibility checking,
     // so this no-ops when the booking is > 2 days out (cron picks it up).
     // Failures are non-fatal — admin can retry from the booking detail page.

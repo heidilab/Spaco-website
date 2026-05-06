@@ -77,18 +77,22 @@ export async function getUserBookings(userId: string): Promise<BookingRecord[]> 
 }
 
 export async function getAllBookings(status?: string): Promise<BookingRecord[]> {
-  let q;
-  if (status) {
-    q = query(
-      collection(db, 'bookings'),
-      where('status', '==', status),
-      orderBy('createdAt', 'desc')
-    );
-  } else {
-    q = query(collection(db, 'bookings'), orderBy('createdAt', 'desc'));
-  }
+  // We sort client-side so a (status, createdAt) composite index is never
+  // required. Without this, hitting any sub-page that filters by status
+  // would silently fail when the index is missing.
+  const q = status
+    ? query(collection(db, 'bookings'), where('status', '==', status))
+    : query(collection(db, 'bookings'), orderBy('createdAt', 'desc'));
   const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as BookingRecord));
+  const items = snap.docs.map((d) => ({ id: d.id, ...d.data() } as BookingRecord));
+  if (status) {
+    items.sort((a, b) => {
+      const ta = (a.createdAt as { toMillis?: () => number } | null)?.toMillis?.() ?? 0;
+      const tb = (b.createdAt as { toMillis?: () => number } | null)?.toMillis?.() ?? 0;
+      return tb - ta;
+    });
+  }
+  return items;
 }
 
 export async function updateBookingStatus(id: string, status: string) {
@@ -96,6 +100,58 @@ export async function updateBookingStatus(id: string, status: string) {
     status,
     updatedAt: serverTimestamp(),
   });
+}
+
+/** Admin/CS: edit a booking's date / time / guest count. Updates the
+ *  blocked_slots that were created for the booking so the schedule stays
+ *  consistent. Caller must validate availability before invoking. */
+export async function updateBookingDateTime(
+  bookingId: string,
+  next: { date: string; startTime: string; endTime: string; guestCount?: number }
+) {
+  const bookingRef = doc(db, 'bookings', bookingId);
+  const bookingSnap = await getDoc(bookingRef);
+  if (!bookingSnap.exists()) throw new Error('Booking not found');
+  const booking = bookingSnap.data() as BookingRecord;
+
+  const [endH] = next.endTime.split(':').map(Number);
+  const bufferEnd = `${String(endH + 1).padStart(2, '0')}:00`;
+  const venuesToBlock = venuesSharingSpace(booking.venueId);
+
+  // Replace the blocked_slots tied to this booking.
+  const blockedSnap = await getDocs(
+    query(collection(db, 'blocked_slots'), where('bookingId', '==', bookingId))
+  );
+  for (const b of blockedSnap.docs) {
+    await deleteDoc(b.ref);
+  }
+  for (const vid of venuesToBlock) {
+    await createBlockedSlot({
+      venueId: vid,
+      date: next.date,
+      startTime: next.startTime,
+      endTime: next.endTime,
+      reason: 'booking',
+      bookingId,
+    });
+    await createBlockedSlot({
+      venueId: vid,
+      date: next.date,
+      startTime: next.endTime,
+      endTime: bufferEnd,
+      reason: 'cleaning',
+      bookingId,
+    });
+  }
+
+  const patch: Record<string, unknown> = {
+    date: next.date,
+    startTime: next.startTime,
+    endTime: next.endTime,
+    updatedAt: serverTimestamp(),
+  };
+  if (typeof next.guestCount === 'number') patch.guestCount = next.guestCount;
+  await updateDoc(bookingRef, patch);
 }
 
 /** Set the outstanding balance for a booking (50%-deposit case). Use 0 to

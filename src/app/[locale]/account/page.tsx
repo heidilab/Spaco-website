@@ -4,17 +4,28 @@ import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { Link } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
-import { getUserProfile, updateUserProfile } from '@/lib/firestore';
+import { getUserProfile, getUserBookings, updateUserProfile } from '@/lib/firestore';
 import { isValidHkPhone, normalizeHkPhone } from '@/lib/whatsapp';
-import { UserProfile } from '@/types';
+import { UserProfile, BookingRecord } from '@/types';
+import { venues } from '@/lib/venues';
 import AuthModal from '@/components/auth/AuthModal';
-import { User, Sparkles, CalendarDays, Save } from 'lucide-react';
+import { User, Sparkles, CalendarDays, Save, Clock, Users as UsersIcon } from 'lucide-react';
 import { motion } from 'framer-motion';
+
+const statusLabels: Record<string, { zh: string; en: string }> = {
+  pending: { zh: '待付款', en: 'Pending payment' },
+  awaiting_payment: { zh: '待付款', en: 'Awaiting Payment' },
+  awaiting_review: { zh: '待核實', en: 'Awaiting Review' },
+  confirmed: { zh: '已確認', en: 'Confirmed' },
+  completed: { zh: '已完成', en: 'Completed' },
+  cancelled: { zh: '已取消', en: 'Cancelled' },
+};
 
 export default function AccountPage() {
   const locale = useLocale() as 'zh' | 'en';
   const { user, loading: authLoading } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [bookings, setBookings] = useState<BookingRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [authModalOpen, setAuthModalOpen] = useState(false);
 
@@ -32,7 +43,7 @@ export default function AccountPage() {
       setLoading(false);
       return;
     }
-    getUserProfile(user.uid).then((p) => {
+    Promise.all([getUserProfile(user.uid), getUserBookings(user.uid)]).then(([p, bs]) => {
       if (p) {
         const profile = p as unknown as UserProfile;
         setProfile(profile);
@@ -40,6 +51,7 @@ export default function AccountPage() {
         setPhone(profile.phone || '');
         setWhatsappPhone(profile.whatsappPhone || '');
       }
+      setBookings(bs);
       setLoading(false);
     });
   }, [user, authLoading]);
@@ -134,19 +146,83 @@ export default function AccountPage() {
             </p>
           </div>
 
-          {/* Quick links */}
-          <Link
-            href="/my-bookings"
-            className="glass-card p-5 flex items-center justify-between hover:-translate-y-0.5 transition-transform"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-white/60 flex items-center justify-center">
+          {/* My bookings — inline preview of the 3 most recent visible bookings.
+              Mirrors my-bookings page filtering: hide pending+no-payment-method,
+              cancelled, and offline-awaiting bookings whose 30-min hold expired. */}
+          <div className="glass-card p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-bold text-lg flex items-center gap-2">
                 <CalendarDays size={18} className="text-pink" />
-              </div>
-              <p className="font-semibold">{locale === 'zh' ? '我的預訂' : 'My Bookings'}</p>
+                {locale === 'zh' ? '我的預訂' : 'My Bookings'}
+              </h2>
+              <Link
+                href="/my-bookings"
+                className="text-xs text-pink font-semibold hover:underline"
+              >
+                {locale === 'zh' ? '查看全部 →' : 'View all →'}
+              </Link>
             </div>
-            <span className="text-ink-soft text-sm">→</span>
-          </Link>
+
+            {(() => {
+              const now = Date.now();
+              const visible = bookings.filter((b) => {
+                if (b.status === 'pending' && !b.paymentMethod) return false;
+                if (b.status === 'cancelled') return false;
+                const isOfflineAwaiting =
+                  b.status === 'awaiting_payment' &&
+                  b.paymentMethod !== 'stripe' &&
+                  !b.receiptUrl;
+                if (
+                  isOfflineAwaiting &&
+                  typeof b.pendingExpiresAt === 'number' &&
+                  b.pendingExpiresAt <= now
+                )
+                  return false;
+                return true;
+              });
+              if (visible.length === 0) {
+                return (
+                  <p className="text-sm text-ink-soft text-center py-6">
+                    {locale === 'zh' ? '暫無預訂記錄' : 'No bookings yet'}
+                  </p>
+                );
+              }
+              return (
+                <div className="space-y-2">
+                  {visible.slice(0, 3).map((b) => {
+                    const venue = venues.find((v) => v.id === b.venueId);
+                    return (
+                      <Link
+                        key={b.id}
+                        href="/my-bookings"
+                        className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-4 py-3 rounded-xl bg-white/60 border border-charcoal/10 hover:border-accent transition-colors"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-sm truncate">
+                            {venue?.name[locale] || b.venueId}
+                          </p>
+                          <div className="flex flex-wrap gap-3 text-xs text-ink-soft mt-1">
+                            <span className="flex items-center gap-1">
+                              <CalendarDays size={11} /> {b.date}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Clock size={11} /> {b.startTime}–{b.endTime}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <UsersIcon size={11} /> {b.guestCount} {locale === 'zh' ? '人' : 'pax'}
+                            </span>
+                          </div>
+                        </div>
+                        <span className="text-xs px-2.5 py-1 rounded-pill bg-white/70 border border-charcoal/10 text-ink-soft self-start sm:self-auto">
+                          {statusLabels[b.status]?.[locale] || b.status}
+                        </span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
 
           {/* Profile edit */}
           <div className="glass-card p-7 space-y-4">

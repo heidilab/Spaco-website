@@ -33,10 +33,15 @@ export default function AdminDepositPage() {
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    getAllBookings('confirmed').then((data) => {
-      setBookings(data);
-      setLoading(false);
-    }).catch(() => setLoading(false));
+    // Load both 'confirmed' (booking happened, awaiting deposit refund) AND
+    // 'completed' (already settled, in case admin needs to revisit). Failing
+    // queries should not stall the page: catch and log so loading flips off.
+    Promise.all([
+      getAllBookings('confirmed').catch((e) => { console.error(e); return []; }),
+      getAllBookings('completed').catch((e) => { console.error(e); return []; }),
+    ])
+      .then(([confirmed, completed]) => setBookings([...confirmed, ...completed]))
+      .finally(() => setLoading(false));
   }, []);
 
   const toggleFixed = (id: string) => {
