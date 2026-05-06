@@ -62,13 +62,18 @@ export async function getBooking(id: string): Promise<BookingRecord | null> {
 }
 
 export async function getUserBookings(userId: string): Promise<BookingRecord[]> {
+  // Sort client-side to avoid requiring a (userId, createdAt) composite index.
   const q = query(
     collection(db, 'bookings'),
-    where('userId', '==', userId),
-    orderBy('createdAt', 'desc')
+    where('userId', '==', userId)
   );
   const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as BookingRecord));
+  const items = snap.docs.map((d) => ({ id: d.id, ...d.data() } as BookingRecord));
+  return items.sort((a, b) => {
+    const ta = (a.createdAt as { toMillis?: () => number } | null)?.toMillis?.() ?? 0;
+    const tb = (b.createdAt as { toMillis?: () => number } | null)?.toMillis?.() ?? 0;
+    return tb - ta;
+  });
 }
 
 export async function getAllBookings(status?: string): Promise<BookingRecord[]> {

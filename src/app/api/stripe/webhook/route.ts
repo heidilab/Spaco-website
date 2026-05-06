@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { stripe } from '@/lib/stripe';
-import { updateBookingStatus } from '@/lib/firestore';
+import { adminDb } from '@/lib/firebaseAdmin';
+import { FieldValue } from 'firebase-admin/firestore';
+import { sendEmail, buildBookingConfirmationEmail, generateWhatsAppLink } from '@/lib/email';
+import { getVenueById } from '@/lib/venues';
 import { processBookingForLockAccess } from '@/lib/lockPasscode';
+import type { BookingRecord, UserProfile } from '@/types';
 
 export const runtime = 'nodejs';
 
@@ -25,11 +29,54 @@ export async function POST(request: NextRequest) {
       const bookingId = session.metadata?.bookingId;
 
       if (bookingId) {
-        await updateBookingStatus(bookingId, 'confirmed');
-        // TODO: Send confirmation email
-        // If the booking is within the 2-day lock-passcode window, this
-        // generates the passcode + emails the customer immediately.
-        // Otherwise it no-ops; the daily cron will pick it up at T−2 days.
+        // 1. Mark booking confirmed (admin SDK — bypasses security rules).
+        const bookingRef = adminDb.collection('bookings').doc(bookingId);
+        await bookingRef.update({
+          status: 'confirmed',
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+
+        // 2. Send confirmation email to the customer.
+        try {
+          const bookingSnap = await bookingRef.get();
+          const booking = bookingSnap.data() as BookingRecord | undefined;
+          if (booking) {
+            const userSnap = await adminDb.collection('users').doc(booking.userId).get();
+            const profile = userSnap.data() as UserProfile | undefined;
+            const customerEmail =
+              profile?.email || session.customer_details?.email || session.customer_email;
+            if (customerEmail) {
+              const venue = getVenueById(booking.venueId);
+              const venueName = venue?.name.zh || booking.branchSlug;
+              const whatsappNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || '85292823060';
+              const whatsappLink = generateWhatsAppLink(
+                whatsappNumber,
+                `你好，我已完成預訂付款。\n預訂編號：${bookingId}\n場地：${venueName}\n日期：${booking.date}`
+              );
+              const tpl = buildBookingConfirmationEmail({
+                customerName: profile?.displayName || customerEmail.split('@')[0],
+                venueName,
+                date: booking.date,
+                startTime: booking.startTime,
+                endTime: booking.endTime,
+                guestCount: booking.guestCount,
+                subtotal: booking.pricing.subtotal,
+                deposit: booking.pricing.deposit,
+                paymentMethod: 'Stripe',
+                whatsappLink,
+              });
+              await sendEmail({ to: customerEmail, subject: tpl.subject, html: tpl.html });
+            }
+          }
+        } catch (err) {
+          console.warn('[stripe webhook] confirmation email failed:', err);
+          // Non-fatal — booking is already confirmed.
+        }
+
+        // 3. If the booking is within the 2-day lock-passcode window, this
+        //    generates the passcode + emails the customer immediately, OR
+        //    sends a balance-due reminder if there's outstanding balance.
+        //    Otherwise it no-ops; the daily cron will pick it up at T−2 days.
         try {
           await processBookingForLockAccess(bookingId);
         } catch (err) {
@@ -45,4 +92,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Webhook failed' }, { status: 400 });
   }
 }
-
