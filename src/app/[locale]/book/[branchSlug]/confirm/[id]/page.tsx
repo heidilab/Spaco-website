@@ -76,7 +76,10 @@ export default function ConfirmBookingPage() {
 
   const venue = getVenueById(booking.venueId);
   const venueName = venue?.name[locale] || booking.branchSlug;
-  const isFullPayment = booking.pricing.subtotal <= 10000;
+  const securityDeposit = booking.pricing.securityDeposit ?? 0;
+  const grandTotal = booking.pricing.subtotal + securityDeposit;
+  const isFullPayment = grandTotal <= 10000;
+  const balanceDue = Math.max(0, grandTotal - booking.pricing.deposit);
 
   const refundReady =
     method === 'fps'
@@ -146,14 +149,22 @@ export default function ConfirmBookingPage() {
             )}
             <div className="pt-3 border-t border-white/40 space-y-1.5">
               <div className="flex justify-between text-sm">
-                <span className="text-ink-soft">{locale === 'zh' ? '總金額' : 'Subtotal'}</span>
-                <span className="font-semibold">HK${booking.pricing.subtotal.toLocaleString()}</span>
+                <span className="text-ink-soft">{locale === 'zh' ? '小計' : 'Subtotal'}</span>
+                <span>HK${booking.pricing.subtotal.toLocaleString()}</span>
               </div>
-              <div className="flex justify-between text-base">
+              <div className="flex justify-between text-sm">
+                <span className="text-ink-soft">{locale === 'zh' ? '按金（活動後退還）' : 'Security deposit (refunded after event)'}</span>
+                <span>HK${securityDeposit.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between text-sm font-semibold pt-1.5 border-t border-white/40">
+                <span>{locale === 'zh' ? '總計' : 'Grand total'}</span>
+                <span>HK${grandTotal.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between text-base pt-2">
                 <span className="text-ink-soft">
                   {isFullPayment
                     ? (locale === 'zh' ? '應付（全數）' : 'Due now (full)')
-                    : (locale === 'zh' ? '應付（50% 按金）' : 'Due now (50%)')}
+                    : (locale === 'zh' ? '應付（50%）' : 'Due now (50%)')}
                 </span>
                 <span className="font-bold text-gradient-pink text-xl">
                   HK${booking.pricing.deposit.toLocaleString()}
@@ -162,7 +173,7 @@ export default function ConfirmBookingPage() {
               {!isFullPayment && (
                 <div className="flex justify-between text-xs text-amber-700 bg-amber-50 p-2 rounded mt-1">
                   <span>{locale === 'zh' ? '尾數（活動前 2 日繳清）' : 'Balance (due 2 days before event)'}</span>
-                  <span className="font-semibold">HK${(booking.balanceDue ?? 0).toLocaleString()}</span>
+                  <span className="font-semibold">HK${balanceDue.toLocaleString()}</span>
                 </div>
               )}
             </div>

@@ -806,25 +806,50 @@ export default function BookingPage() {
                 ))}
               </div>
 
-              <div className="border-t border-cream/10 pt-4 mb-4">
-                <div className="flex justify-between text-lg font-bold">
-                  <span>{t('subtotal')}</span>
+              <div className="border-t border-cream/10 pt-4 mb-4 space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-cream/70">{t('subtotal')}</span>
                   <span>HK${pricing.subtotal.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-cream/70">
+                    {locale === 'zh' ? '按金（活動後退還）' : 'Security deposit (refunded after event)'}
+                  </span>
+                  <span>HK${pricing.securityDeposit.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between text-lg font-bold pt-2 border-t border-cream/10">
+                  <span>{locale === 'zh' ? '總計' : 'Grand total'}</span>
+                  <span>HK${pricing.grandTotal.toLocaleString()}</span>
                 </div>
               </div>
 
-              {/* Deposit */}
-              <div className="bg-cream/10 rounded-2xl p-5 mb-6">
+              {/* Amount due now (highlighted) */}
+              <div className="bg-cream/10 rounded-2xl p-5 mb-3">
                 <div className="flex justify-between font-bold mb-2">
-                  <span>{t('deposit')}</span>
+                  <span>
+                    {pricing.canInstallment
+                      ? (locale === 'zh' ? '應付（50% 確認預約）' : 'Due now (50% to confirm)')
+                      : (locale === 'zh' ? '應付（全數確認預約）' : 'Due now (full to confirm)')}
+                  </span>
                   <span>HK${pricing.deposit.toLocaleString()}</span>
                 </div>
                 <p className="text-xs text-cream/50">
                   {locale === 'zh'
-                    ? '按金將於活動結束後24小時內退還（詳情請參閱預訂須知）'
-                    : 'Deposit will be refunded within 24 hours after the event (see Booking Guidelines for details)'}
+                    ? '按金將於活動結束後 24 小時內退還（詳情請參閱預訂須知）'
+                    : 'Security deposit will be refunded within 24 hours after the event'}
                 </p>
               </div>
+
+              {pricing.canInstallment && (
+                <div className="bg-amber-500/15 text-amber-100 rounded-2xl p-4 mb-6 text-sm">
+                  <p className="font-semibold mb-1">
+                    {locale === 'zh' ? `尾數 HK$${(pricing.grandTotal - pricing.deposit).toLocaleString()}` : `Balance HK$${(pricing.grandTotal - pricing.deposit).toLocaleString()}`}
+                  </p>
+                  <p className="text-xs opacity-90">
+                    {locale === 'zh' ? '須於活動前 2 日繳清，方可獲發場地門鎖密碼。' : 'Due 2 days before the event for venue passcode delivery.'}
+                  </p>
+                </div>
+              )}
 
               {/* Installment Notice */}
               {pricing.canInstallment && (
@@ -939,7 +964,7 @@ export default function BookingPage() {
                       try { await updateUserWhatsapp(user.uid, e164); } catch { /* non-blocking */ }
                     }
 
-                    const balanceDue = Math.max(0, pricing.subtotal - pricing.deposit);
+                    const balanceDue = Math.max(0, pricing.grandTotal - pricing.deposit);
                     const pendingExpiresAt =
                       Date.now() + PAYMENT_DETAILS.pendingHoldMinutes * 60 * 1000;
                     const bookingId = await createBooking({
@@ -959,6 +984,7 @@ export default function BookingPage() {
                         baseCharge: pricing.baseCharge,
                         addOnTotal: pricing.addOnTotal,
                         subtotal: pricing.subtotal,
+                        securityDeposit: pricing.securityDeposit,
                         deposit: pricing.deposit,
                       },
                       status: 'pending',

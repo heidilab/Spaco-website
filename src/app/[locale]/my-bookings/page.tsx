@@ -204,7 +204,7 @@ function BookingCard({
         </div>
         <div className="text-right">
           <p className="text-2xl font-bold font-display text-gradient-pink">
-            HK${booking.pricing.subtotal.toLocaleString()}
+            HK${(booking.pricing.subtotal + (booking.pricing.securityDeposit ?? 0)).toLocaleString()}
           </p>
           <p className="text-xs text-ink-soft">
             {locale === 'zh' ? '應付' : 'Due'}: HK${booking.pricing.deposit.toLocaleString()}

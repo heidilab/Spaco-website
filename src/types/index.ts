@@ -103,7 +103,13 @@ export interface BookingRecord {
   pricing: {
     baseCharge: number;
     addOnTotal: number;
+    /** Rental subtotal: baseCharge + addOnTotal (excludes 按金). */
     subtotal: number;
+    /** Refundable security deposit (按金) — refunded after event. Tiered
+     *  against subtotal: 1000 / 2000 / 4000.  Optional for backwards
+     *  compatibility with bookings created before this field existed. */
+    securityDeposit?: number;
+    /** Amount due upfront to confirm: full grandTotal if ≤ HK$10k, else 50%. */
     deposit: number;
   };
   status: 'pending' | 'awaiting_payment' | 'awaiting_review' | 'confirmed' | 'completed' | 'cancelled';
@@ -204,6 +210,7 @@ export interface BookingDraft {
     baseCharge: number;
     addOnTotal: number;
     subtotal: number;
+    securityDeposit?: number;
     deposit: number;
   };
 

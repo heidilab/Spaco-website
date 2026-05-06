@@ -236,8 +236,19 @@ export const hotpotSeafoodMenu = {
 export interface PricingCalculation {
   baseCharge: number;
   addOnTotal: number;
+  /** rental + add-ons (excluding security deposit). */
   subtotal: number;
+  /** Refundable security deposit (按金) — returned ≤24h after event,
+   *  tiered: ≤$4k → $1000, ≤$10k → $2000, >$10k → $4000. */
+  securityDeposit: number;
+  /** subtotal + securityDeposit — the total amount the customer owes. */
+  grandTotal: number;
+  /** Amount payable upfront to confirm:
+   *   - grandTotal ≤ HK$10,000 → grandTotal (full payment)
+   *   - grandTotal >  HK$10,000 → grandTotal × 0.5 (deposit only,
+   *     remaining 50 % due 2 days before the event) */
   deposit: number;
+  /** True when grandTotal exceeds the installment threshold. */
   canInstallment: boolean;
   breakdown: { label: { zh: string; en: string }; amount: number }[];
 }
@@ -382,28 +393,43 @@ export function calculatePricing(
   }
 
   const subtotal = baseCharge + addOnTotal;
-  const deposit = calculateDeposit(subtotal);
+  const securityDeposit = calculateSecurityDeposit(subtotal);
+  const grandTotal = subtotal + securityDeposit;
+  const deposit = calculateDeposit(grandTotal);
 
   return {
     baseCharge,
     addOnTotal,
     subtotal,
+    securityDeposit,
+    grandTotal,
     deposit,
-    canInstallment: subtotal > 10000,
+    canInstallment: grandTotal > 10000,
     breakdown,
   };
 }
 
 /**
- * Amount the customer must pay UPFRONT to confirm a booking.
- *  - subtotal ≤ HK$10,000 → full payment (deposit = subtotal, no balance)
- *  - subtotal >  HK$10,000 → 50% deposit; remaining 50% due 2 days before event.
- *
- * Note: this is the "what to charge now" number, NOT the refundable
- * security amount returned to the customer after the event (that's
- * tracked separately on BookingRecord.depositRefund).
+ * Refundable security deposit (按金), returned to the customer within 24h
+ * after the event (less any deductions). Tiered against the rental subtotal
+ * (rental + add-ons, excluding the security deposit itself):
+ *   ≤ HK$4,000  → HK$1,000
+ *   ≤ HK$10,000 → HK$2,000
+ *   >  HK$10,000 → HK$4,000
  */
-export function calculateDeposit(total: number): number {
-  if (total <= 10000) return total;
-  return Math.round(total * 0.5);
+export function calculateSecurityDeposit(rentalSubtotal: number): number {
+  if (rentalSubtotal > 10000) return 4000;
+  if (rentalSubtotal > 4000) return 2000;
+  return 1000;
+}
+
+/**
+ * Amount the customer must pay UPFRONT to confirm a booking. Computed
+ * against the GRAND TOTAL (subtotal + security deposit):
+ *   grandTotal ≤ HK$10,000 → full payment (deposit = grandTotal, no balance)
+ *   grandTotal >  HK$10,000 → 50% deposit; remaining 50% due 2 days before event.
+ */
+export function calculateDeposit(grandTotal: number): number {
+  if (grandTotal <= 10000) return grandTotal;
+  return Math.round(grandTotal * 0.5);
 }
