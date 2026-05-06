@@ -10,6 +10,18 @@ const nextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
+  // Reverse-proxy Firebase Auth's helper iframe + redirect handler so the
+  // OAuth consent screen says "Continue to spacohk.com" instead of
+  // "spaco-website.firebaseapp.com". Set NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+  // to spacohk.com in Vercel for this to take effect.
+  async rewrites() {
+    return [
+      {
+        source: '/__/auth/:path*',
+        destination: 'https://spaco-website.firebaseapp.com/__/auth/:path*',
+      },
+    ];
+  },
 };
 
 export default withNextIntl(nextConfig);
