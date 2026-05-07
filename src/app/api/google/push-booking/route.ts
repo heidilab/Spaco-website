@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { adminDb } from '@/lib/firebaseAdmin';
 import {
   pushBookingToCalendar, removeBookingFromCalendar,
 } from '@/lib/googleCalendar';
@@ -11,14 +10,15 @@ import { BookingRecord, UserProfile } from '@/types';
 //
 // DELETE /api/google/push-booking?bookingId=... → remove from gcal.
 //
-// (Authorisation note: these endpoints rely on Firestore rules + the booking
-// containing the user's uid; staff sessions also have full update rights.
-// Either way the underlying writes go through normal Firestore client
-// auth — the route just orchestrates the gcal calls.)
+// Uses Firebase Admin SDK (server-side, bypasses Firestore rules) because
+// the route is invoked by client fetch() calls without forwarded auth tokens.
+// This is consistent with how the Stripe webhook handles bookings.
+
+export const runtime = 'nodejs';
 
 async function loadBooking(bookingId: string): Promise<BookingRecord | null> {
-  const snap = await getDoc(doc(db, 'bookings', bookingId));
-  if (!snap.exists()) return null;
+  const snap = await adminDb.collection('bookings').doc(bookingId).get();
+  if (!snap.exists) return null;
   return { id: snap.id, ...snap.data() } as BookingRecord;
 }
 
@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
     let resolvedName = customerName;
     if (!resolvedName && booking.userId) {
       try {
-        const userSnap = await getDoc(doc(db, 'users', booking.userId));
+        const userSnap = await adminDb.collection('users').doc(booking.userId).get();
         const profile = userSnap.data() as UserProfile | undefined;
         resolvedName = profile?.displayName || undefined;
       } catch { /* profile read failed — push without name */ }
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
       // Google not connected or no calendar configured for venue — fine, skip.
       return NextResponse.json({ skipped: true });
     }
-    await updateDoc(doc(db, 'bookings', bookingId), { googleEventId: eventId });
+    await adminDb.collection('bookings').doc(bookingId).update({ googleEventId: eventId });
     return NextResponse.json({ ok: true, eventId });
   } catch (err) {
     return NextResponse.json(
@@ -86,7 +86,7 @@ export async function DELETE(req: NextRequest) {
       venueId: booking.venueId,
       googleEventId: booking.googleEventId,
     });
-    await updateDoc(doc(db, 'bookings', bookingId), { googleEventId: null });
+    await adminDb.collection('bookings').doc(bookingId).update({ googleEventId: null });
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json(
