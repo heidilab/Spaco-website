@@ -5,7 +5,7 @@ import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllStaff, setStaffRole, removeStaff, findUserByEmail } from '@/lib/content';
 import { StaffRole } from '@/types';
-import { UserCog, Plus, Trash2, Shield, Headphones, Sparkles, Search, AlertCircle } from 'lucide-react';
+import { UserCog, Plus, Trash2, Shield, Headphones, Sparkles, Search, AlertCircle, Megaphone } from 'lucide-react';
 
 interface StaffData {
   uid: string;
@@ -33,6 +33,12 @@ const roleConfig: Record<StaffRole, { icon: typeof Shield; color: string; label:
     color: 'bg-green-50 text-green-600',
     label: { zh: '清潔員', en: 'Cleaner' },
     desc: { zh: '只可查看預訂日曆', en: 'Calendar view only' },
+  },
+  marketing: {
+    icon: Megaphone,
+    color: 'bg-purple-50 text-purple-600',
+    label: { zh: '市場推廣', en: 'Marketing' },
+    desc: { zh: '內容管理、SEO、常見問題、總日曆', en: 'Content, SEO, FAQ, calendar' },
   },
 };
 

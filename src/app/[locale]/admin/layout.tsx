@@ -12,7 +12,7 @@ const allSidebarLinks = [
   { href: '/admin', icon: LayoutDashboard, label: { zh: '控制中心', en: 'Dashboard' }, permission: null },
   { href: '/admin/content', icon: Image, label: { zh: '內容管理', en: 'Content' }, permission: 'content' },
   { href: '/admin/seo', icon: Search, label: { zh: 'SEO 管理', en: 'SEO' }, permission: 'seo' },
-  { href: '/admin/faq', icon: HelpCircle, label: { zh: '常見問題管理', en: 'FAQ' }, permission: 'content' },
+  { href: '/admin/faq', icon: HelpCircle, label: { zh: '常見問題管理', en: 'FAQ' }, permission: 'faq' },
   { href: '/admin/receipts', icon: Receipt, label: { zh: '待確認入數紙', en: 'Pending Receipts' }, permission: 'bookings' },
   { href: '/admin/bookings', icon: ListOrdered, label: { zh: '預訂管理', en: 'Bookings' }, permission: 'bookings' },
   { href: '/admin/calendar', icon: CalendarDays, label: { zh: '總日曆', en: 'Calendar' }, permission: 'calendar' },
@@ -69,6 +69,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     admin: { zh: '管理員', en: 'Admin' },
     cs: { zh: '客服', en: 'CS' },
     cleaner: { zh: '清潔員', en: 'Cleaner' },
+    marketing: { zh: '市場推廣', en: 'Marketing' },
   };
 
   return (

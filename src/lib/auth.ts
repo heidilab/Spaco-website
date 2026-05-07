@@ -80,10 +80,10 @@ export async function isAdmin(uid: string): Promise<boolean> {
   return snap.exists();
 }
 
-export async function getStaffRole(uid: string): Promise<'admin' | 'cs' | 'cleaner' | null> {
+export async function getStaffRole(uid: string): Promise<'admin' | 'cs' | 'cleaner' | 'marketing' | null> {
   const adminRef = doc(db, 'admin_users', uid);
   const snap = await getDoc(adminRef);
   if (!snap.exists()) return null;
   const data = snap.data();
-  return (data.role as 'admin' | 'cs' | 'cleaner') || 'admin';
+  return (data.role as 'admin' | 'cs' | 'cleaner' | 'marketing') || 'admin';
 }

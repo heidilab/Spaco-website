@@ -1,3 +1,4 @@
+import Script from 'next/script';
 import { NextIntlClientProvider } from 'next-intl';
 import { getMessages } from 'next-intl/server';
 import { notFound } from 'next/navigation';
@@ -38,9 +39,28 @@ export default async function LocaleLayout({
 
   const messages = await getMessages();
 
+  // Google Ads / Analytics gtag — only emitted when the env var is set.
+  // We use NEXT_PUBLIC_GOOGLE_ADS_ID (e.g. "AW-1234567890" or "G-XXXX")
+  // so conversion-tracking on the WhatsApp CTA works without redeploys.
+  const gtagId = process.env.NEXT_PUBLIC_GOOGLE_ADS_ID;
+
   return (
     <html lang={locale} suppressHydrationWarning>
       <body className="font-sans antialiased" suppressHydrationWarning>
+        {gtagId && (
+          <>
+            <Script
+              src={`https://www.googletagmanager.com/gtag/js?id=${gtagId}`}
+              strategy="afterInteractive"
+            />
+            <Script id="gtag-init" strategy="afterInteractive">{`
+              window.dataLayer = window.dataLayer || [];
+              function gtag(){dataLayer.push(arguments);}
+              gtag('js', new Date());
+              gtag('config', '${gtagId}');
+            `}</Script>
+          </>
+        )}
         <NextIntlClientProvider messages={messages}>
           <AuthProvider>
             <Header />

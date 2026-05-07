@@ -266,7 +266,7 @@ export interface CalendarEvent {
 
 // ============ CMS Types ============
 
-export type StaffRole = 'admin' | 'cs' | 'cleaner';
+export type StaffRole = 'admin' | 'cs' | 'cleaner' | 'marketing';
 
 export interface StaffMember {
   uid: string;
@@ -368,9 +368,10 @@ export interface BusinessDocument {
 
 // Role permissions
 export const ROLE_PERMISSIONS: Record<StaffRole, string[]> = {
-  admin: ['content', 'seo', 'gcal', 'members', 'bookings', 'calendar', 'deposit', 'staff', 'documents'],
+  admin: ['content', 'seo', 'gcal', 'members', 'bookings', 'calendar', 'deposit', 'staff', 'documents', 'faq'],
   cs: ['members', 'bookings', 'calendar', 'deposit', 'documents'],
   cleaner: ['calendar'],
+  marketing: ['content', 'seo', 'faq', 'calendar'],
 };
 
 // ============ SEO ============

@@ -3,12 +3,13 @@
 import { useTranslations } from 'next-intl';
 import { Link, usePathname, useRouter } from '@/i18n/routing';
 import { useEffect, useRef, useState } from 'react';
-import { Menu, X, ArrowRight, Globe, LogIn, ChevronDown } from 'lucide-react';
+import { Menu, X, Globe, LogIn, ChevronDown } from 'lucide-react';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
 import UserMenu from '@/components/auth/UserMenu';
 import AuthModal from '@/components/auth/AuthModal';
 import { LogoInline } from '@/components/layout/Logo';
+import WhatsAppCTA from '@/components/layout/WhatsAppCTA';
 
 // Branches surfaced in the Spaces dropdown — keep in sync with BranchGrid
 const BRANCH_LINKS = [
@@ -154,10 +155,7 @@ export default function Header() {
                 </>
               )}
 
-              <Link href="/#collection" className="btn-primary text-sm">
-                {t('book')}
-                <ArrowRight size={16} />
-              </Link>
+              <WhatsAppCTA source="navbar_desktop" />
             </div>
 
             {/* Mobile Menu Button */}
@@ -252,14 +250,12 @@ export default function Header() {
                   </div>
                 )}
 
-                <Link
-                  href="/#collection"
-                  className="btn-primary text-center justify-center mt-3"
-                  onClick={() => setMobileOpen(false)}
-                >
-                  {t('book')}
-                  <ArrowRight size={16} />
-                </Link>
+                <div className="mt-3" onClick={() => setMobileOpen(false)}>
+                  <WhatsAppCTA
+                    source="navbar_mobile"
+                    className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 rounded-pill bg-[#25D366] text-white font-semibold text-base hover:opacity-90 transition-opacity shadow-md"
+                  />
+                </div>
               </nav>
             </div>
           )}
