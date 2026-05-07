@@ -170,7 +170,7 @@ export async function getAllStaff() {
 
 export async function setStaffRole(
   uid: string,
-  role: 'admin' | 'cs' | 'cleaner',
+  role: 'admin' | 'cs' | 'cleaner' | 'marketing',
   displayName: string,
   email: string,
   addedBy: string
