@@ -74,7 +74,43 @@ export const addOns: AddOn[] = [
       en: 'Drinks are randomly supplied by our vendor (no specific selection) — typically canned soft drinks and packaged beverages',
     },
   },
+  {
+    // Shisha is a tiered package — pricePerUnit here is the base for the
+    // first head; the actual price uses calcShishaPrice() below to handle
+    // the 1-head / 2-head / extra-head tiers + optional staff setup.
+    id: 'shisha',
+    name: { zh: 'Shisha 水煙套餐', en: 'Shisha Package' },
+    pricePerUnit: 390,
+    unit: 'item',
+    maxQuantity: 10,
+    description: {
+      zh: '1 個水煙頭 $390 / 2 個 $750 / 額外每個 +$250；需另選口味，需活動 2 日前預訂',
+      en: '1 head $390 / 2 heads $750 / +$250 per extra head; flavor selection required, order ≥ 2 days ahead',
+    },
+    variants: [
+      { id: 'A', category: 'fruity-minty', name: { zh: 'A · 芒果菠蘿檸檬綠茶',     en: 'A · Mango Pineapple Lemon Green Tea' } },
+      { id: 'B', category: 'fruity-minty', name: { zh: 'B · 蜜桃伯爵茶',           en: 'B · Peach Earl Grey' } },
+      { id: 'C', category: 'fruity-minty', name: { zh: 'C · 提子茉莉青瓜',         en: 'C · Grape Jasmine Cucumber' } },
+      { id: 'D', category: 'creamy',       name: { zh: 'D · 士多啤梨窩夫',         en: 'D · Strawberry Waffle' } },
+      { id: 'E', category: 'creamy',       name: { zh: 'E · 蜜瓜牛奶',             en: 'E · Melon Milk' } },
+      { id: 'F', category: 'floral',       name: { zh: 'F · 茉莉雞蛋花青檸',       en: 'F · Jasmine Frangipani Lemon Lime' } },
+      { id: 'G', category: 'woody',        name: { zh: 'G · 檀香伯爵蜜桃針葉',     en: 'G · Sandalwood Earl Grey Peach Needle' } },
+      { id: 'H', category: 'woody',        name: { zh: 'H · 檀香綠茶蘋果',         en: 'H · Sandalwood Green Tea Apple' } },
+    ],
+  },
 ];
+
+/** Shisha tiered pricing: 1 head $390, 2 heads $750, +$250 per extra. */
+export function calcShishaPrice(heads: number, staffSetup = false): number {
+  if (heads <= 0) return 0;
+  let total = 390;                                  // 1st head
+  if (heads >= 2) total += 360;                     // 2nd head ($750 - $390)
+  if (heads >= 3) total += (heads - 2) * 250;       // 3rd+ heads
+  if (staffSetup) total += 180;
+  return total;
+}
+
+export const SHISHA_STAFF_SETUP_FEE = 180;
 
 // Concise staff-facing add-on labels, used for supplier ordering, the master
 // calendar popup, admin booking lists, and Google Calendar event descriptions.
@@ -88,22 +124,43 @@ const STAFF_ADDON_LABELS: Record<string, { zh: string; en: string }> = {
   'hotpot-seafood':   { zh: '海鮮火鍋套餐',   en: 'Seafood Hotpot Package' },
   'hotpot-extra-soup':{ zh: '額外湯底',        en: 'Extra Soup Base' },
   'drinks':           { zh: '無酒精飲品任飲', en: 'Drinks Package' },
+  'shisha':           { zh: 'Shisha 水煙',     en: 'Shisha Package' },
 };
 
 export function getAddOnLabel(id: string, locale: 'zh' | 'en' = 'en'): string {
   return STAFF_ADDON_LABELS[id]?.[locale] || id;
 }
 
+/** Resolve a Shisha flavor variant id → its display label. */
+export function getShishaFlavorLabel(variantId: string, locale: 'zh' | 'en' = 'en'): string {
+  const shisha = addOns.find((a) => a.id === 'shisha');
+  const v = shisha?.variants?.find((x) => x.id === variantId);
+  return v?.name[locale] || variantId;
+}
+
 /** Format a booking's addOns as a comma-separated staff-facing string,
- *  e.g. "BBQ Standard Package ×4, Drinks Package ×4". */
+ *  e.g. "BBQ Standard Package ×4, Drinks Package ×4". For Shisha, also
+ *  surface flavor breakdown + setup option:
+ *  "Shisha 水煙 ×3 (A·芒果菠蘿×2, C·提子×1, +人手setup)". */
 export function formatAddOnsForStaff(
-  addOns: { id: string; quantity: number }[] | undefined,
+  addOns: { id: string; quantity: number; options?: { flavors?: string[]; staffSetup?: boolean } }[] | undefined,
   locale: 'zh' | 'en' = 'en',
 ): string {
   if (!addOns || addOns.length === 0) return '';
-  return addOns
-    .map((a) => `${getAddOnLabel(a.id, locale)} ×${a.quantity}`)
-    .join(', ');
+  return addOns.map((a) => {
+    const base = `${getAddOnLabel(a.id, locale)} ×${a.quantity}`;
+    if (a.id !== 'shisha') return base;
+    // Shisha: tally flavors and append setup flag.
+    const counts: Record<string, number> = {};
+    for (const f of a.options?.flavors || []) counts[f] = (counts[f] || 0) + 1;
+    const flavorParts = Object.entries(counts)
+      .map(([id, n]) => `${getShishaFlavorLabel(id, locale)}${n > 1 ? `×${n}` : ''}`);
+    const setupTag = a.options?.staffSetup
+      ? (locale === 'zh' ? '+人手setup' : '+staff setup')
+      : '';
+    const detail = [...flavorParts, setupTag].filter(Boolean).join(', ');
+    return detail ? `${base} (${detail})` : base;
+  }).join(', ');
 }
 
 // BBQ Standard package prices differ by venue
@@ -288,7 +345,7 @@ export function calculatePricing(
   isWeekend: boolean,
   hours: number,
   guests: number,
-  selectedAddOns: { id: string; quantity: number }[]
+  selectedAddOns: { id: string; quantity: number; options?: { flavors?: string[]; staffSetup?: boolean } }[]
 ): PricingCalculation {
   const tier = isWeekend ? venue.pricing.weekend : venue.pricing.weekday;
   const baseCharge = tier.perHead * guests * hours;
@@ -399,6 +456,21 @@ export function calculatePricing(
         label: {
           zh: `無酒精飲品任飲 (${guests}人 x $25)`,
           en: `Unlimited Drinks (${guests} pax x $25)`,
+        },
+        amount: cost,
+      });
+      continue;
+    }
+
+    if (selected.id === 'shisha') {
+      const heads = selected.quantity;
+      const staffSetup = !!selected.options?.staffSetup;
+      const cost = calcShishaPrice(heads, staffSetup);
+      addOnTotal += cost;
+      breakdown.push({
+        label: {
+          zh: `Shisha 水煙 (${heads} 個煙頭${staffSetup ? ' + 人手 setup' : ''})`,
+          en: `Shisha (${heads} head${heads > 1 ? 's' : ''}${staffSetup ? ' + staff setup' : ''})`,
         },
         amount: cost,
       });

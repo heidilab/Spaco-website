@@ -7,7 +7,7 @@ import { useRouter } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
 import { getBooking, updateBookingRefundDetails } from '@/lib/firestore';
 import { getVenueById } from '@/lib/venues';
-import { addOns as addOnCatalog } from '@/lib/pricing';
+import { addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE } from '@/lib/pricing';
 import { BookingRecord, RefundDetails } from '@/types';
 import { CalendarDays, Clock, Users, MapPin, ArrowRight } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -140,9 +140,26 @@ export default function ConfirmBookingPage() {
                 {booking.addOns.map((a) => {
                   const meta = addOnCatalog.find((c) => c.id === a.id);
                   return (
-                    <p key={a.id} className="text-sm">
-                      • {meta?.name[locale] || a.id} {a.quantity > 1 ? `× ${a.quantity}` : ''}
-                    </p>
+                    <div key={a.id} className="text-sm">
+                      <p>
+                        • {meta?.name[locale] || a.id} {a.quantity > 1 ? `× ${a.quantity}` : ''}
+                      </p>
+                      {a.id === 'shisha' && a.options?.flavors && a.options.flavors.length > 0 && (
+                        <p className="text-xs text-ink-soft pl-3 mt-0.5">
+                          {a.options.flavors.map((f, i) => (
+                            <span key={i}>
+                              {locale === 'zh' ? `#${i + 1}` : `#${i + 1}`} {getShishaFlavorLabel(f, locale)}
+                              {i < a.options!.flavors!.length - 1 ? '、' : ''}
+                            </span>
+                          ))}
+                        </p>
+                      )}
+                      {a.id === 'shisha' && a.options?.staffSetup && (
+                        <p className="text-xs text-ink-soft pl-3">
+                          {locale === 'zh' ? `+ 員工協助 setup (HK$${SHISHA_STAFF_SETUP_FEE})` : `+ Staff setup help (HK$${SHISHA_STAFF_SETUP_FEE})`}
+                        </p>
+                      )}
+                    </div>
                   );
                 })}
               </div>

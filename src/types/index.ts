@@ -30,6 +30,20 @@ export interface AddOn {
   unit: 'person' | 'flat' | 'item';
   maxQuantity?: number;
   description?: { zh: string; en: string };
+  /** Optional named variants — used by add-ons like Shisha where each
+   *  unit has a sub-selection (flavor). The category is for grouping
+   *  in the UI dropdown. */
+  variants?: { id: string; name: { zh: string; en: string }; category?: string }[];
+}
+
+/** Per-add-on user-chosen extras. Currently only used by Shisha. Stored
+ *  alongside `quantity` on each addOns entry so the pricing calc + display
+ *  surfaces can resolve flavors and setup option without a parallel field. */
+export interface AddOnOptions {
+  /** Flavor variant ids picked, one per quantity unit (per Shisha head). */
+  flavors?: string[];
+  /** Whether the customer wants staff setup (+$180 flat). */
+  staffSetup?: boolean;
 }
 
 export interface BookingState {
@@ -38,7 +52,7 @@ export interface BookingState {
   startTime: string;
   endTime: string;
   guestCount: number;
-  addOns: { id: string; quantity: number }[];
+  addOns: { id: string; quantity: number; options?: AddOnOptions }[];
 }
 
 export interface FilterState {
@@ -98,7 +112,7 @@ export interface BookingRecord {
   hours: number;
   guestCount: number;
   isWeekend: boolean;
-  addOns: { id: string; quantity: number }[];
+  addOns: { id: string; quantity: number; options?: AddOnOptions }[];
   hasBYOFood: boolean;
   pricing: {
     baseCharge: number;
@@ -204,7 +218,7 @@ export interface BookingDraft {
   hours: number;
   guestCount: number;
   isWeekend: boolean;
-  addOns: { id: string; quantity: number }[];
+  addOns: { id: string; quantity: number; options?: AddOnOptions }[];
   hasBYOFood: boolean;
   pricing: {
     baseCharge: number;

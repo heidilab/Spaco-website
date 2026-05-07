@@ -5,7 +5,8 @@ import { Link } from '@/i18n/routing';
 import { useParams } from 'next/navigation';
 import { useState, useMemo, useEffect } from 'react';
 import { getVenueBySlug } from '@/lib/venues';
-import { addOns, calculatePricing, noBBQVenues, freeDrinksVenues, hotpotVenues, bbqStandardPriceByVenue, bbqStandardMenu, bbqPremiumMenu, hotpotStandardMenu, hotpotSeafoodMenu, hotpotSoupBases } from '@/lib/pricing';
+import { addOns, calculatePricing, noBBQVenues, freeDrinksVenues, hotpotVenues, bbqStandardPriceByVenue, bbqStandardMenu, bbqPremiumMenu, hotpotStandardMenu, hotpotSeafoodMenu, hotpotSoupBases, calcShishaPrice, SHISHA_STAFF_SETUP_FEE } from '@/lib/pricing';
+import type { AddOnOptions } from '@/types';
 import {
   ArrowLeft, ArrowRight, Calendar, Clock, Users,
   Plus, Minus, AlertCircle, Check, Info, MessageCircle,
@@ -45,7 +46,7 @@ export default function BookingPage() {
     setMinDate(new Date().toISOString().split('T')[0]);
   }, []);
   const [guestCount, setGuestCount] = useState(venue.minGuests.weekday);
-  const [selectedAddOns, setSelectedAddOns] = useState<{ id: string; quantity: number }[]>([]);
+  const [selectedAddOns, setSelectedAddOns] = useState<{ id: string; quantity: number; options?: AddOnOptions }[]>([]);
   const [hasBYOFood, setHasBYOFood] = useState(false);
   const [, setShowGrillWarning] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
@@ -214,6 +215,54 @@ export default function BookingPage() {
       }
     }
   };
+
+  // ─── Shisha state helpers ───
+  // Shisha is unique among add-ons: each unit (head) carries its own
+  // flavor selection, and there's an optional flat staff-setup fee. We
+  // expose explicit setters so the UI doesn't reach into selectedAddOns
+  // shape. Default flavor for newly-added heads is 'A'.
+  const shishaCatalogEntry = addOns.find((a) => a.id === 'shisha');
+  const shishaEntry = selectedAddOns.find((a) => a.id === 'shisha');
+  const shishaHeads = shishaEntry?.quantity || 0;
+  const shishaFlavors = shishaEntry?.options?.flavors || [];
+  const shishaStaffSetup = !!shishaEntry?.options?.staffSetup;
+
+  function setShishaHeads(next: number) {
+    const heads = Math.max(0, Math.min(10, Math.floor(next)));
+    if (heads === 0) {
+      setSelectedAddOns(selectedAddOns.filter((a) => a.id !== 'shisha'));
+      return;
+    }
+    // Resize the flavors array to match heads, defaulting new slots to 'A'.
+    const prev = shishaEntry?.options?.flavors || [];
+    const nextFlavors = Array.from({ length: heads }, (_, i) => prev[i] || 'A');
+    const updated = {
+      id: 'shisha',
+      quantity: heads,
+      options: { flavors: nextFlavors, staffSetup: shishaStaffSetup },
+    };
+    if (shishaEntry) {
+      setSelectedAddOns(selectedAddOns.map((a) => a.id === 'shisha' ? updated : a));
+    } else {
+      setSelectedAddOns([...selectedAddOns, updated]);
+    }
+  }
+  function setShishaFlavor(idx: number, flavorId: string) {
+    if (!shishaEntry) return;
+    const next = [...(shishaEntry.options?.flavors || [])];
+    next[idx] = flavorId;
+    setSelectedAddOns(selectedAddOns.map((a) => a.id === 'shisha'
+      ? { ...a, options: { ...(a.options || {}), flavors: next } }
+      : a,
+    ));
+  }
+  function toggleShishaStaffSetup() {
+    if (!shishaEntry) return;
+    setSelectedAddOns(selectedAddOns.map((a) => a.id === 'shisha'
+      ? { ...a, options: { ...(a.options || {}), staffSetup: !a.options?.staffSetup } }
+      : a,
+    ));
+  }
 
   // Time slot options
   const timeSlots = Array.from({ length: 24 }, (_, i) => {
@@ -783,6 +832,94 @@ export default function BookingPage() {
                     <p className="text-sm text-green-700">
                       {locale === 'zh' ? '此場地已包無酒精飲品任飲' : 'This venue includes complimentary non-alcoholic drinks'}
                     </p>
+                  </div>
+                )}
+
+                {/* Shisha Package — tiered pricing + per-head flavor selection */}
+                {shishaCatalogEntry && (
+                  <div className={`p-5 rounded-2xl border ${shishaHeads > 0 ? 'border-accent bg-accent/5' : 'border-charcoal/5'}`}>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold">{shishaCatalogEntry.name[locale]}</p>
+                        <p className="text-sm text-muted mt-1">{shishaCatalogEntry.description?.[locale]}</p>
+                        <p className="text-xs text-ink-soft mt-2">
+                          {locale === 'zh'
+                            ? '* 由外部供應商提供。需活動 2 日前預訂'
+                            : '* Provided by outside vendor. Order ≥ 2 days ahead'}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setShishaHeads(shishaHeads - 1)}
+                          disabled={shishaHeads <= 0 || tooSoonForExtras}
+                          className="w-8 h-8 rounded-full border border-charcoal/20 flex items-center justify-center hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed"
+                        >
+                          <Minus size={14} />
+                        </button>
+                        <span className="w-6 text-center font-semibold">{shishaHeads}</span>
+                        <button
+                          type="button"
+                          onClick={() => setShishaHeads(shishaHeads + 1)}
+                          disabled={shishaHeads >= 10 || tooSoonForExtras}
+                          className="w-8 h-8 rounded-full border border-charcoal/20 flex items-center justify-center hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed"
+                        >
+                          <Plus size={14} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Per-head flavor pickers — visible when at least one head chosen */}
+                    {shishaHeads > 0 && (
+                      <div className="mt-4 space-y-3 border-t border-white/40 pt-4">
+                        <p className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
+                          {locale === 'zh' ? '每個煙頭揀口味' : 'Pick a flavor per head'}
+                        </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {Array.from({ length: shishaHeads }, (_, i) => (
+                            <label key={i} className="flex items-center gap-2 text-sm">
+                              <span className="w-12 text-ink-soft shrink-0">
+                                {locale === 'zh' ? `#${i + 1}` : `#${i + 1}`}
+                              </span>
+                              <select
+                                value={shishaFlavors[i] || 'A'}
+                                onChange={(e) => setShishaFlavor(i, e.target.value)}
+                                className="flex-1 px-2 py-1.5 rounded-lg border border-charcoal/15 bg-white text-sm focus:outline-none focus:border-accent"
+                              >
+                                {shishaCatalogEntry.variants?.map((v) => (
+                                  <option key={v.id} value={v.id}>{v.name[locale]}</option>
+                                ))}
+                              </select>
+                            </label>
+                          ))}
+                        </div>
+
+                        {/* Staff setup option */}
+                        <label className="flex items-center gap-3 mt-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={shishaStaffSetup}
+                            onChange={toggleShishaStaffSetup}
+                            className="w-4 h-4"
+                          />
+                          <span className="text-sm">
+                            {locale === 'zh'
+                              ? `需要員工協助 setup（+HK$${SHISHA_STAFF_SETUP_FEE}）`
+                              : `Staff setup help (+HK$${SHISHA_STAFF_SETUP_FEE})`}
+                          </span>
+                        </label>
+
+                        {/* Live price preview */}
+                        <div className="flex items-center justify-between pt-2 border-t border-white/40">
+                          <span className="text-sm text-ink-soft">
+                            {locale === 'zh' ? '小計' : 'Subtotal'}
+                          </span>
+                          <span className="font-bold">
+                            HK${calcShishaPrice(shishaHeads, shishaStaffSetup).toLocaleString()}
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
