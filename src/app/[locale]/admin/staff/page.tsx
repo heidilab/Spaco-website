@@ -171,6 +171,7 @@ export default function AdminStaffPage() {
                     <option value="admin">{roleConfig.admin.label[locale]}</option>
                     <option value="cs">{roleConfig.cs.label[locale]}</option>
                     <option value="cleaner">{roleConfig.cleaner.label[locale]}</option>
+                    <option value="marketing">{roleConfig.marketing.label[locale]}</option>
                   </select>
                   {!isSelf && (
                     <button
@@ -222,6 +223,7 @@ export default function AdminStaffPage() {
                   <option value="admin">{roleConfig.admin.label[locale]} — {roleConfig.admin.desc[locale]}</option>
                   <option value="cs">{roleConfig.cs.label[locale]} — {roleConfig.cs.desc[locale]}</option>
                   <option value="cleaner">{roleConfig.cleaner.label[locale]} — {roleConfig.cleaner.desc[locale]}</option>
+                  <option value="marketing">{roleConfig.marketing.label[locale]} — {roleConfig.marketing.desc[locale]}</option>
                 </select>
               </div>
 
