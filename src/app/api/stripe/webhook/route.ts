@@ -5,6 +5,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { sendEmail, buildBookingConfirmationEmail, generateWhatsAppLink } from '@/lib/email';
 import { getVenueById } from '@/lib/venues';
 import { processBookingForLockAccess } from '@/lib/lockPasscode';
+import { pushBookingToCalendar } from '@/lib/googleCalendar';
 import type { BookingRecord, UserProfile } from '@/types';
 
 export const runtime = 'nodejs';
@@ -88,6 +89,25 @@ export async function POST(request: NextRequest) {
         } catch (err) {
           console.warn('[stripe webhook] lock passcode trigger failed:', err);
           // Non-fatal — the cron will retry tomorrow.
+        }
+
+        // 4. Push the confirmed booking to Google Calendar so staff see it
+        //    in their normal workflow. Skipped if already pushed earlier
+        //    (eventId persisted) or if Google isn't connected.
+        try {
+          const fresh = await bookingRef.get();
+          const booking = fresh.data() as BookingRecord | undefined;
+          if (booking && !booking.googleEventId) {
+            const origin = request.nextUrl.origin;
+            const redirectUri = `${origin}/api/google/callback`;
+            const eventId = await pushBookingToCalendar(redirectUri, { booking });
+            if (eventId) {
+              await bookingRef.update({ googleEventId: eventId });
+            }
+          }
+        } catch (err) {
+          console.warn('[stripe webhook] gcal push failed:', err);
+          // Non-fatal — periodic sync cron will reconcile.
         }
       }
     }

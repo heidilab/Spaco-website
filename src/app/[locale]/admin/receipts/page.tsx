@@ -54,6 +54,12 @@ export default function AdminReceiptsPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ bookingId }),
     }).catch((err) => console.warn('[payment-confirmed email] failed:', err));
+    // Push to Google Calendar (Direction A) — non-blocking.
+    fetch('/api/google/push-booking', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bookingId }),
+    }).catch((err) => console.warn('[gcal push] failed:', err));
     // Trigger TTLock passcode generation. The API does eligibility checking,
     // so this no-ops when the booking is > 2 days out (cron picks it up).
     // Failures are non-fatal — admin can retry from the booking detail page.
@@ -66,6 +72,10 @@ export default function AdminReceiptsPage() {
   const handleReject = async (bookingId: string) => {
     await updateBookingStatus(bookingId, 'cancelled');
     await deleteBlockedSlotsByBooking(bookingId);
+    // Remove from Google Calendar (Direction A on cancel).
+    fetch(`/api/google/push-booking?bookingId=${encodeURIComponent(bookingId)}`, {
+      method: 'DELETE',
+    }).catch(() => { /* gcal disconnected — fine */ });
     // If a passcode somehow already exists (shouldn't for awaiting_payment,
     // but defensive), revoke it on TTLock so the door access is killed.
     revokeLockPasscode(bookingId).catch(() => { /* no-op */ });

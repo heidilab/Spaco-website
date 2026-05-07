@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { removeBookingFromCalendar } from '@/lib/googleCalendar';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -54,9 +55,12 @@ export async function GET(request: NextRequest) {
     }),
   ];
 
+  const origin = request.nextUrl.origin;
+  const redirectUri = `${origin}/api/google/callback`;
   for (const docSnap of candidates) {
     const bookingId = docSnap.id;
     try {
+      const data = docSnap.data() as { venueId?: string; googleEventId?: string };
       await docSnap.ref.update({
         status: 'cancelled',
         updatedAt: FieldValue.serverTimestamp(),
@@ -68,6 +72,19 @@ export async function GET(request: NextRequest) {
       const batch = adminDb.batch();
       for (const b of blockedSnap.docs) batch.delete(b.ref);
       if (blockedSnap.size > 0) await batch.commit();
+      // Remove the orphaned Google Calendar event so staff don't see a
+      // ghost booking. Non-fatal on failure (e.g. gcal disconnected).
+      if (data.googleEventId && data.venueId) {
+        try {
+          await removeBookingFromCalendar(redirectUri, {
+            venueId: data.venueId,
+            googleEventId: data.googleEventId,
+          });
+          await docSnap.ref.update({ googleEventId: null });
+        } catch (err) {
+          console.warn('[expire-pending] gcal cleanup failed for', bookingId, err);
+        }
+      }
       cancelled.push(bookingId);
     } catch (err) {
       console.error('[expire-pending-bookings] failed for', bookingId, err);
