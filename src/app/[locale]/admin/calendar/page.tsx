@@ -12,9 +12,10 @@ import {
 } from '@/lib/firestore';
 import { BookingRecord, BlockedSlot, CalendarEvent } from '@/types';
 import { venues } from '@/lib/venues';
+import { formatAddOnsForStaff } from '@/lib/pricing';
 import {
   ChevronLeft, ChevronRight, Lock, Calendar, Eye, Truck, Trash2,
-  ExternalLink, Plus, X,
+  ExternalLink, Plus, X, Package,
 } from 'lucide-react';
 import { getHolidaysForMonth, Holiday } from '@/lib/hkHolidays';
 
@@ -612,10 +613,19 @@ function SummaryItemMeta({ item, locale }: { item: DayItem; locale: 'zh' | 'en' 
       : b.status === 'pending' ? (locale === 'zh' ? '待處理' : 'Pending')
       : b.status === 'cancelled' ? (locale === 'zh' ? '已取消' : 'Cancelled')
       : b.status;
+    const addOnsLine = formatAddOnsForStaff(b.addOns, locale);
     return (
-      <p className="text-xs text-ink-soft mt-0.5">
-        {b.whatsappPhone || '—'} · {status}
-      </p>
+      <>
+        <p className="text-xs text-ink-soft mt-0.5">
+          {b.whatsappPhone || '—'} · {status}
+        </p>
+        {addOnsLine && (
+          <p className="text-xs text-violet-700 mt-1 flex items-start gap-1">
+            <Package size={11} className="mt-0.5 shrink-0" />
+            <span className="line-clamp-2">{addOnsLine}</span>
+          </p>
+        )}
+      </>
     );
   }
   if (item.kind === 'gcal') {

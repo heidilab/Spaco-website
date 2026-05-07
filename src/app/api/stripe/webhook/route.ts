@@ -2,10 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { stripe } from '@/lib/stripe';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
-import { sendEmail, buildBookingConfirmationEmail, generateWhatsAppLink } from '@/lib/email';
+import {
+  sendEmail, buildBookingConfirmationEmail, generateWhatsAppLink,
+  sendStaffBookingNotification,
+} from '@/lib/email';
 import { getVenueById } from '@/lib/venues';
 import { processBookingForLockAccess } from '@/lib/lockPasscode';
 import { pushBookingToCalendar } from '@/lib/googleCalendar';
+import { formatAddOnsForStaff } from '@/lib/pricing';
 import type { BookingRecord, UserProfile } from '@/types';
 
 export const runtime = 'nodejs';
@@ -94,13 +98,18 @@ export async function POST(request: NextRequest) {
         // 4. Push the confirmed booking to Google Calendar so staff see it
         //    in their normal workflow. Skipped if already pushed earlier
         //    (eventId persisted) or if Google isn't connected.
+        let bookingForNotify: BookingRecord | undefined;
+        let profileForNotify: UserProfile | undefined;
         try {
           const fresh = await bookingRef.get();
           const booking = fresh.data() as BookingRecord | undefined;
-          if (booking && !booking.googleEventId) {
+          bookingForNotify = booking;
+          if (booking) {
             const userSnap = await adminDb.collection('users').doc(booking.userId).get();
-            const profile = userSnap.data() as UserProfile | undefined;
-            const customerName = profile?.displayName;
+            profileForNotify = userSnap.data() as UserProfile | undefined;
+          }
+          if (booking && !booking.googleEventId) {
+            const customerName = profileForNotify?.displayName;
             const origin = request.nextUrl.origin;
             const redirectUri = `${origin}/api/google/callback`;
             const eventId = await pushBookingToCalendar(redirectUri, { booking, customerName });
@@ -111,6 +120,36 @@ export async function POST(request: NextRequest) {
         } catch (err) {
           console.warn('[stripe webhook] gcal push failed:', err);
           // Non-fatal — periodic sync cron will reconcile.
+        }
+
+        // 5. Notify staff of the new confirmed booking. Includes full
+        //    add-on detail so CS / ops can place supplier orders.
+        try {
+          if (bookingForNotify) {
+            const venue = getVenueById(bookingForNotify.venueId);
+            const origin = request.nextUrl.origin;
+            await sendStaffBookingNotification({
+              bookingId: bookingForNotify.id,
+              venueName: venue?.name.zh || bookingForNotify.branchSlug,
+              date: bookingForNotify.date,
+              startTime: bookingForNotify.startTime,
+              endTime: bookingForNotify.endTime,
+              guestCount: bookingForNotify.guestCount,
+              customerName: profileForNotify?.displayName || '—',
+              customerEmail: profileForNotify?.email,
+              whatsappPhone: bookingForNotify.whatsappPhone,
+              subtotal: bookingForNotify.pricing.subtotal,
+              deposit: bookingForNotify.pricing.deposit,
+              balanceDue: bookingForNotify.balanceDue ?? 0,
+              addOnsLine: formatAddOnsForStaff(bookingForNotify.addOns, 'zh'),
+              hasBYOFood: !!bookingForNotify.hasBYOFood,
+              paymentMethod: 'Stripe',
+              adminUrl: `${origin}/zh/admin/bookings/${bookingForNotify.id}`,
+            });
+          }
+        } catch (err) {
+          console.warn('[stripe webhook] staff notify failed:', err);
+          // Non-fatal — booking is already confirmed.
         }
       }
     }

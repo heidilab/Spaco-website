@@ -6,9 +6,10 @@ import { getAllBookings, updateBookingStatus, updateBookingBalance } from '@/lib
 import { tryGenerateLockPasscode, revokeLockPasscode, resendLockPasscode } from '@/lib/lockPasscodeClient';
 import { BookingRecord, BookingDraft } from '@/types';
 import { venues } from '@/lib/venues';
+import { formatAddOnsForStaff } from '@/lib/pricing';
 import {
   Search, Check, X as XIcon, MessageCircle, Plus, Link2, Copy, RotateCw,
-  Calendar, Inbox, ListChecks, Key, DollarSign, Send,
+  Calendar, Inbox, ListChecks, Key, DollarSign, Send, Package,
 } from 'lucide-react';
 import { buildWhatsAppLink, formatHkPhone } from '@/lib/whatsapp';
 import { Link } from '@/i18n/routing';
@@ -107,10 +108,11 @@ export default function AdminBookingsPage() {
         console.warn('[ttlock] revoke on cancel failed:', err),
       );
     }
-    // If transitioning into 'confirmed' (manual approve), trigger passcode
-    // generation + push to Google Calendar so staff see the booking in
-    // their normal workflow. Both are non-blocking; the push API is
-    // idempotent (no-op if booking already has googleEventId).
+    // If transitioning into 'confirmed' (manual approve), trigger:
+    //   • TTLock passcode generation (no-op if > 2 days out)
+    //   • Push to Google Calendar (idempotent — no-op if already pushed)
+    //   • Staff notification email to CS + spacohk@gmail.com
+    // All non-blocking; status flip is the source of truth.
     if (newStatus === 'confirmed') {
       tryGenerateLockPasscode(bookingId).catch((err) =>
         console.warn('[ttlock] post-confirm generate failed:', err),
@@ -120,6 +122,11 @@ export default function AdminBookingsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bookingId }),
       }).catch(() => { /* gcal disconnected — fine */ });
+      fetch('/api/admin/notify-booking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookingId }),
+      }).catch((err) => console.warn('[notify] staff email failed:', err));
     }
     await loadBookings();
   };
@@ -313,6 +320,18 @@ export default function AdminBookingsPage() {
                         <Link href={`/admin/bookings/${booking.id}`} className="font-medium text-sm text-ink hover:text-pink hover:underline">
                           {venue?.name[locale] || booking.venueId}
                         </Link>
+                        {/* Add-ons chip — surfaces supplier-orderable items
+                         *  in the row so staff don't need to click into the
+                         *  detail page to see what to order. */}
+                        {booking.addOns && booking.addOns.length > 0 && (
+                          <div
+                            className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-pill text-[10px] font-medium border bg-violet-50 text-violet-700 border-violet-200 max-w-[260px] truncate"
+                            title={formatAddOnsForStaff(booking.addOns, locale)}
+                          >
+                            <Package size={10} className="shrink-0" />
+                            <span className="truncate">{formatAddOnsForStaff(booking.addOns, locale)}</span>
+                          </div>
+                        )}
                       </td>
                       <td className="px-6 py-4 text-sm text-ink">{booking.date}</td>
                       <td className="px-6 py-4 text-sm text-ink">{booking.startTime} - {booking.endTime}</td>

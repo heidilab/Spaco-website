@@ -76,6 +76,36 @@ export const addOns: AddOn[] = [
   },
 ];
 
+// Concise staff-facing add-on labels, used for supplier ordering, the master
+// calendar popup, admin booking lists, and Google Calendar event descriptions.
+// These strip the consumer-facing parenthetical detail from name.en so staff
+// can scan and order quickly. Falls back to the id if not mapped.
+const STAFF_ADDON_LABELS: Record<string, { zh: string; en: string }> = {
+  'bbq-standard':     { zh: 'BBQ 標準套餐',   en: 'BBQ Standard Package' },
+  'bbq-premium':      { zh: 'BBQ 豪華套餐',   en: 'BBQ Premium Package' },
+  'bbq-grill':        { zh: 'BBQ 爐租用',      en: 'BBQ Grill Rental' },
+  'hotpot-standard':  { zh: '火鍋標準套餐',   en: 'Standard Hotpot Package' },
+  'hotpot-seafood':   { zh: '海鮮火鍋套餐',   en: 'Seafood Hotpot Package' },
+  'hotpot-extra-soup':{ zh: '額外湯底',        en: 'Extra Soup Base' },
+  'drinks':           { zh: '無酒精飲品任飲', en: 'Drinks Package' },
+};
+
+export function getAddOnLabel(id: string, locale: 'zh' | 'en' = 'en'): string {
+  return STAFF_ADDON_LABELS[id]?.[locale] || id;
+}
+
+/** Format a booking's addOns as a comma-separated staff-facing string,
+ *  e.g. "BBQ Standard Package ×4, Drinks Package ×4". */
+export function formatAddOnsForStaff(
+  addOns: { id: string; quantity: number }[] | undefined,
+  locale: 'zh' | 'en' = 'en',
+): string {
+  if (!addOns || addOns.length === 0) return '';
+  return addOns
+    .map((a) => `${getAddOnLabel(a.id, locale)} ×${a.quantity}`)
+    .join(', ');
+}
+
 // BBQ Standard package prices differ by venue
 export const bbqStandardPriceByVenue: Record<string, number> = {
   cwb: 158,

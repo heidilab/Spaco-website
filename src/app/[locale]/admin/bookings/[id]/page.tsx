@@ -13,10 +13,11 @@ import {
 } from '@/lib/firestore';
 import { BookingRecord, UserProfile } from '@/types';
 import { venues } from '@/lib/venues';
+import { formatAddOnsForStaff } from '@/lib/pricing';
 import { buildWhatsAppLink, formatHkPhone } from '@/lib/whatsapp';
 import {
   ArrowLeft, CalendarDays, Clock, Users, Save, MessageCircle,
-  Mail, Phone, User as UserIcon, Sparkles, AlertCircle, CalendarPlus,
+  Mail, Phone, User as UserIcon, Sparkles, AlertCircle, CalendarPlus, Package,
 } from 'lucide-react';
 
 const statusLabels: Record<string, { zh: string; en: string }> = {
@@ -358,6 +359,17 @@ export default function AdminBookingDetailPage() {
             <Row icon={<CalendarDays size={14} />} label={locale === 'zh' ? '日期' : 'Date'} value={booking.date} />
             <Row icon={<Clock size={14} />} label={locale === 'zh' ? '時段' : 'Time'} value={`${booking.startTime} – ${booking.endTime} (${booking.hours}h)`} />
             <Row icon={<Users size={14} />} label={locale === 'zh' ? '人數' : 'Guests'} value={`${booking.guestCount}`} />
+            {booking.addOns && booking.addOns.length > 0 && (
+              <Row
+                icon={<Package size={14} />}
+                label={locale === 'zh' ? '附加服務' : 'Add-ons'}
+                value={formatAddOnsForStaff(booking.addOns, locale)}
+                highlight="violet"
+              />
+            )}
+            {booking.hasBYOFood && (
+              <Row label={locale === 'zh' ? '自攜食物' : 'BYO Food'} value={locale === 'zh' ? '是' : 'Yes'} />
+            )}
             <Row label={locale === 'zh' ? '小計' : 'Subtotal'} value={`HK$${booking.pricing.subtotal.toLocaleString()}`} />
             <Row label={locale === 'zh' ? '按金' : 'Deposit'} value={`HK$${booking.pricing.deposit.toLocaleString()}`} />
             {(booking.balanceDue ?? 0) > 0 && (
@@ -468,15 +480,19 @@ function Row({
   icon?: React.ReactNode;
   label: string;
   value: string;
-  highlight?: 'amber' | 'emerald';
+  highlight?: 'amber' | 'emerald' | 'violet';
 }) {
-  const color = highlight === 'amber' ? 'text-amber-700' : highlight === 'emerald' ? 'text-emerald-700 font-mono' : 'text-ink';
+  const color =
+    highlight === 'amber' ? 'text-amber-700'
+    : highlight === 'emerald' ? 'text-emerald-700 font-mono'
+    : highlight === 'violet' ? 'text-violet-700'
+    : 'text-ink';
   return (
-    <div className="flex items-center justify-between gap-2 border-b border-white/30 pb-2 last:border-0">
-      <span className="flex items-center gap-1.5 text-ink-soft">
+    <div className="flex items-start justify-between gap-3 border-b border-white/30 pb-2 last:border-0">
+      <span className="flex items-center gap-1.5 text-ink-soft shrink-0">
         {icon} {label}
       </span>
-      <span className={`font-medium ${color}`}>{value}</span>
+      <span className={`font-medium text-right ${color}`}>{value}</span>
     </div>
   );
 }

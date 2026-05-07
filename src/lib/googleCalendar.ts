@@ -14,6 +14,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from './firebaseAdmin';
 import { BlockedSlot, BookingRecord } from '@/types';
 import { venues, venuesSharingSpace } from './venues';
+import { formatAddOnsForStaff } from './pricing';
 
 // ──────────────────────────────────────────────────────────
 // Calendar key ↔ venue mapping
@@ -379,9 +380,8 @@ function buildEventDescription(b: BookingRecord, customerName?: string, notes?: 
   if (b.whatsappPhone) lines.push(`WhatsApp: ${formatPhone(b.whatsappPhone)}`);
   if (b.guestCount) lines.push(`人數: ${b.guestCount}`);
   if (b.hasBYOFood) lines.push('BYO food');
-  if (b.addOns && b.addOns.length > 0) {
-    lines.push('Add-ons: ' + b.addOns.map((a) => `${a.id}×${a.quantity}`).join(', '));
-  }
+  const addOnsLine = formatAddOnsForStaff(b.addOns);
+  if (addOnsLine) lines.push(`Add-ons: ${addOnsLine}`);
   if (notes) lines.push('', notes);
   lines.push('', '— Auto-synced from spacohk.com');
   return lines.join('\n');

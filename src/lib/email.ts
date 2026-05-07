@@ -412,6 +412,107 @@ export function buildLockPasscodeEmail(params: {
 // but the customer still owes the remaining balance.
 // ─────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────
+// Staff notification email — fired when a booking is confirmed
+// (Stripe payment OR admin manual confirm). Recipients come from
+// STAFF_NOTIFICATION_EMAILS env var (comma-separated). Includes full
+// add-on detail so CS / ops can place supplier orders without opening
+// the admin panel.
+// ─────────────────────────────────────────────────────────────
+
+export function buildStaffBookingNotificationEmail(params: {
+  bookingId: string;
+  venueName: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  guestCount: number;
+  customerName: string;
+  customerEmail?: string;
+  whatsappPhone?: string;
+  subtotal: number;
+  deposit: number;
+  balanceDue: number;
+  addOnsLine: string;
+  hasBYOFood: boolean;
+  paymentMethod: string;
+  adminUrl: string;
+}) {
+  const balanceRow = params.balanceDue > 0
+    ? `<tr><td style="padding: 8px 0; color: #991B1B; font-size: 13px;">⚠️ 尚欠尾數</td><td style="padding: 8px 0; text-align: right; font-weight: 700; color: #991B1B;">HK$${params.balanceDue.toLocaleString()}</td></tr>`
+    : '';
+  const addOnsRow = params.addOnsLine
+    ? `<tr><td style="padding: 8px 0; color: #6D28D9; font-size: 13px;">📦 附加服務</td><td style="padding: 8px 0; text-align: right; font-weight: 600; color: #6D28D9;">${params.addOnsLine}</td></tr>`
+    : '';
+  const byoRow = params.hasBYOFood
+    ? `<tr><td style="padding: 8px 0; color: #999; font-size: 13px;">自攜食物</td><td style="padding: 8px 0; text-align: right; font-weight: 600;">是</td></tr>`
+    : '';
+  return {
+    subject: `🔔 新預約確認 — ${params.venueName} ${params.date} (${params.customerName})`,
+    html: `
+      <div style="font-family: ${EMAIL_FONT}; max-width: 640px; margin: 0 auto; background: ${EMAIL_BG}; padding: 32px 20px;">
+        ${emailHeader('內部通知 · BOOKING CONFIRMED')}
+        <div style="background: white; padding: 28px; border-radius: 20px; margin-bottom: 16px;">
+          <p style="margin: 0 0 8px; font-size: 14px; color: #999;">Booking ID</p>
+          <p style="margin: 0 0 20px; font-family: 'Courier New', monospace; font-size: 14px; color: ${EMAIL_INK};">${params.bookingId}</p>
+
+          <h2 style="margin: 0 0 16px; font-size: 18px; color: ${EMAIL_INK};">📋 預訂詳情</h2>
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">場地</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.venueName}</td></tr>
+            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">日期</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.date}</td></tr>
+            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">時段</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.startTime} – ${params.endTime}</td></tr>
+            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">人數</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.guestCount} 人</td></tr>
+            ${addOnsRow}
+            ${byoRow}
+          </table>
+
+          <h2 style="margin: 0 0 16px; font-size: 18px; color: ${EMAIL_INK};">💰 金額</h2>
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">小計</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">HK$${params.subtotal.toLocaleString()}</td></tr>
+            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">已收按金</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">HK$${params.deposit.toLocaleString()}</td></tr>
+            ${balanceRow}
+            <tr><td style="padding: 8px 0; color: #999; font-size: 13px;">付款方式</td><td style="padding: 8px 0; text-align: right; font-weight: 600;">${params.paymentMethod}</td></tr>
+          </table>
+
+          <h2 style="margin: 0 0 16px; font-size: 18px; color: ${EMAIL_INK};">👤 客戶聯絡</h2>
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">姓名</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.customerName}</td></tr>
+            ${params.whatsappPhone ? `<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">WhatsApp</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.whatsappPhone}</td></tr>` : ''}
+            ${params.customerEmail ? `<tr><td style="padding: 8px 0; color: #999; font-size: 13px;">Email</td><td style="padding: 8px 0; text-align: right; font-weight: 600;">${params.customerEmail}</td></tr>` : ''}
+          </table>
+        </div>
+
+        <div style="text-align: center; margin-bottom: 16px;">
+          <a href="${params.adminUrl}" style="display: inline-block; background: linear-gradient(135deg, ${EMAIL_PINK} 0%, ${EMAIL_PEACH} 100%); color: white; padding: 14px 32px; border-radius: 999px; text-decoration: none; font-weight: 700; font-size: 14px;">
+            打開後台 · Open Admin
+          </a>
+        </div>
+
+        ${emailFooter()}
+      </div>
+    `,
+  };
+}
+
+/** Send the staff notification to all configured recipients. Reads
+ *  STAFF_NOTIFICATION_EMAILS (comma-separated) and falls back to
+ *  spacohk@gmail.com if unset. Errors are caught per-recipient so one
+ *  bad address can't break the others. */
+export async function sendStaffBookingNotification(
+  params: Parameters<typeof buildStaffBookingNotificationEmail>[0],
+): Promise<void> {
+  const list = (process.env.STAFF_NOTIFICATION_EMAILS || 'spacohk@gmail.com')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (list.length === 0) return;
+  const tpl = buildStaffBookingNotificationEmail(params);
+  await Promise.all(list.map((to) =>
+    sendEmail({ to, subject: tpl.subject, html: tpl.html })
+      .catch((err) => console.warn(`[staff-notify] send to ${to} failed:`, err)),
+  ));
+}
+
 export function buildBalanceDueReminderEmail(params: {
   customerName: string;
   venueName: string;
