@@ -108,11 +108,18 @@ export default function AdminBookingsPage() {
       );
     }
     // If transitioning into 'confirmed' (manual approve), trigger passcode
-    // generation. The API does eligibility checking — no-op if > 2 days out.
+    // generation + push to Google Calendar so staff see the booking in
+    // their normal workflow. Both are non-blocking; the push API is
+    // idempotent (no-op if booking already has googleEventId).
     if (newStatus === 'confirmed') {
       tryGenerateLockPasscode(bookingId).catch((err) =>
         console.warn('[ttlock] post-confirm generate failed:', err),
       );
+      fetch('/api/google/push-booking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookingId }),
+      }).catch(() => { /* gcal disconnected — fine */ });
     }
     await loadBookings();
   };

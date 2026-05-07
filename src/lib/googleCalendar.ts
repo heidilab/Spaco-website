@@ -340,6 +340,15 @@ interface PushBookingInput {
   notes?: string;
 }
 
+/** Format an HK phone for display: 9123 4966 (8 digits) or 5 1234 5678 etc. */
+function formatPhone(raw: string): string {
+  const digits = raw.replace(/\D/g, '');
+  // Strip a leading 852 country code if present.
+  const local = digits.startsWith('852') && digits.length > 8 ? digits.slice(3) : digits;
+  if (local.length === 8) return `${local.slice(0, 4)} ${local.slice(4)}`;
+  return local;
+}
+
 /** Build the canonical event title used by direction A pushes. */
 function buildEventSummary(b: BookingRecord, customerName?: string): string {
   const venue = venues.find((v) => v.id === b.venueId);
@@ -351,19 +360,24 @@ function buildEventSummary(b: BookingRecord, customerName?: string): string {
     : b.venueId === 'sw-ab' ? '[全層 A+B] '
     : '';
   const venueLabel = venue ? `${swTag}${venue.branch}` : b.venueId;
-  const guestSuffix = ` (${b.guestCount}p)`;
-  const name = customerName ? ` · ${customerName}` : '';
+  const phone = b.whatsappPhone ? ` ${formatPhone(b.whatsappPhone)}` : '';
+  const name = customerName ? ` · ${customerName}${phone}` : phone ? ` ·${phone}` : '';
+  const guestSuffix = ` (${b.guestCount}人)`;
   return `${venueLabel}${name}${guestSuffix}`;
 }
 
-function buildEventDescription(b: BookingRecord, notes?: string): string {
+function buildEventDescription(b: BookingRecord, customerName?: string, notes?: string): string {
   const lines: string[] = [];
-  lines.push(`Booking ID: ${b.id}`);
-  if (b.whatsappPhone) lines.push(`WhatsApp: ${b.whatsappPhone}`);
-  if (b.guestCount) lines.push(`Guests: ${b.guestCount}`);
-  if (b.pricing?.subtotal) {
-    lines.push(`Total: HK$${b.pricing.subtotal.toLocaleString()} (+ HK$${b.pricing.deposit.toLocaleString()} deposit)`);
+  // Outstanding balance warning — surfaced at the top so staff scanning the
+  // calendar see it before clicking in.
+  if (typeof b.balanceDue === 'number' && b.balanceDue > 0) {
+    const dueDate = b.balanceDueDate ? `（限期 ${b.balanceDueDate}）` : '';
+    lines.push(`⚠️ 未找清尾數 HK$${b.balanceDue.toLocaleString()}${dueDate}`, '');
   }
+  lines.push(`Booking ID: ${b.id}`);
+  if (customerName) lines.push(`姓名: ${customerName}`);
+  if (b.whatsappPhone) lines.push(`WhatsApp: ${formatPhone(b.whatsappPhone)}`);
+  if (b.guestCount) lines.push(`人數: ${b.guestCount}`);
   if (b.hasBYOFood) lines.push('BYO food');
   if (b.addOns && b.addOns.length > 0) {
     lines.push('Add-ons: ' + b.addOns.map((a) => `${a.id}×${a.quantity}`).join(', '));
@@ -399,7 +413,7 @@ export async function pushBookingToCalendar(
     calendarId,
     requestBody: {
       summary: buildEventSummary(input.booking, input.customerName),
-      description: buildEventDescription(input.booking, input.notes),
+      description: buildEventDescription(input.booking, input.customerName, input.notes),
       start: { dateTime: startISO, timeZone: 'Asia/Hong_Kong' },
       end:   { dateTime: endISO,   timeZone: 'Asia/Hong_Kong' },
       // Mark synced events so direction-B sync can skip them (we don't want

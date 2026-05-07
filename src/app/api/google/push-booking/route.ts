@@ -4,7 +4,7 @@ import { db } from '@/lib/firebase';
 import {
   pushBookingToCalendar, removeBookingFromCalendar,
 } from '@/lib/googleCalendar';
-import { BookingRecord } from '@/types';
+import { BookingRecord, UserProfile } from '@/types';
 
 // POST /api/google/push-booking { bookingId } → push booking to gcal,
 // update booking with returned eventId.
@@ -37,10 +37,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ alreadyPushed: true, eventId: booking.googleEventId });
     }
 
+    // Auto-fill customerName from the user profile if not provided. This is
+    // the common case when admin clicks "Push to Google Calendar" without
+    // typing a name in.
+    let resolvedName = customerName;
+    if (!resolvedName && booking.userId) {
+      try {
+        const userSnap = await getDoc(doc(db, 'users', booking.userId));
+        const profile = userSnap.data() as UserProfile | undefined;
+        resolvedName = profile?.displayName || undefined;
+      } catch { /* profile read failed — push without name */ }
+    }
+
     const origin = req.nextUrl.origin;
     const redirectUri = `${origin}/api/google/callback`;
     const eventId = await pushBookingToCalendar(redirectUri, {
-      booking, customerName, notes,
+      booking, customerName: resolvedName, notes,
     });
     if (!eventId) {
       // Google not connected or no calendar configured for venue — fine, skip.

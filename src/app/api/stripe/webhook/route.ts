@@ -98,9 +98,12 @@ export async function POST(request: NextRequest) {
           const fresh = await bookingRef.get();
           const booking = fresh.data() as BookingRecord | undefined;
           if (booking && !booking.googleEventId) {
+            const userSnap = await adminDb.collection('users').doc(booking.userId).get();
+            const profile = userSnap.data() as UserProfile | undefined;
+            const customerName = profile?.displayName;
             const origin = request.nextUrl.origin;
             const redirectUri = `${origin}/api/google/callback`;
-            const eventId = await pushBookingToCalendar(redirectUri, { booking });
+            const eventId = await pushBookingToCalendar(redirectUri, { booking, customerName });
             if (eventId) {
               await bookingRef.update({ googleEventId: eventId });
             }

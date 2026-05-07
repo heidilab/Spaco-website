@@ -16,7 +16,7 @@ import { venues } from '@/lib/venues';
 import { buildWhatsAppLink, formatHkPhone } from '@/lib/whatsapp';
 import {
   ArrowLeft, CalendarDays, Clock, Users, Save, MessageCircle,
-  Mail, Phone, User as UserIcon, Sparkles, AlertCircle,
+  Mail, Phone, User as UserIcon, Sparkles, AlertCircle, CalendarPlus,
 } from 'lucide-react';
 
 const statusLabels: Record<string, { zh: string; en: string }> = {
@@ -50,6 +50,11 @@ export default function AdminBookingDetailPage() {
   const [saved, setSaved] = useState(false);
   const [statusValue, setStatusValue] = useState('');
   const [statusSaving, setStatusSaving] = useState(false);
+
+  // Manual gcal push (for backfilling bookings whose webhook ran while
+  // Google was disconnected, or that were created via admin without auto-sync).
+  const [pushing, setPushing] = useState(false);
+  const [pushMsg, setPushMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   useEffect(() => {
     if (!canAccess) {
@@ -132,6 +137,44 @@ export default function AdminBookingDetailPage() {
     }
   }
 
+  async function handlePushToGcal() {
+    if (!booking || pushing) return;
+    setPushing(true);
+    setPushMsg(null);
+    try {
+      const res = await fetch('/api/google/push-booking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookingId: booking.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Push failed');
+      if (data.skipped) {
+        setPushMsg({
+          kind: 'err',
+          text: locale === 'zh'
+            ? 'Google 日曆未連接或場地未對應 calendar — 請先去 Calendar Sync 連接'
+            : 'Google not connected, or no calendar mapped for this venue.',
+        });
+      } else {
+        setPushMsg({
+          kind: 'ok',
+          text: locale === 'zh' ? '✓ 已推送到 Google 日曆' : '✓ Pushed to Google Calendar',
+        });
+        const fresh = await getBooking(booking.id);
+        if (fresh) setBooking(fresh);
+      }
+    } catch (err) {
+      setPushMsg({
+        kind: 'err',
+        text: (locale === 'zh' ? '推送失敗：' : 'Push failed: ') +
+          (err instanceof Error ? err.message : 'unknown'),
+      });
+    } finally {
+      setPushing(false);
+    }
+  }
+
   async function handleStatusChange(next: string) {
     if (!booking || next === booking.status) return;
     setStatusSaving(true);
@@ -190,6 +233,46 @@ export default function AdminBookingDetailPage() {
               ))}
             </div>
           </div>
+
+          {/* Google Calendar push — only shown when not yet synced */}
+          {!booking.googleEventId && (
+            <div className="glass-card p-6">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div>
+                  <h2 className="font-bold flex items-center gap-2">
+                    <CalendarPlus size={16} />
+                    {locale === 'zh' ? 'Google 日曆' : 'Google Calendar'}
+                  </h2>
+                  <p className="text-xs text-ink-soft mt-1">
+                    {locale === 'zh'
+                      ? '此預訂尚未推送到 Google 日曆。撳下面個鈕補返。'
+                      : 'This booking is not yet on Google Calendar. Click to push.'}
+                  </p>
+                </div>
+                <button
+                  onClick={handlePushToGcal}
+                  disabled={pushing}
+                  className="btn-primary disabled:opacity-40 flex items-center gap-2"
+                >
+                  <CalendarPlus size={14} />
+                  {pushing
+                    ? (locale === 'zh' ? '推送中…' : 'Pushing…')
+                    : (locale === 'zh' ? '推送到 Google 日曆' : 'Push to Google Calendar')}
+                </button>
+              </div>
+              {pushMsg && (
+                <div
+                  className={`mt-3 text-sm rounded-lg px-3 py-2 ${
+                    pushMsg.kind === 'ok'
+                      ? 'text-emerald-700 bg-emerald-50'
+                      : 'text-rose-600 bg-rose-50'
+                  }`}
+                >
+                  {pushMsg.text}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Editable date / time */}
           <div className="glass-card p-6 space-y-4">
