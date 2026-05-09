@@ -22,7 +22,8 @@ import { adminDb } from './firebaseAdmin';
 import { addKeyboardPasscode, deleteKeyboardPasscode, isTTLockConfigured } from './ttlock';
 import { getVenueById } from './venues';
 import { getSiteContent } from './content';
-import { sendEmail, buildLockPasscodeEmail, buildBalanceDueReminderEmail } from './email';
+import { buildLockPasscodeEmail, buildBalanceDueReminderEmail } from './email';
+import { sendAutomatedEmail } from './emailAutomations';
 import type { BookingRecord, UserProfile } from '@/types';
 
 // ─────────────────────────────────────────────────────────────
@@ -173,7 +174,12 @@ export async function processBookingForLockAccess(bookingId: string): Promise<Pr
         balanceDue:   b.balanceDue ?? 0,
         whatsappLink: 'https://wa.me/85292823060',
       });
-      await sendEmail({ to: contact.email, subject: tpl.subject, html: tpl.html });
+      await sendAutomatedEmail({
+        automationKey: 'balance_due_reminder',
+        to: contact.email,
+        subject: tpl.subject,
+        html: tpl.html,
+      });
       await ref.update({ balanceReminderSentAt: FieldValue.serverTimestamp() });
       return { bookingId, action: 'reminded', reason: 'balance-due' };
     } catch (err) {
@@ -249,7 +255,12 @@ export async function processBookingForLockAccess(bookingId: string): Promise<Pr
         validToMs:    validTo,
         whatsappLink: 'https://wa.me/85292823060',
       });
-      await sendEmail({ to: contact.email, subject: tpl.subject, html: tpl.html });
+      await sendAutomatedEmail({
+        automationKey: 'lock_passcode',
+        to: contact.email,
+        subject: tpl.subject,
+        html: tpl.html,
+      });
       await ref.update({ 'lockPasscode.emailSentAt': FieldValue.serverTimestamp() });
     }
 

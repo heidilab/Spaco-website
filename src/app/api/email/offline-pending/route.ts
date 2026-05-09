@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
-import { sendEmail, buildOfflinePaymentPendingEmail, generateWhatsAppLink } from '@/lib/email';
+import { buildOfflinePaymentPendingEmail, generateWhatsAppLink } from '@/lib/email';
+import { sendAutomatedEmail } from '@/lib/emailAutomations';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
 import { getVenueById } from '@/lib/venues';
 
@@ -53,7 +54,12 @@ export async function POST(req: NextRequest) {
       bookingId,
       whatsappLink,
     });
-    await sendEmail({ to: user.email, subject: tpl.subject, html: tpl.html });
+    await sendAutomatedEmail({
+      automationKey: 'offline_payment_pending',
+      to: user.email,
+      subject: tpl.subject,
+      html: tpl.html,
+    });
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error('[offline-pending] failed:', err);

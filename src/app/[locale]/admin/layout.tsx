@@ -5,7 +5,7 @@ import { Link, usePathname } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   LayoutDashboard, CalendarDays, ListOrdered,
-  Calculator, ChevronLeft, Shield, Image, Users, UserCog, Receipt, FileText, HelpCircle, Search, CalendarClock,
+  Calculator, ChevronLeft, Shield, Image, Users, UserCog, Receipt, FileText, HelpCircle, Search, CalendarClock, Mail,
 } from 'lucide-react';
 
 const allSidebarLinks = [
@@ -17,6 +17,7 @@ const allSidebarLinks = [
   { href: '/admin/bookings', icon: ListOrdered, label: { zh: '預訂管理', en: 'Bookings' }, permission: 'bookings' },
   { href: '/admin/calendar', icon: CalendarDays, label: { zh: '總日曆', en: 'Calendar' }, permission: 'calendar' },
   { href: '/admin/calendar-sync', icon: CalendarClock, label: { zh: 'Google 同步', en: 'Google Sync' }, permission: 'gcal' },
+  { href: '/admin/email-automation', icon: Mail, label: { zh: 'Email 自動化', en: 'Email Automation' }, permission: 'gcal' },
   { href: '/admin/documents', icon: FileText, label: { zh: '單據管理', en: 'Documents' }, permission: 'documents' },
   { href: '/admin/deposit', icon: Calculator, label: { zh: '按金結算', en: 'Deposit' }, permission: 'deposit' },
   { href: '/admin/members', icon: Users, label: { zh: '會員管理', en: 'Members' }, permission: 'members' },

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
-import { sendEmail, buildPostEventEmail } from '@/lib/email';
+import { buildPostEventEmail } from '@/lib/email';
+import { sendAutomatedEmail } from '@/lib/emailAutomations';
 import { getVenueById } from '@/lib/venues';
 
 export const runtime = 'nodejs';
@@ -81,7 +82,12 @@ export async function GET(request: NextRequest) {
         pointsEarned,
         pointsBalance: user.loyaltyPoints || 0,
       });
-      await sendEmail({ to: user.email, subject: tpl.subject, html: tpl.html });
+      await sendAutomatedEmail({
+        automationKey: 'post_event',
+        to: user.email,
+        subject: tpl.subject,
+        html: tpl.html,
+      });
 
       await docSnap.ref.update({
         postEventEmailSentAt: FieldValue.serverTimestamp(),

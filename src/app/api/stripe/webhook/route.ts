@@ -3,9 +3,10 @@ import { stripe } from '@/lib/stripe';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import {
-  sendEmail, buildBookingConfirmationEmail, generateWhatsAppLink,
+  buildBookingConfirmationEmail, generateWhatsAppLink,
   sendStaffBookingNotification,
 } from '@/lib/email';
+import { sendAutomatedEmail } from '@/lib/emailAutomations';
 import { getVenueById } from '@/lib/venues';
 import { processBookingForLockAccess } from '@/lib/lockPasscode';
 import { pushBookingToCalendar } from '@/lib/googleCalendar';
@@ -71,12 +72,22 @@ export async function POST(request: NextRequest) {
                 startTime: booking.startTime,
                 endTime: booking.endTime,
                 guestCount: booking.guestCount,
+                adultCount: booking.adultCount,
+                childCount: booking.childCount,
                 subtotal: booking.pricing.subtotal,
                 deposit: booking.pricing.deposit,
+                balanceDue: booking.balanceDue,
+                balanceDueDate: booking.balanceDueDate,
+                addOnsLine: formatAddOnsForStaff(booking.addOns, 'zh'),
                 paymentMethod: 'Stripe',
                 whatsappLink,
               });
-              await sendEmail({ to: customerEmail, subject: tpl.subject, html: tpl.html });
+              await sendAutomatedEmail({
+                automationKey: 'booking_confirmation',
+                to: customerEmail,
+                subject: tpl.subject,
+                html: tpl.html,
+              });
             }
           }
         } catch (err) {

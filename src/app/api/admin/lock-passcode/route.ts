@@ -16,7 +16,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { processBookingForLockAccess, revokeBookingPasscode } from '@/lib/lockPasscode';
-import { sendEmail, buildLockPasscodeEmail } from '@/lib/email';
+import { buildLockPasscodeEmail } from '@/lib/email';
+import { sendAutomatedEmail } from '@/lib/emailAutomations';
 import { getVenueById } from '@/lib/venues';
 import { adminVerifyIdToken, adminUserHasContentPerm } from '@/lib/adminAuth';
 import type { BookingRecord, UserProfile } from '@/types';
@@ -92,7 +93,12 @@ export async function POST(req: NextRequest) {
         validToMs:    b.lockPasscode.validTo,
         whatsappLink: 'https://wa.me/85292823060',
       });
-      await sendEmail({ to: profile.email, subject: tpl.subject, html: tpl.html });
+      await sendAutomatedEmail({
+        automationKey: 'lock_passcode',
+        to: profile.email,
+        subject: tpl.subject,
+        html: tpl.html,
+      });
       await updateDoc(ref, { 'lockPasscode.emailSentAt': serverTimestamp() });
       return NextResponse.json({ ok: true });
     }
