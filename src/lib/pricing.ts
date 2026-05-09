@@ -340,20 +340,38 @@ export interface PricingCalculation {
   breakdown: { label: { zh: string; en: string }; amount: number }[];
 }
 
+/** Compute the adult-equivalent guest count: each child counts as 0.5.
+ *  Used for both minimum-charge enforcement and per-head pricing
+ *  (venue rental, BBQ, hotpot, drinks). Children pay half on these. */
+export function adultEquivalent(adults: number, children: number): number {
+  return adults + 0.5 * Math.max(0, children);
+}
+
 export function calculatePricing(
   venue: Venue,
   isWeekend: boolean,
   hours: number,
   guests: number,
-  selectedAddOns: { id: string; quantity: number; options?: { flavors?: string[]; staffSetup?: boolean } }[]
+  selectedAddOns: { id: string; quantity: number; options?: { flavors?: string[]; staffSetup?: boolean } }[],
+  /** Optional adult/child split. If omitted, the entire `guests` count
+   *  is treated as adults (legacy bookings) and full price applies. */
+  childCount: number = 0,
 ): PricingCalculation {
   const tier = isWeekend ? venue.pricing.weekend : venue.pricing.weekday;
-  const baseCharge = tier.perHead * guests * hours;
+  const adults = Math.max(0, guests - childCount);
+  const equiv = adultEquivalent(adults, childCount);
+  const baseCharge = Math.round(tier.perHead * equiv * hours);
+  const guestLabel = childCount > 0
+    ? `${adults}成人 + ${childCount}小童`
+    : `${guests}人`;
+  const guestLabelEn = childCount > 0
+    ? `${adults} adults + ${childCount} kids`
+    : `${guests} pax`;
   const breakdown: { label: { zh: string; en: string }; amount: number }[] = [
     {
       label: {
-        zh: `場地費 (${guests}人 x ${hours}小時 x $${tier.perHead})`,
-        en: `Venue (${guests} pax x ${hours}hrs x $${tier.perHead})`,
+        zh: `場地費 (${guestLabel} x ${hours}小時 x $${tier.perHead})`,
+        en: `Venue (${guestLabelEn} x ${hours}hrs x $${tier.perHead})`,
       },
       amount: baseCharge,
     },
@@ -366,14 +384,14 @@ export function calculatePricing(
 
   for (const selected of selectedAddOns) {
     if (selected.id === 'bbq-standard') {
-      // Use venue-specific BBQ standard price
+      // Use venue-specific BBQ standard price; children at half rate.
       const price = bbqStandardPriceByVenue[venue.id] || 158;
-      const cost = price * guests;
+      const cost = Math.round(price * equiv);
       addOnTotal += cost;
       breakdown.push({
         label: {
-          zh: `BBQ 標準套餐 (${guests}人 x $${price})`,
-          en: `BBQ Standard (${guests} pax x $${price})`,
+          zh: `BBQ 標準套餐 (${guestLabel} x $${price})`,
+          en: `BBQ Standard (${guestLabelEn} x $${price})`,
         },
         amount: cost,
       });
@@ -381,12 +399,12 @@ export function calculatePricing(
     }
 
     if (selected.id === 'bbq-premium') {
-      const cost = 328 * guests;
+      const cost = Math.round(328 * equiv);
       addOnTotal += cost;
       breakdown.push({
         label: {
-          zh: `BBQ 豪華套餐 (${guests}人 x $328)`,
-          en: `BBQ Premium (${guests} pax x $328)`,
+          zh: `BBQ 豪華套餐 (${guestLabel} x $328)`,
+          en: `BBQ Premium (${guestLabelEn} x $328)`,
         },
         amount: cost,
       });
@@ -409,12 +427,12 @@ export function calculatePricing(
     }
 
     if (selected.id === 'hotpot-standard') {
-      const cost = 168 * guests;
+      const cost = Math.round(168 * equiv);
       addOnTotal += cost;
       breakdown.push({
         label: {
-          zh: `火鍋標準套餐 (${guests}人 x $168)`,
-          en: `Hotpot Standard (${guests} pax x $168)`,
+          zh: `火鍋標準套餐 (${guestLabel} x $168)`,
+          en: `Hotpot Standard (${guestLabelEn} x $168)`,
         },
         amount: cost,
       });
@@ -422,12 +440,12 @@ export function calculatePricing(
     }
 
     if (selected.id === 'hotpot-seafood') {
-      const cost = 348 * guests;
+      const cost = Math.round(348 * equiv);
       addOnTotal += cost;
       breakdown.push({
         label: {
-          zh: `海鮮火鍋套餐 (${guests}人 x $348)`,
-          en: `Seafood Hotpot (${guests} pax x $348)`,
+          zh: `海鮮火鍋套餐 (${guestLabel} x $348)`,
+          en: `Seafood Hotpot (${guestLabelEn} x $348)`,
         },
         amount: cost,
       });
@@ -450,12 +468,12 @@ export function calculatePricing(
     if (selected.id === 'drinks') {
       // Skip if venue includes free drinks (TST)
       if (freeDrinksVenues.includes(venue.id)) continue;
-      const cost = 25 * guests;
+      const cost = Math.round(25 * equiv);
       addOnTotal += cost;
       breakdown.push({
         label: {
-          zh: `無酒精飲品任飲 (${guests}人 x $25)`,
-          en: `Unlimited Drinks (${guests} pax x $25)`,
+          zh: `無酒精飲品任飲 (${guestLabel} x $25)`,
+          en: `Unlimited Drinks (${guestLabelEn} x $25)`,
         },
         amount: cost,
       });

@@ -45,7 +45,13 @@ export default function BookingPage() {
   useEffect(() => {
     setMinDate(new Date().toISOString().split('T')[0]);
   }, []);
-  const [guestCount, setGuestCount] = useState(venue.minGuests.weekday);
+  // Adults / children split. Children (1–9 yo) count as 0.5 adult-equivalent
+  // for the minimum-charge check and pay half on per-head charges (rental,
+  // BBQ, hotpot, drinks). Total head count = adults + children.
+  const [adultCount, setAdultCount] = useState(venue.minGuests.weekday);
+  const [childCount, setChildCount] = useState(0);
+  const guestCount = adultCount + childCount;
+  const adultEquiv = adultCount + 0.5 * childCount;
   const [selectedAddOns, setSelectedAddOns] = useState<{ id: string; quantity: number; options?: AddOnOptions }[]>([]);
   const [hasBYOFood, setHasBYOFood] = useState(false);
   const [, setShowGrillWarning] = useState(false);
@@ -148,11 +154,17 @@ export default function BookingPage() {
   const minGuests = isWeekend ? venue.minGuests.weekend : venue.minGuests.weekday;
   const minHours = isWeekend ? venue.minHours.weekend : venue.minHours.weekday;
 
+  // When date changes (and weekday/weekend tier with it), bump adult count
+  // up so adult-equivalent meets the new minimum. Children count unchanged.
   useEffect(() => {
-    if (selectedDate) {
-      setGuestCount((prev) => Math.max(prev, minGuests));
-    }
-  }, [selectedDate, minGuests]);
+    if (!selectedDate) return;
+    setAdultCount((prevAdults) => {
+      const equiv = prevAdults + 0.5 * childCount;
+      if (equiv >= minGuests) return prevAdults;
+      // Need (minGuests - 0.5 × childCount) adults at minimum.
+      return Math.ceil(minGuests - 0.5 * childCount);
+    });
+  }, [selectedDate, minGuests, childCount]);
 
   // Calculate hours
   const hours = useMemo(() => {
@@ -163,8 +175,8 @@ export default function BookingPage() {
 
   // Pricing calculation
   const pricing = useMemo(() => {
-    return calculatePricing(venue, isWeekend, Math.max(hours, minHours), guestCount, selectedAddOns);
-  }, [venue, isWeekend, hours, minHours, guestCount, selectedAddOns]);
+    return calculatePricing(venue, isWeekend, Math.max(hours, minHours), guestCount, selectedAddOns, childCount);
+  }, [venue, isWeekend, hours, minHours, guestCount, childCount, selectedAddOns]);
 
   // Add-on toggle
   const toggleAddOn = (id: string) => {
@@ -281,7 +293,7 @@ export default function BookingPage() {
   });
 
   // Can proceed check
-  const canProceed = selectedDate && hours >= minHours && agreedToTerms && whatsappReady;
+  const canProceed = selectedDate && hours >= minHours && adultEquiv >= minGuests && agreedToTerms && whatsappReady;
 
   return (
     <div className="pt-28 pb-20 relative overflow-hidden">
@@ -403,33 +415,90 @@ export default function BookingPage() {
               )}
             </div>
 
-            {/* Guest Count */}
+            {/* Guest Count — adults + children split */}
             <div className="glass-card p-7 md:p-8">
               <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
                 <Users size={20} className="text-accent" />
                 {locale === 'zh' ? '預約人數' : 'Number of Guests'}
               </h2>
-              <div className="flex items-center gap-4">
-                <button
-                  onClick={() => setGuestCount(Math.max(minGuests, guestCount - 1))}
-                  disabled={guestCount <= minGuests}
-                  className="w-12 h-12 rounded-xl border border-charcoal/10 flex items-center justify-center hover:bg-cream transition-colors disabled:opacity-30"
-                >
-                  <Minus size={18} />
-                </button>
-                <span className="text-3xl font-bold w-20 text-center">{guestCount}</span>
-                <button
-                  onClick={() => setGuestCount(Math.min(venue.capacity.max, guestCount + 1))}
-                  className="w-12 h-12 rounded-xl border border-charcoal/10 flex items-center justify-center hover:bg-cream transition-colors"
-                >
-                  <Plus size={18} />
-                </button>
+
+              {/* Adult stepper */}
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <p className="font-semibold">{locale === 'zh' ? '成人' : 'Adults'}</p>
+                  <p className="text-xs text-muted">{locale === 'zh' ? '10 歲或以上' : 'Age 10+'}</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => {
+                      // Floor the adult count so adult-equiv stays ≥ minGuests.
+                      const floor = Math.max(0, Math.ceil(minGuests - 0.5 * childCount));
+                      setAdultCount(Math.max(floor, adultCount - 1));
+                    }}
+                    disabled={adultCount <= Math.max(0, Math.ceil(minGuests - 0.5 * childCount))}
+                    className="w-10 h-10 rounded-xl border border-charcoal/10 flex items-center justify-center hover:bg-cream transition-colors disabled:opacity-30"
+                  >
+                    <Minus size={16} />
+                  </button>
+                  <span className="text-2xl font-bold w-12 text-center">{adultCount}</span>
+                  <button
+                    onClick={() => setAdultCount(adultCount + 1)}
+                    className="w-10 h-10 rounded-xl border border-charcoal/10 flex items-center justify-center hover:bg-cream transition-colors"
+                  >
+                    <Plus size={16} />
+                  </button>
+                </div>
               </div>
-              <p className="text-xs text-muted mt-3">
-                {locale === 'zh'
-                  ? '場地預約按人頭收費，人數只能加不能減。'
-                  : 'Venue charges are per person. Guest count can only be increased, not decreased.'}
-              </p>
+
+              {/* Child stepper */}
+              <div className="flex items-center justify-between border-t border-white/40 pt-4">
+                <div>
+                  <p className="font-semibold">{locale === 'zh' ? '小童' : 'Children'}</p>
+                  <p className="text-xs text-muted">
+                    {locale === 'zh' ? '1-9 歲（半價：場租／燒烤／火鍋／飲品）' : 'Age 1–9 (half-price: rental / BBQ / hotpot / drinks)'}
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setChildCount(Math.max(0, childCount - 1))}
+                    disabled={childCount <= 0}
+                    className="w-10 h-10 rounded-xl border border-charcoal/10 flex items-center justify-center hover:bg-cream transition-colors disabled:opacity-30"
+                  >
+                    <Minus size={16} />
+                  </button>
+                  <span className="text-2xl font-bold w-12 text-center">{childCount}</span>
+                  <button
+                    onClick={() => setChildCount(childCount + 1)}
+                    className="w-10 h-10 rounded-xl border border-charcoal/10 flex items-center justify-center hover:bg-cream transition-colors"
+                  >
+                    <Plus size={16} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Summary line */}
+              <div className="mt-4 p-3 rounded-xl bg-cream/40 text-sm space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-ink-soft">{locale === 'zh' ? '總人數' : 'Total guests'}</span>
+                  <span className="font-semibold">{guestCount} {locale === 'zh' ? '人' : 'pax'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-ink-soft">
+                    {locale === 'zh' ? '計價人數（小童 ½）' : 'Charged equivalent (kids ½)'}
+                  </span>
+                  <span className={`font-semibold ${adultEquiv < minGuests ? 'text-rose-600' : ''}`}>
+                    {adultEquiv} {locale === 'zh' ? `／ 最少 ${minGuests}` : `/ min ${minGuests}`}
+                  </span>
+                </div>
+              </div>
+              {adultEquiv < minGuests && (
+                <p className="mt-2 text-xs text-rose-600 flex items-start gap-1">
+                  <AlertCircle size={12} className="mt-0.5 shrink-0" />
+                  {locale === 'zh'
+                    ? `未達最低消費。需要 ${minGuests} 人計價（成人 + 小童 × 0.5）。`
+                    : `Below minimum charge. Need ${minGuests} adult-equivalent (adults + children × 0.5).`}
+                </p>
+              )}
             </div>
 
             {/* Add-ons */}
@@ -1114,6 +1183,8 @@ export default function BookingPage() {
                       endTime,
                       hours,
                       guestCount,
+                      adultCount,
+                      childCount,
                       isWeekend,
                       addOns: selectedAddOns,
                       hasBYOFood,

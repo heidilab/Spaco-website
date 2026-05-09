@@ -133,7 +133,17 @@ export default function ConfirmBookingPage() {
             <Row icon={<MapPin size={14} />} label={locale === 'zh' ? '場地' : 'Venue'} value={venueName} />
             <Row icon={<CalendarDays size={14} />} label={locale === 'zh' ? '日期' : 'Date'} value={booking.date} />
             <Row icon={<Clock size={14} />} label={locale === 'zh' ? '時間' : 'Time'} value={`${booking.startTime} – ${booking.endTime} (${booking.hours} ${locale === 'zh' ? '小時' : 'hrs'})`} />
-            <Row icon={<Users size={14} />} label={locale === 'zh' ? '人數' : 'Guests'} value={`${booking.guestCount} ${locale === 'zh' ? '人' : 'pax'}`} />
+            <Row
+              icon={<Users size={14} />}
+              label={locale === 'zh' ? '人數' : 'Guests'}
+              value={
+                (booking.childCount ?? 0) > 0
+                  ? (locale === 'zh'
+                      ? `${booking.guestCount} 人 (${booking.adultCount ?? booking.guestCount} 成人 + ${booking.childCount} 小童)`
+                      : `${booking.guestCount} pax (${booking.adultCount ?? booking.guestCount} adults + ${booking.childCount} kids)`)
+                  : `${booking.guestCount} ${locale === 'zh' ? '人' : 'pax'}`
+              }
+            />
             {booking.addOns.length > 0 && (
               <div className="pt-2 border-t border-white/40 space-y-1">
                 <p className="text-xs text-ink-soft">{locale === 'zh' ? '附加服務' : 'Add-ons'}</p>

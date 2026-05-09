@@ -135,6 +135,8 @@ export async function POST(request: NextRequest) {
               startTime: bookingForNotify.startTime,
               endTime: bookingForNotify.endTime,
               guestCount: bookingForNotify.guestCount,
+              adultCount: bookingForNotify.adultCount,
+              childCount: bookingForNotify.childCount,
               customerName: profileForNotify?.displayName || '—',
               customerEmail: profileForNotify?.email,
               whatsappPhone: bookingForNotify.whatsappPhone,

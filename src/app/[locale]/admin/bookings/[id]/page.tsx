@@ -358,7 +358,17 @@ export default function AdminBookingDetailPage() {
             <h2 className="font-bold mb-2">{locale === 'zh' ? '預訂資料' : 'Booking Data'}</h2>
             <Row icon={<CalendarDays size={14} />} label={locale === 'zh' ? '日期' : 'Date'} value={booking.date} />
             <Row icon={<Clock size={14} />} label={locale === 'zh' ? '時段' : 'Time'} value={`${booking.startTime} – ${booking.endTime} (${booking.hours}h)`} />
-            <Row icon={<Users size={14} />} label={locale === 'zh' ? '人數' : 'Guests'} value={`${booking.guestCount}`} />
+            <Row
+              icon={<Users size={14} />}
+              label={locale === 'zh' ? '人數' : 'Guests'}
+              value={
+                (booking.childCount ?? 0) > 0
+                  ? (locale === 'zh'
+                      ? `${booking.guestCount} (${booking.adultCount ?? booking.guestCount} 成人 + ${booking.childCount} 小童)`
+                      : `${booking.guestCount} (${booking.adultCount ?? booking.guestCount} adults + ${booking.childCount} kids)`)
+                  : `${booking.guestCount}`
+              }
+            />
             {booking.addOns && booking.addOns.length > 0 && (
               <Row
                 icon={<Package size={14} />}

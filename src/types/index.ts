@@ -52,6 +52,8 @@ export interface BookingState {
   startTime: string;
   endTime: string;
   guestCount: number;
+  adultCount?: number;
+  childCount?: number;
   addOns: { id: string; quantity: number; options?: AddOnOptions }[];
 }
 
@@ -110,7 +112,16 @@ export interface BookingRecord {
   startTime: string;
   endTime: string;
   hours: number;
+  /** Total head count = adultCount + childCount. Kept for backward
+   *  compatibility with bookings created before the adult/child split. */
   guestCount: number;
+  /** Number of adults (10+ years old). When unset on legacy bookings,
+   *  treat the full guestCount as adults. */
+  adultCount?: number;
+  /** Number of children aged 1–9. They count as 0.5 adult-equivalent
+   *  for minimum-charge calculation and pay half on per-head charges
+   *  (venue rental, BBQ, hotpot, drinks). */
+  childCount?: number;
   isWeekend: boolean;
   addOns: { id: string; quantity: number; options?: AddOnOptions }[];
   hasBYOFood: boolean;
@@ -216,7 +227,16 @@ export interface BookingDraft {
   startTime: string;          // HH:mm
   endTime: string;
   hours: number;
+  /** Total head count = adultCount + childCount. Kept for backward
+   *  compatibility with bookings created before the adult/child split. */
   guestCount: number;
+  /** Number of adults (10+ years old). When unset on legacy bookings,
+   *  treat the full guestCount as adults. */
+  adultCount?: number;
+  /** Number of children aged 1–9. They count as 0.5 adult-equivalent
+   *  for minimum-charge calculation and pay half on per-head charges
+   *  (venue rental, BBQ, hotpot, drinks). */
+  childCount?: number;
   isWeekend: boolean;
   addOns: { id: string; quantity: number; options?: AddOnOptions }[];
   hasBYOFood: boolean;

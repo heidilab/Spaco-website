@@ -378,7 +378,12 @@ function buildEventDescription(b: BookingRecord, customerName?: string, notes?: 
   lines.push(`Booking ID: ${b.id}`);
   if (customerName) lines.push(`姓名: ${customerName}`);
   if (b.whatsappPhone) lines.push(`WhatsApp: ${formatPhone(b.whatsappPhone)}`);
-  if (b.guestCount) lines.push(`人數: ${b.guestCount}`);
+  if (b.guestCount) {
+    const split = (b.adultCount ?? 0) > 0 || (b.childCount ?? 0) > 0
+      ? ` (${b.adultCount ?? b.guestCount} 成人${(b.childCount ?? 0) > 0 ? ` + ${b.childCount} 小童` : ''})`
+      : '';
+    lines.push(`人數: ${b.guestCount}${split}`);
+  }
   if (b.hasBYOFood) lines.push('BYO food');
   const addOnsLine = formatAddOnsForStaff(b.addOns);
   if (addOnsLine) lines.push(`Add-ons: ${addOnsLine}`);

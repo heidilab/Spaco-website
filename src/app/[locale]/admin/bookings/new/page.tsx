@@ -32,7 +32,10 @@ export default function AdminNewBookingPage() {
   const [date, setDate] = useState<string>('');
   const [startTime, setStartTime] = useState<string>('14:00');
   const [hours, setHours] = useState<number>(4);
-  const [guestCount, setGuestCount] = useState<number>(15);
+  const [adultCount, setAdultCount] = useState<number>(15);
+  const [childCount, setChildCount] = useState<number>(0);
+  const guestCount = adultCount + childCount;
+  const adultEquiv = adultCount + 0.5 * childCount;
   const [addOnQty, setAddOnQty] = useState<Record<string, number>>({});
   const [hasBYOFood, setHasBYOFood] = useState<boolean>(false);
 
@@ -78,7 +81,7 @@ export default function AdminNewBookingPage() {
     .map(([id, quantity]) => ({ id, quantity }));
 
   const pricing = venue
-    ? calculatePricing(venue, isWeekend, hours, guestCount, selectedAddOnList)
+    ? calculatePricing(venue, isWeekend, hours, guestCount, selectedAddOnList, childCount)
     : null;
   const deposit = pricing ? calculateDeposit(pricing.subtotal) : 0;
 
@@ -108,6 +111,8 @@ export default function AdminNewBookingPage() {
         endTime,
         hours,
         guestCount,
+        adultCount,
+        childCount,
         isWeekend,
         addOns: selectedAddOnList,
         hasBYOFood,
@@ -345,27 +350,60 @@ export default function AdminNewBookingPage() {
             )}
           </div>
 
-          {/* Guests */}
+          {/* Guests — adults + children split */}
           <div className="glass-card p-6">
             <h3 className="text-base font-bold mb-4 text-ink flex items-center gap-2">
               <Users size={16} className="text-pink" />
               {locale === 'zh' ? '人數' : 'Guests'}
             </h3>
-            <div className="flex items-center gap-2 max-w-xs">
-              <button type="button" onClick={() => setGuestCount(Math.max(1, guestCount - 1))} className="p-2.5 rounded-lg bg-white/85 border-2 border-charcoal/15"><Minus size={14} /></button>
-              <input
-                type="number"
-                min={1}
-                value={guestCount}
-                onChange={(e) => setGuestCount(Math.max(1, parseInt(e.target.value) || 1))}
-                className="flex-1 px-3 py-2.5 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85 text-center font-bold"
-              />
-              <button type="button" onClick={() => setGuestCount(guestCount + 1)} className="p-2.5 rounded-lg bg-white/85 border-2 border-charcoal/15"><Plus size={14} /></button>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold">{locale === 'zh' ? '成人' : 'Adults'}</p>
+                  <p className="text-[11px] text-ink-soft">{locale === 'zh' ? '10 歲或以上' : 'Age 10+'}</p>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button type="button" onClick={() => setAdultCount(Math.max(0, adultCount - 1))} className="p-1.5 rounded-md bg-white/80 border border-charcoal/15"><Minus size={12} /></button>
+                  <input
+                    type="number"
+                    min={0}
+                    value={adultCount}
+                    onChange={(e) => setAdultCount(Math.max(0, parseInt(e.target.value) || 0))}
+                    className="w-16 px-2 py-1.5 rounded-md border border-charcoal/15 text-sm bg-white/80 text-center font-bold"
+                  />
+                  <button type="button" onClick={() => setAdultCount(adultCount + 1)} className="p-1.5 rounded-md bg-white/80 border border-charcoal/15"><Plus size={12} /></button>
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-3 border-t border-white/40 pt-3">
+                <div>
+                  <p className="text-sm font-semibold">{locale === 'zh' ? '小童' : 'Children'}</p>
+                  <p className="text-[11px] text-ink-soft">{locale === 'zh' ? '1-9 歲（半價）' : 'Age 1–9 (half price)'}</p>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button type="button" onClick={() => setChildCount(Math.max(0, childCount - 1))} className="p-1.5 rounded-md bg-white/80 border border-charcoal/15"><Minus size={12} /></button>
+                  <input
+                    type="number"
+                    min={0}
+                    value={childCount}
+                    onChange={(e) => setChildCount(Math.max(0, parseInt(e.target.value) || 0))}
+                    className="w-16 px-2 py-1.5 rounded-md border border-charcoal/15 text-sm bg-white/80 text-center font-bold"
+                  />
+                  <button type="button" onClick={() => setChildCount(childCount + 1)} className="p-1.5 rounded-md bg-white/80 border border-charcoal/15"><Plus size={12} /></button>
+                </div>
+              </div>
             </div>
-            {venue && (guestCount < venue.capacity.min || guestCount > venue.capacity.max) && (
+
+            <div className="mt-3 text-xs text-ink-soft flex items-center justify-between">
+              <span>{locale === 'zh' ? `總人數 ${guestCount}` : `Total ${guestCount}`}</span>
+              <span>{locale === 'zh' ? `計價 ${adultEquiv} 人` : `Charged ${adultEquiv}`}</span>
+            </div>
+            {venue && adultEquiv < venue.capacity.min && (
               <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
                 <AlertCircle size={12} />
-                {locale === 'zh' ? `此場地容納 ${venue.capacity.min}-${venue.capacity.max} 人` : `Capacity ${venue.capacity.min}-${venue.capacity.max}`}
+                {locale === 'zh'
+                  ? `此場地最低消費為 ${venue.capacity.min} 人計價（小童 ½）`
+                  : `Min charge ${venue.capacity.min} adult-equiv (kids ½)`}
               </p>
             )}
           </div>

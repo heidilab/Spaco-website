@@ -45,6 +45,8 @@ export async function POST(req: NextRequest) {
       startTime: booking.startTime,
       endTime: booking.endTime,
       guestCount: booking.guestCount,
+      adultCount: booking.adultCount,
+      childCount: booking.childCount,
       customerName: profile?.displayName || '—',
       customerEmail: profile?.email,
       whatsappPhone: booking.whatsappPhone,

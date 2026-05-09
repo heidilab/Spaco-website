@@ -427,6 +427,8 @@ export function buildStaffBookingNotificationEmail(params: {
   startTime: string;
   endTime: string;
   guestCount: number;
+  adultCount?: number;
+  childCount?: number;
   customerName: string;
   customerEmail?: string;
   whatsappPhone?: string;
@@ -461,7 +463,7 @@ export function buildStaffBookingNotificationEmail(params: {
             <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">場地</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.venueName}</td></tr>
             <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">日期</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.date}</td></tr>
             <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">時段</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.startTime} – ${params.endTime}</td></tr>
-            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">人數</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.guestCount} 人</td></tr>
+            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">人數</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.guestCount} 人${(params.childCount ?? 0) > 0 ? ` (${params.adultCount ?? params.guestCount} 成人 + ${params.childCount} 小童)` : ''}</td></tr>
             ${addOnsRow}
             ${byoRow}
           </table>
