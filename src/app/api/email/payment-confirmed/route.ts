@@ -5,6 +5,8 @@ import { sendAutomatedEmail } from '@/lib/emailAutomations';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
 import { getVenueById } from '@/lib/venues';
 import { formatAddOnsForStaff } from '@/lib/pricing';
+import { deductLoyaltyPoints } from '@/lib/loyaltyServer';
+import { FieldValue } from 'firebase-admin/firestore';
 import type { BookingRecord } from '@/types';
 
 export const runtime = 'nodejs';
@@ -45,6 +47,8 @@ export async function POST(req: NextRequest) {
       childCount: booking.childCount,
       subtotal: booking.pricing.subtotal,
       deposit: booking.pricing.deposit,
+      pointsUsed: booking.pointsUsed,
+      pointsDiscount: booking.pointsDiscount,
       balanceDue: booking.balanceDue,
       balanceDueDate: booking.balanceDueDate,
       addOnsLine: formatAddOnsForStaff(booking.addOns, 'zh'),
@@ -57,6 +61,19 @@ export async function POST(req: NextRequest) {
       subject: tpl.subject,
       html: tpl.html,
     });
+
+    // Deduct loyalty points (idempotent — only fires once per booking).
+    if (booking.pointsUsed && booking.pointsUsed > 0 && !booking.pointsRedeemedAt) {
+      try {
+        const deducted = await deductLoyaltyPoints(booking.userId, booking.pointsUsed);
+        await adminDb.collection('bookings').doc(bookingId).update({
+          pointsRedeemedAt: FieldValue.serverTimestamp(),
+          pointsActuallyDeducted: deducted,
+        });
+      } catch (err) {
+        console.warn('[payment-confirmed] points deduction failed:', err);
+      }
+    }
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error('[payment-confirmed] failed:', err);

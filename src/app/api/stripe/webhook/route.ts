@@ -8,6 +8,7 @@ import { getVenueById } from '@/lib/venues';
 import { processBookingForLockAccess } from '@/lib/lockPasscode';
 import { pushBookingToCalendar } from '@/lib/googleCalendar';
 import { formatAddOnsForStaff } from '@/lib/pricing';
+import { deductLoyaltyPoints } from '@/lib/loyaltyServer';
 import type { BookingRecord, UserProfile } from '@/types';
 
 export const runtime = 'nodejs';
@@ -45,6 +46,22 @@ export async function POST(request: NextRequest) {
         }
         await bookingRef.update(updates);
 
+        // 1b. If the customer redeemed loyalty points on this booking,
+        //     deduct them from the user's balance now (transactional —
+        //     caps at current balance to prevent going negative even
+        //     under concurrent redemption).
+        try {
+          const preNotifySnap = await bookingRef.get();
+          const preBooking = preNotifySnap.data() as BookingRecord | undefined;
+          if (preBooking?.pointsUsed && preBooking.pointsUsed > 0 && !isBalancePayment) {
+            const deducted = await deductLoyaltyPoints(preBooking.userId, preBooking.pointsUsed);
+            await bookingRef.update({ pointsRedeemedAt: FieldValue.serverTimestamp(), pointsActuallyDeducted: deducted });
+          }
+        } catch (err) {
+          console.warn('[stripe webhook] points deduction failed:', err);
+          // Non-fatal — booking is already confirmed; admin can reconcile.
+        }
+
         // 2. Send confirmation email to the customer.
         try {
           const bookingSnap = await bookingRef.get();
@@ -74,6 +91,8 @@ export async function POST(request: NextRequest) {
                 childCount: booking.childCount,
                 subtotal: booking.pricing.subtotal,
                 deposit: booking.pricing.deposit,
+                pointsUsed: booking.pointsUsed,
+                pointsDiscount: booking.pointsDiscount,
                 balanceDue: booking.balanceDue,
                 balanceDueDate: booking.balanceDueDate,
                 addOnsLine: formatAddOnsForStaff(booking.addOns, 'zh'),

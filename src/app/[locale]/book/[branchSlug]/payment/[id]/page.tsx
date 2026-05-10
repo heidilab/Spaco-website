@@ -72,12 +72,16 @@ export default function PaymentMethodPage() {
       await updateBookingPaymentMethod(booking.id, selected);
 
       if (selected === 'stripe') {
+        // Customer's loyalty redemption (set on the confirm page) reduces
+        // the actual amount we charge.
+        const pointsDiscount = booking.pointsDiscount || 0;
+        const chargeAmount = Math.max(1, booking.pricing.deposit - pointsDiscount);
         const res = await fetch('/api/stripe/checkout', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             bookingId: booking.id,
-            amount: booking.pricing.deposit,
+            amount: chargeAmount,
             deposit: booking.pricing.deposit,
             venueName,
             customerEmail: user?.email,

@@ -152,6 +152,21 @@ export interface BookingRecord {
     /** Amount due upfront to confirm: full grandTotal if ≤ HK$10k, else 50%. */
     deposit: number;
   };
+  /** Loyalty points used to reduce the upfront amount. 100 pts = HK$1.
+   *  Validated at booking creation; deducted from the user balance when
+   *  payment is confirmed (Stripe webhook / admin offline confirm). */
+  pointsUsed?: number;
+  /** HK$ value of the points redemption (= floor(pointsUsed / 100)).
+   *  Subtracted from `pricing.deposit` when computing the actual amount
+   *  charged at checkout. Stored separately so admin can audit. */
+  pointsDiscount?: number;
+  /** Set by the payment-confirmation handler once the points have been
+   *  taken out of the user's balance. Used to make the deduction
+   *  idempotent across retries. */
+  pointsRedeemedAt?: unknown;
+  /** Actual amount deducted (capped at the customer's balance at the
+   *  time of deduction; may be < pointsUsed under concurrent race). */
+  pointsActuallyDeducted?: number;
   status: 'pending' | 'awaiting_payment' | 'awaiting_review' | 'confirmed' | 'completed' | 'cancelled';
   paymentMethod: 'fps' | 'stripe' | 'bank' | null;
   receiptUrl: string | null;

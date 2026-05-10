@@ -407,6 +407,19 @@ export async function redeemLoyaltyPoints(userId: string, pointsToUse: number): 
   return true;
 }
 
+/** Loyalty redemption helpers shared between checkout UI + admin display. */
+export const POINTS_PER_HKD = 100; // 100 pts = HK$1
+
+/** Convert points to HK$ value (floor). */
+export function pointsToHkd(points: number): number {
+  return Math.floor(points / POINTS_PER_HKD);
+}
+
+/** Convert HK$ to points (× 100). */
+export function hkdToPoints(hkd: number): number {
+  return Math.max(0, Math.floor(hkd) * POINTS_PER_HKD);
+}
+
 // ============ RECEIPT UPLOAD ============
 
 export async function updateBookingReceipt(bookingId: string, receiptUrl: string) {

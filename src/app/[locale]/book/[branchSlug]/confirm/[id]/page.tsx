@@ -5,11 +5,16 @@ import { useLocale } from 'next-intl';
 import { useParams } from 'next/navigation';
 import { useRouter } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
-import { getBooking, updateBookingRefundDetails } from '@/lib/firestore';
+import {
+  getBooking, updateBookingRefundDetails, getUserProfile,
+  POINTS_PER_HKD, pointsToHkd,
+} from '@/lib/firestore';
+import { doc, updateDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import { getVenueById } from '@/lib/venues';
 import { addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE } from '@/lib/pricing';
 import { BookingRecord, RefundDetails } from '@/types';
-import { CalendarDays, Clock, Users, MapPin, ArrowRight } from 'lucide-react';
+import { CalendarDays, Clock, Users, MapPin, ArrowRight, Sparkles } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 export default function ConfirmBookingPage() {
@@ -25,6 +30,12 @@ export default function ConfirmBookingPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Loyalty point redemption — points balance loaded from user profile.
+  const [pointsBalance, setPointsBalance] = useState<number>(0);
+  // Customer-chosen amount of HK$ to redeem (live state). Capped by both
+  // their balance and the remaining payable amount.
+  const [redeemHkd, setRedeemHkd] = useState<number>(0);
+
   // Refund details form state
   const [method, setMethod] = useState<'fps' | 'bank'>('fps');
   const [fpsIdentifier, setFpsIdentifier] = useState('');
@@ -38,8 +49,11 @@ export default function ConfirmBookingPage() {
       router.push('/');
       return;
     }
-    getBooking(bookingId)
-      .then((b) => {
+    Promise.all([
+      getBooking(bookingId),
+      getUserProfile(user.uid).catch(() => null),
+    ])
+      .then(([b, profile]) => {
         if (!b) {
           setError(locale === 'zh' ? '找不到預訂記錄' : 'Booking not found');
         } else if (b.userId !== user.uid) {
@@ -53,6 +67,11 @@ export default function ConfirmBookingPage() {
             setAccountHolderName(b.refundDetails.accountHolderName || '');
             setAccountNumber(b.refundDetails.accountNumber || '');
           }
+          // Restore previous redemption if the user came back to this page.
+          if (b.pointsDiscount && b.pointsDiscount > 0) setRedeemHkd(b.pointsDiscount);
+        }
+        if (profile) {
+          setPointsBalance((profile as { loyaltyPoints?: number }).loyaltyPoints || 0);
         }
       })
       .finally(() => setLoading(false));
@@ -81,6 +100,12 @@ export default function ConfirmBookingPage() {
   const isFullPayment = grandTotal <= 10000;
   const balanceDue = Math.max(0, grandTotal - booking.pricing.deposit);
 
+  // Redemption math — keep at least HK$1 charged so Stripe minimum holds.
+  const maxRedeemHkd = Math.min(pointsToHkd(pointsBalance), Math.max(0, booking.pricing.deposit - 1));
+  const clampedRedeem = Math.max(0, Math.min(redeemHkd, maxRedeemHkd));
+  const pointsUsed = clampedRedeem * POINTS_PER_HKD;
+  const dueNow = booking.pricing.deposit - clampedRedeem;
+
   const refundReady =
     method === 'fps'
       ? fpsIdentifier.trim().length > 0
@@ -102,6 +127,11 @@ export default function ConfirmBookingPage() {
               accountNumber: accountNumber.trim(),
             };
       await updateBookingRefundDetails(booking.id, refundDetails);
+      // Persist points redemption (or clear it if user chose 0).
+      await updateDoc(doc(db, 'bookings', booking.id), {
+        pointsUsed: pointsUsed > 0 ? pointsUsed : null,
+        pointsDiscount: clampedRedeem > 0 ? clampedRedeem : null,
+      });
       router.push(`/book/${slug}/payment/${booking.id}`);
     } catch (err) {
       console.error(err);
@@ -197,14 +227,26 @@ export default function ConfirmBookingPage() {
                 <span>{locale === 'zh' ? '總計' : 'Grand total'}</span>
                 <span>HK${grandTotal.toLocaleString()}</span>
               </div>
-              <div className="flex justify-between text-base pt-2">
+              <div className="flex justify-between text-sm">
                 <span className="text-ink-soft">
                   {isFullPayment
                     ? (locale === 'zh' ? '應付（全數）' : 'Due now (full)')
                     : (locale === 'zh' ? '應付（50%）' : 'Due now (50%)')}
                 </span>
+                <span className="font-medium">HK${booking.pricing.deposit.toLocaleString()}</span>
+              </div>
+              {clampedRedeem > 0 && (
+                <div className="flex justify-between text-sm text-pink">
+                  <span>− {locale === 'zh' ? '積分抵扣' : 'Points redemption'}</span>
+                  <span>−HK${clampedRedeem.toLocaleString()}</span>
+                </div>
+              )}
+              <div className="flex justify-between text-base pt-2 border-t border-white/40">
+                <span className="text-ink-soft font-semibold">
+                  {locale === 'zh' ? '即時應付' : 'Pay now'}
+                </span>
                 <span className="font-bold text-gradient-pink text-xl">
-                  HK${booking.pricing.deposit.toLocaleString()}
+                  HK${dueNow.toLocaleString()}
                 </span>
               </div>
               {!isFullPayment && (
@@ -215,6 +257,76 @@ export default function ConfirmBookingPage() {
               )}
             </div>
           </div>
+
+          {/* Loyalty point redemption */}
+          {pointsBalance > 0 && (
+            <div className="glass-card p-7 space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-gradient-pink flex items-center justify-center text-white shrink-0">
+                  <Sparkles size={18} />
+                </div>
+                <div className="flex-1">
+                  <h2 className="font-bold text-lg">{locale === 'zh' ? '用積分抵扣' : 'Redeem Loyalty Points'}</h2>
+                  <p className="text-xs text-ink-soft mt-1">
+                    {locale === 'zh'
+                      ? `你有 ${pointsBalance.toLocaleString()} 分（= HK$${pointsToHkd(pointsBalance).toLocaleString()}）。${POINTS_PER_HKD} 分 = HK$1。`
+                      : `You have ${pointsBalance.toLocaleString()} pts (= HK$${pointsToHkd(pointsBalance).toLocaleString()}). ${POINTS_PER_HKD} pts = HK$1.`}
+                  </p>
+                </div>
+              </div>
+
+              {maxRedeemHkd === 0 ? (
+                <p className="text-sm text-ink-soft">
+                  {locale === 'zh' ? '今次預訂金額太細，未夠用積分。' : 'Booking amount too small to redeem points.'}
+                </p>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-ink-soft">
+                        {locale === 'zh' ? '想用幾多 HK$？' : 'Redeem how much?'}
+                      </span>
+                      <span className="font-bold text-pink">
+                        HK${clampedRedeem.toLocaleString()}{' '}
+                        <span className="text-xs text-ink-soft font-normal">
+                          ({pointsUsed.toLocaleString()} {locale === 'zh' ? '分' : 'pts'})
+                        </span>
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={maxRedeemHkd}
+                      step={1}
+                      value={clampedRedeem}
+                      onChange={(e) => setRedeemHkd(parseInt(e.target.value, 10) || 0)}
+                      className="w-full accent-pink"
+                    />
+                    <div className="flex items-center justify-between text-xs text-ink-soft">
+                      <span>HK$0</span>
+                      <span>{locale === 'zh' ? `上限 HK$${maxRedeemHkd.toLocaleString()}` : `Max HK$${maxRedeemHkd.toLocaleString()}`}</span>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setRedeemHkd(0)}
+                      className="px-3 py-1.5 rounded-pill text-xs bg-white/70 border border-charcoal/15 hover:bg-white"
+                    >
+                      {locale === 'zh' ? '清除' : 'Clear'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRedeemHkd(maxRedeemHkd)}
+                      className="px-3 py-1.5 rounded-pill text-xs bg-pink/10 text-pink border border-pink/20 hover:bg-pink/20"
+                    >
+                      {locale === 'zh' ? `用盡 (HK$${maxRedeemHkd.toLocaleString()})` : `Max (HK$${maxRedeemHkd.toLocaleString()})`}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           {/* Refund form */}
           <div className="glass-card p-7 space-y-4">

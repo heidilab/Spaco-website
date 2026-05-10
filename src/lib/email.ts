@@ -265,6 +265,10 @@ export function buildBookingConfirmationEmail(params: {
   childCount?: number;
   subtotal: number;
   deposit: number;
+  /** Loyalty points redeemed at checkout. When > 0, a violet line shows
+   *  the points used and the HK$ value subtracted from the upfront. */
+  pointsUsed?: number;
+  pointsDiscount?: number;
   /** Outstanding balance for high-value bookings paying 50% upfront.
    *  When > 0, a yellow notice with due date appears. */
   balanceDue?: number;
@@ -324,7 +328,8 @@ export function buildBookingConfirmationEmail(params: {
           <h3 style="margin: 22px 0 12px; font-size: 14px; color: ${EMAIL_INK}; letter-spacing: 0.04em; text-transform: uppercase;">💰 金額</h3>
           <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
             <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">小計</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">HK$${params.subtotal.toLocaleString()}</td></tr>
-            <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">已收</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">HK$${params.deposit.toLocaleString()}</td></tr>
+            ${(params.pointsDiscount ?? 0) > 0 ? `<tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #6D28D9; font-size: 13px;">✨ 積分抵扣</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600; color: #6D28D9;">−HK$${params.pointsDiscount!.toLocaleString()} (${(params.pointsUsed || 0).toLocaleString()} 分)</td></tr>` : ''}
+            <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">已收</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">HK$${(params.deposit - (params.pointsDiscount || 0)).toLocaleString()}</td></tr>
             <tr><td style="padding: 10px 0; color: #999; font-size: 13px;">付款方式</td><td style="padding: 10px 0; text-align: right; font-weight: 600;">${params.paymentMethod}</td></tr>
           </table>
         </div>

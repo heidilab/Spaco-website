@@ -382,6 +382,14 @@ export default function AdminBookingDetailPage() {
             )}
             <Row label={locale === 'zh' ? '小計' : 'Subtotal'} value={`HK$${booking.pricing.subtotal.toLocaleString()}`} />
             <Row label={locale === 'zh' ? '按金' : 'Deposit'} value={`HK$${booking.pricing.deposit.toLocaleString()}`} />
+            {(booking.pointsUsed ?? 0) > 0 && (
+              <Row
+                icon={<Sparkles size={14} />}
+                label={locale === 'zh' ? '積分抵扣' : 'Points redeemed'}
+                value={`−HK$${(booking.pointsDiscount || 0).toLocaleString()} (${booking.pointsUsed!.toLocaleString()} ${locale === 'zh' ? '分' : 'pts'})`}
+                highlight="violet"
+              />
+            )}
             {(booking.balanceDue ?? 0) > 0 && (
               <Row label={locale === 'zh' ? '欠尾數' : 'Balance due'} value={`HK$${booking.balanceDue!.toLocaleString()}`} highlight="amber" />
             )}
