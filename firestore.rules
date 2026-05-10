@@ -129,6 +129,14 @@ service cloud.firestore {
       allow read, write: if isStaff();
     }
 
+    // ───── Promo codes ─────
+    // Admin-only management. Customers validate codes via a server route
+    // (Admin SDK) so they never need direct read access; this keeps the
+    // catalog private (no enumeration of unused codes from the client).
+    match /promo_codes/{id} {
+      allow read, write: if isStaff();
+    }
+
     // Default deny — fallthrough.
     match /{document=**} {
       allow read, write: if false;

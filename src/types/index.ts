@@ -328,6 +328,47 @@ export interface CalendarEvent {
   updatedAt?: unknown;
 }
 
+// ============ Promo Codes ============
+
+/** Four supported promo code types:
+ *   • percent — e.g. "88 折" (12% off subtotal)
+ *   • cash    — fixed HK$ amount off (optional minimum subtotal)
+ *   • free_drinks — Drinks add-on becomes free (other surcharges unchanged)
+ *   • per_pax — fixed HK$ off per adult-equivalent
+ */
+export type PromoCodeType = 'percent' | 'cash' | 'free_drinks' | 'per_pax';
+
+export interface PromoCode {
+  id: string;
+  /** Customer-typed code (case-insensitive but stored upper-cased). */
+  code: string;
+  type: PromoCodeType;
+  /** For 'percent': discount percent 0-100. e.g. 12 means 12% off. */
+  percent?: number;
+  /** For 'cash' + 'per_pax': HK$ amount. */
+  amount?: number;
+  /** For 'cash': customer's subtotal must be ≥ this to qualify. 0/null = no min. */
+  minSubtotal?: number;
+  /** Inclusive start date (YYYY-MM-DD). Null = active immediately. */
+  startDate?: string | null;
+  /** Inclusive end date (YYYY-MM-DD). Null = no expiry. */
+  endDate?: string | null;
+  /** Total number of times the code can be redeemed across all customers.
+   *  Null = unlimited. */
+  totalUsageLimit?: number | null;
+  /** How many bookings have used this code so far. Auto-incremented at
+   *  booking-confirmation time. */
+  totalUsageCount: number;
+  /** How many times each user can use the code. Default 1. Null = unlimited. */
+  perUserLimit?: number | null;
+  /** Whether the code is enabled. Disabled codes won't validate at checkout. */
+  enabled: boolean;
+  /** Optional human-friendly description shown in the admin list. */
+  description?: string;
+  createdAt: unknown;
+  updatedAt?: unknown;
+}
+
 // ============ CMS Types ============
 
 export type StaffRole = 'admin' | 'cs' | 'cleaner' | 'marketing';
