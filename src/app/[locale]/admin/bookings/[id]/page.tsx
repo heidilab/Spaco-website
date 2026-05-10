@@ -10,6 +10,8 @@ import {
   getUserProfile,
   updateBookingDateTime,
   updateBookingStatus,
+  updateBookingDepositRefund,
+  creditLoyaltyPoints,
 } from '@/lib/firestore';
 import { BookingRecord, UserProfile } from '@/types';
 import { venues } from '@/lib/venues';
@@ -18,7 +20,19 @@ import { buildWhatsAppLink, formatHkPhone } from '@/lib/whatsapp';
 import {
   ArrowLeft, CalendarDays, Clock, Users, Save, MessageCircle,
   Mail, Phone, User as UserIcon, Sparkles, AlertCircle, CalendarPlus, Package,
+  Calculator, Plus, Minus,
 } from 'lucide-react';
+
+// Standard fixed deductions — same set as /admin/deposit so the
+// inline form stays in lockstep with the dedicated page.
+const FIXED_DEDUCTIONS = [
+  { id: 'oven', label: { zh: '沒有關閉焗爐', en: 'Oven not turned off' }, amount: 2000 },
+  { id: 'ac', label: { zh: '沒有關閉冷氣', en: 'AC not turned off' }, amount: 800 },
+  { id: 'lights', label: { zh: '沒有關閉電燈', en: 'Lights not turned off' }, amount: 500 },
+  { id: 'cookware', label: { zh: '沒有清洗爐具', en: 'Cookware not cleaned' }, amount: 500 },
+  { id: 'mess', label: { zh: '嘔吐物/場地髒亂', en: 'Vomit/venue mess' }, amount: 800 },
+  { id: 'ballpit', label: { zh: '波波池飲食違規', en: 'Ball pit food violation' }, amount: 1500 },
+];
 
 const statusLabels: Record<string, { zh: string; en: string }> = {
   pending: { zh: '待處理', en: 'Pending' },
@@ -56,6 +70,13 @@ export default function AdminBookingDetailPage() {
   // Google was disconnected, or that were created via admin without auto-sync).
   const [pushing, setPushing] = useState(false);
   const [pushMsg, setPushMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  // Deposit settlement state — admin inputs deductions after the event,
+  // saves once, system marks booking completed + credits loyalty points.
+  const [selectedFixed, setSelectedFixed] = useState<string[]>([]);
+  const [customDeductions, setCustomDeductions] = useState<{ label: string; amount: number }[]>([]);
+  const [settling, setSettling] = useState(false);
+  const [settleMsg, setSettleMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   useEffect(() => {
     if (!canAccess) {
@@ -135,6 +156,65 @@ export default function AdminBookingDetailPage() {
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  /** Sum of fixed + custom deductions (HK$). */
+  function totalDeductions(): number {
+    const fixed = selectedFixed.reduce((sum, id) => {
+      const item = FIXED_DEDUCTIONS.find((d) => d.id === id);
+      return sum + (item?.amount || 0);
+    }, 0);
+    const custom = customDeductions.reduce((sum, d) => sum + (d.amount || 0), 0);
+    return fixed + custom;
+  }
+
+  async function handleSettleDeposit() {
+    if (!booking) return;
+    setSettling(true);
+    setSettleMsg(null);
+    try {
+      const securityDeposit = booking.pricing.securityDeposit ?? 0;
+      const total = totalDeductions();
+      const refundAmount = Math.max(0, securityDeposit - total);
+
+      const deductions = [
+        ...selectedFixed.map((id) => {
+          const item = FIXED_DEDUCTIONS.find((d) => d.id === id)!;
+          return { label: item.label[locale], amount: item.amount };
+        }),
+        ...customDeductions.filter((d) => d.label && d.amount > 0),
+      ];
+
+      await updateBookingDepositRefund(booking.id, { amount: refundAmount, deductions });
+
+      // Credit loyalty points: subtotal (rental + add-ons) + deducted
+      // deposit (forfeited security deposit counts as additional spend
+      // per product spec). 1 HK$ = 1 point.
+      let creditedPoints = 0;
+      if (booking.userId) {
+        const points = booking.pricing.subtotal + total;
+        creditedPoints = await creditLoyaltyPoints(booking.userId, points);
+      }
+
+      setSettleMsg({
+        kind: 'ok',
+        text: locale === 'zh'
+          ? `✓ 結算完成。退款 HK$${refundAmount.toLocaleString()}，已 credit ${creditedPoints.toLocaleString()} 積分。`
+          : `✓ Settled. Refund HK$${refundAmount.toLocaleString()}; credited ${creditedPoints.toLocaleString()} pts.`,
+      });
+      const fresh = await getBooking(booking.id);
+      if (fresh) setBooking(fresh);
+      setSelectedFixed([]);
+      setCustomDeductions([]);
+    } catch (err) {
+      setSettleMsg({
+        kind: 'err',
+        text: (locale === 'zh' ? '結算失敗：' : 'Settle failed: ') +
+          (err instanceof Error ? err.message : 'unknown'),
+      });
+    } finally {
+      setSettling(false);
     }
   }
 
@@ -405,6 +485,25 @@ export default function AdminBookingDetailPage() {
               <Row label={locale === 'zh' ? '門鎖密碼' : 'Lock passcode'} value={booking.lockPasscode.passcode} highlight="emerald" />
             )}
           </div>
+
+          {/* Deposit Settlement — admin inputs deductions after the
+           *  event, system marks completed + credits loyalty points.
+           *  Already-settled bookings show a read-only summary with
+           *  the option to re-open. */}
+          {(booking.status === 'confirmed' || booking.status === 'completed') && (booking.pricing.securityDeposit ?? 0) > 0 && (
+            <DepositSettlement
+              booking={booking}
+              locale={locale}
+              selectedFixed={selectedFixed}
+              setSelectedFixed={setSelectedFixed}
+              customDeductions={customDeductions}
+              setCustomDeductions={setCustomDeductions}
+              total={totalDeductions()}
+              settling={settling}
+              settleMsg={settleMsg}
+              onSettle={handleSettleDeposit}
+            />
+          )}
         </div>
 
         {/* RIGHT — member info */}
@@ -518,6 +617,205 @@ function Row({
         {icon} {label}
       </span>
       <span className={`font-medium text-right ${color}`}>{value}</span>
+    </div>
+  );
+}
+
+interface DepositSettlementProps {
+  booking: BookingRecord;
+  locale: 'zh' | 'en';
+  selectedFixed: string[];
+  setSelectedFixed: (s: string[]) => void;
+  customDeductions: { label: string; amount: number }[];
+  setCustomDeductions: (d: { label: string; amount: number }[]) => void;
+  total: number;
+  settling: boolean;
+  settleMsg: { kind: 'ok' | 'err'; text: string } | null;
+  onSettle: () => void;
+}
+
+function DepositSettlement(props: DepositSettlementProps) {
+  const {
+    booking, locale, selectedFixed, setSelectedFixed,
+    customDeductions, setCustomDeductions, total, settling, settleMsg, onSettle,
+  } = props;
+  const securityDeposit = booking.pricing.securityDeposit ?? 0;
+  const refundAmount = Math.max(0, securityDeposit - total);
+  const alreadySettled = !!booking.depositRefund;
+
+  // Past-event check: settlement should only be done after the event.
+  const endMs = new Date(`${booking.date}T${booking.endTime}:00+08:00`).getTime();
+  const isAfterEvent = Date.now() >= endMs;
+
+  function toggleFixed(id: string) {
+    setSelectedFixed(selectedFixed.includes(id)
+      ? selectedFixed.filter((x) => x !== id)
+      : [...selectedFixed, id]);
+  }
+  function addCustom() {
+    setCustomDeductions([...customDeductions, { label: '', amount: 0 }]);
+  }
+  function updateCustom(i: number, field: 'label' | 'amount', val: string | number) {
+    const updated = [...customDeductions];
+    if (field === 'amount') updated[i].amount = Number(val);
+    else updated[i].label = val as string;
+    setCustomDeductions(updated);
+  }
+  function removeCustom(i: number) {
+    setCustomDeductions(customDeductions.filter((_, idx) => idx !== i));
+  }
+
+  return (
+    <div className="glass-card p-6 space-y-4">
+      <div className="flex items-center gap-2">
+        <Calculator size={16} className="text-pink" />
+        <h2 className="font-bold">{locale === 'zh' ? '按金結算' : 'Deposit Settlement'}</h2>
+      </div>
+
+      {alreadySettled ? (
+        <div className="space-y-2 text-sm">
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+            <p className="font-semibold text-emerald-700 mb-1">
+              {locale === 'zh' ? '✓ 已結算' : '✓ Settled'}
+            </p>
+            <p className="text-xs text-emerald-700">
+              {locale === 'zh' ? '退款金額：' : 'Refund: '}HK${(booking.depositRefund as { amount?: number })?.amount?.toLocaleString() || 0}
+            </p>
+          </div>
+          {(booking.depositRefund as { deductions?: { label: string; amount: number }[] })?.deductions?.length ? (
+            <ul className="text-xs text-ink-soft space-y-1 pl-4 list-disc">
+              {(booking.depositRefund as { deductions?: { label: string; amount: number }[] }).deductions!.map((d, i) => (
+                <li key={i}>{d.label} −HK${d.amount.toLocaleString()}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-ink-soft">{locale === 'zh' ? '無扣費' : 'No deductions'}</p>
+          )}
+        </div>
+      ) : (
+        <>
+          {!isAfterEvent && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 flex items-start gap-1.5">
+              <AlertCircle size={12} className="text-amber-600 mt-0.5 shrink-0" />
+              <p className="text-xs text-amber-800">
+                {locale === 'zh'
+                  ? '活動仲未完成。可以預先選定扣費，但建議活動結束後先確認結算。'
+                  : 'Event hasn\'t ended yet. You can pre-select deductions, but it\'s safer to confirm after the event.'}
+              </p>
+            </div>
+          )}
+
+          <div className="bg-cream/60 rounded-xl p-3 text-sm">
+            <p className="text-xs text-ink-soft">{locale === 'zh' ? '原始按金' : 'Original deposit'}</p>
+            <p className="text-xl font-bold">HK${securityDeposit.toLocaleString()}</p>
+          </div>
+
+          {/* Fixed deductions */}
+          <div>
+            <p className="text-xs font-semibold text-ink-soft uppercase tracking-wider mb-2">
+              {locale === 'zh' ? '固定扣費' : 'Fixed deductions'}
+            </p>
+            <div className="space-y-1.5">
+              {FIXED_DEDUCTIONS.map((item) => (
+                <label
+                  key={item.id}
+                  className={`flex items-center justify-between p-2.5 rounded-lg border cursor-pointer text-sm transition-colors ${
+                    selectedFixed.includes(item.id)
+                      ? 'border-rose-300 bg-rose-50'
+                      : 'border-charcoal/10 bg-white/60 hover:bg-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedFixed.includes(item.id)}
+                      onChange={() => toggleFixed(item.id)}
+                      className="w-4 h-4 accent-rose-500"
+                    />
+                    <span>{item.label[locale]}</span>
+                  </div>
+                  <span className="font-medium text-rose-600">−HK${item.amount.toLocaleString()}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Custom deductions */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
+                {locale === 'zh' ? '自訂扣費' : 'Custom'}
+              </p>
+              <button onClick={addCustom} className="text-xs text-pink hover:underline flex items-center gap-1">
+                <Plus size={12} /> {locale === 'zh' ? '新增' : 'Add'}
+              </button>
+            </div>
+            {customDeductions.map((item, i) => (
+              <div key={i} className="flex gap-2 mb-2">
+                <input
+                  type="text"
+                  value={item.label}
+                  onChange={(e) => updateCustom(i, 'label', e.target.value)}
+                  placeholder={locale === 'zh' ? '說明' : 'Description'}
+                  className="flex-1 px-2.5 py-1.5 rounded-lg border border-charcoal/15 text-xs"
+                />
+                <input
+                  type="number"
+                  value={item.amount || ''}
+                  onChange={(e) => updateCustom(i, 'amount', e.target.value)}
+                  placeholder="$"
+                  className="w-20 px-2.5 py-1.5 rounded-lg border border-charcoal/15 text-xs"
+                />
+                <button onClick={() => removeCustom(i)} className="w-8 h-8 rounded-lg bg-rose-50 text-rose-500 flex items-center justify-center">
+                  <Minus size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* Summary */}
+          <div className="border-t border-white/40 pt-3 space-y-1 text-sm">
+            <div className="flex justify-between">
+              <span className="text-ink-soft">{locale === 'zh' ? '總扣費' : 'Total deductions'}</span>
+              <span className="text-rose-600 font-medium">−HK${total.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between font-bold">
+              <span>{locale === 'zh' ? '退還客人' : 'Refund to customer'}</span>
+              <span className="text-emerald-600">HK${refundAmount.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between text-xs text-ink-soft">
+              <span>{locale === 'zh' ? '會員 credit 積分' : 'Loyalty points credit'}</span>
+              <span>+{(booking.pricing.subtotal + total).toLocaleString()} {locale === 'zh' ? '分' : 'pts'}</span>
+            </div>
+          </div>
+
+          {settleMsg && (
+            <div className={`text-xs rounded-lg px-3 py-2 ${
+              settleMsg.kind === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
+            }`}>
+              {settleMsg.text}
+            </div>
+          )}
+
+          <button
+            onClick={onSettle}
+            disabled={settling}
+            className="w-full btn-primary justify-center disabled:opacity-50 flex items-center gap-2"
+          >
+            {settling ? '...' : (
+              <>
+                <Calculator size={14} />
+                {locale === 'zh' ? '確認結算 · 退款 + 加積分' : 'Confirm settlement'}
+              </>
+            )}
+          </button>
+          <p className="text-[11px] text-ink-soft leading-relaxed">
+            {locale === 'zh'
+              ? '退還按金部分需離線轉帳客人。系統會自動：(1) 將預訂標記為「已完成」 (2) credit 積分（小計 + 已扣按金）。'
+              : 'Refund the customer offline. System will: (1) mark booking completed (2) credit points (subtotal + deducted deposit).'}
+          </p>
+        </>
+      )}
     </div>
   );
 }

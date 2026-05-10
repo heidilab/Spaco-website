@@ -71,8 +71,11 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
-      // Points earned this booking (mirrors creditLoyaltyPoints logic).
-      const pointsEarned = Math.max(0, Math.floor(booking.pricing.subtotal - booking.pricing.deposit));
+      // Points earned forecast: rental + add-ons (excluding security
+      // deposit). Admin's deposit settlement may credit a higher
+      // amount later if part of the security deposit was kept; the
+      // customer will see the actual balance when they next check.
+      const pointsEarned = Math.max(0, Math.floor(booking.pricing.subtotal));
       const venue = getVenueById(booking.venueId);
 
       const tpl = buildPostEventEmail({

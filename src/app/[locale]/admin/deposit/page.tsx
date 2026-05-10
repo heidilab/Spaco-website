@@ -99,13 +99,12 @@ export default function AdminDepositPage() {
       deductions,
     });
 
-    // Auto-credit loyalty points (total minus deposit)
+    // Auto-credit loyalty points: $1 spent = 1 pt. Spending = rental
+    // + add-ons (subtotal) PLUS any deducted security deposit (kept
+    // by SPACO counts as additional spending per product spec).
     if (selectedBooking.userId) {
-      await creditLoyaltyPoints(
-        selectedBooking.userId,
-        selectedBooking.pricing.subtotal,
-        selectedBooking.pricing.deposit
-      );
+      const points = selectedBooking.pricing.subtotal + totalDeductions();
+      await creditLoyaltyPoints(selectedBooking.userId, points);
     }
 
     setSaving(false);

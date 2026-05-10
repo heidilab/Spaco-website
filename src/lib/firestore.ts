@@ -376,9 +376,15 @@ export async function updateBookingReceiptUploaded(
 
 // ============ LOYALTY POINTS ============
 
-export async function creditLoyaltyPoints(userId: string, bookingTotal: number, deposit: number) {
-  // Points = total minus deposit, $1 = 1 point
-  const pointsToAdd = Math.floor(bookingTotal - deposit);
+/** Credit N loyalty points to a user. 100 pts = HK$1 (rate set per
+ *  product spec: $1 spent = 1 point). Caller is responsible for
+ *  computing the correct amount — typically:
+ *      subtotal (rental + add-ons, excludes security deposit)
+ *      + any portion of the security deposit that was forfeited
+ *        (kept by SPACO as cleaning/damage deduction)
+ *  Returns the actual amount credited. */
+export async function creditLoyaltyPoints(userId: string, points: number): Promise<number> {
+  const pointsToAdd = Math.floor(points);
   if (pointsToAdd <= 0) return 0;
 
   const userRef = doc(db, 'users', userId);
