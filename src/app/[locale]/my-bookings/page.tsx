@@ -10,7 +10,7 @@ import { BookingRecord } from '@/types';
 import { venues } from '@/lib/venues';
 import { generateWhatsAppLink } from '@/lib/email';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
-import { CalendarDays, Clock, Users, Upload, MessageCircle, CreditCard, AlertCircle } from 'lucide-react';
+import { CalendarDays, Clock, Users, Upload, MessageCircle, CreditCard, AlertCircle, ChevronRight } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Link } from '@/i18n/routing';
 import AuthModal from '@/components/auth/AuthModal';
@@ -218,7 +218,13 @@ function BookingCard({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.05 }}
-      className="glass-card p-6"
+      className="glass-card p-6 cursor-pointer hover:bg-white/40 transition-colors"
+      onClick={(e) => {
+        // Ignore clicks that originate inside actions / inline links.
+        const target = e.target as HTMLElement;
+        if (target.closest('button') || target.closest('a')) return;
+        window.location.href = `/${locale}/my-bookings/${booking.id}`;
+      }}
     >
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-3">
         <div className="space-y-2 flex-1">
@@ -334,6 +340,17 @@ function BookingCard({
       )}
 
       {uploadError && <p className="text-sm text-rose-500 mt-2">{uploadError}</p>}
+
+      {/* View detail hint — explicit cue that the card is clickable */}
+      <div className="border-t border-white/40 pt-3 mt-3">
+        <Link
+          href={`/my-bookings/${booking.id}`}
+          className="text-sm text-pink hover:underline font-medium inline-flex items-center gap-1"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {locale === 'zh' ? '查看詳情' : 'View details'} <ChevronRight size={14} />
+        </Link>
+      </div>
     </motion.div>
   );
 }
