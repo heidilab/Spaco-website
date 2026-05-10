@@ -48,6 +48,11 @@ export default function ModifyBookingPage() {
   const [cart, setCart] = useState<CartEntry[]>([]);
   /** Original quantities for guard rails — cart entry can't go below these. */
   const [floor, setFloor] = useState<Record<string, number>>({});
+  /** Original guest counts as floors — customer can only increase. */
+  const [adultCount, setAdultCount] = useState<number>(0);
+  const [childCount, setChildCount] = useState<number>(0);
+  const [adultFloor, setAdultFloor] = useState<number>(0);
+  const [childFloor, setChildFloor] = useState<number>(0);
 
   useEffect(() => {
     if (authLoading) return;
@@ -64,6 +69,14 @@ export default function ModifyBookingPage() {
           const f: Record<string, number> = {};
           for (const a of (b.addOns || [])) f[a.id] = a.quantity;
           setFloor(f);
+          // Adult/child floors come from the booking. Legacy bookings
+          // without a split fall back to all-adults.
+          const adults = b.adultCount ?? b.guestCount ?? 0;
+          const kids = b.childCount ?? 0;
+          setAdultCount(adults);
+          setChildCount(kids);
+          setAdultFloor(adults);
+          setChildFloor(kids);
         }
       })
       .finally(() => setLoading(false));
@@ -91,19 +104,21 @@ export default function ModifyBookingPage() {
   // Diff calculation — full pricing recalc with new cart, compared
   // to the original. Use the booking's own subtotal as baseline so
   // we don't have to round-trip the venue rate / hours / pax.
+  const newGuestCount = adultCount + childCount;
   const newPricing = useMemo(() => {
     if (!venue || !booking) return null;
     return calculatePricing(
       venue,
       booking.isWeekend,
       booking.hours,
-      booking.guestCount,
+      newGuestCount,
       cart,
-      booking.childCount,
+      childCount,
     );
-  }, [venue, booking, cart]);
+  }, [venue, booking, cart, newGuestCount, childCount]);
 
   const subtotalDiff = newPricing && booking ? Math.max(0, newPricing.subtotal - booking.pricing.subtotal) : 0;
+  const guestsChanged = adultCount !== adultFloor || childCount !== childFloor;
 
   const FOOD_IDS = new Set(['bbq-standard', 'bbq-premium', 'bbq-grill', 'hotpot-standard', 'hotpot-seafood', 'hotpot-extra-soup']);
 
@@ -148,12 +163,19 @@ export default function ModifyBookingPage() {
     setSubmitting(true);
     try {
       const newBalance = (booking.balanceDue ?? 0) + subtotalDiff;
-      await updateDoc(doc(db, 'bookings', booking.id), {
+      const update: Record<string, unknown> = {
         addOns: cart,
         'pricing.subtotal': newPricing.subtotal,
         'pricing.addOnTotal': newPricing.addOnTotal,
         balanceDue: newBalance,
-      });
+      };
+      // Persist guest count changes too (D3).
+      if (guestsChanged) {
+        update.adultCount = adultCount;
+        update.childCount = childCount;
+        update.guestCount = newGuestCount;
+      }
+      await updateDoc(doc(db, 'bookings', booking.id), update);
       router.push(`/book/${booking.branchSlug}/pay-balance/${booking.id}`);
     } catch (err) {
       setError((locale === 'zh' ? '儲存失敗：' : 'Save failed: ') + (err instanceof Error ? err.message : 'unknown'));
@@ -210,7 +232,7 @@ export default function ModifyBookingPage() {
               {venue?.name[locale]} · {booking.date} {booking.startTime}–{booking.endTime}
             </p>
             <p className="text-xs text-ink-soft mt-1">
-              {locale === 'zh' ? '只可以加，唔可以減；確認後系統會將差額加入尾數，跳去付款頁。' : 'Add-only — saving recomputes the balance and redirects to pay-balance.'}
+              {locale === 'zh' ? '只可以加（人數／附加服務），唔可以減；確認後系統會將差額加入尾數，跳去付款頁。' : 'Add-only (guests / add-ons) — saving recomputes the balance and redirects to pay-balance.'}
             </p>
           </div>
 
@@ -224,6 +246,75 @@ export default function ModifyBookingPage() {
               </p>
             </div>
           )}
+
+          {/* Guest count modify (D3) — only +, floors locked */}
+          <div className="glass-card p-5">
+            <p className="font-semibold mb-3">{locale === 'zh' ? '預約人數' : 'Guests'}</p>
+
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <p className="text-sm font-semibold">{locale === 'zh' ? '成人' : 'Adults'}</p>
+                <p className="text-[11px] text-ink-soft">
+                  {locale === 'zh' ? `已預訂 ${adultFloor}（不可減少）` : `Booked: ${adultFloor} (locked)`}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setAdultCount(Math.max(adultFloor, adultCount - 1))}
+                  disabled={adultCount <= adultFloor}
+                  className="w-8 h-8 rounded-full border border-charcoal/15 flex items-center justify-center hover:bg-white disabled:opacity-30"
+                >
+                  <Minus size={14} />
+                </button>
+                <span className="w-6 text-center font-semibold">{adultCount}</span>
+                <button
+                  type="button"
+                  onClick={() => setAdultCount(adultCount + 1)}
+                  className="w-8 h-8 rounded-full border border-charcoal/15 flex items-center justify-center hover:bg-white"
+                >
+                  <Plus size={14} />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between border-t border-white/40 pt-3">
+              <div>
+                <p className="text-sm font-semibold">{locale === 'zh' ? '小童 (1–9 歲)' : 'Children (1–9)'}</p>
+                <p className="text-[11px] text-ink-soft">
+                  {locale === 'zh'
+                    ? `已預訂 ${childFloor}（不可減少；半價）`
+                    : `Booked: ${childFloor} (locked; half price)`}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setChildCount(Math.max(childFloor, childCount - 1))}
+                  disabled={childCount <= childFloor}
+                  className="w-8 h-8 rounded-full border border-charcoal/15 flex items-center justify-center hover:bg-white disabled:opacity-30"
+                >
+                  <Minus size={14} />
+                </button>
+                <span className="w-6 text-center font-semibold">{childCount}</span>
+                <button
+                  type="button"
+                  onClick={() => setChildCount(childCount + 1)}
+                  className="w-8 h-8 rounded-full border border-charcoal/15 flex items-center justify-center hover:bg-white"
+                >
+                  <Plus size={14} />
+                </button>
+              </div>
+            </div>
+
+            {guestsChanged && (
+              <p className="text-xs text-emerald-700 mt-3">
+                {locale === 'zh'
+                  ? `+${(adultCount - adultFloor) + (childCount - childFloor)} 人（場地租用 / BBQ / 火鍋 / 飲品按計價人數重新計）`
+                  : `+${(adultCount - adultFloor) + (childCount - childFloor)} pax (rental / BBQ / hotpot / drinks recompute)`}
+              </p>
+            )}
+          </div>
 
           <div className="space-y-3">
             {visibleAddOns.map((a) => {
