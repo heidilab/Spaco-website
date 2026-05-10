@@ -7,6 +7,7 @@ import { tryGenerateLockPasscode, revokeLockPasscode, resendLockPasscode } from 
 import { BookingRecord, BookingDraft } from '@/types';
 import { venues } from '@/lib/venues';
 import { formatAddOnsForStaff } from '@/lib/pricing';
+import { MARKETING_CHANNEL_LABELS, MarketingChannel } from '@/types';
 import {
   Search, Check, X as XIcon, MessageCircle, Plus, Link2, Copy, RotateCw,
   Calendar, Inbox, ListChecks, Key, DollarSign, Send, Package,
@@ -330,6 +331,20 @@ export default function AdminBookingsPage() {
                           >
                             <Package size={10} className="shrink-0" />
                             <span className="truncate">{formatAddOnsForStaff(booking.addOns, locale)}</span>
+                          </div>
+                        )}
+                        {/* Marketing channel chip — first-time customers
+                         *  show the channel they selected, repeat
+                         *  customers show "Loyalty Member". */}
+                        {booking.marketingChannel && (
+                          <div className={`mt-1 ml-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-pill text-[10px] font-medium border ${
+                            booking.marketingChannel === 'loyalty_member'
+                              ? 'bg-amber-50 text-amber-700 border-amber-200'
+                              : 'bg-sky-50 text-sky-700 border-sky-200'
+                          }`}>
+                            {booking.marketingChannel === 'loyalty_member'
+                              ? (locale === 'zh' ? '🌟 老會員' : '🌟 Loyalty Member')
+                              : `📣 ${MARKETING_CHANNEL_LABELS[booking.marketingChannel as MarketingChannel][locale]}${booking.marketingChannelOther ? `: ${booking.marketingChannelOther}` : ''}`}
                           </div>
                         )}
                       </td>

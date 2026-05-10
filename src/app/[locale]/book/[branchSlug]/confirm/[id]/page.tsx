@@ -13,7 +13,7 @@ import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { getVenueById } from '@/lib/venues';
 import { addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE } from '@/lib/pricing';
-import { BookingRecord, RefundDetails } from '@/types';
+import { BookingRecord, RefundDetails, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
 import { CalendarDays, Clock, Users, MapPin, ArrowRight, Sparkles, Tag, X as XIcon, Loader2, Check } from 'lucide-react';
 import { motion } from 'framer-motion';
 
@@ -35,6 +35,13 @@ export default function ConfirmBookingPage() {
   // Customer-chosen amount of HK$ to redeem (live state). Capped by both
   // their balance and the remaining payable amount.
   const [redeemHkd, setRedeemHkd] = useState<number>(0);
+
+  // Marketing channel — required on the customer's FIRST booking.
+  // We treat first-booking as: user profile has no firstBookingChannel
+  // recorded yet AND this is the booking they're about to confirm.
+  const [isFirstTime, setIsFirstTime] = useState<boolean>(false);
+  const [marketingChannel, setMarketingChannel] = useState<MarketingChannel | ''>('');
+  const [marketingOther, setMarketingOther] = useState<string>('');
 
   // Promo code state — entered by customer; validated server-side.
   // Once validated, `applied` carries the resolved discount.
@@ -95,7 +102,14 @@ export default function ConfirmBookingPage() {
           }
         }
         if (profile) {
-          setPointsBalance((profile as { loyaltyPoints?: number }).loyaltyPoints || 0);
+          const p = profile as { loyaltyPoints?: number; firstBookingChannel?: MarketingChannel };
+          setPointsBalance(p.loyaltyPoints || 0);
+          // First-time = no channel recorded on profile yet.
+          setIsFirstTime(!p.firstBookingChannel);
+        } else {
+          // Profile read failed — treat as first-time to be safe (better
+          // to ask twice than miss the data point).
+          setIsFirstTime(true);
         }
       })
       .finally(() => setLoading(false));
@@ -145,6 +159,12 @@ export default function ConfirmBookingPage() {
       : bankName.trim().length > 0 &&
         accountHolderName.trim().length > 0 &&
         accountNumber.trim().length > 0;
+
+  // Marketing channel must be selected on first-time bookings, and if
+  // 'other' is picked the free-text detail must be non-empty.
+  const marketingReady = !isFirstTime || (
+    !!marketingChannel && (marketingChannel !== 'other' || marketingOther.trim().length > 0)
+  );
 
   async function handleApplyPromo() {
     const code = promoInput.trim().toUpperCase();
@@ -224,7 +244,7 @@ export default function ConfirmBookingPage() {
             };
       await updateBookingRefundDetails(booking.id, refundDetails);
       // Persist promo + points redemption + recomputed deposit.
-      await updateDoc(doc(db, 'bookings', booking.id), {
+      const bookingPatch: Record<string, unknown> = {
         promoCode: applied?.code || null,
         promoCodeId: applied?.codeId || null,
         promoDiscount: applied?.amount || null,
@@ -235,7 +255,28 @@ export default function ConfirmBookingPage() {
         // payment page + Stripe webhook see the right amounts.
         'pricing.deposit': effectiveDeposit,
         balanceDue,
-      });
+      };
+
+      // Marketing channel — first-time customers picked an answer;
+      // repeat customers auto-tag as 'loyalty_member'.
+      if (isFirstTime && marketingChannel) {
+        bookingPatch.marketingChannel = marketingChannel;
+        if (marketingChannel === 'other') {
+          bookingPatch.marketingChannelOther = marketingOther.trim();
+        }
+        // Persist to user profile so subsequent bookings auto-tag.
+        if (user) {
+          const profilePatch: Record<string, unknown> = {
+            firstBookingChannel: marketingChannel,
+          };
+          if (marketingChannel === 'other') profilePatch.firstBookingChannelOther = marketingOther.trim();
+          await updateDoc(doc(db, 'users', user.uid), profilePatch);
+        }
+      } else if (!isFirstTime) {
+        bookingPatch.marketingChannel = 'loyalty_member';
+      }
+
+      await updateDoc(doc(db, 'bookings', booking.id), bookingPatch);
       router.push(`/book/${slug}/payment/${booking.id}`);
     } catch (err) {
       console.error(err);
@@ -553,10 +594,60 @@ export default function ConfirmBookingPage() {
             )}
           </div>
 
+          {/* Marketing channel — first-time customers only.
+           *  Required field; admin uses this to track acquisition.
+           *  Repeat customers auto-tag as 'loyalty_member' silently. */}
+          {isFirstTime && (
+            <div className="glass-card p-7 space-y-4">
+              <div>
+                <h2 className="font-bold text-lg">
+                  {locale === 'zh' ? '請問你係喺邊度知道我哋？' : 'How did you hear about us?'}
+                  <span className="text-rose-500 ml-1">*</span>
+                </h2>
+                <p className="text-xs text-ink-soft mt-1">
+                  {locale === 'zh'
+                    ? '只問新會員一次。呢個資料用嚟改善我哋嘅推廣，唔會公開。'
+                    : 'Asked once on your first booking. Used internally to improve our marketing.'}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {(Object.keys(MARKETING_CHANNEL_LABELS) as MarketingChannel[]).map((ch) => (
+                  <button
+                    key={ch}
+                    type="button"
+                    onClick={() => setMarketingChannel(ch)}
+                    className={`px-3 py-2.5 rounded-xl border text-sm font-medium transition-all ${
+                      marketingChannel === ch
+                        ? 'border-accent bg-accent/10 text-accent'
+                        : 'border-charcoal/10 bg-white/60 text-ink hover:border-charcoal/25'
+                    }`}
+                  >
+                    {MARKETING_CHANNEL_LABELS[ch][locale]}
+                  </button>
+                ))}
+              </div>
+
+              {marketingChannel === 'other' && (
+                <div>
+                  <label className="block text-xs text-ink-soft mb-1.5">
+                    {locale === 'zh' ? '請說明 *' : 'Please specify *'}
+                  </label>
+                  <input
+                    value={marketingOther}
+                    onChange={(e) => setMarketingOther(e.target.value)}
+                    placeholder={locale === 'zh' ? '例：商場 / 巴士廣告' : 'e.g. mall / bus ad'}
+                    className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
           {error && <p className="text-sm text-rose-500 text-center">{error}</p>}
 
           <button
-            disabled={!refundReady || submitting}
+            disabled={!refundReady || !marketingReady || submitting}
             onClick={handleProceed}
             className="w-full bg-accent text-white py-4 rounded-xl font-bold text-lg hover:bg-accent/90 transition-colors flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -569,6 +660,11 @@ export default function ConfirmBookingPage() {
           {!refundReady && (
             <p className="text-xs text-rose-400 text-center -mt-3">
               {locale === 'zh' ? '請填妥所有退款資料' : 'Please complete all refund fields'}
+            </p>
+          )}
+          {refundReady && !marketingReady && (
+            <p className="text-xs text-rose-400 text-center -mt-3">
+              {locale === 'zh' ? '請選擇一個市場推廣渠道' : 'Please select a marketing channel'}
             </p>
           )}
         </motion.div>

@@ -110,9 +110,26 @@ export interface UserProfile {
    *  so admin / CS can message the customer directly. */
   whatsappPhone?: string;
   loyaltyPoints: number;
+  /** Marketing channel selected at first booking. Persisted on the user
+   *  so subsequent bookings auto-tag as "Loyalty Member" without
+   *  re-asking. One of MarketingChannel ids. */
+  firstBookingChannel?: MarketingChannel;
+  /** Free-text detail when firstBookingChannel === 'other'. */
+  firstBookingChannelOther?: string;
   createdAt: unknown;
   lastLogin: unknown;
 }
+
+export type MarketingChannel = 'google' | 'instagram' | 'facebook' | 'xiaohongshu' | 'referral' | 'other';
+
+export const MARKETING_CHANNEL_LABELS: Record<MarketingChannel, { zh: string; en: string }> = {
+  google:      { zh: 'Google',          en: 'Google' },
+  instagram:   { zh: 'Instagram',       en: 'Instagram' },
+  facebook:    { zh: 'Facebook',        en: 'Facebook' },
+  xiaohongshu: { zh: '小紅書',          en: '小紅書 (RED)' },
+  referral:    { zh: '朋友介紹',        en: 'Friend referral' },
+  other:       { zh: '其他',            en: 'Other' },
+};
 
 export interface BookingRecord {
   id: string;
@@ -152,6 +169,14 @@ export interface BookingRecord {
     /** Amount due upfront to confirm: full grandTotal if ≤ HK$10k, else 50%. */
     deposit: number;
   };
+  /** Marketing channel snapshot — captured on the customer's FIRST
+   *  booking (mandatory question). Repeat customers auto-tag as
+   *  'loyalty_member' (a sentinel that's not a real MarketingChannel).
+   *  Stored on every booking so /admin/finance can break down monthly
+   *  acquisition without joining the user table. */
+  marketingChannel?: MarketingChannel | 'loyalty_member';
+  /** Free-text detail when marketingChannel === 'other'. */
+  marketingChannelOther?: string;
   /** Promo code applied at checkout (entered by customer on the
    *  confirm page). Optional. The discount applies to the subtotal
    *  before any loyalty redemption — see Ship C in repo docs. */

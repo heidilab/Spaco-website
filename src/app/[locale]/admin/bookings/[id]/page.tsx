@@ -13,7 +13,7 @@ import {
   updateBookingDepositRefund,
   creditLoyaltyPoints,
 } from '@/lib/firestore';
-import { BookingRecord, UserProfile } from '@/types';
+import { BookingRecord, UserProfile, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
 import { venues } from '@/lib/venues';
 import { formatAddOnsForStaff } from '@/lib/pricing';
 import { buildWhatsAppLink, formatHkPhone } from '@/lib/whatsapp';
@@ -475,6 +475,16 @@ export default function AdminBookingDetailPage() {
                 label={locale === 'zh' ? '優惠碼' : 'Promo'}
                 value={`${booking.promoCode} (−HK$${(booking.promoDiscount || 0).toLocaleString()})`}
                 highlight="emerald"
+              />
+            )}
+            {booking.marketingChannel && (
+              <Row
+                label={locale === 'zh' ? '推廣渠道' : 'Channel'}
+                value={
+                  booking.marketingChannel === 'loyalty_member'
+                    ? (locale === 'zh' ? '🌟 老會員' : '🌟 Loyalty Member')
+                    : `📣 ${MARKETING_CHANNEL_LABELS[booking.marketingChannel as MarketingChannel][locale]}${booking.marketingChannelOther ? `: ${booking.marketingChannelOther}` : ''}`
+                }
               />
             )}
             {(booking.balanceDue ?? 0) > 0 && (
