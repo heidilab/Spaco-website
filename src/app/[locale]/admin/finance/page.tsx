@@ -59,6 +59,16 @@ export default function FinanceOverviewPage() {
     return MARKETING_CHANNEL_LABELS[ch as MarketingChannel]?.[locale] || ch;
   }
 
+  /** Display name for the branch filter — handles the 'sw' group key. */
+  function branchLabel(key: string): string {
+    if (key === 'all') return locale === 'zh' ? '全部' : 'All';
+    if (key === 'sw') return locale === 'zh' ? '上環海景旗艦店' : 'Sheung Wan';
+    if (key === 'cwb') return locale === 'zh' ? '銅鑼灣店' : 'Causeway Bay';
+    if (key === 'wanchai') return locale === 'zh' ? '灣仔店' : 'Wan Chai';
+    if (key === 'tst') return locale === 'zh' ? '尖沙咀店' : 'Tsim Sha Tsui';
+    return venues.find((v) => v.id === key)?.name[locale] || key;
+  }
+
   async function handleExportExcel() {
     setExporting(true);
     try {
@@ -69,7 +79,7 @@ export default function FinanceOverviewPage() {
       const summary = [
         [locale === 'zh' ? '篩選' : 'Filter', ''],
         [locale === 'zh' ? '日期' : 'Date range', `${from} → ${to}`],
-        [locale === 'zh' ? '分店' : 'Branch', branch === 'all' ? (locale === 'zh' ? '全部' : 'All') : (venues.find((v) => v.id === branch)?.name[locale] || branch)],
+        [locale === 'zh' ? '分店' : 'Branch', branchLabel(branch)],
         [locale === 'zh' ? '推廣渠道' : 'Channel', channel === 'all' ? (locale === 'zh' ? '全部' : 'All') : channelLabel(channel as string)],
         [],
         [locale === 'zh' ? '總收入' : 'Total Revenue', result.totalRevenue],
@@ -131,7 +141,7 @@ export default function FinanceOverviewPage() {
       doc.setFontSize(10);
       doc.setTextColor(100);
       doc.text(`Date: ${from} → ${to}`, 40, y); y += 14;
-      doc.text(`Branch: ${branch === 'all' ? 'All' : venues.find((v) => v.id === branch)?.name.en || branch}`, 40, y); y += 14;
+      doc.text(`Branch: ${branchLabel(branch)}`, 40, y); y += 14;
       doc.text(`Channel: ${channel === 'all' ? 'All' : String(channel)}`, 40, y); y += 26;
 
       doc.setTextColor(0);
@@ -247,7 +257,10 @@ export default function FinanceOverviewPage() {
               className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85"
             >
               <option value="all">{locale === 'zh' ? '全部' : 'All'}</option>
-              {venues.map((v) => <option key={v.id} value={v.id}>{v.name[locale]}</option>)}
+              <option value="cwb">{locale === 'zh' ? '銅鑼灣店' : 'Causeway Bay'}</option>
+              <option value="wanchai">{locale === 'zh' ? '灣仔店' : 'Wan Chai'}</option>
+              <option value="sw">{locale === 'zh' ? '上環海景旗艦店' : 'Sheung Wan'}</option>
+              <option value="tst">{locale === 'zh' ? '尖沙咀店' : 'Tsim Sha Tsui'}</option>
             </select>
           </div>
           <div>

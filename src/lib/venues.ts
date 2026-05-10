@@ -134,8 +134,8 @@ export const venues: Venue[] = [
     name: { zh: '尖沙咀店', en: 'Tsim Sha Tsui' },
     subtitle: { zh: '', en: '' },
     description: {
-      zh: '尖沙咀獨特海景空間，設有戶外 BBQ 及桌球設備，已包無酒精飲品任飲。',
-      en: 'A unique harbour view space in TST with outdoor BBQ, pool table and complimentary non-alcoholic drinks.',
+      zh: '尖沙咀獨特空間，設有戶外 BBQ 及桌球設備，已包無酒精飲品任飲。',
+      en: 'A unique space in TST with outdoor BBQ, pool table and complimentary non-alcoholic drinks.',
     },
     address: {
       zh: '尖沙咀寶勒巷22-24號雲龍商業大廈17樓A1室',

@@ -63,7 +63,7 @@ export const BRANCH_INFO: BranchInfo[] = [
     id: 'tst',
     slug: 'tsim-sha-tsui',
     seoId: 'branch-tst',
-    name: { zh: '尖沙咀海景空間', en: 'Tsim Sha Tsui Harbour View' },
+    name: { zh: '尖沙咀店', en: 'Tsim Sha Tsui' },
     streetAddress: { zh: '尖沙咀寶勒巷 22-24 號', en: '22-24 Prat Avenue, Tsim Sha Tsui' },
     district: { zh: '尖沙咀', en: 'Tsim Sha Tsui' },
     openingHours: ALWAYS_OPEN,

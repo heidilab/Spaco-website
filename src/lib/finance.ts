@@ -11,10 +11,29 @@ export interface FinanceFilter {
   from?: string;
   /** Inclusive YYYY-MM-DD end. Bookings with date > to excluded. */
   to?: string;
-  /** Restrict to a venueId. 'all' or omitted = all venues. */
+  /** Restrict to a branch. 'all' = all venues. 'sw' = all Sheung Wan
+   *  variants (sw-a, sw-b, sw-ab) since they share the same physical
+   *  flagship. Otherwise a venue id (cwb / wanchai / tst). */
   branch?: string;
   /** Restrict to a marketing channel. 'all' or omitted = all. */
   channel?: MarketingChannel | 'loyalty_member' | 'all';
+}
+
+/** Roll a venueId up to its branch group key used by the finance UI. */
+function branchKey(venueId: string): string {
+  if (venueId.startsWith('sw-')) return 'sw';
+  return venueId;
+}
+
+/** Display name for a branch group key. */
+function branchGroupName(key: string): { zh: string; en: string } {
+  if (key === 'sw') return { zh: '上環海景旗艦店', en: 'Sheung Wan Flagship' };
+  if (key === 'cwb') return { zh: '銅鑼灣店', en: 'Causeway Bay' };
+  if (key === 'wanchai') return { zh: '灣仔店', en: 'Wan Chai' };
+  if (key === 'tst') return { zh: '尖沙咀店', en: 'Tsim Sha Tsui' };
+  // Fall back to the venue catalog name if available.
+  const v = venues.find((vn) => vn.id === key);
+  return v?.name || { zh: key, en: key };
 }
 
 export interface AddOnRevenue {
@@ -131,7 +150,10 @@ export function aggregateBookings(
     if (b.status === 'cancelled' || b.status === 'pending') return false;
     if (filter.from && b.date < filter.from) return false;
     if (filter.to && b.date > filter.to) return false;
-    if (filter.branch && filter.branch !== 'all' && b.venueId !== filter.branch) return false;
+    if (filter.branch && filter.branch !== 'all') {
+      // Branch filter rolls SW variants together.
+      if (branchKey(b.venueId) !== filter.branch) return false;
+    }
     if (filter.channel && filter.channel !== 'all') {
       const ch = b.marketingChannel || 'unknown';
       if (ch !== filter.channel) return false;
@@ -181,11 +203,12 @@ export function aggregateBookings(
     m.bookings += 1;
     monthlyMap.set(month, m);
 
-    // Branch bucket.
-    const branchBucket = branchMap.get(b.venueId) || { revenue: 0, bookings: 0 };
+    // Branch bucket — SW Room A / B / A+B all roll up to one group.
+    const bKey = branchKey(b.venueId);
+    const branchBucket = branchMap.get(bKey) || { revenue: 0, bookings: 0 };
     branchBucket.revenue += totalForBooking;
     branchBucket.bookings += 1;
-    branchMap.set(b.venueId, branchBucket);
+    branchMap.set(bKey, branchBucket);
 
     // Add-on bucket.
     for (const a of (b.addOns || [])) {
@@ -209,14 +232,11 @@ export function aggregateBookings(
     .sort((a, b) => a.month.localeCompare(b.month));
 
   const byBranch: BranchRevenue[] = Array.from(branchMap.entries())
-    .map(([id, v]) => {
-      const venue = venues.find((vn) => vn.id === id);
-      return {
-        branchId: id,
-        branchName: venue?.name || { zh: id, en: id },
-        ...v,
-      };
-    })
+    .map(([id, v]) => ({
+      branchId: id,
+      branchName: branchGroupName(id),
+      ...v,
+    }))
     .sort((a, b) => b.revenue - a.revenue);
 
   const byAddOn: AddOnRevenue[] = Array.from(addOnMap.entries())

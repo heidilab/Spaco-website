@@ -88,7 +88,7 @@ export const CONTENT_DEFAULTS: Record<string, Record<string, Bilingual>> = {
     // ─── 尖沙咀店 ───
     tst_name:        { zh: '尖沙咀店', en: 'Tsim Sha Tsui' },
     tst_size:        { zh: '2,500 sq ft', en: '2,500 sq ft' },
-    tst_description: { zh: '尖沙咀獨特海景空間，已包無酒精飲品任飲。', en: 'Unique TST harbour view with complimentary non-alcoholic drinks.' },
+    tst_description: { zh: '尖沙咀獨特空間，已包無酒精飲品任飲。', en: 'Unique TST space with complimentary non-alcoholic drinks.' },
     tst_amenities:   { zh: '戶外 BBQ、桌球、麻將', en: 'Outdoor BBQ, Pool Table, Mahjong' },
     // ─── 上環海景旗艦店 - 全層 A+B ───
     swab_name:       { zh: '上環海景旗艦店 - 全層 A+B', en: 'Sheung Wan - Full Floor (A+B)' },

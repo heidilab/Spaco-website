@@ -13,10 +13,10 @@ import WhatsAppCTA from '@/components/layout/WhatsAppCTA';
 
 // Branches surfaced in the Spaces dropdown — keep in sync with BranchGrid
 const BRANCH_LINKS = [
-  { slug: 'causeway-bay', label: { zh: '銅鑼灣旗艦店', en: 'Causeway Bay' } },
-  { slug: 'wan-chai',     label: { zh: '灣仔商務空間', en: 'Wan Chai' } },
-  { slug: 'sheung-wan',   label: { zh: '上環海景旗艦店 (A / B / 全層)', en: 'Sheung Wan (A / B / Full)' } },
-  { slug: 'tsim-sha-tsui', label: { zh: '尖沙咀海景空間', en: 'TST Harbour View' } },
+  { slug: 'causeway-bay',  label: { zh: '銅鑼灣店',       en: 'Causeway Bay' } },
+  { slug: 'wan-chai',      label: { zh: '灣仔店',         en: 'Wan Chai' } },
+  { slug: 'tsim-sha-tsui', label: { zh: '尖沙咀店',       en: 'Tsim Sha Tsui' } },
+  { slug: 'sheung-wan',    label: { zh: '上環海景旗艦店', en: 'Sheung Wan Flagship' } },
 ];
 
 export default function Header() {

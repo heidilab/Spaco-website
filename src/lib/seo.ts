@@ -256,7 +256,7 @@ export const SEO_PAGES: SeoPageDef[] = [
     id: 'branch-tst',
     path: '/branches/tsim-sha-tsui',
     label: { zh: '尖沙咀分店', en: 'TST Branch' },
-    defaultTitle: { zh: '尖沙咀海景空間 — SPACO', en: 'TST — SPACO' },
+    defaultTitle: { zh: '尖沙咀店 — SPACO', en: 'TST — SPACO' },
   },
 ];
 

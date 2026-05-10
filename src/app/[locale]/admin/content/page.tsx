@@ -142,11 +142,11 @@ const PROMO_LINK_OPTIONS: { value: string; label: { zh: string; en: string } }[]
 // floor as Room A + Room B combined, so its branch page reuses A's & B's
 // photos rather than maintaining a third gallery.
 const branchPhotoSections: BranchPhotoSection[] = [
-  { key: 'branch-cwb',   keyPrefix: 'cwb',   label: { zh: '銅鑼灣旗艦店', en: 'Causeway Bay' } },
-  { key: 'branch-wc',    keyPrefix: 'wc',    label: { zh: '灣仔商務空間', en: 'Wan Chai' } },
-  { key: 'branch-sw-a',  keyPrefix: 'sw-a',  label: { zh: '上環 Room A',  en: 'Sheung Wan A' } },
-  { key: 'branch-sw-b',  keyPrefix: 'sw-b',  label: { zh: '上環 Room B',  en: 'Sheung Wan B' } },
-  { key: 'branch-tst',   keyPrefix: 'tst',   label: { zh: '尖沙咀海景空間', en: 'TST' } },
+  { key: 'branch-cwb',   keyPrefix: 'cwb',   label: { zh: '銅鑼灣店',       en: 'Causeway Bay' } },
+  { key: 'branch-wc',    keyPrefix: 'wc',    label: { zh: '灣仔店',         en: 'Wan Chai' } },
+  { key: 'branch-sw-a',  keyPrefix: 'sw-a',  label: { zh: '上環 Room A',    en: 'Sheung Wan A' } },
+  { key: 'branch-sw-b',  keyPrefix: 'sw-b',  label: { zh: '上環 Room B',    en: 'Sheung Wan B' } },
+  { key: 'branch-tst',   keyPrefix: 'tst',   label: { zh: '尖沙咀店',       en: 'TST' } },
 ];
 
 // ===== TEXT SECTIONS =====
