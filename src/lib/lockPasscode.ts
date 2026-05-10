@@ -247,6 +247,7 @@ export async function processBookingForLockAccess(bookingId: string): Promise<Pr
       const tpl = buildLockPasscodeEmail({
         customerName: contact.name,
         venueName,
+        venueAddress: venue?.address.zh,
         date:         b.date,
         startTime:    b.startTime,
         endTime:      b.endTime,

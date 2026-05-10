@@ -33,6 +33,10 @@ export const venues: Venue[] = [
       zh: '位於銅鑼灣核心地段的旗艦空間，配備頂級音響及設計師家具，適合各類型聚會。',
       en: 'Our flagship venue in the heart of Causeway Bay, featuring premium sound systems and designer furniture for all occasions.',
     },
+    address: {
+      zh: '銅鑼灣禮頓道26號凱基商業大廈5樓全層',
+      en: '5/F (Whole Floor), KGI Commercial Building, 26 Leighton Road, Causeway Bay',
+    },
     branch: 'CWB',
     capacity: { min: 15, max: 70 },
     size: '2,800 sq ft',
@@ -54,6 +58,10 @@ export const venues: Venue[] = [
     description: {
       zh: '灣仔專業商務空間，適合公司活動、工作坊及小型會議，配備專業投影設備。',
       en: 'A professional business space in Wan Chai, ideal for corporate events, workshops and meetings with professional AV equipment.',
+    },
+    address: {
+      zh: '灣仔吉安街一號B2地鋪',
+      en: 'Shop B2, G/F, 1 Kat On Street, Wan Chai',
     },
     branch: 'WC',
     capacity: { min: 6, max: 35 },
@@ -77,6 +85,10 @@ export const venues: Venue[] = [
       zh: '上環寧靜空間 Room A，適合親子活動、小型聚會，設有戶外 BBQ 區域。',
       en: 'A tranquil space in Sheung Wan Room A, perfect for family events and intimate gatherings with outdoor BBQ area.',
     },
+    address: {
+      zh: '上環干諾道西70-72號金祐大廈22樓',
+      en: '22/F, Kam Yau Building, 70-72 Connaught Road West, Sheung Wan',
+    },
     branch: 'SW',
     capacity: { min: 6, max: 35 },
     size: '1,000 sq ft',
@@ -98,6 +110,10 @@ export const venues: Venue[] = [
     description: {
       zh: '上環 Room B 設有獨立專業廚房、桌球枱及打邊爐設備，適合高品味聚會。',
       en: 'Sheung Wan Room B features a private professional kitchen, pool table and hotpot facilities for premium gatherings.',
+    },
+    address: {
+      zh: '上環干諾道西70-72號金祐大廈22樓',
+      en: '22/F, Kam Yau Building, 70-72 Connaught Road West, Sheung Wan',
     },
     branch: 'SW',
     capacity: { min: 20, max: 70 },
@@ -121,6 +137,10 @@ export const venues: Venue[] = [
       zh: '尖沙咀獨特海景空間，設有戶外 BBQ 及桌球設備，已包無酒精飲品任飲。',
       en: 'A unique harbour view space in TST with outdoor BBQ, pool table and complimentary non-alcoholic drinks.',
     },
+    address: {
+      zh: '尖沙咀寶勒巷22-24號雲龍商業大廈17樓A1室',
+      en: 'Unit A1, 17/F, Wan Loong Commercial Building, 22-24 Prat Avenue, Tsim Sha Tsui',
+    },
     branch: 'TST',
     capacity: { min: 12, max: 70 },
     size: '2,500 sq ft',
@@ -142,6 +162,10 @@ export const venues: Venue[] = [
     description: {
       zh: '上環全層包場，合併 Room A 及 B，可容納最多 100 人的大型活動。',
       en: 'Full floor venue combining Room A & B in Sheung Wan, accommodating up to 100 guests for large events.',
+    },
+    address: {
+      zh: '上環干諾道西70-72號金祐大廈22樓',
+      en: '22/F, Kam Yau Building, 70-72 Connaught Road West, Sheung Wan',
     },
     branch: 'SW',
     capacity: { min: 25, max: 100 },

@@ -252,6 +252,9 @@ export function buildBirthdayEmail(params: {
 export function buildBookingConfirmationEmail(params: {
   customerName: string;
   venueName: string;
+  /** Full street address — surfaced in the booking detail row so the
+   *  customer knows exactly where to go. Optional for backward compat. */
+  venueAddress?: string;
   date: string;
   startTime: string;
   endTime: string;
@@ -311,6 +314,7 @@ export function buildBookingConfirmationEmail(params: {
           <h3 style="margin: 0 0 12px; font-size: 14px; color: ${EMAIL_INK}; letter-spacing: 0.04em; text-transform: uppercase;">📋 預訂明細</h3>
           <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 8px;">
             <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">場地</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">${params.venueName}</td></tr>
+            ${params.venueAddress ? `<tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px; vertical-align: top;">📍 地址</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600; line-height: 1.5;">${params.venueAddress}</td></tr>` : ''}
             <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">日期</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">${params.date}</td></tr>
             <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">時段</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">${params.startTime} – ${params.endTime}</td></tr>
             <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">人數</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">${peopleLine}</td></tr>
@@ -416,6 +420,9 @@ function formatHkt(unixMs: number): string {
 export function buildLockPasscodeEmail(params: {
   customerName: string;
   venueName: string;
+  /** Full street address — shown next to the venue name so the customer
+   *  has the address handy when arriving at the door. */
+  venueAddress?: string;
   date: string;
   startTime: string;
   endTime: string;
@@ -445,6 +452,7 @@ export function buildLockPasscodeEmail(params: {
 
           <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
             <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">場地</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">${params.venueName}</td></tr>
+            ${params.venueAddress ? `<tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px; vertical-align: top;">📍 地址</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600; line-height: 1.5;">${params.venueAddress}</td></tr>` : ''}
             <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">活動日期</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">${params.date}</td></tr>
             <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">活動時段</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">${params.startTime} – ${params.endTime}</td></tr>
             <tr><td style="padding: 10px 0; color: #999; font-size: 13px; vertical-align: top;">密碼有效期</td><td style="padding: 10px 0; text-align: right; font-weight: 600;">${formatHkt(params.validFromMs)}<br><span style="font-size: 12px; color: #999; font-weight: 400;">至 ${formatHkt(params.validToMs)}</span></td></tr>

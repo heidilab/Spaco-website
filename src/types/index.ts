@@ -4,6 +4,9 @@ export interface Venue {
   name: { zh: string; en: string };
   subtitle: { zh: string; en: string };
   description: { zh: string; en: string };
+  /** Full street address — used in booking confirmation emails and the
+   *  door-passcode email so guests know exactly where to go. */
+  address: { zh: string; en: string };
   branch: string;
   capacity: { min: number; max: number };
   size: string;

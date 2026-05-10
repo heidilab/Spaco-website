@@ -36,6 +36,7 @@ export async function POST(req: NextRequest) {
     const tpl = buildBookingConfirmationEmail({
       customerName: user.displayName || 'there',
       venueName: venue?.name.zh || booking.venueId,
+      venueAddress: venue?.address.zh,
       date: booking.date,
       startTime: booking.startTime,
       endTime: booking.endTime,

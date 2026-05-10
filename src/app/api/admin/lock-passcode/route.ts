@@ -85,6 +85,7 @@ export async function POST(req: NextRequest) {
       const tpl = buildLockPasscodeEmail({
         customerName: profile.displayName || profile.email.split('@')[0],
         venueName:    venue?.name.zh || b.branchSlug,
+        venueAddress: venue?.address.zh,
         date:         b.date,
         startTime:    b.startTime,
         endTime:      b.endTime,

@@ -18,6 +18,7 @@ function buildPreview(key: EmailAutomationKey): { subject: string; html: string 
   const SAMPLE = {
     customerName: '陳大文',
     venueName: '銅鑼灣店',
+    venueAddress: '銅鑼灣禮頓道26號凱基商業大廈5樓全層',
     date: '2026-06-15',
     startTime: '14:00',
     endTime: '19:00',
