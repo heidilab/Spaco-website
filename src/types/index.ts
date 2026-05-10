@@ -152,6 +152,21 @@ export interface BookingRecord {
     /** Amount due upfront to confirm: full grandTotal if ≤ HK$10k, else 50%. */
     deposit: number;
   };
+  /** Promo code applied at checkout (entered by customer on the
+   *  confirm page). Optional. The discount applies to the subtotal
+   *  before any loyalty redemption — see Ship C in repo docs. */
+  promoCode?: string;
+  /** PromoCode document id, kept so the webhook can increment usage. */
+  promoCodeId?: string;
+  /** HK$ value of the promo discount (already factored into deposit). */
+  promoDiscount?: number;
+  /** When the customer redeems a "free drinks" promo, the drinks add-on
+   *  is set to free in the breakdown — store the original drinks cost
+   *  here so admin can audit. */
+  promoFreeDrinksCost?: number;
+  /** Set when the webhook successfully increments the promo's usage
+   *  count (idempotency guard for retries). */
+  promoRedeemedAt?: unknown;
   /** Loyalty points used to reduce the upfront amount. 100 pts = HK$1.
    *  Validated at booking creation; deducted from the user balance when
    *  payment is confirmed (Stripe webhook / admin offline confirm). */

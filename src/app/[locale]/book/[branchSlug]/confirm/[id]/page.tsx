@@ -14,7 +14,7 @@ import { db } from '@/lib/firebase';
 import { getVenueById } from '@/lib/venues';
 import { addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE } from '@/lib/pricing';
 import { BookingRecord, RefundDetails } from '@/types';
-import { CalendarDays, Clock, Users, MapPin, ArrowRight, Sparkles } from 'lucide-react';
+import { CalendarDays, Clock, Users, MapPin, ArrowRight, Sparkles, Tag, X as XIcon, Loader2, Check } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 export default function ConfirmBookingPage() {
@@ -35,6 +35,19 @@ export default function ConfirmBookingPage() {
   // Customer-chosen amount of HK$ to redeem (live state). Capped by both
   // their balance and the remaining payable amount.
   const [redeemHkd, setRedeemHkd] = useState<number>(0);
+
+  // Promo code state — entered by customer; validated server-side.
+  // Once validated, `applied` carries the resolved discount.
+  const [promoInput, setPromoInput] = useState<string>('');
+  const [promoChecking, setPromoChecking] = useState<boolean>(false);
+  const [promoError, setPromoError] = useState<string | null>(null);
+  const [applied, setApplied] = useState<{
+    codeId: string;
+    code: string;
+    type: 'percent' | 'cash' | 'free_drinks' | 'per_pax';
+    amount: number;
+    freeDrinks: boolean;
+  } | null>(null);
 
   // Refund details form state
   const [method, setMethod] = useState<'fps' | 'bank'>('fps');
@@ -69,6 +82,17 @@ export default function ConfirmBookingPage() {
           }
           // Restore previous redemption if the user came back to this page.
           if (b.pointsDiscount && b.pointsDiscount > 0) setRedeemHkd(b.pointsDiscount);
+          // Restore promo code if previously applied.
+          if (b.promoCode && b.promoCodeId) {
+            setPromoInput(b.promoCode);
+            setApplied({
+              codeId: b.promoCodeId,
+              code: b.promoCode,
+              type: 'cash', // placeholder; real type recovered if user re-checks
+              amount: b.promoDiscount || 0,
+              freeDrinks: !!b.promoFreeDrinksCost,
+            });
+          }
         }
         if (profile) {
           setPointsBalance((profile as { loyaltyPoints?: number }).loyaltyPoints || 0);
@@ -96,15 +120,24 @@ export default function ConfirmBookingPage() {
   const venue = getVenueById(booking.venueId);
   const venueName = venue?.name[locale] || booking.branchSlug;
   const securityDeposit = booking.pricing.securityDeposit ?? 0;
-  const grandTotal = booking.pricing.subtotal + securityDeposit;
-  const isFullPayment = grandTotal <= 10000;
-  const balanceDue = Math.max(0, grandTotal - booking.pricing.deposit);
 
-  // Redemption math — keep at least HK$1 charged so Stripe minimum holds.
-  const maxRedeemHkd = Math.min(pointsToHkd(pointsBalance), Math.max(0, booking.pricing.deposit - 1));
+  // Promo discount reduces the *effective subtotal*. Deposit (% rule)
+  // is recomputed from the new subtotal so the customer pays less both
+  // upfront and on balance, proportionally.
+  const promoDiscount = applied?.amount || 0;
+  const effectiveSubtotal = Math.max(0, booking.pricing.subtotal - promoDiscount);
+  const effectiveGrandTotal = effectiveSubtotal + securityDeposit;
+  const isFullPayment = effectiveGrandTotal <= 10000;
+  const effectiveDeposit = isFullPayment
+    ? effectiveGrandTotal
+    : Math.round(effectiveGrandTotal * 0.5);
+  const balanceDue = Math.max(0, effectiveGrandTotal - effectiveDeposit);
+
+  // Redemption math — applied AFTER promo. Keep at least HK$1 charged.
+  const maxRedeemHkd = Math.min(pointsToHkd(pointsBalance), Math.max(0, effectiveDeposit - 1));
   const clampedRedeem = Math.max(0, Math.min(redeemHkd, maxRedeemHkd));
   const pointsUsed = clampedRedeem * POINTS_PER_HKD;
-  const dueNow = booking.pricing.deposit - clampedRedeem;
+  const dueNow = effectiveDeposit - clampedRedeem;
 
   const refundReady =
     method === 'fps'
@@ -112,6 +145,69 @@ export default function ConfirmBookingPage() {
       : bankName.trim().length > 0 &&
         accountHolderName.trim().length > 0 &&
         accountNumber.trim().length > 0;
+
+  async function handleApplyPromo() {
+    const code = promoInput.trim().toUpperCase();
+    if (!code) return;
+    setPromoChecking(true);
+    setPromoError(null);
+    try {
+      // Compute drinks cost from current booking — needed for free_drinks codes.
+      const drinksEntry = booking?.addOns?.find((a) => a.id === 'drinks');
+      // Drinks is per-pax @ $25 — but cost is part of subtotal already.
+      // For free_drinks we just need the rough drinks portion to refund.
+      const adultEquiv = (booking?.adultCount ?? booking?.guestCount ?? 0)
+        + 0.5 * (booking?.childCount ?? 0);
+      const drinksCost = drinksEntry ? Math.round(25 * adultEquiv) : 0;
+
+      const res = await fetch('/api/promo/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code,
+          subtotal: booking?.pricing.subtotal,
+          adultEquiv: adultEquiv || 1,
+          drinksCost,
+          userId: user?.uid,
+        }),
+      });
+      const data = await res.json();
+      if (!data.valid) {
+        const reason = data.reason as string;
+        const msg = (() => {
+          if (reason === 'not_found') return locale === 'zh' ? '優惠碼不存在' : 'Code not found';
+          if (reason === 'disabled') return locale === 'zh' ? '此優惠碼已暫停' : 'Code disabled';
+          if (reason === 'not_started') return locale === 'zh' ? `優惠由 ${data.startDate} 開始` : `Starts ${data.startDate}`;
+          if (reason === 'expired') return locale === 'zh' ? `優惠已於 ${data.endDate} 結束` : `Expired ${data.endDate}`;
+          if (reason === 'min_subtotal') return locale === 'zh' ? `需滿 HK$${data.minSubtotal} 先可用` : `Min subtotal HK$${data.minSubtotal}`;
+          if (reason === 'sold_out') return locale === 'zh' ? '優惠碼已用完' : 'Code sold out';
+          if (reason === 'per_user_limit') return locale === 'zh' ? `你已用過呢個 code（每人限 ${data.perUserLimit} 次）` : `You've already used this code (limit ${data.perUserLimit})`;
+          return locale === 'zh' ? '優惠碼無效' : 'Invalid code';
+        })();
+        setApplied(null);
+        setPromoError(msg);
+        return;
+      }
+      setApplied({
+        codeId: data.codeId,
+        code: data.code,
+        type: data.type,
+        amount: data.amount,
+        freeDrinks: data.freeDrinks,
+      });
+      setPromoError(null);
+    } catch {
+      setPromoError(locale === 'zh' ? '驗證失敗，請重試' : 'Validation failed');
+    } finally {
+      setPromoChecking(false);
+    }
+  }
+
+  function handleClearPromo() {
+    setApplied(null);
+    setPromoInput('');
+    setPromoError(null);
+  }
 
   async function handleProceed() {
     if (!refundReady || !booking) return;
@@ -127,10 +223,18 @@ export default function ConfirmBookingPage() {
               accountNumber: accountNumber.trim(),
             };
       await updateBookingRefundDetails(booking.id, refundDetails);
-      // Persist points redemption (or clear it if user chose 0).
+      // Persist promo + points redemption + recomputed deposit.
       await updateDoc(doc(db, 'bookings', booking.id), {
+        promoCode: applied?.code || null,
+        promoCodeId: applied?.codeId || null,
+        promoDiscount: applied?.amount || null,
+        promoFreeDrinksCost: applied?.freeDrinks ? applied.amount : null,
         pointsUsed: pointsUsed > 0 ? pointsUsed : null,
         pointsDiscount: clampedRedeem > 0 ? clampedRedeem : null,
+        // Recompute deposit / balance to reflect promo discount so the
+        // payment page + Stripe webhook see the right amounts.
+        'pricing.deposit': effectiveDeposit,
+        balanceDue,
       });
       router.push(`/book/${slug}/payment/${booking.id}`);
     } catch (err) {
@@ -219,13 +323,19 @@ export default function ConfirmBookingPage() {
                 <span className="text-ink-soft">{locale === 'zh' ? '小計' : 'Subtotal'}</span>
                 <span>HK${booking.pricing.subtotal.toLocaleString()}</span>
               </div>
+              {applied && applied.amount > 0 && (
+                <div className="flex justify-between text-sm text-emerald-700">
+                  <span>− {locale === 'zh' ? '優惠碼' : 'Promo'} <span className="font-mono text-xs">{applied.code}</span></span>
+                  <span>−HK${applied.amount.toLocaleString()}</span>
+                </div>
+              )}
               <div className="flex justify-between text-sm">
                 <span className="text-ink-soft">{locale === 'zh' ? '按金（活動後退還）' : 'Security deposit (refunded after event)'}</span>
                 <span>HK${securityDeposit.toLocaleString()}</span>
               </div>
               <div className="flex justify-between text-sm font-semibold pt-1.5 border-t border-white/40">
                 <span>{locale === 'zh' ? '總計' : 'Grand total'}</span>
-                <span>HK${grandTotal.toLocaleString()}</span>
+                <span>HK${effectiveGrandTotal.toLocaleString()}</span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-ink-soft">
@@ -233,7 +343,7 @@ export default function ConfirmBookingPage() {
                     ? (locale === 'zh' ? '應付（全數）' : 'Due now (full)')
                     : (locale === 'zh' ? '應付（50%）' : 'Due now (50%)')}
                 </span>
-                <span className="font-medium">HK${booking.pricing.deposit.toLocaleString()}</span>
+                <span className="font-medium">HK${effectiveDeposit.toLocaleString()}</span>
               </div>
               {clampedRedeem > 0 && (
                 <div className="flex justify-between text-sm text-pink">
@@ -256,6 +366,62 @@ export default function ConfirmBookingPage() {
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Promo code */}
+          <div className="glass-card p-7 space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-gradient-warm flex items-center justify-center text-white shrink-0">
+                <Tag size={18} />
+              </div>
+              <div className="flex-1">
+                <h2 className="font-bold text-lg">{locale === 'zh' ? '優惠碼' : 'Promo Code'}</h2>
+                <p className="text-xs text-ink-soft mt-1">
+                  {locale === 'zh' ? '輸入優惠碼可獲折扣（不影響按金）。' : 'Enter a code for a discount (does not affect the security deposit).'}
+                </p>
+              </div>
+            </div>
+
+            {applied ? (
+              <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-emerald-50 border border-emerald-200">
+                <div>
+                  <p className="font-mono font-bold text-emerald-700">{applied.code}</p>
+                  <p className="text-xs text-emerald-600 mt-0.5">
+                    {locale === 'zh' ? `已減 HK$${applied.amount.toLocaleString()}` : `−HK$${applied.amount.toLocaleString()} applied`}
+                    {applied.freeDrinks && (locale === 'zh' ? '（飲品免費）' : ' (free drinks)')}
+                  </p>
+                </div>
+                <button
+                  onClick={handleClearPromo}
+                  className="w-8 h-8 rounded-full bg-white/70 hover:bg-white text-ink-soft flex items-center justify-center"
+                >
+                  <XIcon size={14} />
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="flex gap-2">
+                  <input
+                    value={promoInput}
+                    onChange={(e) => setPromoInput(e.target.value)}
+                    placeholder="WELCOME10"
+                    className="flex-1 px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85 font-mono uppercase"
+                    onKeyDown={(e) => e.key === 'Enter' && handleApplyPromo()}
+                  />
+                  <button
+                    onClick={handleApplyPromo}
+                    disabled={!promoInput.trim() || promoChecking}
+                    className="px-4 py-2 rounded-xl bg-gradient-pink text-white text-sm font-semibold disabled:opacity-40 flex items-center gap-1.5"
+                  >
+                    {promoChecking ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                    {locale === 'zh' ? '應用' : 'Apply'}
+                  </button>
+                </div>
+                {promoError && (
+                  <p className="text-xs text-rose-600">{promoError}</p>
+                )}
+              </>
+            )}
           </div>
 
           {/* Loyalty point redemption */}

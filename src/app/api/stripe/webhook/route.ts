@@ -46,19 +46,31 @@ export async function POST(request: NextRequest) {
         }
         await bookingRef.update(updates);
 
-        // 1b. If the customer redeemed loyalty points on this booking,
-        //     deduct them from the user's balance now (transactional —
-        //     caps at current balance to prevent going negative even
-        //     under concurrent redemption).
+        // 1b. If the customer redeemed loyalty points / applied a promo
+        //     code, persist the deductions now (deposit payments only —
+        //     balance payments don't touch points/promos again).
         try {
           const preNotifySnap = await bookingRef.get();
           const preBooking = preNotifySnap.data() as BookingRecord | undefined;
-          if (preBooking?.pointsUsed && preBooking.pointsUsed > 0 && !isBalancePayment) {
-            const deducted = await deductLoyaltyPoints(preBooking.userId, preBooking.pointsUsed);
-            await bookingRef.update({ pointsRedeemedAt: FieldValue.serverTimestamp(), pointsActuallyDeducted: deducted });
+          if (preBooking && !isBalancePayment) {
+            // Loyalty points — transactional deduction.
+            if (preBooking.pointsUsed && preBooking.pointsUsed > 0) {
+              const deducted = await deductLoyaltyPoints(preBooking.userId, preBooking.pointsUsed);
+              await bookingRef.update({
+                pointsRedeemedAt: FieldValue.serverTimestamp(),
+                pointsActuallyDeducted: deducted,
+              });
+            }
+            // Promo code — increment totalUsageCount on the code doc.
+            if (preBooking.promoCodeId && !preBooking.promoRedeemedAt) {
+              await adminDb.collection('promo_codes').doc(preBooking.promoCodeId).update({
+                totalUsageCount: FieldValue.increment(1),
+              });
+              await bookingRef.update({ promoRedeemedAt: FieldValue.serverTimestamp() });
+            }
           }
         } catch (err) {
-          console.warn('[stripe webhook] points deduction failed:', err);
+          console.warn('[stripe webhook] points/promo deduction failed:', err);
           // Non-fatal — booking is already confirmed; admin can reconcile.
         }
 
@@ -91,6 +103,8 @@ export async function POST(request: NextRequest) {
                 childCount: booking.childCount,
                 subtotal: booking.pricing.subtotal,
                 deposit: booking.pricing.deposit,
+                promoCode: booking.promoCode,
+                promoDiscount: booking.promoDiscount,
                 pointsUsed: booking.pointsUsed,
                 pointsDiscount: booking.pointsDiscount,
                 balanceDue: booking.balanceDue,

@@ -47,6 +47,8 @@ export async function POST(req: NextRequest) {
       childCount: booking.childCount,
       subtotal: booking.pricing.subtotal,
       deposit: booking.pricing.deposit,
+      promoCode: booking.promoCode,
+      promoDiscount: booking.promoDiscount,
       pointsUsed: booking.pointsUsed,
       pointsDiscount: booking.pointsDiscount,
       balanceDue: booking.balanceDue,
@@ -62,7 +64,7 @@ export async function POST(req: NextRequest) {
       html: tpl.html,
     });
 
-    // Deduct loyalty points (idempotent — only fires once per booking).
+    // Deduct loyalty points + increment promo usage (idempotent).
     if (booking.pointsUsed && booking.pointsUsed > 0 && !booking.pointsRedeemedAt) {
       try {
         const deducted = await deductLoyaltyPoints(booking.userId, booking.pointsUsed);
@@ -72,6 +74,18 @@ export async function POST(req: NextRequest) {
         });
       } catch (err) {
         console.warn('[payment-confirmed] points deduction failed:', err);
+      }
+    }
+    if (booking.promoCodeId && !booking.promoRedeemedAt) {
+      try {
+        await adminDb.collection('promo_codes').doc(booking.promoCodeId).update({
+          totalUsageCount: FieldValue.increment(1),
+        });
+        await adminDb.collection('bookings').doc(bookingId).update({
+          promoRedeemedAt: FieldValue.serverTimestamp(),
+        });
+      } catch (err) {
+        console.warn('[payment-confirmed] promo increment failed:', err);
       }
     }
     return NextResponse.json({ ok: true });

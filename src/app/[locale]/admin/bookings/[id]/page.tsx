@@ -390,6 +390,13 @@ export default function AdminBookingDetailPage() {
                 highlight="violet"
               />
             )}
+            {booking.promoCode && (booking.promoDiscount ?? 0) > 0 && (
+              <Row
+                label={locale === 'zh' ? '優惠碼' : 'Promo'}
+                value={`${booking.promoCode} (−HK$${(booking.promoDiscount || 0).toLocaleString()})`}
+                highlight="emerald"
+              />
+            )}
             {(booking.balanceDue ?? 0) > 0 && (
               <Row label={locale === 'zh' ? '欠尾數' : 'Balance due'} value={`HK$${booking.balanceDue!.toLocaleString()}`} highlight="amber" />
             )}
