@@ -5,7 +5,7 @@ import { Link } from '@/i18n/routing';
 import { useParams } from 'next/navigation';
 import { useState, useMemo, useEffect } from 'react';
 import { getVenueBySlug } from '@/lib/venues';
-import { addOns, calculatePricing, noBBQVenues, freeDrinksVenues, hotpotVenues, bbqStandardPriceByVenue, bbqStandardMenu, bbqPremiumMenu, hotpotStandardMenu, hotpotSeafoodMenu, hotpotSoupBases, calcShishaPrice, SHISHA_STAFF_SETUP_FEE } from '@/lib/pricing';
+import { addOns, calculatePricing, noBBQVenues, freeDrinksVenues, hotpotVenues, bbqStandardPriceByVenue, bbqStandardMenu, bbqPremiumMenu, hotpotStandardMenu, hotpotSeafoodMenu, hotpotSoupBases, calcShishaPrice, SHISHA_STAFF_SETUP_FEE, SHISHA_MAX_PIPES } from '@/lib/pricing';
 import type { AddOnOptions } from '@/types';
 import {
   ArrowLeft, ArrowRight, Calendar, Clock, Users,
@@ -229,29 +229,36 @@ export default function BookingPage() {
   };
 
   // ─── Shisha state helpers ───
-  // Shisha is unique among add-ons: each unit (head) carries its own
-  // flavor selection, and there's an optional flat staff-setup fee. We
-  // expose explicit setters so the UI doesn't reach into selectedAddOns
-  // shape. Default flavor for newly-added heads is 'A'.
+  // Shisha customer model:
+  //   • Pipes: 1 or 2 (max 2 simultaneous per venue)
+  //   • Heads: ≥ pipes count. Each pipe needs at least 1 head to start;
+  //     extra heads (heads - pipes) are pre-paid for mid-session swaps
+  //     at $250 each.
+  //   • Each head has its own flavor.
+  //   • Optional flat staff-setup fee (+$180).
+  // We persist `quantity = heads` on the addOns entry (so existing display
+  // surfaces keep working with their ×N suffix) and `options.pipes` on
+  // top of that.
   const shishaCatalogEntry = addOns.find((a) => a.id === 'shisha');
   const shishaEntry = selectedAddOns.find((a) => a.id === 'shisha');
   const shishaHeads = shishaEntry?.quantity || 0;
+  const shishaPipes = shishaEntry?.options?.pipes || (shishaHeads > 0 ? Math.min(SHISHA_MAX_PIPES, shishaHeads) : 0);
   const shishaFlavors = shishaEntry?.options?.flavors || [];
   const shishaStaffSetup = !!shishaEntry?.options?.staffSetup;
 
-  function setShishaHeads(next: number) {
-    const heads = Math.max(0, Math.min(10, Math.floor(next)));
-    if (heads === 0) {
+  function writeShisha(next: { pipes: number; heads: number; flavors: string[]; staffSetup: boolean }) {
+    if (next.heads === 0) {
       setSelectedAddOns(selectedAddOns.filter((a) => a.id !== 'shisha'));
       return;
     }
-    // Resize the flavors array to match heads, defaulting new slots to 'A'.
-    const prev = shishaEntry?.options?.flavors || [];
-    const nextFlavors = Array.from({ length: heads }, (_, i) => prev[i] || 'A');
     const updated = {
       id: 'shisha',
-      quantity: heads,
-      options: { flavors: nextFlavors, staffSetup: shishaStaffSetup },
+      quantity: next.heads,
+      options: {
+        pipes: next.pipes,
+        flavors: next.flavors,
+        staffSetup: next.staffSetup,
+      },
     };
     if (shishaEntry) {
       setSelectedAddOns(selectedAddOns.map((a) => a.id === 'shisha' ? updated : a));
@@ -259,21 +266,40 @@ export default function BookingPage() {
       setSelectedAddOns([...selectedAddOns, updated]);
     }
   }
+
+  function setShishaPipes(nextPipes: number) {
+    const pipes = Math.max(1, Math.min(SHISHA_MAX_PIPES, Math.floor(nextPipes)));
+    // Heads must always be ≥ pipes. If user picks 2 pipes but had only 1
+    // head, bump heads up. Otherwise keep existing heads.
+    const heads = Math.max(pipes, shishaHeads);
+    const prevFlavors = shishaFlavors;
+    const flavors = Array.from({ length: heads }, (_, i) => prevFlavors[i] || 'A');
+    writeShisha({ pipes, heads, flavors, staffSetup: shishaStaffSetup });
+  }
+
+  function setShishaHeads(nextHeads: number) {
+    const heads = Math.max(0, Math.min(10, Math.floor(nextHeads)));
+    if (heads === 0) {
+      writeShisha({ pipes: 0, heads: 0, flavors: [], staffSetup: false });
+      return;
+    }
+    // Floor pipes to current selection (or 1 for first add); ceil to heads
+    // when heads is being lowered below current pipes count.
+    const pipes = Math.max(1, Math.min(heads, shishaPipes || 1));
+    const flavors = Array.from({ length: heads }, (_, i) => shishaFlavors[i] || 'A');
+    writeShisha({ pipes, heads, flavors, staffSetup: shishaStaffSetup });
+  }
+
   function setShishaFlavor(idx: number, flavorId: string) {
     if (!shishaEntry) return;
-    const next = [...(shishaEntry.options?.flavors || [])];
-    next[idx] = flavorId;
-    setSelectedAddOns(selectedAddOns.map((a) => a.id === 'shisha'
-      ? { ...a, options: { ...(a.options || {}), flavors: next } }
-      : a,
-    ));
+    const flavors = [...shishaFlavors];
+    flavors[idx] = flavorId;
+    writeShisha({ pipes: shishaPipes, heads: shishaHeads, flavors, staffSetup: shishaStaffSetup });
   }
+
   function toggleShishaStaffSetup() {
     if (!shishaEntry) return;
-    setSelectedAddOns(selectedAddOns.map((a) => a.id === 'shisha'
-      ? { ...a, options: { ...(a.options || {}), staffSetup: !a.options?.staffSetup } }
-      : a,
-    ));
+    writeShisha({ pipes: shishaPipes, heads: shishaHeads, flavors: shishaFlavors, staffSetup: !shishaStaffSetup });
   }
 
   // Time slot options
@@ -904,43 +930,91 @@ export default function BookingPage() {
                   </div>
                 )}
 
-                {/* Shisha Package — tiered pricing + per-head flavor selection */}
+                {/* Shisha Package — pipes + heads + per-head flavor selection */}
                 {shishaCatalogEntry && (
                   <div className={`p-5 rounded-2xl border ${shishaHeads > 0 ? 'border-accent bg-accent/5' : 'border-charcoal/5'}`}>
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold">{shishaCatalogEntry.name[locale]}</p>
-                        <p className="text-sm text-muted mt-1">{shishaCatalogEntry.description?.[locale]}</p>
-                        <p className="text-xs text-ink-soft mt-2">
-                          {locale === 'zh'
-                            ? '* 由外部供應商提供。需活動 2 日前預訂'
-                            : '* Provided by outside vendor. Order ≥ 2 days ahead'}
+                    <div className="mb-4">
+                      <p className="font-semibold">{shishaCatalogEntry.name[locale]}</p>
+                      <p className="text-sm text-muted mt-1">{shishaCatalogEntry.description?.[locale]}</p>
+                      <p className="text-xs text-ink-soft mt-2">
+                        {locale === 'zh'
+                          ? '* 由外部供應商提供。需活動 2 日前預訂。'
+                          : '* Provided by outside vendor. Order ≥ 2 days ahead.'}
+                      </p>
+                    </div>
+
+                    {/* Pipes selector — 1 or 2 pill buttons */}
+                    <div className="flex items-center justify-between gap-3 py-3 border-t border-white/40">
+                      <div>
+                        <p className="font-semibold text-sm">{locale === 'zh' ? '水煙支數' : 'Pipes'}</p>
+                        <p className="text-xs text-ink-soft mt-0.5">
+                          {locale === 'zh' ? '可同時開幾多支（場地最多 2 支）' : `How many simultaneous pipes (max ${SHISHA_MAX_PIPES})`}
                         </p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => setShishaHeads(shishaHeads - 1)}
-                          disabled={shishaHeads <= 0 || tooSoonForExtras}
-                          className="w-8 h-8 rounded-full border border-charcoal/20 flex items-center justify-center hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed"
-                        >
-                          <Minus size={14} />
-                        </button>
-                        <span className="w-6 text-center font-semibold">{shishaHeads}</span>
-                        <button
-                          type="button"
-                          onClick={() => setShishaHeads(shishaHeads + 1)}
-                          disabled={shishaHeads >= 10 || tooSoonForExtras}
-                          className="w-8 h-8 rounded-full border border-charcoal/20 flex items-center justify-center hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed"
-                        >
-                          <Plus size={14} />
-                        </button>
+                        {[1, 2].map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            onClick={() => setShishaPipes(n)}
+                            disabled={tooSoonForExtras}
+                            className={`px-4 py-1.5 rounded-pill text-sm font-semibold border transition disabled:opacity-30 ${
+                              shishaPipes === n
+                                ? 'bg-gradient-pink text-white border-transparent shadow-glow'
+                                : 'bg-white/70 text-ink-soft border-charcoal/15 hover:bg-white'
+                            }`}
+                          >
+                            {n} {locale === 'zh' ? '支' : `pipe${n > 1 ? 's' : ''}`}
+                          </button>
+                        ))}
+                        {shishaHeads > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setShishaHeads(0)}
+                            className="px-3 py-1.5 rounded-pill text-xs font-medium bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200"
+                          >
+                            {locale === 'zh' ? '取消' : 'Remove'}
+                          </button>
+                        )}
                       </div>
                     </div>
 
-                    {/* Per-head flavor pickers — visible when at least one head chosen */}
+                    {/* Heads stepper — only shown when pipes is selected */}
                     {shishaHeads > 0 && (
-                      <div className="mt-4 space-y-3 border-t border-white/40 pt-4">
+                      <div className="flex items-center justify-between gap-3 py-3 border-t border-white/40">
+                        <div>
+                          <p className="font-semibold text-sm">{locale === 'zh' ? '煙頭數' : 'Heads (total)'}</p>
+                          <p className="text-xs text-ink-soft mt-0.5">
+                            {locale === 'zh'
+                              ? `最少 ${shishaPipes} 個（每支水煙最少 1 個頭）；額外每個 +$250`
+                              : `Min ${shishaPipes} (each pipe needs 1); extras +$250 each`}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setShishaHeads(shishaHeads - 1)}
+                            disabled={shishaHeads <= shishaPipes || tooSoonForExtras}
+                            className="w-8 h-8 rounded-full border border-charcoal/20 flex items-center justify-center hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed"
+                          >
+                            <Minus size={14} />
+                          </button>
+                          <span className="w-6 text-center font-semibold">{shishaHeads}</span>
+                          <button
+                            type="button"
+                            onClick={() => setShishaHeads(shishaHeads + 1)}
+                            disabled={shishaHeads >= 10 || tooSoonForExtras}
+                            className="w-8 h-8 rounded-full border border-charcoal/20 flex items-center justify-center hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed"
+                          >
+                            <Plus size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Per-head flavor pickers + setup + subtotal — when heads chosen */}
+                    {shishaHeads > 0 && (
+                      <div className="mt-3 space-y-3 border-t border-white/40 pt-4">
                         <p className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
                           {locale === 'zh' ? '每個煙頭揀口味' : 'Pick a flavor per head'}
                         </p>
@@ -948,7 +1022,7 @@ export default function BookingPage() {
                           {Array.from({ length: shishaHeads }, (_, i) => (
                             <label key={i} className="flex items-center gap-2 text-sm">
                               <span className="w-12 text-ink-soft shrink-0">
-                                {locale === 'zh' ? `#${i + 1}` : `#${i + 1}`}
+                                #{i + 1}
                               </span>
                               <select
                                 value={shishaFlavors[i] || 'A'}
@@ -984,7 +1058,7 @@ export default function BookingPage() {
                             {locale === 'zh' ? '小計' : 'Subtotal'}
                           </span>
                           <span className="font-bold">
-                            HK${calcShishaPrice(shishaHeads, shishaStaffSetup).toLocaleString()}
+                            HK${calcShishaPrice(shishaPipes, shishaHeads, shishaStaffSetup).toLocaleString()}
                           </span>
                         </div>
                       </div>

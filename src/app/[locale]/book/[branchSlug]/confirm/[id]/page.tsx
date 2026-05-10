@@ -154,11 +154,21 @@ export default function ConfirmBookingPage() {
                       <p>
                         • {meta?.name[locale] || a.id} {a.quantity > 1 ? `× ${a.quantity}` : ''}
                       </p>
+                      {a.id === 'shisha' && (
+                        <p className="text-xs text-ink-soft pl-3 mt-0.5">
+                          {(() => {
+                            const pipes = a.options?.pipes ?? Math.min(2, a.quantity);
+                            return locale === 'zh'
+                              ? `${pipes} 支水煙 / ${a.quantity} 個煙頭`
+                              : `${pipes} pipe${pipes > 1 ? 's' : ''} / ${a.quantity} head${a.quantity > 1 ? 's' : ''}`;
+                          })()}
+                        </p>
+                      )}
                       {a.id === 'shisha' && a.options?.flavors && a.options.flavors.length > 0 && (
                         <p className="text-xs text-ink-soft pl-3 mt-0.5">
                           {a.options.flavors.map((f, i) => (
                             <span key={i}>
-                              {locale === 'zh' ? `#${i + 1}` : `#${i + 1}`} {getShishaFlavorLabel(f, locale)}
+                              #{i + 1} {getShishaFlavorLabel(f, locale)}
                               {i < a.options!.flavors!.length - 1 ? '、' : ''}
                             </span>
                           ))}

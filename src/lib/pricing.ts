@@ -84,8 +84,8 @@ export const addOns: AddOn[] = [
     unit: 'item',
     maxQuantity: 10,
     description: {
-      zh: '1 個水煙頭 $390 / 2 個 $750 / 額外每個 +$250；需另選口味，需活動 2 日前預訂',
-      en: '1 head $390 / 2 heads $750 / +$250 per extra head; flavor selection required, order ≥ 2 days ahead',
+      zh: '1 支水煙 + 1 個煙頭 $390 / 2 支 + 2 頭 $750 / 額外每個煙頭 +$250；自助形式（食完一個頭可以換新嘅）；最多 2 支水煙；需活動 2 日前預訂',
+      en: '1 pipe + 1 head $390 / 2 pipes + 2 heads $750 / +$250 each extra head (DIY swap); max 2 pipes per venue; order ≥ 2 days ahead',
     },
     variants: [
       { id: 'A', category: 'fruity-minty', name: { zh: 'A · 芒果菠蘿檸檬綠茶',     en: 'A · Mango Pineapple Lemon Green Tea' } },
@@ -100,15 +100,26 @@ export const addOns: AddOn[] = [
   },
 ];
 
-/** Shisha tiered pricing: 1 head $390, 2 heads $750, +$250 per extra. */
-export function calcShishaPrice(heads: number, staffSetup = false): number {
-  if (heads <= 0) return 0;
-  let total = 390;                                  // 1st head
-  if (heads >= 2) total += 360;                     // 2nd head ($750 - $390)
-  if (heads >= 3) total += (heads - 2) * 250;       // 3rd+ heads
-  if (staffSetup) total += 180;
-  return total;
+/** Shisha pricing.
+ *  - 1 pipe + 1 head = $390 (single base)
+ *  - 2 pipes + 2 heads = $750 (double base)
+ *  - Each extra head beyond `pipes` = +$250 (for mid-session swap)
+ *  - Optional staff setup = +$180 flat */
+export function calcShishaPrice(
+  pipes: number,
+  heads: number,
+  staffSetup = false,
+): number {
+  if (pipes <= 0 || heads <= 0) return 0;
+  const validPipes = Math.min(2, Math.max(1, Math.floor(pipes)));
+  const validHeads = Math.max(validPipes, Math.floor(heads));
+  const base = validPipes === 1 ? 390 : 750;
+  const extra = (validHeads - validPipes) * 250;
+  return base + extra + (staffSetup ? 180 : 0);
 }
+
+/** Max simultaneous pipes per venue. Currently uniform across venues. */
+export const SHISHA_MAX_PIPES = 2;
 
 export const SHISHA_STAFF_SETUP_FEE = 180;
 
@@ -140,17 +151,22 @@ export function getShishaFlavorLabel(variantId: string, locale: 'zh' | 'en' = 'e
 
 /** Format a booking's addOns as a comma-separated staff-facing string,
  *  e.g. "BBQ Standard Package ×4, Drinks Package ×4". For Shisha, also
- *  surface flavor breakdown + setup option:
- *  "Shisha 水煙 ×3 (A·芒果菠蘿×2, C·提子×1, +人手setup)". */
+ *  surface pipe count + flavor breakdown + setup option:
+ *  "Shisha 水煙 (2支/3頭: A·芒果菠蘿×2, C·提子×1, +人手setup)". */
 export function formatAddOnsForStaff(
-  addOns: { id: string; quantity: number; options?: { flavors?: string[]; staffSetup?: boolean } }[] | undefined,
+  addOns: { id: string; quantity: number; options?: { pipes?: number; flavors?: string[]; staffSetup?: boolean } }[] | undefined,
   locale: 'zh' | 'en' = 'en',
 ): string {
   if (!addOns || addOns.length === 0) return '';
   return addOns.map((a) => {
-    const base = `${getAddOnLabel(a.id, locale)} ×${a.quantity}`;
-    if (a.id !== 'shisha') return base;
-    // Shisha: tally flavors and append setup flag.
+    if (a.id !== 'shisha') {
+      return `${getAddOnLabel(a.id, locale)} ×${a.quantity}`;
+    }
+    // Shisha: pipes/heads + flavor breakdown + setup flag.
+    const heads = a.quantity;
+    const pipes = a.options?.pipes ?? Math.min(2, heads);
+    const headerZh = `${pipes}支/${heads}頭`;
+    const headerEn = `${pipes} pipe${pipes > 1 ? 's' : ''} / ${heads} head${heads > 1 ? 's' : ''}`;
     const counts: Record<string, number> = {};
     for (const f of a.options?.flavors || []) counts[f] = (counts[f] || 0) + 1;
     const flavorParts = Object.entries(counts)
@@ -158,8 +174,10 @@ export function formatAddOnsForStaff(
     const setupTag = a.options?.staffSetup
       ? (locale === 'zh' ? '+人手setup' : '+staff setup')
       : '';
-    const detail = [...flavorParts, setupTag].filter(Boolean).join(', ');
-    return detail ? `${base} (${detail})` : base;
+    const detail = [locale === 'zh' ? headerZh : headerEn, ...flavorParts, setupTag]
+      .filter(Boolean)
+      .join(', ');
+    return `${getAddOnLabel(a.id, locale)} (${detail})`;
   }).join(', ');
 }
 
@@ -352,7 +370,7 @@ export function calculatePricing(
   isWeekend: boolean,
   hours: number,
   guests: number,
-  selectedAddOns: { id: string; quantity: number; options?: { flavors?: string[]; staffSetup?: boolean } }[],
+  selectedAddOns: { id: string; quantity: number; options?: { pipes?: number; flavors?: string[]; staffSetup?: boolean } }[],
   /** Optional adult/child split. If omitted, the entire `guests` count
    *  is treated as adults (legacy bookings) and full price applies. */
   childCount: number = 0,
@@ -482,13 +500,16 @@ export function calculatePricing(
 
     if (selected.id === 'shisha') {
       const heads = selected.quantity;
+      // Default pipes to min(2, heads) for any legacy entry without it,
+      // so old test data keeps producing a sensible total.
+      const pipes = Math.min(SHISHA_MAX_PIPES, Math.max(1, selected.options?.pipes ?? Math.min(2, heads)));
       const staffSetup = !!selected.options?.staffSetup;
-      const cost = calcShishaPrice(heads, staffSetup);
+      const cost = calcShishaPrice(pipes, heads, staffSetup);
       addOnTotal += cost;
       breakdown.push({
         label: {
-          zh: `Shisha 水煙 (${heads} 個煙頭${staffSetup ? ' + 人手 setup' : ''})`,
-          en: `Shisha (${heads} head${heads > 1 ? 's' : ''}${staffSetup ? ' + staff setup' : ''})`,
+          zh: `Shisha 水煙 (${pipes} 支水煙 / ${heads} 個煙頭${staffSetup ? ' + 人手 setup' : ''})`,
+          en: `Shisha (${pipes} pipe${pipes > 1 ? 's' : ''} / ${heads} head${heads > 1 ? 's' : ''}${staffSetup ? ' + staff setup' : ''})`,
         },
         amount: cost,
       });

@@ -41,9 +41,21 @@ export interface AddOn {
 
 /** Per-add-on user-chosen extras. Currently only used by Shisha. Stored
  *  alongside `quantity` on each addOns entry so the pricing calc + display
- *  surfaces can resolve flavors and setup option without a parallel field. */
+ *  surfaces can resolve flavors and setup option without a parallel field.
+ *
+ *  Shisha pricing model:
+ *    1 pipe + 1 head  = $390   (base, single)
+ *    2 pipes + 2 heads = $750  (base, double)
+ *    Each extra head  = +$250  (heads beyond pipes count, used for swapping
+ *                                a fresh head onto a pipe mid-session)
+ *  Each venue allows max 2 pipes simultaneously. Heads must be ≥ pipes
+ *  (every pipe needs at least one head to start). On the addOns entry we
+ *  store `quantity = total head count` so the existing display surfaces
+ *  (×N suffix) keep working; `pipes` lives on options. */
 export interface AddOnOptions {
-  /** Flavor variant ids picked, one per quantity unit (per Shisha head). */
+  /** How many shisha pipes (1 or 2). Constrained by venue (max 2). */
+  pipes?: number;
+  /** Flavor variant ids picked, one per head (so length === quantity). */
   flavors?: string[];
   /** Whether the customer wants staff setup (+$180 flat). */
   staffSetup?: boolean;
