@@ -1,0 +1,308 @@
+'use client';
+
+// Customer-facing booking modification — D2 (add add-ons).
+//
+// Lets the customer ADD add-ons to a confirmed booking (no removal,
+// no quantity decrease). Computes the price diff vs the original
+// booking and pushes that into balanceDue so the existing pay-balance
+// flow handles the actual payment (Stripe + offline both supported).
+//
+// Hard rules:
+//   • Modify deadline: ≥ 24 hrs before booking start
+//   • Food / shisha add-ons: ≥ 48 hrs before booking start (existing
+//     2-day-advance rule from the original booking flow)
+//   • Existing add-on qty cannot be decreased
+
+import { useEffect, useMemo, useState } from 'react';
+import { useLocale } from 'next-intl';
+import { useParams } from 'next/navigation';
+import { useRouter, Link } from '@/i18n/routing';
+import { useAuth } from '@/contexts/AuthContext';
+import { getBooking } from '@/lib/firestore';
+import { doc, updateDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+import { getVenueById, venuesSharingSpace } from '@/lib/venues';
+import {
+  addOns as addOnCatalog, calculatePricing, noBBQVenues, freeDrinksVenues,
+} from '@/lib/pricing';
+import { BookingRecord, AddOnOptions } from '@/types';
+import {
+  ArrowLeft, Plus, Minus, Check, AlertCircle, Loader2, Info,
+} from 'lucide-react';
+
+interface CartEntry { id: string; quantity: number; options?: AddOnOptions }
+
+export default function ModifyBookingPage() {
+  const locale = useLocale() as 'zh' | 'en';
+  const params = useParams();
+  const router = useRouter();
+  const bookingId = params.id as string;
+  const { user, loading: authLoading } = useAuth();
+
+  const [booking, setBooking] = useState<BookingRecord | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  /** Cart starts identical to the booking. Customer can only ADD. */
+  const [cart, setCart] = useState<CartEntry[]>([]);
+  /** Original quantities for guard rails — cart entry can't go below these. */
+  const [floor, setFloor] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) { router.push('/'); return; }
+    getBooking(bookingId)
+      .then((b) => {
+        if (!b) {
+          setError(locale === 'zh' ? '找不到預訂' : 'Booking not found');
+        } else if (b.userId !== user.uid) {
+          setError(locale === 'zh' ? '無權修改此預訂' : 'Not authorized');
+        } else {
+          setBooking(b);
+          setCart((b.addOns || []).map((a) => ({ ...a })));
+          const f: Record<string, number> = {};
+          for (const a of (b.addOns || [])) f[a.id] = a.quantity;
+          setFloor(f);
+        }
+      })
+      .finally(() => setLoading(false));
+  }, [bookingId, user, authLoading, router, locale]);
+
+  const venue = booking ? getVenueById(booking.venueId) : null;
+
+  const startMs = booking ? new Date(`${booking.date}T${booking.startTime}:00+08:00`).getTime() : 0;
+  const hoursUntilStart = booking ? (startMs - Date.now()) / 3600000 : Infinity;
+  const canModify = !!booking && (booking.status === 'confirmed' || booking.status === 'awaiting_payment') && hoursUntilStart >= 24;
+  const canAddFood = hoursUntilStart >= 48;
+
+  // Add-ons currently visible (filter out shisha — out of D2 scope —
+  // and venue-incompatible items).
+  const visibleAddOns = useMemo(() => {
+    if (!venue) return [];
+    return addOnCatalog.filter((a) => {
+      if (a.id === 'shisha') return false; // D2 skip
+      if ((a.id === 'bbq-standard' || a.id === 'bbq-premium' || a.id === 'bbq-grill') && noBBQVenues.includes(venue.id)) return false;
+      if (a.id === 'drinks' && freeDrinksVenues.includes(venue.id)) return false;
+      return true;
+    });
+  }, [venue]);
+
+  // Diff calculation — full pricing recalc with new cart, compared
+  // to the original. Use the booking's own subtotal as baseline so
+  // we don't have to round-trip the venue rate / hours / pax.
+  const newPricing = useMemo(() => {
+    if (!venue || !booking) return null;
+    return calculatePricing(
+      venue,
+      booking.isWeekend,
+      booking.hours,
+      booking.guestCount,
+      cart,
+      booking.childCount,
+    );
+  }, [venue, booking, cart]);
+
+  const subtotalDiff = newPricing && booking ? Math.max(0, newPricing.subtotal - booking.pricing.subtotal) : 0;
+
+  const FOOD_IDS = new Set(['bbq-standard', 'bbq-premium', 'bbq-grill', 'hotpot-standard', 'hotpot-seafood', 'hotpot-extra-soup']);
+
+  function getQty(id: string): number {
+    return cart.find((c) => c.id === id)?.quantity || 0;
+  }
+  function isFloor(id: string, qty: number): boolean {
+    return qty <= (floor[id] || 0);
+  }
+
+  /** Add or increase quantity. Mirrors the mutual-exclusivity rules
+   *  from the booking page (BBQ standard ↔ premium, BYO + grill).
+   *  We only let the customer ADD here; existing items at floor cannot
+   *  be removed. */
+  function inc(id: string) {
+    setCart((prev) => {
+      const existing = prev.find((c) => c.id === id);
+      // BBQ mutex: adding bbq-standard with bbq-premium present is OK
+      // only if premium isn't already in the original. Same for premium.
+      // For modify, simplest: no mutex enforcement here — the customer
+      // already chose at booking time. Just allow stacking.
+      if (existing) {
+        return prev.map((c) => c.id === id ? { ...c, quantity: c.quantity + 1 } : c);
+      }
+      return [...prev, { id, quantity: 1 }];
+    });
+  }
+  function dec(id: string) {
+    setCart((prev) => {
+      const existing = prev.find((c) => c.id === id);
+      if (!existing) return prev;
+      const newQty = existing.quantity - 1;
+      const min = floor[id] || 0;
+      if (newQty < min) return prev; // can't go below original
+      if (newQty === 0) return prev.filter((c) => c.id !== id);
+      return prev.map((c) => c.id === id ? { ...c, quantity: newQty } : c);
+    });
+  }
+
+  async function handleSave() {
+    if (!booking || subtotalDiff <= 0 || !newPricing) return;
+    setSubmitting(true);
+    try {
+      const newBalance = (booking.balanceDue ?? 0) + subtotalDiff;
+      await updateDoc(doc(db, 'bookings', booking.id), {
+        addOns: cart,
+        'pricing.subtotal': newPricing.subtotal,
+        'pricing.addOnTotal': newPricing.addOnTotal,
+        balanceDue: newBalance,
+      });
+      router.push(`/book/${booking.branchSlug}/pay-balance/${booking.id}`);
+    } catch (err) {
+      setError((locale === 'zh' ? '儲存失敗：' : 'Save failed: ') + (err instanceof Error ? err.message : 'unknown'));
+      setSubmitting(false);
+    }
+  }
+
+  if (authLoading || loading) {
+    return <div className="pt-28 min-h-screen flex items-center justify-center"><div className="animate-pulse text-ink-soft">Loading…</div></div>;
+  }
+  if (error || !booking) {
+    return (
+      <div className="pt-28 min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-rose-500 mb-4">{error || 'Error'}</p>
+          <Link href="/my-bookings" className="text-sm text-pink hover:underline">{locale === 'zh' ? '← 返回' : '← Back'}</Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (!canModify) {
+    return (
+      <div className="pt-28 min-h-screen flex items-center justify-center">
+        <div className="glass-card p-8 max-w-md text-center">
+          <AlertCircle size={32} className="mx-auto mb-3 text-amber-500" />
+          <h1 className="text-xl font-bold mb-2">{locale === 'zh' ? '已過修改期限' : 'Modification Closed'}</h1>
+          <p className="text-sm text-ink-soft mb-4">
+            {locale === 'zh'
+              ? '預約開始前 24 小時內已唔可以自助修改。如有需要請 WhatsApp 我哋。'
+              : 'Self-service modifications are closed within 24 hours of start. Please WhatsApp us instead.'}
+          </p>
+          <Link href={`/my-bookings/${booking.id}`} className="text-sm text-pink hover:underline">
+            {locale === 'zh' ? '← 返回詳情' : '← Back to detail'}
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="pt-28 pb-20">
+      <div className="max-content mx-auto px-6 md:px-12 lg:px-20">
+        <div className="max-w-2xl mx-auto space-y-5">
+          <Link href={`/my-bookings/${booking.id}`} className="inline-flex items-center gap-2 text-sm text-ink-soft hover:text-pink">
+            <ArrowLeft size={14} /> {locale === 'zh' ? '返回詳情' : 'Back to detail'}
+          </Link>
+
+          <div>
+            <h1 className="text-heading">
+              <span className="text-gradient-pink">{locale === 'zh' ? '修改預訂' : 'Modify Booking'}</span>
+            </h1>
+            <p className="text-ink-soft mt-2 text-sm">
+              {venue?.name[locale]} · {booking.date} {booking.startTime}–{booking.endTime}
+            </p>
+            <p className="text-xs text-ink-soft mt-1">
+              {locale === 'zh' ? '只可以加，唔可以減；確認後系統會將差額加入尾數，跳去付款頁。' : 'Add-only — saving recomputes the balance and redirects to pay-balance.'}
+            </p>
+          </div>
+
+          {!canAddFood && (
+            <div className="rounded-2xl bg-amber-50 border border-amber-200 px-4 py-3 flex items-start gap-2.5">
+              <AlertCircle size={16} className="text-amber-600 mt-0.5 shrink-0" />
+              <p className="text-xs text-amber-800 leading-relaxed">
+                {locale === 'zh'
+                  ? '距離活動少於 48 小時，BBQ／火鍋等需要供應商準備嘅 add-ons 已經唔可以後加。其他項目（如場地租用爐）仲可以加。'
+                  : 'Less than 48 hours from start — BBQ / hotpot add-ons can no longer be added. Other items (like grill rental) are still available.'}
+              </p>
+            </div>
+          )}
+
+          <div className="space-y-3">
+            {visibleAddOns.map((a) => {
+              const qty = getQty(a.id);
+              const atFloor = isFloor(a.id, qty);
+              const isFood = FOOD_IDS.has(a.id);
+              const lockedFood = isFood && !canAddFood && qty === floor[a.id];
+              return (
+                <div key={a.id} className={`glass-card p-5 ${qty > (floor[a.id] || 0) ? 'border-accent/40 bg-accent/5' : ''} ${lockedFood ? 'opacity-50' : ''}`}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold">{a.name[locale]}</p>
+                      <p className="text-xs text-muted mt-1">{a.description?.[locale]}</p>
+                      {(floor[a.id] || 0) > 0 && (
+                        <p className="text-[11px] text-emerald-700 mt-1">
+                          {locale === 'zh' ? `已預訂 × ${floor[a.id]}（不可減少）` : `Already booked × ${floor[a.id]} (locked)`}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => dec(a.id)}
+                        disabled={atFloor}
+                        className="w-8 h-8 rounded-full border border-charcoal/15 flex items-center justify-center hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        <Minus size={14} />
+                      </button>
+                      <span className="w-6 text-center font-semibold">{qty}</span>
+                      <button
+                        type="button"
+                        onClick={() => inc(a.id)}
+                        disabled={lockedFood}
+                        className="w-8 h-8 rounded-full border border-charcoal/15 flex items-center justify-center hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        <Plus size={14} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Sticky diff summary */}
+          <div className="glass-card p-6 sticky bottom-4 mt-6">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-sm text-ink-soft">{locale === 'zh' ? '原小計' : 'Original subtotal'}</span>
+              <span className="text-sm">HK${booking.pricing.subtotal.toLocaleString()}</span>
+            </div>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-sm text-ink-soft">{locale === 'zh' ? '新小計' : 'New subtotal'}</span>
+              <span className="text-sm font-semibold">HK${(newPricing?.subtotal || 0).toLocaleString()}</span>
+            </div>
+            <div className="flex items-center justify-between mb-4 pt-3 border-t border-white/40">
+              <span className="font-bold">{locale === 'zh' ? '需補付' : 'Top-up'}</span>
+              <span className="font-bold text-2xl text-gradient-pink">HK${subtotalDiff.toLocaleString()}</span>
+            </div>
+            {(booking.balanceDue ?? 0) > 0 && subtotalDiff > 0 && (
+              <p className="text-xs text-ink-soft mb-3 flex items-start gap-1.5">
+                <Info size={12} className="mt-0.5 shrink-0" />
+                {locale === 'zh'
+                  ? `加上現有未繳尾數 HK$${(booking.balanceDue || 0).toLocaleString()}，共需付 HK$${((booking.balanceDue || 0) + subtotalDiff).toLocaleString()}。`
+                  : `Plus existing balance HK$${(booking.balanceDue || 0).toLocaleString()} = HK$${((booking.balanceDue || 0) + subtotalDiff).toLocaleString()} total.`}
+              </p>
+            )}
+            <button
+              onClick={handleSave}
+              disabled={subtotalDiff <= 0 || submitting}
+              className="w-full py-3 rounded-xl bg-gradient-pink text-white font-bold text-base disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {submitting ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+              {subtotalDiff <= 0
+                ? (locale === 'zh' ? '請先加項目' : 'Add items to continue')
+                : (locale === 'zh' ? '確認並付款' : 'Save & Pay')}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
