@@ -18,7 +18,7 @@ import { useLocale } from 'next-intl';
 import { useParams } from 'next/navigation';
 import { useRouter, Link } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
-import { getBooking } from '@/lib/firestore';
+import { getBooking, getBlockedSlots, updateBookingDateTime } from '@/lib/firestore';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { getVenueById, venuesSharingSpace } from '@/lib/venues';
@@ -27,8 +27,14 @@ import {
 } from '@/lib/pricing';
 import { BookingRecord, AddOnOptions } from '@/types';
 import {
-  ArrowLeft, Plus, Minus, Check, AlertCircle, Loader2, Info,
+  ArrowLeft, Plus, Minus, Check, AlertCircle, Loader2, Info, Clock,
 } from 'lucide-react';
+
+const CLEANING_BUFFER_MIN = 60;
+function toMin(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + (m || 0);
+}
 
 interface CartEntry { id: string; quantity: number; options?: AddOnOptions }
 
@@ -53,6 +59,12 @@ export default function ModifyBookingPage() {
   const [childCount, setChildCount] = useState<number>(0);
   const [adultFloor, setAdultFloor] = useState<number>(0);
   const [childFloor, setChildFloor] = useState<number>(0);
+  /** Time fields. Start can only move EARLIER, end can only move LATER. */
+  const [startTime, setStartTime] = useState<string>('');
+  const [endTime, setEndTime] = useState<string>('');
+  const [startFloor, setStartFloor] = useState<string>('');
+  const [endFloor, setEndFloor] = useState<string>('');
+  const [timeConflict, setTimeConflict] = useState<string | null>(null);
 
   useEffect(() => {
     if (authLoading) return;
@@ -77,6 +89,10 @@ export default function ModifyBookingPage() {
           setChildCount(kids);
           setAdultFloor(adults);
           setChildFloor(kids);
+          setStartTime(b.startTime);
+          setEndTime(b.endTime);
+          setStartFloor(b.startTime);
+          setEndFloor(b.endTime);
         }
       })
       .finally(() => setLoading(false));
@@ -105,20 +121,63 @@ export default function ModifyBookingPage() {
   // to the original. Use the booking's own subtotal as baseline so
   // we don't have to round-trip the venue rate / hours / pax.
   const newGuestCount = adultCount + childCount;
+  const newHours = useMemo(() => {
+    if (!startTime || !endTime) return booking?.hours ?? 0;
+    return Math.max(0, (toMin(endTime) - toMin(startTime)) / 60);
+  }, [startTime, endTime, booking?.hours]);
   const newPricing = useMemo(() => {
     if (!venue || !booking) return null;
     return calculatePricing(
       venue,
       booking.isWeekend,
-      booking.hours,
+      newHours,
       newGuestCount,
       cart,
       childCount,
     );
-  }, [venue, booking, cart, newGuestCount, childCount]);
+  }, [venue, booking, cart, newGuestCount, childCount, newHours]);
 
   const subtotalDiff = newPricing && booking ? Math.max(0, newPricing.subtotal - booking.pricing.subtotal) : 0;
   const guestsChanged = adultCount !== adultFloor || childCount !== childFloor;
+  const timeChanged = startTime !== startFloor || endTime !== endFloor;
+
+  // Live time conflict check — runs whenever time changes.
+  // Compares the proposed window (incl. 1-hr cleaning buffer) against
+  // every other booking / cleaning / admin block on the same date for
+  // the venue (or any venue sharing physical space).
+  useEffect(() => {
+    if (!booking || !venue || !timeChanged) {
+      setTimeConflict(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const myStart = toMin(startTime);
+        const myEnd = toMin(endTime) + CLEANING_BUFFER_MIN;
+        const venueIds = venuesSharingSpace(booking.venueId);
+        for (const vid of venueIds) {
+          const blocks = await getBlockedSlots(vid, booking.date);
+          for (const b of blocks) {
+            if (b.bookingId === booking.id) continue;  // skip our own
+            const bStart = toMin(b.startTime);
+            const bEnd = toMin(b.endTime);
+            if (myStart < bEnd && bStart < myEnd) {
+              if (cancelled) return;
+              setTimeConflict(locale === 'zh'
+                ? `撞到其他預訂（${b.startTime}–${b.endTime}），請揀其他時間。`
+                : `Conflicts with another booking (${b.startTime}–${b.endTime}).`);
+              return;
+            }
+          }
+        }
+        if (!cancelled) setTimeConflict(null);
+      } catch {
+        if (!cancelled) setTimeConflict(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [startTime, endTime, booking, venue, timeChanged, locale]);
 
   const FOOD_IDS = new Set(['bbq-standard', 'bbq-premium', 'bbq-grill', 'hotpot-standard', 'hotpot-seafood', 'hotpot-extra-soup']);
 
@@ -160,6 +219,7 @@ export default function ModifyBookingPage() {
 
   async function handleSave() {
     if (!booking || subtotalDiff <= 0 || !newPricing) return;
+    if (timeChanged && timeConflict) return;
     setSubmitting(true);
     try {
       const newBalance = (booking.balanceDue ?? 0) + subtotalDiff;
@@ -167,6 +227,7 @@ export default function ModifyBookingPage() {
         addOns: cart,
         'pricing.subtotal': newPricing.subtotal,
         'pricing.addOnTotal': newPricing.addOnTotal,
+        'pricing.baseCharge': newPricing.baseCharge,
         balanceDue: newBalance,
       };
       // Persist guest count changes too (D3).
@@ -175,6 +236,22 @@ export default function ModifyBookingPage() {
         update.childCount = childCount;
         update.guestCount = newGuestCount;
       }
+
+      if (timeChanged) {
+        // D4 — also update the blocked_slots so the schedule stays
+        // consistent. updateBookingDateTime atomically replaces the
+        // booking + cleaning blocks for this booking.
+        await updateBookingDateTime(booking.id, {
+          date: booking.date,
+          startTime,
+          endTime,
+          guestCount: guestsChanged ? newGuestCount : undefined,
+        });
+        update.startTime = startTime;
+        update.endTime = endTime;
+        update.hours = newHours;
+      }
+
       await updateDoc(doc(db, 'bookings', booking.id), update);
       router.push(`/book/${booking.branchSlug}/pay-balance/${booking.id}`);
     } catch (err) {
@@ -246,6 +323,64 @@ export default function ModifyBookingPage() {
               </p>
             </div>
           )}
+
+          {/* Time modify (D4) — start can only move earlier, end only later */}
+          <div className="glass-card p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <Clock size={16} className="text-pink" />
+              <p className="font-semibold">{locale === 'zh' ? '預約時段' : 'Booking Time'}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-ink-soft mb-1">
+                  {locale === 'zh' ? '開始時間（只可提早）' : 'Start (only earlier)'}
+                </label>
+                <select
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85"
+                >
+                  {Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}:00`)
+                    .filter((t) => toMin(t) <= toMin(startFloor))
+                    .map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-ink-soft mb-1">
+                  {locale === 'zh' ? '結束時間（只可延遲）' : 'End (only later)'}
+                </label>
+                <select
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85"
+                >
+                  {Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}:00`)
+                    .filter((t) => toMin(t) >= toMin(endFloor))
+                    .map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                </select>
+              </div>
+            </div>
+            <p className="text-[11px] text-ink-soft mt-2">
+              {locale === 'zh'
+                ? `已預訂 ${startFloor}–${endFloor}（共 ${booking.hours} 小時）。延長後系統會自動 check 撞時間 + 預留 1 小時清潔。`
+                : `Booked: ${startFloor}–${endFloor} (${booking.hours} hrs). Extending will auto-check conflicts + 1-hr cleaning buffer.`}
+            </p>
+            {timeConflict && (
+              <div className="mt-3 rounded-xl bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700 flex items-start gap-1.5">
+                <AlertCircle size={12} className="mt-0.5 shrink-0" />
+                {timeConflict}
+              </div>
+            )}
+            {timeChanged && !timeConflict && (
+              <p className="text-xs text-emerald-700 mt-2">
+                {locale === 'zh' ? `✓ 時段可用（新時段 ${newHours} 小時）` : `✓ Available (${newHours} hrs)`}
+              </p>
+            )}
+          </div>
 
           {/* Guest count modify (D3) — only +, floors locked */}
           <div className="glass-card p-5">
@@ -383,13 +518,15 @@ export default function ModifyBookingPage() {
             )}
             <button
               onClick={handleSave}
-              disabled={subtotalDiff <= 0 || submitting}
+              disabled={subtotalDiff <= 0 || submitting || (timeChanged && !!timeConflict)}
               className="w-full py-3 rounded-xl bg-gradient-pink text-white font-bold text-base disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {submitting ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
               {subtotalDiff <= 0
                 ? (locale === 'zh' ? '請先加項目' : 'Add items to continue')
-                : (locale === 'zh' ? '確認並付款' : 'Save & Pay')}
+                : (timeChanged && timeConflict)
+                  ? (locale === 'zh' ? '請先解決時間衝突' : 'Resolve time conflict first')
+                  : (locale === 'zh' ? '確認並付款' : 'Save & Pay')}
             </button>
           </div>
         </div>
