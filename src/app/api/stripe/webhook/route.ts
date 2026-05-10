@@ -2,11 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { stripe } from '@/lib/stripe';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
-import {
-  buildBookingConfirmationEmail, generateWhatsAppLink,
-  sendStaffBookingNotification,
-} from '@/lib/email';
-import { sendAutomatedEmail } from '@/lib/emailAutomations';
+import { buildBookingConfirmationEmail, generateWhatsAppLink } from '@/lib/email';
+import { sendAutomatedEmail, sendStaffBookingNotification } from '@/lib/emailAutomations';
 import { getVenueById } from '@/lib/venues';
 import { processBookingForLockAccess } from '@/lib/lockPasscode';
 import { pushBookingToCalendar } from '@/lib/googleCalendar';

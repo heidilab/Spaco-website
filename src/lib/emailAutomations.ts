@@ -9,7 +9,7 @@
 // `sendAutomatedEmail()` which checks the toggle first.
 
 import { adminDb } from './firebaseAdmin';
-import { sendEmail } from './email';
+import { sendEmail, buildStaffBookingNotificationEmail } from './email';
 
 export type EmailAutomationKey =
   | 'booking_confirmation'
@@ -201,4 +201,31 @@ export async function sendAutomatedEmail(params: {
   }
   await sendEmail({ to: params.to, subject: params.subject, html: params.html });
   return { sent: true };
+}
+
+/** Send the staff booking notification to all configured recipients. Reads
+ *  STAFF_NOTIFICATION_EMAILS (comma-separated) and falls back to
+ *  spacohk@gmail.com if unset. Honours the email-automation toggle so
+ *  admins can pause it from /admin/email-automation. Errors are caught
+ *  per-recipient so one bad address can't break the others.
+ *
+ *  Lives here (not in email.ts) so client bundles importing pure
+ *  template helpers from email.ts don't pull in firebase-admin. */
+export async function sendStaffBookingNotification(
+  params: Parameters<typeof buildStaffBookingNotificationEmail>[0],
+): Promise<void> {
+  if (!(await isEmailAutomationEnabled('staff_booking_notification'))) {
+    console.log('[staff-notify] skipped (automation disabled)');
+    return;
+  }
+  const list = (process.env.STAFF_NOTIFICATION_EMAILS || 'spacohk@gmail.com')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (list.length === 0) return;
+  const tpl = buildStaffBookingNotificationEmail(params);
+  await Promise.all(list.map((to) =>
+    sendEmail({ to, subject: tpl.subject, html: tpl.html })
+      .catch((err) => console.warn(`[staff-notify] send to ${to} failed:`, err)),
+  ));
 }
