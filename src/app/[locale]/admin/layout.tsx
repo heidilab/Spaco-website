@@ -5,7 +5,7 @@ import { Link, usePathname } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   LayoutDashboard, CalendarDays, ListOrdered,
-  ChevronLeft, Shield, Image, Users, UserCog, Receipt, FileText, HelpCircle, Search, CalendarClock, Mail, Tag,
+  ChevronLeft, Shield, Image, Users, UserCog, Receipt, FileText, HelpCircle, Search, CalendarClock, Mail, Tag, BarChart3,
 } from 'lucide-react';
 
 const allSidebarLinks = [
@@ -16,6 +16,7 @@ const allSidebarLinks = [
   { href: '/admin/receipts', icon: Receipt, label: { zh: '待確認入數紙', en: 'Pending Receipts' }, permission: 'bookings' },
   { href: '/admin/bookings', icon: ListOrdered, label: { zh: '預訂管理', en: 'Bookings' }, permission: 'bookings' },
   { href: '/admin/calendar', icon: CalendarDays, label: { zh: '總日曆', en: 'Calendar' }, permission: 'calendar' },
+  { href: '/admin/finance', icon: BarChart3, label: { zh: '財務總覽', en: 'Finance' }, permission: 'documents' },
   { href: '/admin/calendar-sync', icon: CalendarClock, label: { zh: 'Google 同步', en: 'Google Sync' }, permission: 'gcal' },
   { href: '/admin/email-automation', icon: Mail, label: { zh: 'Email 自動化', en: 'Email Automation' }, permission: 'gcal' },
   { href: '/admin/promo-codes', icon: Tag, label: { zh: '優惠碼', en: 'Promo Codes' }, permission: 'gcal' },
