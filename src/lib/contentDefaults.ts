@@ -70,31 +70,43 @@ export const CONTENT_DEFAULTS: Record<string, Record<string, Bilingual>> = {
     cwb_size:        { zh: '2,800 sq ft', en: '2,800 sq ft' },
     cwb_description: { zh: '位於銅鑼灣核心地段的旗艦空間，配備頂級音響及設計師家具。', en: 'Flagship venue in the heart of Causeway Bay with premium sound and designer furniture.' },
     cwb_amenities:   { zh: '戶外 BBQ、火鍋、麻將', en: 'Outdoor BBQ, Hotpot, Mahjong' },
+    cwb_switch_games:{ zh: '', en: '' },
+    cwb_board_games: { zh: '', en: '' },
     // ─── 灣仔店 ───
     wc_name:         { zh: '灣仔店', en: 'Wan Chai' },
     wc_size:         { zh: '1,200 sq ft', en: '1,200 sq ft' },
     wc_description:  { zh: '灣仔專業商務空間，配備專業投影設備。', en: 'Professional business space in Wan Chai with AV equipment.' },
     wc_amenities:    { zh: '麻將', en: 'Mahjong' },
+    wc_switch_games: { zh: '', en: '' },
+    wc_board_games:  { zh: '', en: '' },
     // ─── 上環海景旗艦店 - Room A ───
     swa_name:        { zh: '上環海景旗艦店 - Room A', en: 'Sheung Wan - Room A' },
     swa_size:        { zh: '1,000 sq ft', en: '1,000 sq ft' },
     swa_description: { zh: '上環海景旗艦店 Room A，設有戶外 BBQ 區域。', en: 'Tranquil Room A with outdoor BBQ.' },
     swa_amenities:   { zh: '戶外 BBQ、麻將', en: 'Outdoor BBQ, Mahjong' },
+    swa_switch_games:{ zh: '', en: '' },
+    swa_board_games: { zh: '', en: '' },
     // ─── 上環海景旗艦店 - Room B ───
     swb_name:        { zh: '上環海景旗艦店 - Room B', en: 'Sheung Wan - Room B' },
     swb_size:        { zh: '2,200 sq ft', en: '2,200 sq ft' },
     swb_description: { zh: '上環海景旗艦店 Room B 設有獨立專業廚房、桌球枱及打邊爐設備。', en: 'Room B with private kitchen, pool table and hotpot facilities.' },
     swb_amenities:   { zh: '戶外 BBQ、桌球、火鍋、麻將、獨立廚房', en: 'Outdoor BBQ, Pool Table, Hotpot, Mahjong, Private Kitchen' },
+    swb_switch_games:{ zh: '', en: '' },
+    swb_board_games: { zh: '', en: '' },
     // ─── 尖沙咀店 ───
     tst_name:        { zh: '尖沙咀店', en: 'Tsim Sha Tsui' },
     tst_size:        { zh: '2,500 sq ft', en: '2,500 sq ft' },
     tst_description: { zh: '尖沙咀獨特空間，已包無酒精飲品任飲。', en: 'Unique TST space with complimentary non-alcoholic drinks.' },
     tst_amenities:   { zh: '戶外 BBQ、桌球、麻將', en: 'Outdoor BBQ, Pool Table, Mahjong' },
+    tst_switch_games:{ zh: '', en: '' },
+    tst_board_games: { zh: '', en: '' },
     // ─── 上環海景旗艦店 - 全層 A+B ───
     swab_name:       { zh: '上環海景旗艦店 - 全層 A+B', en: 'Sheung Wan - Full Floor (A+B)' },
     swab_size:       { zh: '3,200 sq ft', en: '3,200 sq ft' },
     swab_description:{ zh: '上環全層包場，合併 Room A 及 B，最多容納 100 人。', en: 'Full floor combining Room A & B, up to 100 guests.' },
     swab_amenities:  { zh: '戶外 BBQ、桌球、火鍋、麻將、獨立廚房', en: 'Outdoor BBQ, Pool Table, Hotpot, Mahjong, Private Kitchen' },
+    swab_switch_games:{ zh: '', en: '' },
+    swab_board_games:{ zh: '', en: '' },
   },
 };
 

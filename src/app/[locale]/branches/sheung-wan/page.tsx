@@ -6,6 +6,7 @@ import { Link } from '@/i18n/routing';
 import { getVenueBySlug, amenityLabels } from '@/lib/venues';
 import { getSiteImages, compareSiteImages } from '@/lib/content';
 import { useBranchOverrides } from '@/lib/useBranchOverrides';
+import GamesList from '@/components/branches/GamesList';
 import { SiteImage } from '@/types';
 import { ArrowRight, ArrowLeft, Users, Maximize, Clock, ChevronLeft, ChevronRight, X, Sparkles, MapPin } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -30,7 +31,7 @@ interface RoomData {
 export default function SheungWanBranchPage() {
   const locale = useLocale() as 'zh' | 'en';
   const t = useTranslations('booking');
-  const { get: getOverride } = useBranchOverrides();
+  const { get: getOverride, getList: getOverrideList } = useBranchOverrides();
 
   // Resolve all 3 venue records up front
   const rooms = useMemo<RoomData[] | null>(() => {
@@ -269,6 +270,18 @@ export default function SheungWanBranchPage() {
                               <span key={`${label}-${i}`} className="chip text-[11px]">{label}</span>
                             ))}
                           </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Switch + board games (admin-managed per variant) */}
+                    {(() => {
+                      const sw = getOverrideList(v.id, 'switch_games', locale);
+                      const bg = getOverrideList(v.id, 'board_games', locale);
+                      if (sw.length === 0 && bg.length === 0) return null;
+                      return (
+                        <div className="mb-5">
+                          <GamesList switchGames={sw} boardGames={bg} locale={locale} />
                         </div>
                       );
                     })()}

@@ -19,7 +19,11 @@ export interface BranchOverride {
   size?: { zh: string; en: string };
   description?: { zh: string; en: string };
   amenities?: { zh: string; en: string };
+  switch_games?: { zh: string; en: string };
+  board_games?: { zh: string; en: string };
 }
+
+export type BranchOverrideField = 'name' | 'size' | 'description' | 'amenities' | 'switch_games' | 'board_games';
 
 /**
  * Loads admin-edited branch overrides from Firestore (`site_content/branches`).
@@ -39,7 +43,7 @@ export function useBranchOverrides() {
   }, []);
 
   /** Get an override for a single field on a venue. Returns '' if not set. */
-  const get = (venueId: string, field: 'name' | 'size' | 'description' | 'amenities', locale: 'zh' | 'en'): string => {
+  const get = (venueId: string, field: BranchOverrideField, locale: 'zh' | 'en'): string => {
     if (!content) return '';
     const prefix = VENUE_TO_CMS_PREFIX[venueId];
     if (!prefix) return '';
@@ -47,5 +51,12 @@ export function useBranchOverrides() {
     return content[key]?.[locale] || '';
   };
 
-  return { get, ready: content !== null };
+  /** Split a newline-separated games list into trimmed entries. */
+  const getList = (venueId: string, field: 'switch_games' | 'board_games', locale: 'zh' | 'en'): string[] => {
+    const raw = get(venueId, field, locale);
+    if (!raw) return [];
+    return raw.split('\n').map((s) => s.trim()).filter(Boolean);
+  };
+
+  return { get, getList, ready: content !== null };
 }

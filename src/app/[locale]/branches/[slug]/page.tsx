@@ -7,6 +7,7 @@ import { useParams } from 'next/navigation';
 import { getVenueBySlug, amenityLabels } from '@/lib/venues';
 import { getSiteImages, compareSiteImages } from '@/lib/content';
 import { useBranchOverrides } from '@/lib/useBranchOverrides';
+import GamesList from '@/components/branches/GamesList';
 import { getPackagesByVenueId, CATEGORY_LABEL } from '@/lib/packages';
 import { SiteImage } from '@/types';
 import { ArrowRight, ArrowLeft, Users, Maximize, Clock, ChevronLeft, ChevronRight, X, Check, Sparkles } from 'lucide-react';
@@ -40,8 +41,8 @@ export default function BranchPage() {
   const venue = getVenueBySlug(slug);
   const [venueImages, setVenueImages] = useState<SiteImage[]>([]);
   const [selectedImage, setSelectedImage] = useState<number | null>(null);
-  // Pull admin-edited overrides (name / size / description / amenities)
-  const { get: getOverride } = useBranchOverrides();
+  // Pull admin-edited overrides (name / size / description / amenities / games)
+  const { get: getOverride, getList: getOverrideList } = useBranchOverrides();
 
   // Redirect old Sheung Wan single-room URLs to the unified branch page.
   // Done in an effect so SSR still renders something while the client
@@ -222,6 +223,13 @@ export default function BranchPage() {
                   })()}
                 </div>
               </div>
+
+              {/* Switch + board games (admin-managed per branch) */}
+              <GamesList
+                switchGames={getOverrideList(venue.id, 'switch_games', locale)}
+                boardGames={getOverrideList(venue.id, 'board_games', locale)}
+                locale={locale}
+              />
 
               {/* Price Table */}
               <div className="relative overflow-hidden rounded-[28px] bg-ink text-cream p-6">
