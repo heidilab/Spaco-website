@@ -7,7 +7,7 @@ import { useParams } from 'next/navigation';
 import { getVenueBySlug, amenityLabels } from '@/lib/venues';
 import { getSiteImages, compareSiteImages } from '@/lib/content';
 import { useBranchOverrides } from '@/lib/useBranchOverrides';
-import GamesList from '@/components/branches/GamesList';
+import AmenityGrid from '@/components/branches/AmenityGrid';
 import { getPackagesByVenueId, CATEGORY_LABEL } from '@/lib/packages';
 import { SiteImage } from '@/types';
 import { ArrowRight, ArrowLeft, Users, Maximize, Clock, ChevronLeft, ChevronRight, X, Check, Sparkles } from 'lucide-react';
@@ -202,34 +202,25 @@ export default function BranchPage() {
                 </div>
               </div>
 
-              {/* Amenities */}
+              {/* Amenities — card grid with icons. Switch + board game
+               *  amenities expand to show the full game list. */}
               <div>
                 <h3 className="font-bold font-display text-ink mb-3">{locale === 'zh' ? '設施' : 'Amenities'}</h3>
-                <div className="flex flex-wrap gap-2">
-                  {(() => {
-                    const override = getOverride(venue.id, 'amenities', locale);
-                    if (override) {
-                      // Admin entered free-form text — split by Chinese/English separators
-                      const items = override.split(/[、,，]/).map((s) => s.trim()).filter(Boolean);
-                      return items.map((label, i) => (
-                        <span key={`${label}-${i}`} className="chip">{label}</span>
-                      ));
-                    }
-                    return venue.amenities.map((a) => (
-                      <span key={a} className="chip">
-                        {amenityLabels[a]?.[locale] || a}
-                      </span>
-                    ));
-                  })()}
-                </div>
+                {(() => {
+                  const override = getOverride(venue.id, 'amenities', locale);
+                  const items = override
+                    ? override.split(/[、,，]/).map((s) => s.trim()).filter(Boolean)
+                    : venue.amenities.map((a) => amenityLabels[a]?.[locale] || a);
+                  return (
+                    <AmenityGrid
+                      amenities={items}
+                      switchGames={getOverrideList(venue.id, 'switch_games', locale)}
+                      boardGames={getOverrideList(venue.id, 'board_games', locale)}
+                      locale={locale}
+                    />
+                  );
+                })()}
               </div>
-
-              {/* Switch + board games (admin-managed per branch) */}
-              <GamesList
-                switchGames={getOverrideList(venue.id, 'switch_games', locale)}
-                boardGames={getOverrideList(venue.id, 'board_games', locale)}
-                locale={locale}
-              />
 
               {/* Price Table */}
               <div className="relative overflow-hidden rounded-[28px] bg-ink text-cream p-6">

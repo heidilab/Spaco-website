@@ -6,7 +6,7 @@ import { Link } from '@/i18n/routing';
 import { getVenueBySlug, amenityLabels } from '@/lib/venues';
 import { getSiteImages, compareSiteImages } from '@/lib/content';
 import { useBranchOverrides } from '@/lib/useBranchOverrides';
-import GamesList from '@/components/branches/GamesList';
+import AmenityGrid from '@/components/branches/AmenityGrid';
 import { SiteImage } from '@/types';
 import { ArrowRight, ArrowLeft, Users, Maximize, Clock, ChevronLeft, ChevronRight, X, Sparkles, MapPin } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -253,35 +253,27 @@ export default function SheungWanBranchPage() {
                       </div>
                     </div>
 
-                    {/* Amenities — admin override (free-form string) wins, else hardcoded list */}
+                    {/* Amenities — card grid with icons (Switch + board
+                     *  games auto-shown when game lists are populated). */}
                     {(() => {
                       const override = getOverride(v.id, 'amenities', locale);
                       const items = override
                         ? override.split(/[、,，]/).map((s) => s.trim()).filter(Boolean)
                         : v.amenities.map((a) => amenityLabels[a]?.[locale] || a);
-                      if (items.length === 0) return null;
+                      const sw = getOverrideList(v.id, 'switch_games', locale);
+                      const bg = getOverrideList(v.id, 'board_games', locale);
+                      if (items.length === 0 && sw.length === 0 && bg.length === 0) return null;
                       return (
                         <div className="mb-5">
                           <p className="text-[10px] text-ink-soft uppercase tracking-wider font-semibold mb-2">
                             {locale === 'zh' ? '設施' : 'Amenities'}
                           </p>
-                          <div className="flex flex-wrap gap-1.5">
-                            {items.map((label, i) => (
-                              <span key={`${label}-${i}`} className="chip text-[11px]">{label}</span>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })()}
-
-                    {/* Switch + board games (admin-managed per variant) */}
-                    {(() => {
-                      const sw = getOverrideList(v.id, 'switch_games', locale);
-                      const bg = getOverrideList(v.id, 'board_games', locale);
-                      if (sw.length === 0 && bg.length === 0) return null;
-                      return (
-                        <div className="mb-5">
-                          <GamesList switchGames={sw} boardGames={bg} locale={locale} />
+                          <AmenityGrid
+                            amenities={items}
+                            switchGames={sw}
+                            boardGames={bg}
+                            locale={locale}
+                          />
                         </div>
                       );
                     })()}
