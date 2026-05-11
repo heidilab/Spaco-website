@@ -4,11 +4,32 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllBookings } from '@/lib/firestore';
-import { aggregateBookings, FinanceFilter } from '@/lib/finance';
+import { aggregateBookings, FinanceFilter, addOnRevenueForBooking } from '@/lib/finance';
 import { venues } from '@/lib/venues';
 import {
   BookingRecord, MarketingChannel, MARKETING_CHANNEL_LABELS,
 } from '@/types';
+
+// Branch code used in the Sales Record Excel export.
+function venueCode(venueId: string): string {
+  if (venueId === 'cwb') return 'CWB';
+  if (venueId === 'wanchai') return 'WC';
+  if (venueId.startsWith('sw-')) return 'SW';
+  if (venueId === 'tst') return 'TST';
+  return venueId.toUpperCase();
+}
+
+const MONTH_NAMES_EN = [
+  'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+  'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC',
+];
+
+/** Pick the most representative month/year from the filter range. Uses
+ *  the start date's year+month. */
+function rangeMonthYear(fromStr: string): { month: string; year: number } {
+  const [y, m] = fromStr.split('-').map(Number);
+  return { month: MONTH_NAMES_EN[(m || 1) - 1], year: y || new Date().getFullYear() };
+}
 import {
   BarChart3, Download, FileSpreadsheet, FileText, TrendingUp,
   Calendar as CalendarIcon, Loader2, MapPin, Tag,
@@ -69,63 +90,277 @@ export default function FinanceOverviewPage() {
     return venues.find((v) => v.id === key)?.name[locale] || key;
   }
 
+  /** Re-apply the current page filter to the raw bookings list — needed
+   *  for the per-booking Excel export which iterates over individual
+   *  bookings rather than the aggregator's summary buckets. */
+  function filteredBookings(): BookingRecord[] {
+    return allBookings.filter((b) => {
+      if (b.status === 'cancelled' || b.status === 'pending') return false;
+      if (from && b.date < from) return false;
+      if (to && b.date > to) return false;
+      if (branch !== 'all') {
+        const key = b.venueId.startsWith('sw-') ? 'sw' : b.venueId;
+        if (key !== branch) return false;
+      }
+      if (channel && channel !== 'all') {
+        const ch = b.marketingChannel || 'unknown';
+        if (ch !== channel) return false;
+      }
+      return true;
+    }).sort((a, b2) => a.date.localeCompare(b2.date));
+  }
+
+  /** Category breakdown per booking — matches the columns in the Sales
+   *  Record template (Rent / Shisha / BBQ / 到會 / Drinks / 加時·罰款). */
+  function categoryBreakdown(b: BookingRecord) {
+    const rent = b.pricing.baseCharge || 0;
+    const shisha = addOnRevenueForBooking(b, 'shisha');
+    const bbq = addOnRevenueForBooking(b, 'bbq-standard')
+      + addOnRevenueForBooking(b, 'bbq-premium')
+      + addOnRevenueForBooking(b, 'bbq-grill');
+    // 到會 = hotpot / catering bucket (admin's choice based on the template label)
+    const cater = addOnRevenueForBooking(b, 'hotpot-standard')
+      + addOnRevenueForBooking(b, 'hotpot-seafood')
+      + addOnRevenueForBooking(b, 'hotpot-extra-soup');
+    const drinks = addOnRevenueForBooking(b, 'drinks');
+    // 加時/罰款 = admin-recorded rental top-ups (post-confirmation
+    // extensions) + forfeited security deposit (penalties).
+    const topUpRental = (b.payments || []).reduce((s, p) => s + (p.rentalAmount || 0), 0);
+    const initialRental = rent + shisha + bbq + cater + drinks; // baseline rental
+    const extensions = Math.max(0, topUpRental - initialRental); // only the delta
+    const refund = b.depositRefund as { deductions?: { amount: number }[] } | undefined;
+    const penalty = (refund?.deductions || []).reduce((s, d) => s + (d.amount || 0), 0);
+    return { rent, shisha, bbq, cater, drinks, extPenalty: extensions + penalty };
+  }
+
+  /** Combine the synthetic initial payment with the audit log so each
+   *  booking surfaces every transaction as its own row in the export. */
+  function transactionsFor(b: BookingRecord): Array<{ date: string; method: string; amount: number; note?: string }> {
+    const tx: Array<{ date: string; method: string; amount: number; note?: string }> = [];
+    const logged = b.payments || [];
+    const loggedAmount = logged.reduce((s, p) => s + (p.amount || 0), 0);
+    const totalPaid = b.pricing.deposit || 0;
+    const initial = Math.max(0, totalPaid - loggedAmount);
+    if (initial > 0) {
+      tx.push({
+        date: b.date,  // use booking date as proxy when createdAt isn't easily extractable here
+        method: b.paymentMethod || 'stripe',
+        amount: initial,
+        note: 'Initial confirmation',
+      });
+    }
+    for (const p of logged) {
+      const dateStr = typeof p.recordedAt === 'string'
+        ? p.recordedAt.slice(0, 10)
+        : '';
+      tx.push({ date: dateStr, method: p.method, amount: p.amount || 0, note: p.note || undefined });
+    }
+    return tx;
+  }
+
   async function handleExportExcel() {
     setExporting(true);
     try {
       const XLSX = await import('xlsx');
       const wb = XLSX.utils.book_new();
+      const { month, year } = rangeMonthYear(from);
+      const titleText = ` ${month}- ${year}  Sales Record`;
 
-      // Summary sheet
+      // ─── SHEET 1: Sales Record (matches user's template) ───
+      const aoa: (string | number)[][] = [];
+
+      // Row 0 — title spanning cols B..T (1..19)
+      aoa.push(['', titleText, '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']);
+      // Row 1 — CR / DR / Source / Returned Deposit / Remarks
+      aoa.push(['CR', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'DR', '', 'Source', 'Returned Deposit', 'Remarks', '']);
+      // Row 2 — Booking Details / Expenses
+      aoa.push(['Booking Details', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'Expenses', '', '', '', '', '']);
+      // Row 3 — sub-headers
+      aoa.push(['', '', '', '', 'Sales', '', '', '', '', '', '', 'Transaction', '', '', '', '', '', '', '', '', '']);
+      // Row 4 — column headers
+      aoa.push([
+        'Branches', 'Date', 'Time', 'ppl',
+        'Rent', 'Shisha', 'BBQ', '到會', 'Drinks', '加時/罰款', 'Total',
+        'Date', 'Payment Methods', 'Amount', 'Total',
+        'Vendor', 'Amount',
+        '', '', '', '',
+      ]);
+
+      const bookings = filteredBookings();
+      let totalSales = 0;
+      let totalTransactions = 0;
+      let totalRefund = 0;
+
+      for (const b of bookings) {
+        const cats = categoryBreakdown(b);
+        const total = b.pricing.subtotal || 0;
+        const txs = transactionsFor(b);
+        const sumTx = txs.reduce((s, t) => s + t.amount, 0);
+        totalSales += total;
+        totalTransactions += sumTx;
+
+        // Time display — include next-day marker for overnight bookings.
+        const timeStr = b.endDate && b.endDate !== b.date
+          ? `${b.startTime}-${b.endTime} (+1d)`
+          : `${b.startTime}-${b.endTime}`;
+        // People — show adult+child split when present.
+        const pplStr = (b.childCount ?? 0) > 0
+          ? `${b.guestCount} (${b.adultCount ?? b.guestCount}A+${b.childCount}C)`
+          : `${b.guestCount}`;
+        // Source — bilingual map for the marketing channel.
+        const src = b.marketingChannel === 'loyalty_member'
+          ? 'Loyalty Member'
+          : b.marketingChannel
+            ? MARKETING_CHANNEL_LABELS[b.marketingChannel as MarketingChannel]?.zh + (b.marketingChannelOther ? `: ${b.marketingChannelOther}` : '')
+            : '';
+        // Returned deposit — only after settlement (depositRefund set)
+        const refund = b.depositRefund as { amount?: number } | undefined;
+        const refundAmt = refund?.amount ?? '';
+        if (typeof refundAmt === 'number') totalRefund += refundAmt;
+        // Remarks — booking id short + payment notes joined
+        const noteParts: string[] = [];
+        noteParts.push(`#${b.id.slice(0, 8)}`);
+        for (const p of (b.payments || [])) if (p.note) noteParts.push(`「${p.note}」`);
+        if (b.endDate && b.endDate !== b.date) noteParts.push(`過夜→${b.endDate}`);
+
+        // One row per transaction; sales / expenses cols only on first row.
+        const rowCount = Math.max(1, txs.length);
+        for (let i = 0; i < rowCount; i++) {
+          const first = i === 0;
+          const t = txs[i];
+          aoa.push([
+            first ? venueCode(b.venueId) : '',
+            first ? b.date : '',
+            first ? timeStr : '',
+            first ? pplStr : '',
+            // Sales — only on first transaction row
+            first ? cats.rent : '',
+            first ? cats.shisha : '',
+            first ? cats.bbq : '',
+            first ? cats.cater : '',
+            first ? cats.drinks : '',
+            first ? cats.extPenalty : '',
+            first ? total : '',
+            // Transaction (per row)
+            t?.date || '',
+            t ? methodLabel(t.method) : '',
+            t?.amount ?? '',
+            // Total transactions only on last row
+            i === rowCount - 1 ? sumTx : '',
+            // Expenses cols — blank (not tracked yet)
+            '',
+            '',
+            // Right cols only on first row
+            first ? src : '',
+            first ? refundAmt : '',
+            first ? noteParts.join(' ') : (t?.note || ''),
+            '',
+          ]);
+        }
+      }
+
+      // Totals row at bottom
+      aoa.push([]);
+      aoa.push([
+        'TOTAL', '', '', '',
+        '', '', '', '', '', '', totalSales,
+        '', '', '', totalTransactions,
+        '', '',
+        '', totalRefund, '', '',
+      ]);
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+      // Header merges to match the template
+      ws['!merges'] = [
+        // Title spans B1..U1 (cols 1..20 inclusive)
+        { s: { r: 0, c: 1 }, e: { r: 0, c: 20 } },
+        // CR header spans A2..K2 (cols 0..10)
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 10 } },
+        // Booking Details spans A3..K3
+        { s: { r: 2, c: 0 }, e: { r: 2, c: 10 } },
+        // First 4 cols of row 3 (Branches/Date/Time/ppl group header — empty)
+        { s: { r: 3, c: 0 }, e: { r: 3, c: 3 } },
+        // Sales (cols E..K)
+        { s: { r: 3, c: 4 }, e: { r: 3, c: 10 } },
+        // Transaction (cols L..O)
+        { s: { r: 3, c: 11 }, e: { r: 3, c: 14 } },
+        // DR (cols P..Q at row 2)
+        { s: { r: 1, c: 15 }, e: { r: 1, c: 16 } },
+        // Expenses (cols P..Q at row 3)
+        { s: { r: 2, c: 15 }, e: { r: 2, c: 16 } },
+        // Source spans R2..R5 (col 17, rows 1..4)
+        { s: { r: 1, c: 17 }, e: { r: 4, c: 17 } },
+        // Returned Deposit spans S2..S5 (col 18)
+        { s: { r: 1, c: 18 }, e: { r: 4, c: 18 } },
+        // Remarks spans T2..T5 (col 19)
+        { s: { r: 1, c: 19 }, e: { r: 4, c: 19 } },
+      ];
+
+      // Column widths — based on content density
+      ws['!cols'] = [
+        { wch: 10 }, // Branches
+        { wch: 12 }, // Date
+        { wch: 14 }, // Time
+        { wch: 12 }, // ppl
+        { wch: 10 }, // Rent
+        { wch: 10 }, // Shisha
+        { wch: 10 }, // BBQ
+        { wch: 10 }, // 到會
+        { wch: 10 }, // Drinks
+        { wch: 12 }, // 加時/罰款
+        { wch: 12 }, // Total
+        { wch: 12 }, // Tx Date
+        { wch: 14 }, // Method
+        { wch: 12 }, // Amount
+        { wch: 12 }, // Total
+        { wch: 12 }, // Vendor
+        { wch: 10 }, // Amount
+        { wch: 22 }, // Source
+        { wch: 14 }, // Returned Deposit
+        { wch: 36 }, // Remarks
+      ];
+
+      XLSX.utils.book_append_sheet(wb, ws, `${month}-${year}`);
+
+      // ─── SHEET 2: Summary (carry over from earlier) ───
       const summary = [
-        [locale === 'zh' ? '篩選' : 'Filter', ''],
-        [locale === 'zh' ? '日期' : 'Date range', `${from} → ${to}`],
-        [locale === 'zh' ? '分店' : 'Branch', branchLabel(branch)],
-        [locale === 'zh' ? '推廣渠道' : 'Channel', channel === 'all' ? (locale === 'zh' ? '全部' : 'All') : channelLabel(channel as string)],
+        ['Filter / 篩選', ''],
+        ['Date / 日期', `${from} → ${to}`],
+        ['Branch / 分店', branchLabel(branch)],
+        ['Channel / 推廣渠道', channel === 'all' ? 'All / 全部' : channelLabel(channel as string)],
         [],
-        [locale === 'zh' ? '總收入' : 'Total Revenue', result.totalRevenue],
-        [locale === 'zh' ? '預訂數' : 'Bookings', result.bookingCount],
-        [locale === 'zh' ? '場租收入' : 'Rental', result.rentalRevenue],
-        [locale === 'zh' ? '附加服務收入' : 'Add-ons', result.addOnRevenue],
-        [locale === 'zh' ? '按金扣減' : 'Deposit Deductions', result.depositDeductionsRevenue],
-        [locale === 'zh' ? '未來預訂收入' : 'Future Revenue', result.futureRevenue],
-        [locale === 'zh' ? '未來預訂數' : 'Future Bookings', result.futureBookingCount],
+        ['Total Revenue / 總收入', result.totalRevenue],
+        ['Bookings / 預訂數', result.bookingCount],
+        ['Rental / 場租', result.rentalRevenue],
+        ['Add-ons / 附加服務', result.addOnRevenue],
+        ['Deposit Deductions / 按金扣減', result.depositDeductionsRevenue],
+        ['Future Revenue / 未來預訂收入', result.futureRevenue],
+        ['Future Bookings / 未來預訂數', result.futureBookingCount],
       ];
-      const wsSummary = XLSX.utils.aoa_to_sheet(summary);
-      XLSX.utils.book_append_sheet(wb, wsSummary, locale === 'zh' ? '摘要' : 'Summary');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'Summary');
 
-      // Monthly
-      const monthly = [
-        [locale === 'zh' ? '月份' : 'Month', locale === 'zh' ? '收入' : 'Revenue', locale === 'zh' ? '預訂數' : 'Bookings'],
-        ...result.monthly.map((r) => [r.month, r.revenue, r.bookings]),
-      ];
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(monthly), locale === 'zh' ? '每月' : 'Monthly');
-
-      // Branch
-      const branchRows = [
-        [locale === 'zh' ? '分店' : 'Branch', locale === 'zh' ? '收入' : 'Revenue', locale === 'zh' ? '預訂數' : 'Bookings'],
-        ...result.byBranch.map((r) => [r.branchName[locale], r.revenue, r.bookings]),
-      ];
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(branchRows), locale === 'zh' ? '分店' : 'Branch');
-
-      // Add-ons
-      const addOnRows = [
-        [locale === 'zh' ? '附加服務' : 'Add-on', locale === 'zh' ? '預訂數' : 'Bookings', locale === 'zh' ? '收入' : 'Revenue'],
-        ...result.byAddOn.map((r) => [r.name[locale], r.bookings, r.revenue]),
-      ];
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(addOnRows), locale === 'zh' ? '附加服務' : 'Add-ons');
-
-      // Channels
+      // ─── SHEET 3: Channel breakdown ───
       const channelRows = [
-        [locale === 'zh' ? '推廣渠道' : 'Channel', locale === 'zh' ? '預訂數' : 'Bookings', locale === 'zh' ? '收入' : 'Revenue'],
+        ['Channel / 推廣渠道', 'Bookings / 預訂數', 'Revenue / 收入'],
         ...result.byChannel.map((r) => [channelLabel(r.channel), r.bookings, r.revenue]),
       ];
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(channelRows), locale === 'zh' ? '推廣' : 'Channels');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(channelRows), 'Channels');
 
-      const filename = `SPACO-finance-${from}-to-${to}.xlsx`;
+      const filename = `SPACO-${month}-${year}-Sales-Record.xlsx`;
       XLSX.writeFile(wb, filename);
     } finally {
       setExporting(false);
     }
+  }
+
+  function methodLabel(m: string): string {
+    if (m === 'stripe') return 'Stripe';
+    if (m === 'fps') return 'FPS';
+    if (m === 'bank') return 'Bank';
+    if (m === 'cash') return 'Cash';
+    if (m === 'other') return 'Other';
+    return m;
   }
 
   async function handleExportPdf() {
