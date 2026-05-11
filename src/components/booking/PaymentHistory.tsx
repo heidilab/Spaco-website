@@ -51,10 +51,28 @@ export default function PaymentHistory({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  if (payments.length === 0) return null;
+  // Synthesize the initial payment from booking data.
+  // pricing.deposit is the running total of every dollar received; subtract
+  // the audit-log entries' totals to back out the initial payment. If the
+  // result is positive, we display a synthetic "first payment" row so the
+  // history is complete (booking-creation payments predate the payments[]
+  // audit log and were never appended to it).
+  const sumLogged = payments.reduce((s, p) => s + (p.amount || 0), 0);
+  const initialPaid = Math.max(0, (booking.pricing.deposit || 0) - sumLogged);
+  const initialMethod = (booking.paymentMethod || 'stripe') as 'stripe' | 'fps' | 'bank' | 'cash' | 'other';
+  // Total rental + deposit across logged entries; the initial payment also
+  // contributed: rental = booking.pricing.subtotal - sum(logged rental),
+  // deposit = booking.pricing.securityDeposit - sum(logged deposit).
+  const loggedRentalSum = payments.reduce((s, p) => s + (p.rentalAmount || 0), 0);
+  const loggedDepositSum = payments.reduce((s, p) => s + (p.depositAmount || 0), 0);
+  const initialRental = Math.max(0, (booking.pricing.subtotal || 0) - loggedRentalSum);
+  const initialDeposit = Math.max(0, (booking.pricing.securityDeposit || 0) - loggedDepositSum);
 
-  const totalRental = payments.reduce((s, p) => s + (p.rentalAmount || 0), 0);
-  const totalDeposit = payments.reduce((s, p) => s + (p.depositAmount || 0), 0);
+  // Nothing to show? Bail early.
+  if (payments.length === 0 && initialPaid === 0) return null;
+
+  const totalRental = loggedRentalSum + initialRental;
+  const totalDeposit = loggedDepositSum + initialDeposit;
 
   async function handleSplitSubmit() {
     if (splittingIdx === null) return;
@@ -112,6 +130,29 @@ export default function PaymentHistory({
       </div>
 
       <ul className="space-y-2 text-xs">
+        {/* Synthetic initial payment row — booking confirmation predates
+         *  the payments[] audit log so we back it out from pricing.deposit. */}
+        {initialPaid > 0 && (
+          <li className="border-l-2 border-emerald-400/60 pl-3 py-1">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="font-mono font-bold text-sm">HK${initialPaid.toLocaleString()}</span>
+              <span className="text-ink-soft">{METHOD_LABELS[initialMethod]?.[locale] || initialMethod}</span>
+            </div>
+            <div className="flex items-baseline gap-3 text-ink-soft mt-0.5">
+              {initialRental > 0 && (
+                <span>{locale === 'zh' ? '場租 ' : 'Rental '}HK${initialRental.toLocaleString()}</span>
+              )}
+              {initialDeposit > 0 && (
+                <span>{locale === 'zh' ? '按金 ' : 'Deposit '}HK${initialDeposit.toLocaleString()}</span>
+              )}
+            </div>
+            <p className="text-ink-soft text-[11px] mt-0.5">
+              {locale === 'zh' ? '首次確認付款' : 'Initial confirmation payment'}
+              {' · '}
+              {fmtRecordedAt(booking.createdAt)}
+            </p>
+          </li>
+        )}
         {payments.map((p, i) => {
           const hasSplit = (p.rentalAmount || 0) > 0 || (p.depositAmount || 0) > 0;
           const isLegacy = !hasSplit && p.amount > 0;

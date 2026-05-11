@@ -71,11 +71,17 @@ export async function POST(req: NextRequest) {
 
     const newSubtotal = (booking.pricing.subtotal || 0) + rental;
     const newSecurityDeposit = (booking.pricing.securityDeposit || 0) + dep;
+    // Legacy entries (pre-Ship F) never bumped pricing.deposit when
+    // the payment was first recorded — they only decremented balanceDue.
+    // So when admin retroactively splits one, we ALSO bump pricing.deposit
+    // by the total so the "已收" display reflects every dollar received.
+    const newDeposit = (booking.pricing.deposit || 0) + entry.amount;
 
     await bookingRef.update({
       payments: updated,
       'pricing.subtotal': newSubtotal,
       'pricing.securityDeposit': newSecurityDeposit,
+      'pricing.deposit': newDeposit,
       updatedAt: FieldValue.serverTimestamp(),
     });
 
@@ -83,6 +89,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       newSubtotal,
       newSecurityDeposit,
+      newDeposit,
     });
   } catch (err) {
     return NextResponse.json(
