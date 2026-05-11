@@ -51,22 +51,25 @@ export default function PaymentHistory({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Synthesize the initial payment from booking data.
-  // pricing.deposit is the running total of every dollar received; subtract
-  // the audit-log entries' totals to back out the initial payment. If the
-  // result is positive, we display a synthetic "first payment" row so the
-  // history is complete (booking-creation payments predate the payments[]
-  // audit log and were never appended to it).
-  const sumLogged = payments.reduce((s, p) => s + (p.amount || 0), 0);
-  const initialPaid = Math.max(0, (booking.pricing.deposit || 0) - sumLogged);
-  const initialMethod = (booking.paymentMethod || 'stripe') as 'stripe' | 'fps' | 'bank' | 'cash' | 'other';
-  // Total rental + deposit across logged entries; the initial payment also
-  // contributed: rental = booking.pricing.subtotal - sum(logged rental),
-  // deposit = booking.pricing.securityDeposit - sum(logged deposit).
+  // Legacy detection: any entry that has a positive amount but no split
+  // is from the pre-split endpoint. When at least one exists, pricing.*
+  // fields may not yet reflect the legacy money so any synthesis math
+  // would be off; we hide the initial row + show a banner asking admin
+  // to split before drawing the full audit.
+  const hasUnsplit = payments.some(
+    (p) => (p.amount || 0) > 0 && (p.rentalAmount || 0) === 0 && (p.depositAmount || 0) === 0,
+  );
+
+  // Synthesize the initial payment from booking data — only safe when all
+  // logged entries are split. Compute the rental / deposit breakdown
+  // independently of pricing.deposit so the math stays consistent across
+  // both "initial" and "all entries logged" states.
   const loggedRentalSum = payments.reduce((s, p) => s + (p.rentalAmount || 0), 0);
   const loggedDepositSum = payments.reduce((s, p) => s + (p.depositAmount || 0), 0);
-  const initialRental = Math.max(0, (booking.pricing.subtotal || 0) - loggedRentalSum);
-  const initialDeposit = Math.max(0, (booking.pricing.securityDeposit || 0) - loggedDepositSum);
+  const initialRental = hasUnsplit ? 0 : Math.max(0, (booking.pricing.subtotal || 0) - loggedRentalSum);
+  const initialDeposit = hasUnsplit ? 0 : Math.max(0, (booking.pricing.securityDeposit || 0) - loggedDepositSum);
+  const initialPaid = initialRental + initialDeposit;
+  const initialMethod = (booking.paymentMethod || 'stripe') as 'stripe' | 'fps' | 'bank' | 'cash' | 'other';
 
   // Nothing to show? Bail early.
   if (payments.length === 0 && initialPaid === 0) return null;
@@ -128,6 +131,17 @@ export default function PaymentHistory({
           <p className="font-bold text-base">HK${totalDeposit.toLocaleString()}</p>
         </div>
       </div>
+
+      {hasUnsplit && adminMode && (
+        <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2.5 text-xs text-amber-800 leading-relaxed">
+          <p className="font-semibold mb-1">⚠️ {locale === 'zh' ? '有未拆分嘅付款' : 'Some payments are not split'}</p>
+          <p>
+            {locale === 'zh'
+              ? '撳下面條目嘅 🪄 拆分鈕，輸入「場租 vs 按金」金額。拆完之後系統會自動更新小計、可退按金、已收，所有顯示先會啱。'
+              : 'Click the 🪄 Split button on the entry below and enter rental vs deposit amounts. Subtotal / refundable / paid totals will then update.'}
+          </p>
+        </div>
+      )}
 
       <ul className="space-y-2 text-xs">
         {/* Synthetic initial payment row — booking confirmation predates
