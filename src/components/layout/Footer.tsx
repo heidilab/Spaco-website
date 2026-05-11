@@ -94,8 +94,8 @@ export default function Footer() {
         <div className="max-content mx-auto mt-12 pt-8 border-t border-cream/10 flex flex-col md:flex-row justify-between items-center gap-4">
           <p className="text-cream/40 text-xs">{t('copyright')}</p>
           <div className="flex gap-6 text-xs text-cream/40">
-            <a href="#" className="hover:text-cream transition-colors">{t('terms')}</a>
-            <a href="#" className="hover:text-cream transition-colors">{t('privacy')}</a>
+            <Link href="/terms" className="hover:text-cream transition-colors">{t('terms')}</Link>
+            <Link href="/privacy" className="hover:text-cream transition-colors">{t('privacy')}</Link>
           </div>
         </div>
       </div>
