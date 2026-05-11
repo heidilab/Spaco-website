@@ -20,7 +20,7 @@ import { buildWhatsAppLink, formatHkPhone } from '@/lib/whatsapp';
 import {
   ArrowLeft, CalendarDays, Clock, Users, Save, MessageCircle,
   Mail, Phone, User as UserIcon, Sparkles, AlertCircle, CalendarPlus, Package,
-  Calculator, Plus, Minus,
+  Calculator, Plus, Minus, Check,
 } from 'lucide-react';
 
 // Standard fixed deductions — same set as /admin/deposit so the
@@ -47,7 +47,7 @@ export default function AdminBookingDetailPage() {
   const locale = useLocale() as 'zh' | 'en';
   const params = useParams();
   const router = useRouter();
-  const { hasPermission } = useAuth();
+  const { hasPermission, user } = useAuth();
   const bookingId = params.id as string;
   const canAccess = hasPermission('bookings');
 
@@ -58,6 +58,7 @@ export default function AdminBookingDetailPage() {
 
   // Editable fields
   const [date, setDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [guestCount, setGuestCount] = useState(0);
@@ -65,6 +66,14 @@ export default function AdminBookingDetailPage() {
   const [saved, setSaved] = useState(false);
   const [statusValue, setStatusValue] = useState('');
   const [statusSaving, setStatusSaving] = useState(false);
+
+  // Post-edit payment recording modal
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [payAmount, setPayAmount] = useState<string>('');
+  const [payMethod, setPayMethod] = useState<'fps' | 'stripe' | 'bank' | 'cash' | 'other'>('fps');
+  const [payNote, setPayNote] = useState<string>('');
+  const [followupBusy, setFollowupBusy] = useState(false);
+  const [followupMsg, setFollowupMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   // Manual gcal push (for backfilling bookings whose webhook ran while
   // Google was disconnected, or that were created via admin without auto-sync).
@@ -92,6 +101,7 @@ export default function AdminBookingDetailPage() {
         }
         setBooking(b);
         setDate(b.date);
+        setEndDate(b.endDate || b.date);
         setStartTime(b.startTime);
         setEndTime(b.endTime);
         setGuestCount(b.guestCount);
@@ -124,29 +134,35 @@ export default function AdminBookingDetailPage() {
   const venue = venues.find((v) => v.id === booking.venueId);
   const dirty =
     date !== booking.date ||
+    endDate !== (booking.endDate || booking.date) ||
     startTime !== booking.startTime ||
     endTime !== booking.endTime ||
     guestCount !== booking.guestCount;
 
+  // Validation: end (date+time) must be strictly after start (date+time).
+  const startMs = (date && startTime) ? new Date(`${date}T${startTime}:00+08:00`).getTime() : 0;
+  const endMs = (endDate && endTime) ? new Date(`${endDate}T${endTime}:00+08:00`).getTime() : 0;
+  const isOvernight = endDate !== date;
+
   async function handleSave() {
     if (!booking || !dirty) return;
-    if (endTime <= startTime) {
-      setError(locale === 'zh' ? '結束時間必須晚於開始時間' : 'End time must be after start time');
+    if (endMs <= startMs) {
+      setError(locale === 'zh' ? '結束時間必須晚於開始時間' : 'End must be after start');
       return;
     }
     setSaving(true);
     setError(null);
     try {
-      await updateBookingDateTime(booking.id, { date, startTime, endTime, guestCount });
-      // Push the updated event to Google Calendar (non-blocking).
-      fetch(`/api/google/push-booking?bookingId=${encodeURIComponent(booking.id)}`, {
-        method: 'POST',
-      }).catch(() => { /* gcal off — fine */ });
+      await updateBookingDateTime(booking.id, { date, startTime, endTime, endDate, guestCount });
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
       // Refresh
       const fresh = await getBooking(booking.id);
       if (fresh) setBooking(fresh);
+      // Open the payment / followup modal so admin can record any
+      // top-up payment and trigger email re-send + gcal sync.
+      setShowPaymentModal(true);
+      setFollowupMsg(null);
     } catch (err) {
       console.error(err);
       setError(
@@ -215,6 +231,52 @@ export default function AdminBookingDetailPage() {
       });
     } finally {
       setSettling(false);
+    }
+  }
+
+  /** Fire after admin edit: optionally records a payment top-up,
+   *  re-sends the customer confirmation email, and updates the
+   *  matching Google Calendar event with the new schedule. */
+  async function handleFollowup(opts: { skipPayment?: boolean } = {}) {
+    if (!booking || !user) return;
+    setFollowupBusy(true);
+    setFollowupMsg(null);
+    try {
+      const body: Record<string, unknown> = { bookingId: booking.id };
+      const amount = parseFloat(payAmount);
+      if (!opts.skipPayment && amount > 0) {
+        body.payment = {
+          amount,
+          method: payMethod,
+          note: payNote.trim() || undefined,
+          recordedBy: user.uid,
+        };
+      }
+      const res = await fetch('/api/admin/booking-edit-followup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Followup failed');
+      setFollowupMsg({
+        kind: 'ok',
+        text: locale === 'zh' ? '✓ 已重發 email + 更新 Google 日曆' : '✓ Email resent + Google Calendar updated',
+      });
+      const fresh = await getBooking(booking.id);
+      if (fresh) setBooking(fresh);
+      // Reset payment form
+      setPayAmount('');
+      setPayNote('');
+      setTimeout(() => setShowPaymentModal(false), 1500);
+    } catch (err) {
+      setFollowupMsg({
+        kind: 'err',
+        text: (locale === 'zh' ? '失敗：' : 'Failed: ') +
+          (err instanceof Error ? err.message : 'unknown'),
+      });
+    } finally {
+      setFollowupBusy(false);
     }
   }
 
@@ -389,6 +451,15 @@ export default function AdminBookingDetailPage() {
                   className="w-full px-3 py-2 rounded-lg border border-charcoal/10 bg-white text-sm focus:outline-none focus:border-accent"
                 />
               </Field>
+              <Field label={locale === 'zh' ? '結束日期' : 'End date'}>
+                <input
+                  type="date"
+                  value={endDate}
+                  min={date}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-charcoal/10 bg-white text-sm focus:outline-none focus:border-accent"
+                />
+              </Field>
               <Field label={locale === 'zh' ? '結束時間' : 'End time'}>
                 <input
                   type="time"
@@ -407,6 +478,15 @@ export default function AdminBookingDetailPage() {
                 />
               </Field>
             </div>
+
+            {isOvernight && (
+              <div className="flex items-start gap-2 text-xs text-violet-700 bg-violet-50 rounded-lg px-3 py-2">
+                <AlertCircle size={12} className="mt-0.5 shrink-0" />
+                {locale === 'zh'
+                  ? `過夜預訂：${date} ${startTime} → ${endDate} ${endTime}。系統會自動分日創建場地封鎖時段。`
+                  : `Overnight: ${date} ${startTime} → ${endDate} ${endTime}. Cross-midnight blocked slots will be created automatically.`}
+              </div>
+            )}
 
             {error && (
               <div className="flex items-start gap-2 text-sm text-rose-600 bg-rose-50 rounded-lg px-3 py-2">
@@ -592,6 +672,111 @@ export default function AdminBookingDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Post-edit followup modal — record top-up payment, re-send
+       *  customer email, sync Google Calendar event */}
+      {showPaymentModal && (
+        <div className="fixed inset-0 z-50 bg-charcoal/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-glass-lg max-w-md w-full p-6">
+            <h3 className="font-bold text-lg mb-1">
+              {locale === 'zh' ? '修改已儲存' : 'Edit saved'}
+            </h3>
+            <p className="text-sm text-ink-soft mb-4">
+              {locale === 'zh'
+                ? '客人有額外付款嗎？確認後會重發 email + 更新 Google 日曆。'
+                : 'Did the customer pay anything extra? On confirm, we re-send the email + update Google Calendar.'}
+            </p>
+
+            <div className="space-y-3 mb-4">
+              <div>
+                <label className="block text-xs font-semibold text-ink-soft mb-1">
+                  {locale === 'zh' ? '金額 (HK$)' : 'Amount (HK$)'}
+                </label>
+                <input
+                  type="number"
+                  value={payAmount}
+                  onChange={(e) => setPayAmount(e.target.value)}
+                  placeholder="0"
+                  className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white"
+                />
+                {(booking.balanceDue ?? 0) > 0 && (
+                  <p className="text-[11px] text-amber-700 mt-1">
+                    {locale === 'zh' ? `現有未繳尾數：HK$${booking.balanceDue!.toLocaleString()}` : `Outstanding balance: HK$${booking.balanceDue!.toLocaleString()}`}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-ink-soft mb-1">
+                  {locale === 'zh' ? '付款方式' : 'Method'}
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {(['fps', 'bank', 'cash', 'stripe', 'other'] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setPayMethod(m)}
+                      className={`px-2 py-1.5 rounded-lg text-xs font-medium border transition ${
+                        payMethod === m
+                          ? 'bg-accent/10 border-accent text-accent'
+                          : 'bg-white/60 border-charcoal/15 text-ink-soft hover:bg-white'
+                      }`}
+                    >
+                      {m === 'fps' ? 'FPS' : m === 'bank' ? (locale === 'zh' ? '銀行' : 'Bank') : m === 'cash' ? (locale === 'zh' ? '現金' : 'Cash') : m === 'stripe' ? 'Stripe' : (locale === 'zh' ? '其他' : 'Other')}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-ink-soft mb-1">
+                  {locale === 'zh' ? '備註（內部）' : 'Note (internal)'}
+                </label>
+                <input
+                  type="text"
+                  value={payNote}
+                  onChange={(e) => setPayNote(e.target.value)}
+                  placeholder={locale === 'zh' ? '例：延長 3 小時 / FPS 已收 ref XXX' : 'e.g. 3-hr extension / FPS ref XXX'}
+                  className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white"
+                />
+              </div>
+            </div>
+
+            {followupMsg && (
+              <div className={`text-xs rounded-lg px-3 py-2 mb-3 ${
+                followupMsg.kind === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
+              }`}>{followupMsg.text}</div>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleFollowup({ skipPayment: true })}
+                disabled={followupBusy}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-white/70 border border-charcoal/15 text-sm font-medium hover:bg-white disabled:opacity-40"
+              >
+                {locale === 'zh' ? '冇額外付款' : 'No payment'}
+              </button>
+              <button
+                onClick={() => handleFollowup()}
+                disabled={followupBusy || !payAmount || parseFloat(payAmount) <= 0}
+                className="flex-1 btn-primary disabled:opacity-40 flex items-center justify-center gap-1.5"
+              >
+                {followupBusy ? '…' : (
+                  <>
+                    <Check size={14} />
+                    {locale === 'zh' ? '記錄並通知' : 'Record + Notify'}
+                  </>
+                )}
+              </button>
+            </div>
+            <button
+              onClick={() => setShowPaymentModal(false)}
+              className="w-full mt-2 text-xs text-ink-soft hover:text-ink"
+            >
+              {locale === 'zh' ? '稍後再處理' : 'Skip for now'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

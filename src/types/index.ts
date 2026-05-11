@@ -143,6 +143,10 @@ export interface BookingRecord {
   date: string;
   startTime: string;
   endTime: string;
+  /** End date when the booking spans midnight (e.g. start 19:00 on
+   *  May 20, end 02:00 on May 21 → date='2026-05-20', endDate='2026-05-21').
+   *  When absent or equal to `date`, the booking ends on the same day. */
+  endDate?: string;
   hours: number;
   /** Total head count = adultCount + childCount. Kept for backward
    *  compatibility with bookings created before the adult/child split. */
@@ -169,6 +173,16 @@ export interface BookingRecord {
     /** Amount due upfront to confirm: full grandTotal if ≤ HK$10k, else 50%. */
     deposit: number;
   };
+  /** Audit log of payments captured for this booking — original deposit,
+   *  balance payment, and any admin-recorded top-ups (e.g. WhatsApp FPS
+   *  for an overnight extension). Each entry is append-only. */
+  payments?: Array<{
+    amount: number;
+    method: 'stripe' | 'fps' | 'bank' | 'cash' | 'other';
+    note?: string;
+    recordedBy: string;     // admin uid
+    recordedAt: unknown;    // Firestore Timestamp
+  }>;
   /** Marketing channel snapshot — captured on the customer's FIRST
    *  booking (mandatory question). Repeat customers auto-tag as
    *  'loyalty_member' (a sentinel that's not a real MarketingChannel).

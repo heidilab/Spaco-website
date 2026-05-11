@@ -411,8 +411,9 @@ export async function pushBookingToCalendar(
   oauth2.setCredentials({ refresh_token: stored.refresh_token });
   const cal = google.calendar({ version: 'v3', auth: oauth2 });
 
+  const endDate = input.booking.endDate || input.booking.date;
   const startISO = `${input.booking.date}T${input.booking.startTime}:00+08:00`;
-  const endISO   = `${input.booking.date}T${input.booking.endTime}:00+08:00`;
+  const endISO   = `${endDate}T${input.booking.endTime}:00+08:00`;
 
   const res = await cal.events.insert({
     calendarId,
@@ -433,6 +434,54 @@ export async function pushBookingToCalendar(
     },
   });
   return res.data.id || null;
+}
+
+/** Update the time / summary / description of an existing event. Used
+ *  when admin edits a booking (date / time / guest count / add-ons).
+ *  Silently no-ops if Google isn't connected or the event doesn't
+ *  exist on the calendar. */
+export async function updateBookingOnCalendar(
+  redirectUri: string,
+  input: PushBookingInput,
+): Promise<void> {
+  if (!input.booking.googleEventId) return;
+  const stored = await getStoredToken();
+  if (!stored) return;
+  const calKey = venueIdToCalendarKey(input.booking.venueId);
+  if (!calKey) return;
+  const calendarId = getCalendarIds()[calKey];
+  if (!calendarId) return;
+
+  const oauth2 = buildOAuthClient(redirectUri);
+  oauth2.setCredentials({ refresh_token: stored.refresh_token });
+  const cal = google.calendar({ version: 'v3', auth: oauth2 });
+
+  const endDate = input.booking.endDate || input.booking.date;
+  const startISO = `${input.booking.date}T${input.booking.startTime}:00+08:00`;
+  const endISO   = `${endDate}T${input.booking.endTime}:00+08:00`;
+
+  try {
+    await cal.events.update({
+      calendarId,
+      eventId: input.booking.googleEventId,
+      requestBody: {
+        summary: buildEventSummary(input.booking, input.customerName),
+        description: buildEventDescription(input.booking, input.customerName, input.notes),
+        start: { dateTime: startISO, timeZone: 'Asia/Hong_Kong' },
+        end:   { dateTime: endISO,   timeZone: 'Asia/Hong_Kong' },
+        extendedProperties: {
+          private: {
+            spaco_booking_id: input.booking.id,
+            spaco_synced_from: 'website',
+          },
+        },
+      },
+    });
+  } catch (err) {
+    const code = (err as { code?: number })?.code;
+    if (code === 404 || code === 410) return; // event gone — no-op
+    throw err;
+  }
 }
 
 /** Update an existing event's status to cancelled OR delete it.

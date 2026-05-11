@@ -104,18 +104,33 @@ export async function updateBookingStatus(id: string, status: string) {
 
 /** Admin/CS: edit a booking's date / time / guest count. Updates the
  *  blocked_slots that were created for the booking so the schedule stays
- *  consistent. Caller must validate availability before invoking. */
+ *  consistent. Caller must validate availability before invoking.
+ *
+ *  Cross-midnight support: when `endDate` is set and differs from `date`,
+ *  two booking blocks are created (date → 23:59 + endDate 00:00 → endTime).
+ *  Cleaning buffer (1hr) is placed after the actual end on whichever day
+ *  the booking concludes. */
 export async function updateBookingDateTime(
   bookingId: string,
-  next: { date: string; startTime: string; endTime: string; guestCount?: number }
+  next: { date: string; startTime: string; endTime: string; endDate?: string; guestCount?: number }
 ) {
   const bookingRef = doc(db, 'bookings', bookingId);
   const bookingSnap = await getDoc(bookingRef);
   if (!bookingSnap.exists()) throw new Error('Booking not found');
   const booking = bookingSnap.data() as BookingRecord;
 
-  const [endH] = next.endTime.split(':').map(Number);
-  const bufferEnd = `${String(endH + 1).padStart(2, '0')}:00`;
+  const endDate = next.endDate && next.endDate !== next.date ? next.endDate : next.date;
+  const overnight = endDate !== next.date;
+
+  const [endH, endM] = next.endTime.split(':').map(Number);
+  // Cleaning buffer: 1 hr after end. If end is past 23:00, buffer pushes
+  // further forward but stays on endDate (which already handled the
+  // midnight crossing).
+  const bufferEndH = endH + 1;
+  const bufferEnd = bufferEndH >= 24
+    ? '23:59'      // cap at end of day; rare and admin can extend manually
+    : `${String(bufferEndH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+
   const venuesToBlock = venuesSharingSpace(booking.venueId);
 
   // Replace the blocked_slots tied to this booking.
@@ -126,28 +141,51 @@ export async function updateBookingDateTime(
     await deleteDoc(b.ref);
   }
   for (const vid of venuesToBlock) {
-    await createBlockedSlot({
-      venueId: vid,
-      date: next.date,
-      startTime: next.startTime,
-      endTime: next.endTime,
-      reason: 'booking',
-      bookingId,
-    });
-    await createBlockedSlot({
-      venueId: vid,
-      date: next.date,
-      startTime: next.endTime,
-      endTime: bufferEnd,
-      reason: 'cleaning',
-      bookingId,
-    });
+    if (overnight) {
+      // Day 1: from start → 23:59
+      await createBlockedSlot({
+        venueId: vid, date: next.date,
+        startTime: next.startTime, endTime: '23:59',
+        reason: 'booking', bookingId,
+      });
+      // Day 2: 00:00 → end + cleaning
+      await createBlockedSlot({
+        venueId: vid, date: endDate,
+        startTime: '00:00', endTime: next.endTime,
+        reason: 'booking', bookingId,
+      });
+      await createBlockedSlot({
+        venueId: vid, date: endDate,
+        startTime: next.endTime, endTime: bufferEnd,
+        reason: 'cleaning', bookingId,
+      });
+    } else {
+      // Same-day booking — original behaviour
+      await createBlockedSlot({
+        venueId: vid, date: next.date,
+        startTime: next.startTime, endTime: next.endTime,
+        reason: 'booking', bookingId,
+      });
+      await createBlockedSlot({
+        venueId: vid, date: next.date,
+        startTime: next.endTime, endTime: bufferEnd,
+        reason: 'cleaning', bookingId,
+      });
+    }
   }
+
+  // Recompute hours from the actual start/end timestamps so cross-midnight
+  // bookings get the right rental duration.
+  const startMs = new Date(`${next.date}T${next.startTime}:00+08:00`).getTime();
+  const endMs = new Date(`${endDate}T${next.endTime}:00+08:00`).getTime();
+  const hours = Math.max(1, Math.round((endMs - startMs) / 3600000));
 
   const patch: Record<string, unknown> = {
     date: next.date,
     startTime: next.startTime,
     endTime: next.endTime,
+    endDate: overnight ? endDate : null,
+    hours,
     updatedAt: serverTimestamp(),
   };
   if (typeof next.guestCount === 'number') patch.guestCount = next.guestCount;
