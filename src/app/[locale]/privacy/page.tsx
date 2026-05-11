@@ -159,18 +159,6 @@ const SECTIONS: Section[] = [
   },
   {
     number: '10',
-    title: { zh: '兒童私隱', en: 'Children\'s Privacy' },
-    body: {
-      zh: [
-        '本網站並非針對 13 歲以下兒童。如發現 13 歲以下兒童未經家長同意提供個人資料，我哋會立即刪除有關資料。家長／監護人如發現此情況，請聯絡 spacohk@gmail.com。',
-      ],
-      en: [
-        'This site is not directed at children under 13. If we discover that a child under 13 has provided personal data without parental consent, we will delete it immediately. Parents / guardians may contact spacohk@gmail.com.',
-      ],
-    },
-  },
-  {
-    number: '11',
     title: { zh: '政策更新', en: 'Policy Updates' },
     body: {
       zh: [
@@ -182,7 +170,7 @@ const SECTIONS: Section[] = [
     },
   },
   {
-    number: '12',
+    number: '11',
     title: { zh: '聯絡', en: 'Contact' },
     body: {
       zh: [
