@@ -459,57 +459,254 @@ export default function FinanceOverviewPage() {
     setExporting(true);
     try {
       const { default: jsPDF } = await import('jspdf');
-      const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-      const fmt = (n: number) => `HK$${n.toLocaleString()}`;
-      let y = 60;
-      doc.setFontSize(20);
-      doc.text('SPACO Finance Overview', 40, y);
-      y += 25;
-      doc.setFontSize(10);
-      doc.setTextColor(100);
-      doc.text(`Date: ${from} → ${to}`, 40, y); y += 14;
-      doc.text(`Branch: ${branchLabel(branch)}`, 40, y); y += 14;
-      doc.text(`Channel: ${channel === 'all' ? 'All' : String(channel)}`, 40, y); y += 26;
+      const autoTable = (await import('jspdf-autotable')).default;
+      // Landscape A4: 842 × 595pt — fits the 16-col booking table.
+      const doc = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'landscape' });
+      const fmt = (n: number) => `$${n.toLocaleString()}`;
+      const { month, year } = rangeMonthYear(from);
 
-      doc.setTextColor(0);
-      doc.setFontSize(13);
-      doc.text('Summary', 40, y); y += 18;
-      doc.setFontSize(11);
-      const sumLines = [
-        `Total Revenue: ${fmt(result.totalRevenue)}`,
-        `Bookings: ${result.bookingCount}`,
-        `Rental: ${fmt(result.rentalRevenue)}`,
-        `Add-ons: ${fmt(result.addOnRevenue)}`,
-        `Deposit Deductions: ${fmt(result.depositDeductionsRevenue)}`,
-        `Future Revenue: ${fmt(result.futureRevenue)} (${result.futureBookingCount} bookings)`,
+      // Brand colors (rgb tuples for jspdf-autotable).
+      const PINK = [255, 107, 157] as [number, number, number];
+      const PINK_SOFT = [255, 240, 245] as [number, number, number];
+      const ORANGE = [255, 176, 136] as [number, number, number];
+      const ORANGE_SOFT = [255, 232, 220] as [number, number, number];
+      const BLUE_SOFT = [217, 234, 254] as [number, number, number];
+      const GREEN_SOFT = [217, 242, 230] as [number, number, number];
+      const PURPLE_SOFT = [234, 219, 253] as [number, number, number];
+      const GRAY = [100, 100, 100] as [number, number, number];
+      const CHARCOAL = [26, 26, 26] as [number, number, number];
+
+      // ─── Page header (top of every page) ───
+      const drawHeader = () => {
+        // Pink title bar
+        doc.setFillColor(...PINK);
+        doc.rect(0, 0, 842, 50, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(18);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`SPACO ${month}-${year} Sales Record`, 30, 32);
+        // Filter chip line
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(255, 255, 255);
+        const filterText = `Date: ${from} → ${to}  ·  Branch: ${branchLabel(branch)}  ·  Channel: ${channel === 'all' ? 'All' : channelLabel(channel as string)}`;
+        doc.text(filterText, 30, 44);
+      };
+      drawHeader();
+      let cursorY = 70;
+
+      // ─── KPI cards row ───
+      const kpis: Array<{ label: string; value: string; fill: [number, number, number] }> = [
+        { label: 'Total Revenue', value: fmt(result.totalRevenue), fill: PINK_SOFT },
+        { label: 'Bookings', value: String(result.bookingCount), fill: PINK_SOFT },
+        { label: 'Rental', value: fmt(result.rentalRevenue), fill: ORANGE_SOFT },
+        { label: 'Add-ons', value: fmt(result.addOnRevenue), fill: BLUE_SOFT },
+        { label: 'Deposit Kept', value: fmt(result.depositDeductionsRevenue), fill: GREEN_SOFT },
+        { label: 'Future Revenue', value: `${fmt(result.futureRevenue)} (${result.futureBookingCount})`, fill: PURPLE_SOFT },
       ];
-      for (const l of sumLines) { doc.text(l, 40, y); y += 16; }
-      y += 12;
+      const cardW = 125, cardH = 50, cardGap = 8, marginX = 30;
+      kpis.forEach((k, i) => {
+        const x = marginX + i * (cardW + cardGap);
+        doc.setFillColor(...k.fill);
+        doc.roundedRect(x, cursorY, cardW, cardH, 6, 6, 'F');
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(...GRAY);
+        doc.text(k.label, x + 8, cursorY + 14);
+        doc.setFontSize(11);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...CHARCOAL);
+        doc.text(k.value, x + 8, cursorY + 34);
+      });
+      cursorY += cardH + 14;
 
-      const writeTable = (title: string, headers: string[], rows: (string | number)[][]) => {
-        if (y > 720) { doc.addPage(); y = 60; }
-        doc.setFontSize(13); doc.text(title, 40, y); y += 18;
-        doc.setFontSize(10);
-        doc.setTextColor(100); doc.text(headers.join('   |   '), 40, y); y += 14;
-        doc.setTextColor(0);
-        for (const r of rows) {
-          if (y > 760) { doc.addPage(); y = 60; }
-          doc.text(r.map((x) => typeof x === 'number' ? fmt(x) : String(x)).join('   |   '), 40, y);
-          y += 14;
+      // ─── Section header helper ───
+      const sectionHeader = (title: string, color: [number, number, number]) => {
+        if (cursorY > 520) {
+          doc.addPage();
+          drawHeader();
+          cursorY = 70;
         }
-        y += 14;
+        doc.setFillColor(...color);
+        doc.roundedRect(30, cursorY, 782, 18, 4, 4, 'F');
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...CHARCOAL);
+        doc.text(title, 38, cursorY + 13);
+        cursorY += 24;
       };
 
-      writeTable('Monthly', ['Month', 'Revenue', 'Bookings'],
-        result.monthly.map((r) => [r.month, r.revenue, r.bookings]));
-      writeTable('By Branch', ['Branch', 'Revenue', 'Bookings'],
-        result.byBranch.map((r) => [r.branchName.en, r.revenue, r.bookings]));
-      writeTable('By Add-on', ['Add-on', 'Bookings', 'Revenue'],
-        result.byAddOn.map((r) => [r.name.en, r.bookings, r.revenue]));
-      writeTable('By Channel', ['Channel', 'Bookings', 'Revenue'],
-        result.byChannel.map((r) => [channelLabel(r.channel), r.bookings, r.revenue]));
+      // ─── Aggregate breakdowns ───
+      sectionHeader('Monthly Revenue', PINK_SOFT);
+      autoTable(doc, {
+        startY: cursorY,
+        margin: { left: 30, right: 30 },
+        head: [['Month', 'Revenue', 'Bookings']],
+        body: result.monthly.map((r) => [r.month, fmt(r.revenue), r.bookings]),
+        styles: { font: 'helvetica', fontSize: 9, cellPadding: 5, lineColor: [200, 200, 200], lineWidth: 0.5 },
+        headStyles: { fillColor: PINK, textColor: [255, 255, 255], fontStyle: 'bold' },
+        alternateRowStyles: { fillColor: [248, 248, 248] },
+        columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } },
+      });
+      cursorY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 14;
 
-      doc.save(`SPACO-finance-${from}-to-${to}.pdf`);
+      sectionHeader('By Branch', ORANGE_SOFT);
+      autoTable(doc, {
+        startY: cursorY,
+        margin: { left: 30, right: 30 },
+        head: [['Branch', 'Revenue', 'Bookings']],
+        body: result.byBranch.map((r) => [r.branchName.en, fmt(r.revenue), r.bookings]),
+        styles: { font: 'helvetica', fontSize: 9, cellPadding: 5, lineColor: [200, 200, 200], lineWidth: 0.5 },
+        headStyles: { fillColor: ORANGE, textColor: [255, 255, 255], fontStyle: 'bold' },
+        alternateRowStyles: { fillColor: [248, 248, 248] },
+        columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } },
+      });
+      cursorY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 14;
+
+      sectionHeader('Add-ons', BLUE_SOFT);
+      autoTable(doc, {
+        startY: cursorY,
+        margin: { left: 30, right: 30 },
+        head: [['Add-on', 'Bookings', 'Revenue']],
+        body: result.byAddOn.map((r) => [r.name.en, r.bookings, fmt(r.revenue)]),
+        styles: { font: 'helvetica', fontSize: 9, cellPadding: 5, lineColor: [200, 200, 200], lineWidth: 0.5 },
+        headStyles: { fillColor: [99, 102, 241], textColor: [255, 255, 255], fontStyle: 'bold' },
+        alternateRowStyles: { fillColor: [248, 248, 248] },
+        columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } },
+      });
+      cursorY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 14;
+
+      sectionHeader('Marketing Channel', PURPLE_SOFT);
+      autoTable(doc, {
+        startY: cursorY,
+        margin: { left: 30, right: 30 },
+        head: [['Channel', 'Bookings', 'Revenue']],
+        body: result.byChannel.map((r) => {
+          const ch = r.channel === 'loyalty_member' ? 'Loyalty Member'
+            : r.channel === 'unknown' ? '(unspecified)'
+            : MARKETING_CHANNEL_LABELS[r.channel as MarketingChannel]?.en || r.channel;
+          return [ch, r.bookings, fmt(r.revenue)];
+        }),
+        styles: { font: 'helvetica', fontSize: 9, cellPadding: 5, lineColor: [200, 200, 200], lineWidth: 0.5 },
+        headStyles: { fillColor: [139, 92, 246], textColor: [255, 255, 255], fontStyle: 'bold' },
+        alternateRowStyles: { fillColor: [248, 248, 248] },
+        columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } },
+      });
+
+      // ─── New page: per-booking detail (Sales Record style) ───
+      doc.addPage();
+      drawHeader();
+      cursorY = 70;
+      sectionHeader('Booking Details (per transaction)', PINK_SOFT);
+
+      const bookings = filteredBookings();
+      // Build flat rows: one row per transaction; sales cols only on
+      // the first transaction row of each booking.
+      const bodyRows: (string | number)[][] = [];
+      let totalSales = 0;
+      let totalTx = 0;
+      for (const b of bookings) {
+        const cats = categoryBreakdown(b);
+        const txs = transactionsFor(b);
+        const total = b.pricing.subtotal || 0;
+        const sumTx = txs.reduce((s, t) => s + t.amount, 0);
+        totalSales += total;
+        totalTx += sumTx;
+
+        const timeStr = b.endDate && b.endDate !== b.date
+          ? `${b.startTime}-${b.endTime} (+1d)`
+          : `${b.startTime}-${b.endTime}`;
+        const pplStr = (b.childCount ?? 0) > 0
+          ? `${b.guestCount} (${b.adultCount ?? b.guestCount}A+${b.childCount}C)`
+          : `${b.guestCount}`;
+        const src = b.marketingChannel === 'loyalty_member'
+          ? 'Loyalty'
+          : b.marketingChannel
+            ? MARKETING_CHANNEL_LABELS[b.marketingChannel as MarketingChannel]?.en || ''
+            : '';
+        const refund = b.depositRefund as { amount?: number } | undefined;
+        const refundAmt = refund?.amount ?? '';
+
+        const rowCount = Math.max(1, txs.length);
+        for (let i = 0; i < rowCount; i++) {
+          const first = i === 0;
+          const t = txs[i];
+          bodyRows.push([
+            first ? venueCode(b.venueId) : '',
+            first ? b.date : '',
+            first ? timeStr : '',
+            first ? pplStr : '',
+            first ? (cats.rent || '') : '',
+            first ? (cats.shisha || '') : '',
+            first ? (cats.bbq || '') : '',
+            first ? (cats.cater || '') : '',
+            first ? (cats.drinks || '') : '',
+            first ? (cats.extPenalty || '') : '',
+            first ? total : '',
+            t ? methodLabel(t.method) : '',
+            t?.amount ?? '',
+            first ? src : '',
+            first ? refundAmt : '',
+            first ? `#${b.id.slice(0, 6)}` : '',
+          ]);
+        }
+      }
+      // TOTAL footer row
+      bodyRows.push([
+        'TOTAL', '', '', '', '', '', '', '', '', '', totalSales, '', totalTx, '', '', '',
+      ]);
+
+      autoTable(doc, {
+        startY: cursorY,
+        margin: { left: 30, right: 30 },
+        head: [[
+          'Branch', 'Date', 'Time', 'ppl',
+          'Rent', 'Shisha', 'BBQ', 'Catering', 'Drinks', 'Ext/Pnl', 'Total',
+          'Method', 'Paid',
+          'Source', 'Refund', 'Ref',
+        ]],
+        body: bodyRows.map((r) => r.map((c) => typeof c === 'number' ? fmt(c) : c)),
+        styles: { font: 'helvetica', fontSize: 7, cellPadding: 3, lineColor: [200, 200, 200], lineWidth: 0.4, overflow: 'linebreak' },
+        headStyles: { fillColor: PINK, textColor: [255, 255, 255], fontStyle: 'bold', halign: 'center', fontSize: 8 },
+        alternateRowStyles: { fillColor: [250, 247, 244] },
+        columnStyles: {
+          0: { halign: 'center', cellWidth: 38 },
+          1: { halign: 'center', cellWidth: 52 },
+          2: { halign: 'center', cellWidth: 60 },
+          3: { halign: 'center', cellWidth: 50 },
+          4: { halign: 'right', cellWidth: 42 },
+          5: { halign: 'right', cellWidth: 42 },
+          6: { halign: 'right', cellWidth: 42 },
+          7: { halign: 'right', cellWidth: 50 },
+          8: { halign: 'right', cellWidth: 42 },
+          9: { halign: 'right', cellWidth: 50 },
+          10: { halign: 'right', cellWidth: 52, fontStyle: 'bold' },
+          11: { halign: 'center', cellWidth: 46 },
+          12: { halign: 'right', cellWidth: 50 },
+          13: { halign: 'center', cellWidth: 56 },
+          14: { halign: 'right', cellWidth: 46 },
+          15: { halign: 'center', cellWidth: 44 },
+        },
+        // Bold last row (TOTAL) with darker fill.
+        didParseCell: (data) => {
+          if (data.row.index === bodyRows.length - 1) {
+            data.cell.styles.fillColor = [240, 240, 240];
+            data.cell.styles.fontStyle = 'bold';
+          }
+        },
+        // Footer note on each page.
+        didDrawPage: () => {
+          const pageH = doc.internal.pageSize.getHeight();
+          doc.setFontSize(7);
+          doc.setTextColor(...GRAY);
+          doc.text('SPACO · Cholliman Inc.', 30, pageH - 16);
+          const pageNum = (doc as unknown as { internal: { getCurrentPageInfo: () => { pageNumber: number } } })
+            .internal.getCurrentPageInfo().pageNumber;
+          doc.text(`Page ${pageNum}`, 800, pageH - 16, { align: 'right' });
+        },
+      });
+
+      doc.save(`SPACO-${month}-${year}-Sales-Record.pdf`);
     } finally {
       setExporting(false);
     }
