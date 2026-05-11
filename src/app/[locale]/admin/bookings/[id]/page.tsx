@@ -16,6 +16,7 @@ import {
 import { BookingRecord, UserProfile, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
 import { venues } from '@/lib/venues';
 import { formatAddOnsForStaff } from '@/lib/pricing';
+import PaymentHistory from '@/components/booking/PaymentHistory';
 import { buildWhatsAppLink, formatHkPhone } from '@/lib/whatsapp';
 import {
   ArrowLeft, CalendarDays, Clock, Users, Save, MessageCircle,
@@ -67,9 +68,12 @@ export default function AdminBookingDetailPage() {
   const [statusValue, setStatusValue] = useState('');
   const [statusSaving, setStatusSaving] = useState(false);
 
-  // Post-edit payment recording modal
+  // Post-edit payment recording modal — split into rental + deposit
+  // so the booking's pricing.subtotal and pricing.securityDeposit can
+  // be bumped accurately (and loyalty-point credit later stays correct).
   const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [payAmount, setPayAmount] = useState<string>('');
+  const [payRentalAmount, setPayRentalAmount] = useState<string>('');
+  const [payDepositAmount, setPayDepositAmount] = useState<string>('');
   const [payMethod, setPayMethod] = useState<'fps' | 'stripe' | 'bank' | 'cash' | 'other'>('fps');
   const [payNote, setPayNote] = useState<string>('');
   const [followupBusy, setFollowupBusy] = useState(false);
@@ -236,17 +240,24 @@ export default function AdminBookingDetailPage() {
 
   /** Fire after admin edit: optionally records a payment top-up,
    *  re-sends the customer confirmation email, and updates the
-   *  matching Google Calendar event with the new schedule. */
+   *  matching Google Calendar event with the new schedule.
+   *
+   *  Payment is split into rental + deposit components so the booking's
+   *  pricing.subtotal (rental + add-ons) and pricing.securityDeposit
+   *  can be patched accurately. Without the split, downstream things
+   *  like loyalty-point credit at deposit-settlement time would be off. */
   async function handleFollowup(opts: { skipPayment?: boolean } = {}) {
     if (!booking || !user) return;
     setFollowupBusy(true);
     setFollowupMsg(null);
     try {
       const body: Record<string, unknown> = { bookingId: booking.id };
-      const amount = parseFloat(payAmount);
-      if (!opts.skipPayment && amount > 0) {
+      const rental = parseFloat(payRentalAmount) || 0;
+      const dep = parseFloat(payDepositAmount) || 0;
+      if (!opts.skipPayment && (rental + dep) > 0) {
         body.payment = {
-          amount,
+          rentalAmount: rental,
+          depositAmount: dep,
           method: payMethod,
           note: payNote.trim() || undefined,
           recordedBy: user.uid,
@@ -266,7 +277,8 @@ export default function AdminBookingDetailPage() {
       const fresh = await getBooking(booking.id);
       if (fresh) setBooking(fresh);
       // Reset payment form
-      setPayAmount('');
+      setPayRentalAmount('');
+      setPayDepositAmount('');
       setPayNote('');
       setTimeout(() => setShowPaymentModal(false), 1500);
     } catch (err) {
@@ -576,6 +588,11 @@ export default function AdminBookingDetailPage() {
             )}
           </div>
 
+          {/* Payment history — surfaces the audit log of every payment
+           *  captured for this booking. Rendered only when there's at
+           *  least one entry (component handles empty internally). */}
+          <PaymentHistory booking={booking} locale={locale} />
+
           {/* Deposit Settlement — admin inputs deductions after the
            *  event, system marks completed + credits loyalty points.
            *  Already-settled bookings show a read-only summary with
@@ -688,23 +705,51 @@ export default function AdminBookingDetailPage() {
             </p>
 
             <div className="space-y-3 mb-4">
-              <div>
-                <label className="block text-xs font-semibold text-ink-soft mb-1">
-                  {locale === 'zh' ? '金額 (HK$)' : 'Amount (HK$)'}
-                </label>
-                <input
-                  type="number"
-                  value={payAmount}
-                  onChange={(e) => setPayAmount(e.target.value)}
-                  placeholder="0"
-                  className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white"
-                />
-                {(booking.balanceDue ?? 0) > 0 && (
-                  <p className="text-[11px] text-amber-700 mt-1">
-                    {locale === 'zh' ? `現有未繳尾數：HK$${booking.balanceDue!.toLocaleString()}` : `Outstanding balance: HK$${booking.balanceDue!.toLocaleString()}`}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-ink-soft mb-1">
+                    {locale === 'zh' ? '場租 (HK$)' : 'Rental (HK$)'}
+                  </label>
+                  <input
+                    type="number"
+                    value={payRentalAmount}
+                    onChange={(e) => setPayRentalAmount(e.target.value)}
+                    placeholder="0"
+                    className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white"
+                  />
+                  <p className="text-[11px] text-ink-soft mt-1">
+                    {locale === 'zh' ? '加入小計（賺積分）' : 'Adds to subtotal (earns points)'}
                   </p>
-                )}
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-ink-soft mb-1">
+                    {locale === 'zh' ? '按金 (HK$)' : 'Deposit (HK$)'}
+                  </label>
+                  <input
+                    type="number"
+                    value={payDepositAmount}
+                    onChange={(e) => setPayDepositAmount(e.target.value)}
+                    placeholder="0"
+                    className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white"
+                  />
+                  <p className="text-[11px] text-ink-soft mt-1">
+                    {locale === 'zh' ? '加入按金（活動後退還）' : 'Adds to refundable deposit'}
+                  </p>
+                </div>
               </div>
+
+              {(parseFloat(payRentalAmount) || 0) + (parseFloat(payDepositAmount) || 0) > 0 && (
+                <div className="rounded-lg bg-pink/10 px-3 py-2 text-xs">
+                  {locale === 'zh' ? '總共記錄：' : 'Total recorded: '}
+                  <span className="font-bold">HK${((parseFloat(payRentalAmount) || 0) + (parseFloat(payDepositAmount) || 0)).toLocaleString()}</span>
+                </div>
+              )}
+
+              {(booking.balanceDue ?? 0) > 0 && (
+                <p className="text-[11px] text-amber-700">
+                  {locale === 'zh' ? `現有未繳尾數：HK$${booking.balanceDue!.toLocaleString()}` : `Outstanding balance: HK$${booking.balanceDue!.toLocaleString()}`}
+                </p>
+              )}
 
               <div>
                 <label className="block text-xs font-semibold text-ink-soft mb-1">
@@ -757,7 +802,7 @@ export default function AdminBookingDetailPage() {
               </button>
               <button
                 onClick={() => handleFollowup()}
-                disabled={followupBusy || !payAmount || parseFloat(payAmount) <= 0}
+                disabled={followupBusy || ((parseFloat(payRentalAmount) || 0) + (parseFloat(payDepositAmount) || 0)) <= 0}
                 className="flex-1 btn-primary disabled:opacity-40 flex items-center justify-center gap-1.5"
               >
                 {followupBusy ? '…' : (

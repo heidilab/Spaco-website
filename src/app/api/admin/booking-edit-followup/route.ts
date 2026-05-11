@@ -25,7 +25,12 @@ export const runtime = 'nodejs';
 // and zero balanceDue if the payment covers it.
 
 interface FollowupPayment {
-  amount: number;
+  /** HK$ paid against rental (場租 + add-ons). Adds to pricing.subtotal
+   *  so loyalty-point credit at deposit settlement stays accurate. */
+  rentalAmount: number;
+  /** HK$ paid into the refundable security deposit. Adds to
+   *  pricing.securityDeposit so the eventual refund math is right. */
+  depositAmount: number;
   method: 'stripe' | 'fps' | 'bank' | 'cash' | 'other';
   note?: string;
   recordedBy: string;
@@ -49,15 +54,31 @@ export async function POST(req: NextRequest) {
     }
     const booking = { id: snap.id, ...snap.data() } as BookingRecord;
 
-    // 1. Optional payment recording
+    // 1. Optional payment recording — split rental / deposit.
+    //    Bumps pricing.subtotal + securityDeposit accordingly so
+    //    downstream loyalty-credit math + refund math stay accurate.
     let updatedBalance: number | null = null;
-    if (body.payment && body.payment.amount > 0) {
-      const newBalance = Math.max(0, (booking.balanceDue ?? 0) - body.payment.amount);
+    if (body.payment && (body.payment.rentalAmount > 0 || body.payment.depositAmount > 0)) {
+      const rental = Math.max(0, body.payment.rentalAmount || 0);
+      const dep = Math.max(0, body.payment.depositAmount || 0);
+      const total = rental + dep;
+      const newSubtotal = (booking.pricing.subtotal || 0) + rental;
+      const newSecurityDeposit = (booking.pricing.securityDeposit || 0) + dep;
+      const newDeposit = (booking.pricing.deposit || 0) + total;
+      const newBalance = Math.max(0, (booking.balanceDue ?? 0) - total);
       await bookingRef.update({
+        'pricing.subtotal': newSubtotal,
+        'pricing.securityDeposit': newSecurityDeposit,
+        'pricing.deposit': newDeposit,
         balanceDue: newBalance,
         balancePaidAt: newBalance === 0 ? FieldValue.serverTimestamp() : booking.balancePaidAt,
         payments: FieldValue.arrayUnion({
-          ...body.payment,
+          rentalAmount: rental,
+          depositAmount: dep,
+          amount: total,
+          method: body.payment.method,
+          note: body.payment.note || null,
+          recordedBy: body.payment.recordedBy,
           recordedAt: new Date().toISOString(),
         }),
         updatedAt: FieldValue.serverTimestamp(),

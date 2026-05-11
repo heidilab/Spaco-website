@@ -11,6 +11,7 @@ import {
   addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE,
 } from '@/lib/pricing';
 import { generateWhatsAppLink } from '@/lib/email';
+import PaymentHistory from '@/components/booking/PaymentHistory';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
 import { BookingRecord } from '@/types';
 import {
@@ -240,6 +241,9 @@ export default function MyBookingDetailPage() {
               </div>
             )}
           </div>
+
+          {/* Payment history — only renders if there's at least one entry */}
+          <PaymentHistory booking={booking} locale={locale} />
 
           {/* Door passcode */}
           {booking.lockPasscode?.passcode && (

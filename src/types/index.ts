@@ -175,13 +175,20 @@ export interface BookingRecord {
   };
   /** Audit log of payments captured for this booking — original deposit,
    *  balance payment, and any admin-recorded top-ups (e.g. WhatsApp FPS
-   *  for an overnight extension). Each entry is append-only. */
+   *  for an overnight extension). Each entry is append-only. Rental and
+   *  deposit splits let downstream code (loyalty credit, deposit refund)
+   *  attribute the money to the right bucket. */
   payments?: Array<{
+    /** HK$ portion paid against rental + add-ons (subtotal). */
+    rentalAmount: number;
+    /** HK$ portion paid into the refundable security deposit. */
+    depositAmount: number;
+    /** Total = rentalAmount + depositAmount, stored for convenience. */
     amount: number;
     method: 'stripe' | 'fps' | 'bank' | 'cash' | 'other';
-    note?: string;
+    note?: string | null;
     recordedBy: string;     // admin uid
-    recordedAt: unknown;    // Firestore Timestamp
+    recordedAt: unknown;    // Firestore Timestamp / ISO string
   }>;
   /** Marketing channel snapshot — captured on the customer's FIRST
    *  booking (mandatory question). Repeat customers auto-tag as
