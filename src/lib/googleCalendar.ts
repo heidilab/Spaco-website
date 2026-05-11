@@ -136,14 +136,27 @@ export async function disconnectGoogle(): Promise<void> {
 // Sync from Google → blocked_slots
 // ──────────────────────────────────────────────────────────
 
-/** Local helper: HH:mm string from a Google event datetime. */
+/** HH:mm string from a Google event datetime in HKT (UTC+8).
+ *  Critical: cron runs on Vercel (UTC), so getHours() would return
+ *  UTC hours and store 19:00 HKT bookings as 11:00. Use Intl with
+ *  explicit timeZone to format in Hong Kong time regardless of host. */
 function hhmm(d: Date): string {
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Hong_Kong',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(d);
+  const hour = parts.find((p) => p.type === 'hour')?.value || '00';
+  const minute = parts.find((p) => p.type === 'minute')?.value || '00';
+  return `${hour}:${minute}`;
 }
 function ymd(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Hong_Kong',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(d);
+  const y = parts.find((p) => p.type === 'year')?.value || '0000';
+  const m = parts.find((p) => p.type === 'month')?.value || '00';
+  const dd = parts.find((p) => p.type === 'day')?.value || '00';
   return `${y}-${m}-${dd}`;
 }
 

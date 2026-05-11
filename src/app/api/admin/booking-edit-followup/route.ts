@@ -86,9 +86,12 @@ export async function POST(req: NextRequest) {
       updatedBalance = newBalance;
     }
 
-    // 2. Re-send confirmation email so customer sees the new schedule
-    const fresh = (await bookingRef.get()).data() as BookingRecord;
-    fresh.id = bookingId;
+    // 2. Re-send confirmation email so customer sees the new schedule.
+    //    Firestore .data() drops the doc id, so re-attach it on every
+    //    BookingRecord we hand off — gcal description + email body
+    //    both surface Booking ID and we don't want "undefined".
+    const freshData = (await bookingRef.get()).data() as BookingRecord;
+    const fresh: BookingRecord = { ...freshData, id: bookingId };
 
     const userSnap = await adminDb.collection('users').doc(fresh.userId).get();
     const profile = userSnap.exists ? (userSnap.data() as UserProfile) : null;

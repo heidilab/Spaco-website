@@ -51,7 +51,10 @@ export async function POST(request: NextRequest) {
         //     balance payments don't touch points/promos again).
         try {
           const preNotifySnap = await bookingRef.get();
-          const preBooking = preNotifySnap.data() as BookingRecord | undefined;
+          const preData = preNotifySnap.data() as BookingRecord | undefined;
+          // Firestore .data() drops the doc id — pin it back so any
+          // downstream code that builds gcal/email content has it.
+          const preBooking = preData ? ({ ...preData, id: bookingId } as BookingRecord) : undefined;
           if (preBooking && !isBalancePayment) {
             // Loyalty points — transactional deduction.
             if (preBooking.pointsUsed && preBooking.pointsUsed > 0) {
@@ -77,7 +80,10 @@ export async function POST(request: NextRequest) {
         // 2. Send confirmation email to the customer.
         try {
           const bookingSnap = await bookingRef.get();
-          const booking = bookingSnap.data() as BookingRecord | undefined;
+          const bookingData = bookingSnap.data() as BookingRecord | undefined;
+          // .data() drops the doc id — pin it on so downstream surfaces
+          // (gcal description / email body) render the real Booking ID.
+          const booking = bookingData ? ({ ...bookingData, id: bookingId } as BookingRecord) : undefined;
           if (booking) {
             const userSnap = await adminDb.collection('users').doc(booking.userId).get();
             const profile = userSnap.data() as UserProfile | undefined;
@@ -144,7 +150,8 @@ export async function POST(request: NextRequest) {
         let profileForNotify: UserProfile | undefined;
         try {
           const fresh = await bookingRef.get();
-          const booking = fresh.data() as BookingRecord | undefined;
+          const freshData = fresh.data() as BookingRecord | undefined;
+          const booking = freshData ? ({ ...freshData, id: bookingId } as BookingRecord) : undefined;
           bookingForNotify = booking;
           if (booking) {
             const userSnap = await adminDb.collection('users').doc(booking.userId).get();

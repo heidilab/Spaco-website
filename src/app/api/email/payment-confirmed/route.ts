@@ -23,7 +23,9 @@ export async function POST(req: NextRequest) {
 
     const snap = await adminDb.collection('bookings').doc(bookingId).get();
     if (!snap.exists) return NextResponse.json({ error: 'booking not found' }, { status: 404 });
-    const booking = snap.data() as BookingRecord;
+    // Pin doc id onto the booking — .data() drops it and downstream
+    // gcal description / email body both render Booking ID.
+    const booking: BookingRecord = { ...(snap.data() as BookingRecord), id: bookingId };
 
     const userSnap = await adminDb.collection('users').doc(booking.userId).get();
     const user = userSnap.exists ? (userSnap.data() as { email?: string; displayName?: string }) : null;
