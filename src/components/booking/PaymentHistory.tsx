@@ -1,9 +1,15 @@
+'use client';
+
 // Renders a booking's payments[] audit log. Used on both the admin
 // booking detail page and the customer-facing /my-bookings/[id] page,
 // so it has to handle the BookingRecord.payments entry shape exactly.
+// When `adminMode` is set, legacy entries (those without a
+// rental/deposit split) get a "拆分" button so admin can retroactively
+// attribute the money.
 
+import { useState } from 'react';
 import type { BookingRecord } from '@/types';
-import { CreditCard } from 'lucide-react';
+import { CreditCard, Wand2, X as XIcon, Loader2 } from 'lucide-react';
 
 const METHOD_LABELS: Record<string, { zh: string; en: string }> = {
   stripe: { zh: 'Stripe', en: 'Stripe' },
@@ -27,15 +33,65 @@ function fmtRecordedAt(v: unknown): string {
 export default function PaymentHistory({
   booking,
   locale,
+  adminMode = false,
+  onUpdated,
 }: {
   booking: BookingRecord;
   locale: 'zh' | 'en';
+  /** When true, show admin-only controls (拆分 button for legacy
+   *  entries that pre-date the rental/deposit split). */
+  adminMode?: boolean;
+  /** Called after a successful split so the parent can refresh. */
+  onUpdated?: () => void;
 }) {
   const payments = booking.payments || [];
+  const [splittingIdx, setSplittingIdx] = useState<number | null>(null);
+  const [rentalInput, setRentalInput] = useState<string>('');
+  const [depInput, setDepInput] = useState<string>('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
   if (payments.length === 0) return null;
 
   const totalRental = payments.reduce((s, p) => s + (p.rentalAmount || 0), 0);
   const totalDeposit = payments.reduce((s, p) => s + (p.depositAmount || 0), 0);
+
+  async function handleSplitSubmit() {
+    if (splittingIdx === null) return;
+    const rental = parseFloat(rentalInput) || 0;
+    const dep = parseFloat(depInput) || 0;
+    const entry = payments[splittingIdx];
+    if (rental + dep !== entry.amount) {
+      setErr(locale === 'zh'
+        ? `兩個金額相加要等於 HK$${entry.amount.toLocaleString()}`
+        : `Rental + deposit must equal HK$${entry.amount.toLocaleString()}`);
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch('/api/admin/booking-fix-payment-split', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookingId: booking.id,
+          paymentIndex: splittingIdx,
+          rentalAmount: rental,
+          depositAmount: dep,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Split failed');
+      setSplittingIdx(null);
+      setRentalInput('');
+      setDepInput('');
+      onUpdated?.();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'unknown');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="glass-card p-6 space-y-3 text-sm">
@@ -56,27 +112,122 @@ export default function PaymentHistory({
       </div>
 
       <ul className="space-y-2 text-xs">
-        {payments.map((p, i) => (
-          <li key={i} className="border-l-2 border-pink/40 pl-3 py-1">
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="font-mono font-bold text-sm">HK${p.amount.toLocaleString()}</span>
-              <span className="text-ink-soft">{METHOD_LABELS[p.method]?.[locale] || p.method}</span>
-            </div>
-            <div className="flex items-baseline gap-3 text-ink-soft mt-0.5">
-              {(p.rentalAmount || 0) > 0 && (
-                <span>{locale === 'zh' ? '場租 ' : 'Rental '}HK${p.rentalAmount.toLocaleString()}</span>
+        {payments.map((p, i) => {
+          const hasSplit = (p.rentalAmount || 0) > 0 || (p.depositAmount || 0) > 0;
+          const isLegacy = !hasSplit && p.amount > 0;
+          return (
+            <li key={i} className="border-l-2 border-pink/40 pl-3 py-1">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="font-mono font-bold text-sm">HK${p.amount.toLocaleString()}</span>
+                <span className="text-ink-soft">{METHOD_LABELS[p.method]?.[locale] || p.method}</span>
+              </div>
+              {hasSplit && (
+                <div className="flex items-baseline gap-3 text-ink-soft mt-0.5">
+                  {(p.rentalAmount || 0) > 0 && (
+                    <span>{locale === 'zh' ? '場租 ' : 'Rental '}HK${p.rentalAmount.toLocaleString()}</span>
+                  )}
+                  {(p.depositAmount || 0) > 0 && (
+                    <span>{locale === 'zh' ? '按金 ' : 'Deposit '}HK${p.depositAmount.toLocaleString()}</span>
+                  )}
+                </div>
               )}
-              {(p.depositAmount || 0) > 0 && (
-                <span>{locale === 'zh' ? '按金 ' : 'Deposit '}HK${p.depositAmount.toLocaleString()}</span>
+              {isLegacy && (
+                <p className="text-amber-700 text-[11px] mt-0.5 flex items-center gap-1">
+                  ⚠️ {locale === 'zh' ? '未拆分（場租 vs 按金）' : 'Not split into rental/deposit'}
+                  {adminMode && (
+                    <button
+                      onClick={() => {
+                        setSplittingIdx(i);
+                        setRentalInput('');
+                        setDepInput('');
+                        setErr(null);
+                      }}
+                      className="ml-1 px-2 py-0.5 rounded-pill bg-pink/10 text-pink text-[10px] font-semibold hover:bg-pink/20 flex items-center gap-1"
+                    >
+                      <Wand2 size={10} /> {locale === 'zh' ? '拆分' : 'Split'}
+                    </button>
+                  )}
+                </p>
               )}
-            </div>
-            {p.note && (
-              <p className="text-ink-soft italic mt-0.5">「{p.note}」</p>
-            )}
-            <p className="text-ink-soft text-[10px] mt-0.5">{fmtRecordedAt(p.recordedAt)}</p>
-          </li>
-        ))}
+              {p.note && (
+                <p className="text-ink-soft italic mt-0.5">「{p.note}」</p>
+              )}
+              <p className="text-ink-soft text-[10px] mt-0.5">{fmtRecordedAt(p.recordedAt)}</p>
+            </li>
+          );
+        })}
       </ul>
+
+      {/* Split modal for legacy entries */}
+      {adminMode && splittingIdx !== null && (
+        <div className="fixed inset-0 z-50 bg-charcoal/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-glass-lg max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-bold text-lg">
+                {locale === 'zh' ? '拆分付款金額' : 'Split Payment'}
+              </h3>
+              <button
+                onClick={() => setSplittingIdx(null)}
+                className="w-8 h-8 rounded-full hover:bg-white/60 flex items-center justify-center"
+              >
+                <XIcon size={14} />
+              </button>
+            </div>
+            <p className="text-sm text-ink-soft mb-4">
+              {locale === 'zh'
+                ? `總金額 HK$${payments[splittingIdx].amount.toLocaleString()}。請輸入幾多係場租、幾多係按金。`
+                : `Total HK$${payments[splittingIdx].amount.toLocaleString()}. Split between rental and deposit.`}
+            </p>
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <div>
+                <label className="block text-xs font-semibold text-ink-soft mb-1">
+                  {locale === 'zh' ? '場租' : 'Rental'}
+                </label>
+                <input
+                  type="number"
+                  value={rentalInput}
+                  onChange={(e) => setRentalInput(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white"
+                  placeholder="0"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-ink-soft mb-1">
+                  {locale === 'zh' ? '按金' : 'Deposit'}
+                </label>
+                <input
+                  type="number"
+                  value={depInput}
+                  onChange={(e) => setDepInput(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white"
+                  placeholder="0"
+                />
+              </div>
+            </div>
+            <p className="text-xs text-ink-soft mb-3">
+              {locale === 'zh' ? '兩者相加：' : 'Sum: '}
+              <span className="font-bold">HK${((parseFloat(rentalInput) || 0) + (parseFloat(depInput) || 0)).toLocaleString()}</span>
+              {' / HK$' + payments[splittingIdx].amount.toLocaleString()}
+            </p>
+            {err && (
+              <div className="text-xs bg-rose-50 text-rose-700 rounded-lg px-3 py-2 mb-3">{err}</div>
+            )}
+            <button
+              onClick={handleSplitSubmit}
+              disabled={busy}
+              className="w-full btn-primary justify-center disabled:opacity-40 flex items-center gap-2"
+            >
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+              {locale === 'zh' ? '確認拆分' : 'Confirm'}
+            </button>
+            <p className="text-[11px] text-ink-soft mt-2 leading-relaxed">
+              {locale === 'zh'
+                ? '拆分後系統會將場租加入小計、按金加入可退按金。已收總額不變。'
+                : 'On confirm, rental adds to subtotal, deposit adds to refundable amount. Total paid is unchanged.'}
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

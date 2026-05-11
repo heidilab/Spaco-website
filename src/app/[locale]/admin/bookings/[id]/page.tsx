@@ -553,7 +553,8 @@ export default function AdminBookingDetailPage() {
               <Row label={locale === 'zh' ? '自攜食物' : 'BYO Food'} value={locale === 'zh' ? '是' : 'Yes'} />
             )}
             <Row label={locale === 'zh' ? '小計' : 'Subtotal'} value={`HK$${booking.pricing.subtotal.toLocaleString()}`} />
-            <Row label={locale === 'zh' ? '按金' : 'Deposit'} value={`HK$${booking.pricing.deposit.toLocaleString()}`} />
+            <Row label={locale === 'zh' ? '可退按金' : 'Refundable deposit'} value={`HK$${(booking.pricing.securityDeposit ?? 0).toLocaleString()}`} />
+            <Row label={locale === 'zh' ? '已收' : 'Paid'} value={`HK$${booking.pricing.deposit.toLocaleString()}`} />
             {(booking.pointsUsed ?? 0) > 0 && (
               <Row
                 icon={<Sparkles size={14} />}
@@ -590,8 +591,18 @@ export default function AdminBookingDetailPage() {
 
           {/* Payment history — surfaces the audit log of every payment
            *  captured for this booking. Rendered only when there's at
-           *  least one entry (component handles empty internally). */}
-          <PaymentHistory booking={booking} locale={locale} />
+           *  least one entry (component handles empty internally).
+           *  adminMode exposes a "拆分" button on legacy entries that
+           *  pre-date the rental/deposit split. */}
+          <PaymentHistory
+            booking={booking}
+            locale={locale}
+            adminMode
+            onUpdated={async () => {
+              const fresh = await getBooking(booking.id);
+              if (fresh) setBooking(fresh);
+            }}
+          />
 
           {/* Deposit Settlement — admin inputs deductions after the
            *  event, system marks completed + credits loyalty points.
