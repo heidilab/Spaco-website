@@ -161,7 +161,10 @@ export default function FinanceOverviewPage() {
   async function handleExportExcel() {
     setExporting(true);
     try {
-      const XLSX = await import('xlsx');
+      // xlsx-js-style is a drop-in fork that supports writing cell
+      // styles (background, font, borders, alignment) — the OSS xlsx
+      // package only reads them.
+      const XLSX = await import('xlsx-js-style');
       const wb = XLSX.utils.book_new();
       const { month, year } = rangeMonthYear(from);
       const titleText = ` ${month}- ${year}  Sales Record`;
@@ -320,6 +323,95 @@ export default function FinanceOverviewPage() {
         { wch: 14 }, // Returned Deposit
         { wch: 36 }, // Remarks
       ];
+
+      // ─── STYLE PASS ───
+      // Apply borders to every cell + section-specific colors to the
+      // header rows 0–4. xlsx-js-style needs each styled cell to exist
+      // (even if blank) and have an `s` property.
+      const thin = { style: 'thin', color: { rgb: '999999' } };
+      const border = { top: thin, bottom: thin, left: thin, right: thin };
+
+      // Section color palette for the 5-row header band.
+      const PINK = 'FFE0EA';        // CR / Booking Details band
+      const PINK_LIGHT = 'FFF0F5';  // Sales sub-band
+      const ORANGE = 'FFE0CC';      // DR / Expenses band
+      const PURPLE = 'EADBFD';      // Source col
+      const GREEN = 'D9F2E6';       // Returned Deposit col
+      const GRAY = 'EAEAEA';        // Remarks col
+      const BLUE = 'D9EAFE';        // Transaction sub-band
+      const TITLE_BG = 'FF6B9D';    // Title row (brand pink)
+      const COL_HEADER_BG = 'F4F4F4'; // Row 5 column headers
+
+      const HEADER_ROW = 4;         // 0-indexed: row index 4 == the column-name row
+      const lastCol = 20;           // we use cols A..U (0..20)
+      const lastRow = aoa.length - 1;
+
+      // Helper to set or create a cell with style.
+      const setStyle = (r: number, c: number, s: object) => {
+        const ref = XLSX.utils.encode_cell({ r, c });
+        if (!ws[ref]) ws[ref] = { t: 's', v: '' };
+        ws[ref].s = { ...(ws[ref].s || {}), ...s };
+      };
+
+      // Pick the fill color for a header cell based on its (row, col).
+      const headerFill = (r: number, c: number): string | null => {
+        if (r === 0) return TITLE_BG;
+        if (r === HEADER_ROW) return COL_HEADER_BG;
+        // Rows 1–3 — section bands.
+        if (c >= 0 && c <= 10) return r === 3 ? PINK_LIGHT : PINK;       // CR / Booking Details / Sales
+        if (c === 11 || (c >= 11 && c <= 14)) return r === 3 ? BLUE : null; // Transaction (only on row 3)
+        if (c === 15 || c === 16) return ORANGE;                          // DR / Expenses / Vendor / Amount
+        if (c === 17) return PURPLE;                                      // Source
+        if (c === 18) return GREEN;                                       // Returned Deposit
+        if (c === 19) return GRAY;                                        // Remarks
+        return null;
+      };
+
+      // Style header rows (0..4) — bold, centered, colored fill, border.
+      for (let r = 0; r <= HEADER_ROW; r++) {
+        for (let c = 0; c <= lastCol; c++) {
+          const fill = headerFill(r, c);
+          const style: Record<string, unknown> = {
+            font: {
+              bold: true,
+              sz: r === 0 ? 16 : 11,
+              color: { rgb: r === 0 ? 'FFFFFF' : '1A1A1A' },
+            },
+            alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+            border,
+          };
+          if (fill) style.fill = { patternType: 'solid', fgColor: { rgb: fill } };
+          setStyle(r, c, style);
+        }
+      }
+
+      // Title row — bump height so the bigger font breathes.
+      ws['!rows'] = ws['!rows'] || [];
+      ws['!rows'][0] = { hpt: 28 };
+      ws['!rows'][4] = { hpt: 24 };
+
+      // Style data rows (5..lastRow) — border only, default font.
+      for (let r = HEADER_ROW + 1; r <= lastRow; r++) {
+        for (let c = 0; c <= lastCol; c++) {
+          const isBlankRow = aoa[r]?.every((v) => v === '' || v === undefined);
+          // Skip the spacer blank row that separates data and TOTAL.
+          if (isBlankRow) continue;
+          // Detect the TOTAL row by its first cell.
+          const isTotalRow = aoa[r]?.[0] === 'TOTAL';
+          const style: Record<string, unknown> = {
+            font: { sz: 11, bold: !!isTotalRow },
+            alignment: {
+              horizontal: c >= 4 && c <= 16 ? 'right' : 'left',
+              vertical: 'center',
+            },
+            border,
+          };
+          if (isTotalRow) {
+            style.fill = { patternType: 'solid', fgColor: { rgb: 'F4F4F4' } };
+          }
+          setStyle(r, c, style);
+        }
+      }
 
       XLSX.utils.book_append_sheet(wb, ws, `${month}-${year}`);
 
