@@ -24,9 +24,12 @@
 
 import { createHash } from 'crypto';
 
-// API base — EU region (auto-redirects to correct region for HK accounts).
-// Use api.ttlock.com (CN region) if your TTLock account was registered in CN.
-const TTLOCK_API_BASE = process.env.TTLOCK_API_BASE || 'https://euapi.ttlock.com';
+// API base. `api.sciener.com` is TTLock's global gateway and works for the
+// SPACO account (verified via /v3/lock/list returning all paired devices).
+// `euapi.ttlock.com` *accepts* auth requests but returns HTML for several
+// /v3/* paths, which is the silent failure mode we hit before fixing this.
+// Override with TTLOCK_API_BASE if a different region ever applies.
+const TTLOCK_API_BASE = process.env.TTLOCK_API_BASE || 'https://api.sciener.com';
 
 // ─────────────────────────────────────────────────────────────
 // Types
