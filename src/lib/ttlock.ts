@@ -226,6 +226,20 @@ export async function listLocks(pageSize = 100): Promise<Array<{
 }
 
 /**
+ * Generate a random 6-digit passcode that won't trip TTLock's "too simple"
+ * filter (errcode -2032). TTLock rejects all-same and strictly sequential
+ * digits, so we require ≥3 distinct digits before returning.
+ */
+function generatePasscode(): string {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const n = Math.floor(100000 + Math.random() * 900000).toString();
+    if (new Set(n).size >= 3) return n;
+  }
+  // Statistically unreachable, but keeps the type system happy.
+  return '518273';
+}
+
+/**
  * Generate a time-limited keyboard passcode on the given lock.
  *
  * @param lockId      The TTLock lockId for the venue's door
@@ -237,50 +251,66 @@ export async function listLocks(pageSize = 100): Promise<Array<{
  *
  * `addType=2` means the passcode is created via TTLock cloud (vs gateway).
  * `keyboardPwdType=3` means custom period (start + end).
+ * `keyboardPwd` is REQUIRED by the v3 API — when callers don't supply one
+ * we generate a random 6-digit value (TTLock used to auto-generate but the
+ * current `/v3/keyboardPwd/add` endpoint rejects requests without it).
  */
 export async function addKeyboardPasscode(params: {
   lockId: number;
   startMs: number;
   endMs: number;
   name: string;
-  /** Optional explicit passcode (4-9 digits). If omitted, TTLock generates one. */
+  /** Optional explicit passcode (4-9 digits). If omitted, we generate one. */
   passcode?: string;
 }): Promise<{ passcode: string; keyboardPwdId: number }> {
-  const { lockId, startMs, endMs, name, passcode } = params;
+  const { lockId, startMs, endMs, name } = params;
   if (endMs <= startMs) {
     throw new Error('[ttlock] addKeyboardPasscode: endMs must be > startMs');
   }
   const accessToken = await getAccessToken();
   const clientId    = readEnvOrThrow('TTLOCK_CLIENT_ID');
 
-  const body = new URLSearchParams({
-    clientId,
-    accessToken,
-    lockId:           String(lockId),
-    keyboardPwdName:  name,
-    startDate:        String(startMs),
-    endDate:          String(endMs),
-    addType:          '2', // 2 = via cloud
-    date:             String(Date.now()),
-    ...(passcode ? { keyboardPwd: passcode } : {}),
-  });
+  // Retry once if TTLock rejects a "too simple" passcode — extremely rare
+  // given the generator's ≥3-distinct-digit guard, but the fallback keeps
+  // a single unlucky draw from breaking a booking.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const passcode = params.passcode || generatePasscode();
+    const body = new URLSearchParams({
+      clientId,
+      accessToken,
+      lockId:           String(lockId),
+      keyboardPwd:      passcode,
+      keyboardPwdName:  name,
+      keyboardPwdType:  '3',
+      startDate:        String(startMs),
+      endDate:          String(endMs),
+      addType:          '2',
+      date:             String(Date.now()),
+    });
 
-  const res = await fetch(`${TTLOCK_API_BASE}/v3/keyboardPwd/add`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-  });
-  const data = (await res.json()) as TTLockKeyboardPwdResponse;
+    const res = await fetch(`${TTLOCK_API_BASE}/v3/keyboardPwd/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+    const data = (await res.json()) as TTLockKeyboardPwdResponse;
 
-  if (data.errcode || !data.keyboardPwdId) {
-    throw new Error(
-      `[ttlock] addKeyboardPasscode failed: ${data.errcode} ${data.errmsg || data.description || 'unknown'}`,
-    );
+    // errcode -2032 = "passcode too simple". If the caller supplied an
+    // explicit passcode we can't retry blindly — bubble the error.
+    if (data.errcode === -2032 && !params.passcode) {
+      continue;
+    }
+    if (data.errcode || !data.keyboardPwdId) {
+      throw new Error(
+        `[ttlock] addKeyboardPasscode failed: ${data.errcode} ${data.errmsg || data.description || 'unknown'}`,
+      );
+    }
+    return {
+      passcode:      data.keyboardPwd || passcode,
+      keyboardPwdId: data.keyboardPwdId,
+    };
   }
-  return {
-    passcode:      data.keyboardPwd,
-    keyboardPwdId: data.keyboardPwdId,
-  };
+  throw new Error('[ttlock] addKeyboardPasscode: exhausted retries');
 }
 
 /**
