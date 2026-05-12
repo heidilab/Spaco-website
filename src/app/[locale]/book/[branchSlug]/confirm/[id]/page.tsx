@@ -208,7 +208,11 @@ export default function ConfirmBookingPage() {
           if (reason === 'wrong_venue') return locale === 'zh' ? '此優惠碼唔適用於依間分店' : 'Code not valid at this branch';
           if (reason === 'sold_out') return locale === 'zh' ? '優惠碼已用完' : 'Code sold out';
           if (reason === 'per_user_limit') return locale === 'zh' ? `你已用過呢個 code（每人限 ${data.perUserLimit} 次）` : `You've already used this code (limit ${data.perUserLimit})`;
-          return locale === 'zh' ? '優惠碼無效' : 'Invalid code';
+          // Surface the raw reason so unknown branches give us a debug trail
+          // instead of the opaque "Invalid code" message.
+          return locale === 'zh'
+            ? `優惠碼無效（${reason || 'unknown'}${data.error ? `: ${data.error}` : ''}）`
+            : `Invalid code (${reason || 'unknown'}${data.error ? `: ${data.error}` : ''})`;
         })();
         setApplied(null);
         setPromoError(msg);
