@@ -39,6 +39,15 @@ function errorPage(title: string, body: string, status = 400): NextResponse {
   return new NextResponse(html, { status, headers: { 'Content-Type': 'text/html' } });
 }
 
+/** TTLock dev portal probes the callback with a HEAD/POST request to
+ *  verify reachability before saving. Reply 200 so the test passes. */
+export async function HEAD() {
+  return new NextResponse(null, { status: 200 });
+}
+export async function POST() {
+  return new NextResponse('OK', { status: 200 });
+}
+
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const code = url.searchParams.get('code');
