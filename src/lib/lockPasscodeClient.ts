@@ -39,10 +39,12 @@ async function callLockPasscodeApi(
 }
 
 /** Eligibility-check + generate. Safe to call any time — no-ops if the
- *  booking is outside the 2-day window or already has a passcode. */
+ *  booking is outside the 2-day window or already has a passcode.
+ *
+ *  Returns the raw API payload — admins clicking the "Generate now" button
+ *  on the booking detail page want to see the `result.reason` (e.g.
+ *  `no-lockid`, `ttlock-not-configured`) so they know what to fix. */
 export function tryGenerateLockPasscode(bookingId: string) {
-  // Fire-and-forget — admin UI doesn't block on TTLock latency. Errors are
-  // surfaced via the result returned from the API call.
   return callLockPasscodeApi(bookingId, 'generate');
 }
 

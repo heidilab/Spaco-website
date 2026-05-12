@@ -24,7 +24,7 @@ import {
   Calculator, Plus, Minus, Check, KeyRound, Send,
 } from 'lucide-react';
 import { getSiteContent } from '@/lib/content';
-import { resendLockPasscode, setManualLockPasscode } from '@/lib/lockPasscodeClient';
+import { resendLockPasscode, setManualLockPasscode, tryGenerateLockPasscode } from '@/lib/lockPasscodeClient';
 
 // Standard fixed deductions — same set as /admin/deposit so the
 // inline form stays in lockstep with the dedicated page.
@@ -1156,6 +1156,36 @@ function LockPasscodePanel({ booking, locale, onUpdated }: LockPasscodePanelProp
     }
   }
 
+  // Run the same eligibility flow the cron / webhook uses, but synchronously
+  // so admin sees exactly why nothing happens (e.g. balance-due, no-lockid,
+  // ttlock-not-configured). Surfaces `result.reason` returned by the API.
+  async function handleGenerate() {
+    setMsg(null);
+    setBusy(true);
+    try {
+      const resp = await tryGenerateLockPasscode(booking.id);
+      const r = (resp as { result?: { action?: string; reason?: string; error?: string } }).result;
+      if (r?.action === 'generated') {
+        setMsg({ kind: 'ok', text: locale === 'zh' ? '✓ 已生成密碼並 email 客人' : '✓ Passcode generated and emailed' });
+      } else if (r?.action === 'reminded') {
+        setMsg({ kind: 'ok', text: locale === 'zh' ? '✓ 已寄出尾數提醒（未付清，唔會生成密碼）' : '✓ Balance reminder sent (passcode held)' });
+      } else {
+        // Surface the skip / error reason so admin knows what to fix.
+        setMsg({
+          kind: 'err',
+          text: locale === 'zh'
+            ? `未生成密碼 — 原因：${r?.reason || 'unknown'}${r?.error ? ` (${r.error})` : ''}`
+            : `Not generated — reason: ${r?.reason || 'unknown'}${r?.error ? ` (${r.error})` : ''}`,
+        });
+      }
+      await onUpdated();
+    } catch (err) {
+      setMsg({ kind: 'err', text: err instanceof Error ? err.message : 'Failed' });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // Mirror the email's display so admin can preview the validity window.
   const formatHkt = (ms?: number) => {
     if (!ms) return '—';
@@ -1204,11 +1234,21 @@ function LockPasscodePanel({ booking, locale, onUpdated }: LockPasscodePanelProp
           </button>
         </div>
       ) : hasTTLock === true ? (
-        <p className="text-sm text-ink-soft">
-          {locale === 'zh'
-            ? '此場地已配 TTLock — 系統會喺活動前 2 日自動生成密碼並 email 客人。'
-            : 'This venue is on TTLock — the system auto-generates a passcode 2 days before the event.'}
-        </p>
+        <div className="space-y-3">
+          <p className="text-sm text-ink-soft">
+            {locale === 'zh'
+              ? '此場地已配 TTLock — 系統會喺活動前 2 日自動生成密碼並 email 客人。如未到 2 日窗口而想即時生成，可以撳下面個掣。'
+              : 'This venue is on TTLock — the system auto-generates a passcode 2 days before the event. Use the button below to trigger generation manually.'}
+          </p>
+          <button
+            type="button"
+            onClick={handleGenerate}
+            disabled={busy}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-pink text-white font-semibold disabled:opacity-50"
+          >
+            <KeyRound size={14} /> {locale === 'zh' ? '即時生成密碼' : 'Generate passcode now'}
+          </button>
+        </div>
       ) : hasTTLock === false ? (
         <div className="space-y-3">
           <p className="text-sm text-ink-soft">
