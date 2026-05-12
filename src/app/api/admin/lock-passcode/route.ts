@@ -15,7 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { processBookingForLockAccess, revokeBookingPasscode } from '@/lib/lockPasscode';
+import { processBookingForLockAccess, revokeBookingPasscode, setManualPasscode } from '@/lib/lockPasscode';
 import { buildLockPasscodeEmail } from '@/lib/email';
 import { sendAutomatedEmail } from '@/lib/emailAutomations';
 import { getVenueById } from '@/lib/venues';
@@ -27,7 +27,9 @@ export const maxDuration = 30;
 
 interface Body {
   bookingId: string;
-  action: 'generate' | 'resend' | 'revoke';
+  action: 'generate' | 'resend' | 'revoke' | 'set-manual';
+  /** Required when action === 'set-manual' — the digits the customer types. */
+  passcode?: string;
 }
 
 export async function POST(req: NextRequest) {
@@ -63,6 +65,18 @@ export async function POST(req: NextRequest) {
 
     if (body.action === 'revoke') {
       await revokeBookingPasscode(body.bookingId);
+      return NextResponse.json({ ok: true });
+    }
+
+    if (body.action === 'set-manual') {
+      const passcode = (body.passcode || '').trim();
+      if (!/^\d{4,9}$/.test(passcode)) {
+        return NextResponse.json({ error: 'invalid-passcode', message: '密碼必須係 4-9 位數字' }, { status: 400 });
+      }
+      const result = await setManualPasscode(body.bookingId, passcode);
+      if (!result.ok) {
+        return NextResponse.json({ error: result.reason }, { status: 400 });
+      }
       return NextResponse.json({ ok: true });
     }
 

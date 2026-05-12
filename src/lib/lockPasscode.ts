@@ -213,8 +213,11 @@ export async function processBookingForLockAccess(bookingId: string): Promise<Pr
     };
   }
 
+  // Overnight bookings carry the day-2 date as `endDate` — use it so the
+  // passcode stays valid until the actual end-time on day 2 rather than
+  // expiring at the rolled-over time on day 1.
   const startMs = hkDateTimeToMs(b.date, b.startTime);
-  const endMs   = hkDateTimeToMs(b.date, b.endTime);
+  const endMs   = hkDateTimeToMs(b.endDate || b.date, b.endTime);
   const validFrom = startMs - PASSCODE_GRACE_MINUTES_BEFORE * 60 * 1000;
   const validTo   = endMs;
 
@@ -318,6 +321,68 @@ function ymdInHkt(ms: number): string {
 }
 
 /**
+ * Admin enters a passcode by hand for venues whose physical door isn't on
+ * TTLock yet. The flow mirrors the TTLock auto-generation path: save the
+ * passcode + validity window to the booking, then email the customer.
+ *
+ * @param bookingId
+ * @param passcode  Customer-facing digits (4–9 chars, validated upstream)
+ */
+export async function setManualPasscode(
+  bookingId: string,
+  passcode: string,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const ref = adminDb.collection('bookings').doc(bookingId);
+  const snap = await ref.get();
+  if (!snap.exists) return { ok: false, reason: 'booking-not-found' };
+  const b = snap.data() as BookingRecord;
+
+  const startMs   = hkDateTimeToMs(b.date, b.startTime);
+  const endMs     = hkDateTimeToMs(b.endDate || b.date, b.endTime);
+  const validFrom = startMs - PASSCODE_GRACE_MINUTES_BEFORE * 60 * 1000;
+  const validTo   = endMs;
+
+  await ref.update({
+    lockPasscode: {
+      passcode,
+      source:      'manual',
+      validFrom,
+      validTo,
+      generatedAt: FieldValue.serverTimestamp(),
+      emailSentAt: null,
+    },
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  const contact = await getCustomerContact(b.userId);
+  if (!contact) return { ok: false, reason: 'no-contact' };
+
+  const venue = getVenueById(b.venueId);
+  const tpl = buildLockPasscodeEmail({
+    customerName: contact.name,
+    venueName:    venue?.name.zh || b.branchSlug,
+    venueAddress: venue?.address.zh,
+    date:         b.date,
+    startTime:    b.startTime,
+    endTime:      b.endTime,
+    endDate:      b.endDate,
+    passcode,
+    validFromMs:  validFrom,
+    validToMs:    validTo,
+    whatsappLink: 'https://wa.me/85292823060',
+  });
+  await sendAutomatedEmail({
+    automationKey: 'lock_passcode',
+    to:            contact.email,
+    subject:       tpl.subject,
+    html:          tpl.html,
+  });
+  await ref.update({ 'lockPasscode.emailSentAt': FieldValue.serverTimestamp() });
+
+  return { ok: true };
+}
+
+/**
  * Revoke a booking's passcode (used when a booking is cancelled).
  * Idempotent — no-ops if there's no passcode.
  */
@@ -328,11 +393,16 @@ export async function revokeBookingPasscode(bookingId: string): Promise<void> {
   const b = snap.data() as BookingRecord;
   if (!b.lockPasscode) return;
 
-  if (isTTLockConfigured()) {
+  // Manual passcodes (no ttlockPwdId) have nothing to delete remotely —
+  // the lock is physical / off-platform. Just clear the booking field.
+  const isManual = b.lockPasscode.source === 'manual'
+    || b.lockPasscode.ttlockPwdId == null
+    || b.lockPasscode.lockId == null;
+  if (!isManual && isTTLockConfigured()) {
     try {
       await deleteKeyboardPasscode({
-        lockId:        b.lockPasscode.lockId,
-        keyboardPwdId: b.lockPasscode.ttlockPwdId,
+        lockId:        b.lockPasscode.lockId as number,
+        keyboardPwdId: b.lockPasscode.ttlockPwdId as number,
       });
     } catch (err) {
       console.warn('[lockPasscode] revoke failed for', bookingId, err);

@@ -262,11 +262,15 @@ export interface BookingRecord {
   lockPasscode?: {
     /** The actual passcode the customer types into the lock (4-9 digits) */
     passcode: string;
-    /** TTLock-side passcode id — needed for delete / lookup */
-    ttlockPwdId: number;
+    /** TTLock-side passcode id — needed for delete / lookup. Absent for
+     *  manual-entry passcodes on venues without a TTLock. */
+    ttlockPwdId?: number;
     /** Lock id this was generated for — venues can be remapped, this is the
-     *  ground truth at generation time. */
-    lockId: number;
+     *  ground truth at generation time. Absent for manual passcodes. */
+    lockId?: number;
+    /** Where this passcode came from. Legacy records (no field) are
+     *  treated as 'ttlock'. */
+    source?: 'ttlock' | 'manual';
     /** Unix ms — passcode becomes valid (= booking start − 1 hour) */
     validFrom: number;
     /** Unix ms — passcode expires (= booking end) */

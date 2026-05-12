@@ -21,8 +21,10 @@ import { buildWhatsAppLink, formatHkPhone } from '@/lib/whatsapp';
 import {
   ArrowLeft, CalendarDays, Clock, Users, Save, MessageCircle,
   Mail, Phone, User as UserIcon, Sparkles, AlertCircle, CalendarPlus, Package,
-  Calculator, Plus, Minus, Check,
+  Calculator, Plus, Minus, Check, KeyRound, Send,
 } from 'lucide-react';
+import { getSiteContent } from '@/lib/content';
+import { resendLockPasscode, setManualLockPasscode } from '@/lib/lockPasscodeClient';
 
 // Standard fixed deductions — same set as /admin/deposit so the
 // inline form stays in lockstep with the dedicated page.
@@ -584,9 +586,6 @@ export default function AdminBookingDetailPage() {
               <Row label={locale === 'zh' ? '欠尾數' : 'Balance due'} value={`HK$${booking.balanceDue!.toLocaleString()}`} highlight="amber" />
             )}
             <Row label={locale === 'zh' ? '付款方式' : 'Payment method'} value={booking.paymentMethod || '—'} />
-            {booking.lockPasscode?.passcode && (
-              <Row label={locale === 'zh' ? '門鎖密碼' : 'Lock passcode'} value={booking.lockPasscode.passcode} highlight="emerald" />
-            )}
           </div>
 
           {/* Payment history — surfaces the audit log of every payment
@@ -598,6 +597,18 @@ export default function AdminBookingDetailPage() {
             booking={booking}
             locale={locale}
             adminMode
+            onUpdated={async () => {
+              const fresh = await getBooking(booking.id);
+              if (fresh) setBooking(fresh);
+            }}
+          />
+
+          {/* Lock passcode panel — for TTLock-mapped venues shows the
+           *  auto-generated passcode + resend button. For non-TTLock
+           *  venues (sw-b, sw-ab, …) lets admin enter a passcode by hand. */}
+          <LockPasscodePanel
+            booking={booking}
+            locale={locale}
             onUpdated={async () => {
               const fresh = await getBooking(booking.id);
               if (fresh) setBooking(fresh);
@@ -1066,6 +1077,173 @@ function DepositSettlement(props: DepositSettlementProps) {
               : 'Refund the customer offline. System will: (1) mark booking completed (2) credit points (subtotal + deducted deposit).'}
           </p>
         </>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Lock passcode panel
+// ─────────────────────────────────────────────────────────────
+
+interface LockPasscodePanelProps {
+  booking: BookingRecord;
+  locale: 'zh' | 'en';
+  onUpdated: () => void | Promise<void>;
+}
+
+function LockPasscodePanel({ booking, locale, onUpdated }: LockPasscodePanelProps) {
+  const [hasTTLock, setHasTTLock] = useState<boolean | null>(null);   // null = unknown
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  // Look up whether the venue is mapped to a TTLock lockId in
+  // site_content/settings. Drives which controls we show: TTLock-mapped
+  // venues display the cron-generated passcode + resend; the rest get a
+  // manual-entry form.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cms = await getSiteContent('settings');
+        const raw = (cms?.[`ttlock_${booking.venueId}`]?.zh
+                  || cms?.[`ttlock_${booking.venueId}`]?.en
+                  || '').trim();
+        const parsed = parseInt(raw, 10);
+        if (!cancelled) setHasTTLock(Number.isFinite(parsed) && parsed > 0);
+      } catch {
+        if (!cancelled) setHasTTLock(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [booking.venueId]);
+
+  const existing = booking.lockPasscode;
+  const isManual = existing?.source === 'manual' || (existing && !existing.ttlockPwdId);
+
+  async function handleSetManual() {
+    setMsg(null);
+    const passcode = input.trim();
+    if (!/^\d{4,9}$/.test(passcode)) {
+      setMsg({ kind: 'err', text: locale === 'zh' ? '密碼必須係 4-9 位數字' : 'Passcode must be 4–9 digits' });
+      return;
+    }
+    setBusy(true);
+    try {
+      await setManualLockPasscode(booking.id, passcode);
+      setInput('');
+      setMsg({ kind: 'ok', text: locale === 'zh' ? '✓ 已儲存並寄出 email' : '✓ Saved and emailed' });
+      await onUpdated();
+    } catch (err) {
+      setMsg({ kind: 'err', text: err instanceof Error ? err.message : 'Failed' });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleResend() {
+    setMsg(null);
+    setBusy(true);
+    try {
+      await resendLockPasscode(booking.id);
+      setMsg({ kind: 'ok', text: locale === 'zh' ? '✓ 已重發 email' : '✓ Email resent' });
+      await onUpdated();
+    } catch (err) {
+      setMsg({ kind: 'err', text: err instanceof Error ? err.message : 'Failed' });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Mirror the email's display so admin can preview the validity window.
+  const formatHkt = (ms?: number) => {
+    if (!ms) return '—';
+    const d = new Date(ms + 8 * 60 * 60 * 1000);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+  };
+
+  return (
+    <div className="glass-card p-6 space-y-4">
+      <h2 className="font-bold flex items-center gap-2">
+        <KeyRound size={16} className="text-pink" />
+        {locale === 'zh' ? '門鎖密碼' : 'Lock Passcode'}
+        {hasTTLock === false && (
+          <span className="chip text-[10px] ml-1">{locale === 'zh' ? '手動' : 'Manual'}</span>
+        )}
+        {hasTTLock === true && (
+          <span className="chip text-[10px] ml-1">TTLock</span>
+        )}
+      </h2>
+
+      {existing ? (
+        <div className="space-y-2">
+          <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-4">
+            <p className="text-xs text-emerald-700 mb-1">{locale === 'zh' ? '密碼' : 'Passcode'}</p>
+            <p className="font-mono text-2xl font-bold text-emerald-900 tracking-widest">
+              {existing.passcode}
+            </p>
+            <p className="text-xs text-emerald-700 mt-2">
+              {locale === 'zh' ? '有效期' : 'Valid'}: {formatHkt(existing.validFrom)} → {formatHkt(existing.validTo)}
+            </p>
+            {isManual && (
+              <p className="text-xs text-emerald-700 mt-1">
+                {locale === 'zh' ? '由 admin 手動輸入' : 'Manually entered by admin'}
+              </p>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={handleResend}
+            disabled={busy}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-charcoal/15 hover:bg-white/90 text-sm font-medium disabled:opacity-50"
+          >
+            <Send size={14} /> {locale === 'zh' ? '重發 email 畀客人' : 'Resend email to customer'}
+          </button>
+        </div>
+      ) : hasTTLock === true ? (
+        <p className="text-sm text-ink-soft">
+          {locale === 'zh'
+            ? '此場地已配 TTLock — 系統會喺活動前 2 日自動生成密碼並 email 客人。'
+            : 'This venue is on TTLock — the system auto-generates a passcode 2 days before the event.'}
+        </p>
+      ) : hasTTLock === false ? (
+        <div className="space-y-3">
+          <p className="text-sm text-ink-soft">
+            {locale === 'zh'
+              ? '此場地暫未配 TTLock。請手動輸入鎖上嘅密碼，系統會自動 email 畀客人。'
+              : 'This venue is not on TTLock. Enter the physical-lock passcode and we will email it to the customer.'}
+          </p>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              value={input}
+              onChange={(e) => setInput(e.target.value.replace(/[^0-9]/g, '').slice(0, 9))}
+              placeholder={locale === 'zh' ? '4-9 位數字' : '4–9 digits'}
+              className="flex-1 px-3 py-2 rounded-xl border border-charcoal/15 font-mono tracking-widest text-lg"
+            />
+            <button
+              type="button"
+              onClick={handleSetManual}
+              disabled={busy || input.length < 4}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-pink text-white font-semibold disabled:opacity-50"
+            >
+              <Send size={14} /> {locale === 'zh' ? '儲存並寄 email' : 'Save & email'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-muted">{locale === 'zh' ? '載入中…' : 'Loading…'}</p>
+      )}
+
+      {msg && (
+        <p className={`text-sm ${msg.kind === 'ok' ? 'text-emerald-600' : 'text-rose-600'}`}>
+          {msg.text}
+        </p>
       )}
     </div>
   );

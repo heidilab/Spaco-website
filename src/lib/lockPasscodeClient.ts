@@ -9,7 +9,7 @@
 
 import { auth } from './firebase';
 
-type Action = 'generate' | 'resend' | 'revoke';
+type Action = 'generate' | 'resend' | 'revoke' | 'set-manual';
 
 async function getIdToken(): Promise<string> {
   const user = auth.currentUser;
@@ -17,7 +17,11 @@ async function getIdToken(): Promise<string> {
   return user.getIdToken();
 }
 
-async function callLockPasscodeApi(bookingId: string, action: Action) {
+async function callLockPasscodeApi(
+  bookingId: string,
+  action: Action,
+  extra?: Record<string, unknown>,
+) {
   const token = await getIdToken();
   const res = await fetch('/api/admin/lock-passcode', {
     method:  'POST',
@@ -25,11 +29,11 @@ async function callLockPasscodeApi(bookingId: string, action: Action) {
       'Content-Type':  'application/json',
       Authorization:   `Bearer ${token}`,
     },
-    body: JSON.stringify({ bookingId, action }),
+    body: JSON.stringify({ bookingId, action, ...(extra || {}) }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data?.error || `lock-passcode API failed (${res.status})`);
+    throw new Error(data?.message || data?.error || `lock-passcode API failed (${res.status})`);
   }
   return data;
 }
@@ -51,4 +55,10 @@ export function resendLockPasscode(bookingId: string) {
  *  a booking is cancelled. */
 export function revokeLockPasscode(bookingId: string) {
   return callLockPasscodeApi(bookingId, 'revoke');
+}
+
+/** Save an admin-entered passcode (for venues without a TTLock lock) and
+ *  email it to the customer. The passcode must be 4–9 digits. */
+export function setManualLockPasscode(bookingId: string, passcode: string) {
+  return callLockPasscodeApi(bookingId, 'set-manual', { passcode });
 }
