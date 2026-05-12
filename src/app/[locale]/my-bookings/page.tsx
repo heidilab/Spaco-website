@@ -178,6 +178,11 @@ function BookingCard({
       await uploadBytes(ref, file);
       const url = await getDownloadURL(ref);
       await updateBookingReceiptUploaded(booking.id, url);
+      fetch('/api/admin/notify-receipt-pending', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookingId: booking.id }),
+      }).catch((err) => console.warn('[notify-receipt-pending] failed:', err));
       onChange();
     } catch (err) {
       console.error(err);

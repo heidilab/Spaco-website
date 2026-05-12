@@ -9,11 +9,12 @@
 // `sendAutomatedEmail()` which checks the toggle first.
 
 import { adminDb } from './firebaseAdmin';
-import { sendEmail, buildStaffBookingNotificationEmail } from './email';
+import { sendEmail, buildStaffBookingNotificationEmail, buildStaffReceiptPendingEmail } from './email';
 
 export type EmailAutomationKey =
   | 'booking_confirmation'
   | 'staff_booking_notification'
+  | 'staff_receipt_pending'
   | 'offline_payment_pending'
   | 'fps_reminder'
   | 'balance_due_reminder'
@@ -58,6 +59,19 @@ export const EMAIL_AUTOMATIONS: EmailAutomationDef[] = [
     trigger: {
       zh: 'Stripe 付款成功 / Admin 手動 confirm booking',
       en: 'Stripe payment success / Admin confirms booking',
+    },
+    audience: 'staff',
+  },
+  {
+    key: 'staff_receipt_pending',
+    name: { zh: '內部入數待核實通知', en: 'Staff Receipt Pending' },
+    description: {
+      zh: '客人上載線下入數紙後即時寄出，提示 admin/CS 入後台核實。',
+      en: 'Fired the moment a customer uploads an offline-payment receipt — nudges admin/CS to review it.',
+    },
+    trigger: {
+      zh: '客人喺 /pay-offline 或 my-bookings 上載入數紙',
+      en: 'Customer uploads receipt on the offline-payment page',
     },
     audience: 'staff',
   },
@@ -227,5 +241,26 @@ export async function sendStaffBookingNotification(
   await Promise.all(list.map((to) =>
     sendEmail({ to, subject: tpl.subject, html: tpl.html })
       .catch((err) => console.warn(`[staff-notify] send to ${to} failed:`, err)),
+  ));
+}
+
+/** Send the "receipt pending review" notification to staff. Same recipient
+ *  list + per-recipient error handling as the booking-confirmed notification. */
+export async function sendStaffReceiptPendingNotification(
+  params: Parameters<typeof buildStaffReceiptPendingEmail>[0],
+): Promise<void> {
+  if (!(await isEmailAutomationEnabled('staff_receipt_pending'))) {
+    console.log('[staff-receipt-pending] skipped (automation disabled)');
+    return;
+  }
+  const list = (process.env.STAFF_NOTIFICATION_EMAILS || 'spacohk@gmail.com')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (list.length === 0) return;
+  const tpl = buildStaffReceiptPendingEmail(params);
+  await Promise.all(list.map((to) =>
+    sendEmail({ to, subject: tpl.subject, html: tpl.html })
+      .catch((err) => console.warn(`[staff-receipt-pending] send to ${to} failed:`, err)),
   ));
 }

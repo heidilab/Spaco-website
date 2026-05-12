@@ -90,6 +90,13 @@ export default function PayOfflinePage() {
       await uploadBytes(ref, file);
       const url = await getDownloadURL(ref);
       await updateBookingReceiptUploaded(booking.id, url);
+      // Fire-and-forget — admin/CS get an email so they know to review the
+      // receipt. Failure shouldn't block the customer-facing success state.
+      fetch('/api/admin/notify-receipt-pending', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookingId: booking.id }),
+      }).catch((err) => console.warn('[notify-receipt-pending] failed:', err));
       setUploadDone(true);
     } catch (err) {
       console.error(err);

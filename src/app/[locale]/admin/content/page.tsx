@@ -270,6 +270,14 @@ const textPages: { id: TextSubTab; label: { zh: string; en: string }; fields: { 
       { key: 'ttlock_sw-b',     label: { zh: 'TTLock — 上環 Room B (lockId)',  en: 'TTLock — Sheung Wan B (lockId)' } },
       { key: 'ttlock_sw-ab',    label: { zh: 'TTLock — 上環全層 (lockId)',     en: 'TTLock — Sheung Wan A+B (lockId)' } },
       { key: 'ttlock_tst',      label: { zh: 'TTLock — 尖沙咀 (lockId)',       en: 'TTLock — TST (lockId)' } },
+      // Per-branch door usage guide images (Cloudinary URL). Embedded in
+      // the lock-passcode email. `sw-ab` automatically falls back to
+      // `sw-b` when unset (whole-floor bookings enter via Room B).
+      { key: 'lockguide_cwb',     label: { zh: '門鎖指南圖 — 銅鑼灣 (URL)',        en: 'Lock guide image — Causeway Bay (URL)' } },
+      { key: 'lockguide_wanchai', label: { zh: '門鎖指南圖 — 灣仔 (URL)',          en: 'Lock guide image — Wan Chai (URL)' } },
+      { key: 'lockguide_sw-a',    label: { zh: '門鎖指南圖 — 上環 Room A (URL)',   en: 'Lock guide image — Sheung Wan A (URL)' } },
+      { key: 'lockguide_sw-b',    label: { zh: '門鎖指南圖 — 上環 Room B / 全層 (URL)', en: 'Lock guide image — SW Room B / A+B (URL)' } },
+      { key: 'lockguide_tst',     label: { zh: '門鎖指南圖 — 尖沙咀 (URL)',        en: 'Lock guide image — TST (URL)' } },
     ],
   },
 ];

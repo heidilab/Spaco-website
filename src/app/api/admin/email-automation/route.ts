@@ -7,7 +7,8 @@ import {
   buildBookingConfirmationEmail, buildOfflinePaymentPendingEmail,
   buildFPSReminderEmail, buildBalanceDueReminderEmail,
   buildLockPasscodeEmail, buildPostEventEmail, buildBirthdayEmail,
-  buildWelcomeEmail, buildStaffBookingNotificationEmail, sendEmail,
+  buildWelcomeEmail, buildStaffBookingNotificationEmail,
+  buildStaffReceiptPendingEmail, sendEmail,
 } from '@/lib/email';
 
 export const runtime = 'nodejs';
@@ -39,6 +40,21 @@ function buildPreview(key: EmailAutomationKey): { subject: string; html: string 
         balanceDueDate: '2026-06-13',
         addOnsLine: 'BBQ Standard Package ×15, Drinks Package ×15, Shisha 水煙 ×2 (A·芒果×1, C·提子×1, +人手setup)',
         paymentMethod: 'Stripe',
+      });
+    case 'staff_receipt_pending':
+      return buildStaffReceiptPendingEmail({
+        bookingId: SAMPLE.bookingId,
+        venueName: SAMPLE.venueName,
+        date: SAMPLE.date,
+        startTime: SAMPLE.startTime,
+        endTime: SAMPLE.endTime,
+        guestCount: 18,
+        amountDue: 4200,
+        customerName: SAMPLE.customerName,
+        customerEmail: 'sample@example.com',
+        whatsappPhone: '+852 9123 4966',
+        receiptUrl: 'https://example.com/receipt.jpg',
+        adminUrl: 'https://spacohk.com/zh/admin/receipts',
       });
     case 'staff_booking_notification':
       return buildStaffBookingNotificationEmail({

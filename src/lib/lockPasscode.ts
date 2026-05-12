@@ -70,6 +70,31 @@ export async function getLockIdForVenue(venueId: string): Promise<number | null>
   return map[venueId] ?? null;
 }
 
+/** Read the venueId → lock-guide image URL map from Firestore. Admins set
+ *  `lockguide_<venueId>` to a Cloudinary URL in Admin → 內容管理 → 系統設定. */
+async function getLockGuideMap(): Promise<Record<string, string>> {
+  const cms = await getSiteContent('settings');
+  const map: Record<string, string> = {};
+  if (!cms) return map;
+  for (const [k, v] of Object.entries(cms)) {
+    if (!k.startsWith('lockguide_')) continue;
+    const venueId = k.slice('lockguide_'.length);
+    const url = (v?.zh || v?.en || '').trim();
+    if (url) map[venueId] = url;
+  }
+  return map;
+}
+
+/** Lock-guide image URL for a venue. Special case: `sw-ab` (the whole-floor
+ *  booking) uses the Room B entrance, so it falls back to `lockguide_sw-b`
+ *  when no `lockguide_sw-ab` is explicitly set. */
+export async function getLockGuideUrlForVenue(venueId: string): Promise<string | undefined> {
+  const map = await getLockGuideMap();
+  if (map[venueId]) return map[venueId];
+  if (venueId === 'sw-ab' && map['sw-b']) return map['sw-b'];
+  return undefined;
+}
+
 /** Read the customer's email + display name (from BookingRecord.userId). */
 async function getCustomerContact(userId: string): Promise<{ email: string; name: string } | null> {
   const snap = await adminDb.collection('users').doc(userId).get();
@@ -248,6 +273,7 @@ export async function processBookingForLockAccess(bookingId: string): Promise<Pr
 
     const contact = await getCustomerContact(b.userId);
     if (contact) {
+      const lockGuideImageUrl = await getLockGuideUrlForVenue(b.venueId);
       const tpl = buildLockPasscodeEmail({
         customerName: contact.name,
         venueName,
@@ -260,6 +286,7 @@ export async function processBookingForLockAccess(bookingId: string): Promise<Pr
         validFromMs:  validFrom,
         validToMs:    validTo,
         whatsappLink: 'https://wa.me/85292823060',
+        lockGuideImageUrl,
       });
       await sendAutomatedEmail({
         automationKey: 'lock_passcode',
@@ -358,6 +385,7 @@ export async function setManualPasscode(
   if (!contact) return { ok: false, reason: 'no-contact' };
 
   const venue = getVenueById(b.venueId);
+  const lockGuideImageUrl = await getLockGuideUrlForVenue(b.venueId);
   const tpl = buildLockPasscodeEmail({
     customerName: contact.name,
     venueName:    venue?.name.zh || b.branchSlug,
@@ -370,6 +398,7 @@ export async function setManualPasscode(
     validFromMs:  validFrom,
     validToMs:    validTo,
     whatsappLink: 'https://wa.me/85292823060',
+    lockGuideImageUrl,
   });
   await sendAutomatedEmail({
     automationKey: 'lock_passcode',

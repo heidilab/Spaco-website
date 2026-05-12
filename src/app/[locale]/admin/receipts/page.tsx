@@ -54,6 +54,14 @@ export default function AdminReceiptsPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ bookingId }),
     }).catch((err) => console.warn('[payment-confirmed email] failed:', err));
+    // Staff notification — same email the Stripe webhook fires when a
+    // payment lands. Without this, offline payments were silently confirmed
+    // and admin/CS never got the "new confirmed booking" email.
+    fetch('/api/admin/notify-booking', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bookingId }),
+    }).catch((err) => console.warn('[notify-booking] failed:', err));
     // Push to Google Calendar (Direction A) — non-blocking.
     fetch('/api/google/push-booking', {
       method: 'POST',

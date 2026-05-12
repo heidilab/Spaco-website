@@ -454,6 +454,9 @@ export function buildLockPasscodeEmail(params: {
   validFromMs: number;
   validToMs: number;
   whatsappLink: string;
+  /** Cloudinary URL to a per-branch lock usage guide image. Rendered just
+   *  before the warning block. Optional — omit when no guide is configured. */
+  lockGuideImageUrl?: string;
 }) {
   return {
     subject: `🔑 SPACO 場地門鎖密碼 — ${params.venueName} (${params.date})`,
@@ -486,12 +489,20 @@ export function buildLockPasscodeEmail(params: {
         <div style="background: #FFF7E6; border-left: 4px solid #F59E0B; border-radius: 14px; padding: 16px 20px; margin-bottom: 16px;">
           <p style="margin: 0 0 8px; font-weight: 700; color: #92400E; font-size: 14px;">⚠️ 重要提醒</p>
           <ul style="margin: 0; padding-left: 18px; color: #78350F; font-size: 13px; line-height: 1.7;">
+            <li><strong>🚫 唔好觸摸圓形指模掣</strong> — 系統冇登記你嘅指模，掂咗指模掣之後再入密碼會被當錯誤密碼。請<strong>直接撳數字鍵</strong>輸入密碼。</li>
             <li>密碼於活動開始前 <strong>1 小時</strong> 開始生效，方便你提早到場準備</li>
             <li>密碼會喺活動結束時間自動失效</li>
             <li>請勿將密碼公開或轉發畀非預約名單上嘅人</li>
             <li>離場時請確認所有電器已關閉、門已鎖好</li>
           </ul>
         </div>
+
+        ${params.lockGuideImageUrl ? `
+        <div style="background: white; border-radius: 18px; padding: 20px; margin-bottom: 16px; text-align: center;">
+          <p style="margin: 0 0 12px; font-size: 13px; color: ${EMAIL_INK}; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 700;">🔑 門鎖使用指南</p>
+          <img src="${params.lockGuideImageUrl}" alt="Lock usage guide" style="display: block; max-width: 100%; height: auto; margin: 0 auto; border-radius: 12px;" />
+        </div>
+        ` : ''}
 
         <div style="text-align: center; margin: 0 0 20px;">
           <a href="${params.whatsappLink}" style="display: inline-block; background: #25D366; color: white; padding: 12px 28px; border-radius: 999px; text-decoration: none; font-weight: 600; font-size: 14px;">
@@ -599,6 +610,74 @@ export function buildStaffBookingNotificationEmail(params: {
 // We keep `email.ts` free of any firebase-admin dependency so client bundles
 // (e.g. /my-bookings) can safely import the pure template helpers and
 // generateWhatsAppLink from here.
+
+// ─────────────────────────────────────────────────────────────
+// Staff "receipt pending" notification — fired the moment the customer
+// uploads an FPS / bank-transfer receipt so admin / CS can review it.
+// ─────────────────────────────────────────────────────────────
+
+export function buildStaffReceiptPendingEmail(params: {
+  bookingId: string;
+  venueName: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  endDate?: string;
+  guestCount: number;
+  amountDue: number;
+  customerName: string;
+  customerEmail?: string;
+  whatsappPhone?: string;
+  receiptUrl: string;
+  adminUrl: string;
+}) {
+  return {
+    subject: `🧾 待核實付款 — ${params.venueName} ${params.date} (${params.customerName})`,
+    html: `
+      <div style="font-family: ${EMAIL_FONT}; max-width: 640px; margin: 0 auto; background: ${EMAIL_BG}; padding: 32px 20px;">
+        ${emailHeader('待核實付款 · RECEIPT PENDING REVIEW')}
+        <div style="background: white; padding: 28px; border-radius: 20px; margin-bottom: 16px;">
+          <p style="margin: 0 0 18px; color: #444; line-height: 1.7;">
+            客人 <strong>${params.customerName}</strong> 已上傳線下付款入數紙，請去後台核實。
+          </p>
+
+          <div style="background: #FFF7E6; border-left: 4px solid #F59E0B; border-radius: 12px; padding: 14px 18px; margin: 0 0 18px;">
+            <p style="margin: 0; font-size: 13px; color: #92400E;">
+              ⏰ 客人預期 30 分鐘內收到審批結果，請盡快處理。
+            </p>
+          </div>
+
+          <h2 style="margin: 0 0 12px; font-size: 16px; color: ${EMAIL_INK};">📋 預訂詳情</h2>
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 18px; font-size: 14px;">
+            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">Booking ID</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-family: 'Courier New', monospace; font-size: 12px;">${params.bookingId}</td></tr>
+            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">場地</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.venueName}</td></tr>
+            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">日期</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.date}</td></tr>
+            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">時段</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${formatTimeRange(params.startTime, params.endTime, params.date, params.endDate)}</td></tr>
+            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">人數</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.guestCount} 人</td></tr>
+            <tr><td style="padding: 8px 0; color: #999; font-size: 13px;">應收金額</td><td style="padding: 8px 0; text-align: right; font-weight: 700; color: ${EMAIL_PINK};">HK$${params.amountDue.toLocaleString()}</td></tr>
+          </table>
+
+          <h2 style="margin: 0 0 12px; font-size: 16px; color: ${EMAIL_INK};">👤 客戶聯絡</h2>
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 18px; font-size: 14px;">
+            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">姓名</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.customerName}</td></tr>
+            ${params.whatsappPhone ? `<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">WhatsApp</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.whatsappPhone}</td></tr>` : ''}
+            ${params.customerEmail ? `<tr><td style="padding: 8px 0; color: #999; font-size: 13px;">Email</td><td style="padding: 8px 0; text-align: right; font-weight: 600;">${params.customerEmail}</td></tr>` : ''}
+          </table>
+
+          <div style="text-align: center; margin: 0 0 12px;">
+            <a href="${params.receiptUrl}" style="display: inline-block; background: white; color: ${EMAIL_INK}; border: 1px solid ${EMAIL_INK}; padding: 10px 24px; border-radius: 999px; text-decoration: none; font-weight: 600; font-size: 13px; margin: 0 6px;">
+              🧾 查看入數紙
+            </a>
+            <a href="${params.adminUrl}" style="display: inline-block; background: linear-gradient(135deg, ${EMAIL_PINK} 0%, ${EMAIL_PEACH} 100%); color: white; padding: 10px 24px; border-radius: 999px; text-decoration: none; font-weight: 700; font-size: 13px; margin: 0 6px;">
+              打開後台核實 →
+            </a>
+          </div>
+        </div>
+        ${emailFooter()}
+      </div>
+    `,
+  };
+}
 
 export function buildBalanceDueReminderEmail(params: {
   customerName: string;

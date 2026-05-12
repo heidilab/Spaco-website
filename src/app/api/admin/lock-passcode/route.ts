@@ -15,7 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { processBookingForLockAccess, revokeBookingPasscode, setManualPasscode } from '@/lib/lockPasscode';
+import { processBookingForLockAccess, revokeBookingPasscode, setManualPasscode, getLockGuideUrlForVenue } from '@/lib/lockPasscode';
 import { buildLockPasscodeEmail } from '@/lib/email';
 import { sendAutomatedEmail } from '@/lib/emailAutomations';
 import { getVenueById } from '@/lib/venues';
@@ -96,6 +96,7 @@ export async function POST(req: NextRequest) {
       }
       const profile = userSnap.data() as UserProfile;
       const venue = getVenueById(b.venueId);
+      const lockGuideImageUrl = await getLockGuideUrlForVenue(b.venueId);
       const tpl = buildLockPasscodeEmail({
         customerName: profile.displayName || profile.email.split('@')[0],
         venueName:    venue?.name.zh || b.branchSlug,
@@ -108,6 +109,7 @@ export async function POST(req: NextRequest) {
         validFromMs:  b.lockPasscode.validFrom,
         validToMs:    b.lockPasscode.validTo,
         whatsappLink: 'https://wa.me/85292823060',
+        lockGuideImageUrl,
       });
       await sendAutomatedEmail({
         automationKey: 'lock_passcode',
