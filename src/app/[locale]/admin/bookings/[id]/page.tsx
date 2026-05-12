@@ -338,6 +338,16 @@ export default function AdminBookingDetailPage() {
     try {
       await updateBookingStatus(booking.id, next);
       setStatusValue(next);
+      // Mirror the trigger that /admin/receipts and /admin/bookings (list)
+      // already fire: when admin manually flips a booking to "confirmed"
+      // and it's within the 2-day window, generate the lock passcode +
+      // email the customer right away. Fire-and-forget — the panel below
+      // also has a manual button so any silent failure can be retried.
+      if (next === 'confirmed') {
+        tryGenerateLockPasscode(booking.id).catch((err) =>
+          console.warn('[ttlock] status-change generate failed:', err),
+        );
+      }
       const fresh = await getBooking(booking.id);
       if (fresh) setBooking(fresh);
     } catch (err) {
