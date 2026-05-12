@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
       date: booking.date,
       startTime: booking.startTime,
       endTime: booking.endTime,
+      endDate: booking.endDate,
       guestCount: booking.guestCount,
       adultCount: booking.adultCount,
       childCount: booking.childCount,

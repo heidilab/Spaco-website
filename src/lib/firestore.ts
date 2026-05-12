@@ -26,30 +26,57 @@ export async function createBooking(data: Omit<BookingRecord, 'id' | 'createdAt'
     updatedAt: serverTimestamp(),
   });
 
-  // Cleaning buffer: 1 hour after end time
-  const [endH] = data.endTime.split(':').map(Number);
-  const bufferEnd = `${String(endH + 1).padStart(2, '0')}:00`;
+  const overnight = !!data.endDate && data.endDate !== data.date;
+  const endDate = overnight ? (data.endDate as string) : data.date;
+
+  // Cleaning buffer: 1 hour after end time. Buffer sits on `endDate` so
+  // overnight bookings clean up on day 2.
+  const [endH, endM] = data.endTime.split(':').map(Number);
+  const bufferEndH = endH + 1;
+  const bufferEnd = bufferEndH >= 24
+    ? '23:59'
+    : `${String(bufferEndH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
 
   // Block this venue AND every venue sharing the same physical space.
   // (e.g. booking sheung-wan-a also blocks sheung-wan-ab.)
   const venuesToBlock = venuesSharingSpace(data.venueId);
   for (const vid of venuesToBlock) {
-    await createBlockedSlot({
-      venueId: vid,
-      date: data.date,
-      startTime: data.startTime,
-      endTime: data.endTime,
-      reason: 'booking',
-      bookingId: ref.id,
-    });
-    await createBlockedSlot({
-      venueId: vid,
-      date: data.date,
-      startTime: data.endTime,
-      endTime: bufferEnd,
-      reason: 'cleaning',
-      bookingId: ref.id,
-    });
+    if (overnight) {
+      // Day 1: start → 23:59
+      await createBlockedSlot({
+        venueId: vid, date: data.date,
+        startTime: data.startTime, endTime: '23:59',
+        reason: 'booking', bookingId: ref.id,
+      });
+      // Day 2: 00:00 → end, plus cleaning buffer after.
+      await createBlockedSlot({
+        venueId: vid, date: endDate,
+        startTime: '00:00', endTime: data.endTime,
+        reason: 'booking', bookingId: ref.id,
+      });
+      await createBlockedSlot({
+        venueId: vid, date: endDate,
+        startTime: data.endTime, endTime: bufferEnd,
+        reason: 'cleaning', bookingId: ref.id,
+      });
+    } else {
+      await createBlockedSlot({
+        venueId: vid,
+        date: data.date,
+        startTime: data.startTime,
+        endTime: data.endTime,
+        reason: 'booking',
+        bookingId: ref.id,
+      });
+      await createBlockedSlot({
+        venueId: vid,
+        date: data.date,
+        startTime: data.endTime,
+        endTime: bufferEnd,
+        reason: 'cleaning',
+        bookingId: ref.id,
+      });
+    }
   }
 
   return ref.id;

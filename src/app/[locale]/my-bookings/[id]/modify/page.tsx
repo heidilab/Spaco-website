@@ -121,10 +121,15 @@ export default function ModifyBookingPage() {
   // to the original. Use the booking's own subtotal as baseline so
   // we don't have to round-trip the venue rate / hours / pax.
   const newGuestCount = adultCount + childCount;
+  // Booking is overnight when the original record carried an endDate
+  // distinct from date. Modify is "extend only" so the overnight flag
+  // never changes here — we just need it to compute hours correctly.
+  const isOvernight = !!booking?.endDate && booking.endDate !== booking.date;
   const newHours = useMemo(() => {
     if (!startTime || !endTime) return booking?.hours ?? 0;
-    return Math.max(0, (toMin(endTime) - toMin(startTime)) / 60);
-  }, [startTime, endTime, booking?.hours]);
+    const endMin = toMin(endTime) + (isOvernight ? 24 * 60 : 0);
+    return Math.max(0, (endMin - toMin(startTime)) / 60);
+  }, [startTime, endTime, booking?.hours, isOvernight]);
   const newPricing = useMemo(() => {
     if (!venue || !booking) return null;
     return calculatePricing(
@@ -153,21 +158,32 @@ export default function ModifyBookingPage() {
     let cancelled = false;
     (async () => {
       try {
-        const myStart = toMin(startTime);
-        const myEnd = toMin(endTime) + CLEANING_BUFFER_MIN;
+        const overnight = isOvernight;
+        const endDate = overnight && booking.endDate ? booking.endDate : booking.date;
+        // Build the windows to check. Overnight bookings split into Day 1
+        // (start → 23:59) and Day 2 (00:00 → end + cleaning buffer).
+        const windows: { date: string; start: number; end: number }[] = overnight
+          ? [
+              { date: booking.date, start: toMin(startTime), end: 24 * 60 },
+              { date: endDate, start: 0, end: toMin(endTime) + CLEANING_BUFFER_MIN },
+            ]
+          : [{ date: booking.date, start: toMin(startTime), end: toMin(endTime) + CLEANING_BUFFER_MIN }];
+
         const venueIds = venuesSharingSpace(booking.venueId);
         for (const vid of venueIds) {
-          const blocks = await getBlockedSlots(vid, booking.date);
-          for (const b of blocks) {
-            if (b.bookingId === booking.id) continue;  // skip our own
-            const bStart = toMin(b.startTime);
-            const bEnd = toMin(b.endTime);
-            if (myStart < bEnd && bStart < myEnd) {
-              if (cancelled) return;
-              setTimeConflict(locale === 'zh'
-                ? `撞到其他預訂（${b.startTime}–${b.endTime}），請揀其他時間。`
-                : `Conflicts with another booking (${b.startTime}–${b.endTime}).`);
-              return;
+          for (const w of windows) {
+            const blocks = await getBlockedSlots(vid, w.date);
+            for (const b of blocks) {
+              if (b.bookingId === booking.id) continue;  // skip our own
+              const bStart = toMin(b.startTime);
+              const bEnd = toMin(b.endTime);
+              if (w.start < bEnd && bStart < w.end) {
+                if (cancelled) return;
+                setTimeConflict(locale === 'zh'
+                  ? `撞到其他預訂（${b.startTime}–${b.endTime}），請揀其他時間。`
+                  : `Conflicts with another booking (${b.startTime}–${b.endTime}).`);
+                return;
+              }
             }
           }
         }
@@ -177,7 +193,7 @@ export default function ModifyBookingPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [startTime, endTime, booking, venue, timeChanged, locale]);
+  }, [startTime, endTime, booking, venue, timeChanged, isOvernight, locale]);
 
   const FOOD_IDS = new Set(['bbq-standard', 'bbq-premium', 'bbq-grill', 'hotpot-standard', 'hotpot-seafood', 'hotpot-extra-soup']);
 
@@ -245,6 +261,9 @@ export default function ModifyBookingPage() {
           date: booking.date,
           startTime,
           endTime,
+          // Preserve the original cross-midnight flag. Modify is "extend only"
+          // so the endDate is carried through unchanged.
+          ...(booking.endDate ? { endDate: booking.endDate } : {}),
           guestCount: guestsChanged ? newGuestCount : undefined,
         });
         update.startTime = startTime;
@@ -306,7 +325,7 @@ export default function ModifyBookingPage() {
               <span className="text-gradient-pink">{locale === 'zh' ? '修改預訂' : 'Modify Booking'}</span>
             </h1>
             <p className="text-ink-soft mt-2 text-sm">
-              {venue?.name[locale]} · {booking.date} {booking.startTime}–{booking.endTime}
+              {venue?.name[locale]} · {booking.date} {booking.startTime}–{booking.endTime}{isOvernight ? (locale === 'zh' ? `（翌日 ${booking.endDate}）` : ` (next day ${booking.endDate})`) : ''}
             </p>
             <p className="text-xs text-ink-soft mt-1">
               {locale === 'zh' ? '只可以加（人數／附加服務），唔可以減；確認後系統會將差額加入尾數，跳去付款頁。' : 'Add-only (guests / add-ons) — saving recomputes the balance and redirects to pay-balance.'}

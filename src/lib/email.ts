@@ -66,6 +66,17 @@ function emailFooter(): string {
   `;
 }
 
+/** Render "HH:mm – HH:mm" with a "(翌日 YYYY-MM-DD)" suffix when the booking
+ *  ends on a different date. Customers occasionally book past midnight and
+ *  need to see the end date explicitly so they don't misread "02:00" as
+ *  the same afternoon. */
+function formatTimeRange(startTime: string, endTime: string, date: string, endDate?: string): string {
+  const overnight = !!endDate && endDate !== date;
+  return overnight
+    ? `${startTime} – ${endTime}（翌日 ${endDate}）`
+    : `${startTime} – ${endTime}`;
+}
+
 // ─────────────────────────────────────────────────────────────
 // Welcome email — sent on first sign-up.
 // ─────────────────────────────────────────────────────────────
@@ -111,6 +122,7 @@ export function buildOfflinePaymentPendingEmail(params: {
   date: string;
   startTime: string;
   endTime: string;
+  endDate?: string;
   amountDue: number;
   fpsNumber: string;
   bankName: string;
@@ -140,7 +152,7 @@ export function buildOfflinePaymentPendingEmail(params: {
           <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
             <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999;">場地</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.venueName}</td></tr>
             <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999;">日期</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.date}</td></tr>
-            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999;">時段</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.startTime} – ${params.endTime}</td></tr>
+            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999;">時段</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${formatTimeRange(params.startTime, params.endTime, params.date, params.endDate)}</td></tr>
             <tr><td style="padding: 8px 0; color: #999;">預訂編號</td><td style="padding: 8px 0; text-align: right; font-family: 'Courier New', monospace; font-size: 12px;">${params.bookingId}</td></tr>
           </table>
 
@@ -258,6 +270,7 @@ export function buildBookingConfirmationEmail(params: {
   date: string;
   startTime: string;
   endTime: string;
+  endDate?: string;
   guestCount: number;
   /** Optional adult/child split. When childCount > 0, the breakdown
    *  appears in the people row. */
@@ -312,7 +325,7 @@ export function buildBookingConfirmationEmail(params: {
           <div style="background: linear-gradient(135deg, ${EMAIL_PINK} 0%, ${EMAIL_PEACH} 100%); border-radius: 18px; padding: 22px; color: white; margin: 0 0 22px;">
             <p style="margin: 0 0 4px; font-size: 11px; opacity: 0.92; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 700;">${params.venueName}</p>
             <p style="margin: 0 0 10px; font-size: 22px; font-weight: 800; line-height: 1.25;">
-              ${params.date} · ${params.startTime}–${params.endTime}
+              ${params.date} · ${formatTimeRange(params.startTime, params.endTime, params.date, params.endDate)}
             </p>
             <p style="margin: 0; font-size: 13px; opacity: 0.92;">${peopleLine}</p>
           </div>
@@ -324,7 +337,7 @@ export function buildBookingConfirmationEmail(params: {
             <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">場地</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">${params.venueName}</td></tr>
             ${params.venueAddress ? `<tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px; vertical-align: top;">📍 地址</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600; line-height: 1.5;">${params.venueAddress}</td></tr>` : ''}
             <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">日期</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">${params.date}</td></tr>
-            <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">時段</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">${params.startTime} – ${params.endTime}</td></tr>
+            <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">時段</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">${formatTimeRange(params.startTime, params.endTime, params.date, params.endDate)}</td></tr>
             <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">人數</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">${peopleLine}</td></tr>
             ${addOnsRow}
           </table>
@@ -436,6 +449,7 @@ export function buildLockPasscodeEmail(params: {
   date: string;
   startTime: string;
   endTime: string;
+  endDate?: string;
   passcode: string;
   validFromMs: number;
   validToMs: number;
@@ -464,7 +478,7 @@ export function buildLockPasscodeEmail(params: {
             <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">場地</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">${params.venueName}</td></tr>
             ${params.venueAddress ? `<tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px; vertical-align: top;">📍 地址</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600; line-height: 1.5;">${params.venueAddress}</td></tr>` : ''}
             <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">活動日期</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">${params.date}</td></tr>
-            <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">活動時段</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">${params.startTime} – ${params.endTime}</td></tr>
+            <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">活動時段</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">${formatTimeRange(params.startTime, params.endTime, params.date, params.endDate)}</td></tr>
             <tr><td style="padding: 10px 0; color: #999; font-size: 13px; vertical-align: top;">密碼有效期</td><td style="padding: 10px 0; text-align: right; font-weight: 600;">${formatHkt(params.validFromMs)}<br><span style="font-size: 12px; color: #999; font-weight: 400;">至 ${formatHkt(params.validToMs)}</span></td></tr>
           </table>
         </div>
@@ -510,6 +524,7 @@ export function buildStaffBookingNotificationEmail(params: {
   date: string;
   startTime: string;
   endTime: string;
+  endDate?: string;
   guestCount: number;
   adultCount?: number;
   childCount?: number;
@@ -546,7 +561,7 @@ export function buildStaffBookingNotificationEmail(params: {
           <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
             <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">場地</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.venueName}</td></tr>
             <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">日期</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.date}</td></tr>
-            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">時段</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.startTime} – ${params.endTime}</td></tr>
+            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">時段</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${formatTimeRange(params.startTime, params.endTime, params.date, params.endDate)}</td></tr>
             <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">人數</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">${params.guestCount} 人${(params.childCount ?? 0) > 0 ? ` (${params.adultCount ?? params.guestCount} 成人 + ${params.childCount} 小童)` : ''}</td></tr>
             ${addOnsRow}
             ${byoRow}
@@ -591,6 +606,7 @@ export function buildBalanceDueReminderEmail(params: {
   date: string;
   startTime: string;
   endTime: string;
+  endDate?: string;
   balanceDue: number;
   whatsappLink: string;
 }) {
@@ -617,7 +633,7 @@ export function buildBalanceDueReminderEmail(params: {
           <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
             <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">場地</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">${params.venueName}</td></tr>
             <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">活動日期</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">${params.date}</td></tr>
-            <tr><td style="padding: 10px 0; color: #999; font-size: 13px;">活動時段</td><td style="padding: 10px 0; text-align: right; font-weight: 600;">${params.startTime} – ${params.endTime}</td></tr>
+            <tr><td style="padding: 10px 0; color: #999; font-size: 13px;">活動時段</td><td style="padding: 10px 0; text-align: right; font-weight: 600;">${formatTimeRange(params.startTime, params.endTime, params.date, params.endDate)}</td></tr>
           </table>
         </div>
 

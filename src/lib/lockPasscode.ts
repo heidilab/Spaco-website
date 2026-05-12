@@ -171,6 +171,7 @@ export async function processBookingForLockAccess(bookingId: string): Promise<Pr
         date:         b.date,
         startTime:    b.startTime,
         endTime:      b.endTime,
+        endDate:      b.endDate,
         balanceDue:   b.balanceDue ?? 0,
         whatsappLink: 'https://wa.me/85292823060',
       });
@@ -251,6 +252,7 @@ export async function processBookingForLockAccess(bookingId: string): Promise<Pr
         date:         b.date,
         startTime:    b.startTime,
         endTime:      b.endTime,
+        endDate:      b.endDate,
         passcode,
         validFromMs:  validFrom,
         validToMs:    validTo,

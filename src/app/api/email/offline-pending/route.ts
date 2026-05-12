@@ -46,6 +46,7 @@ export async function POST(req: NextRequest) {
       date: booking.date,
       startTime: booking.startTime,
       endTime: booking.endTime,
+      endDate: booking.endDate,
       amountDue: booking.pricing.deposit,
       fpsNumber: PAYMENT_DETAILS.fps.display,
       bankName: PAYMENT_DETAILS.bank.name,

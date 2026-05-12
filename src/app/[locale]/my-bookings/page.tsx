@@ -241,7 +241,7 @@ function BookingCard({
               <CalendarDays size={14} className="text-pink" /> {booking.date}
             </span>
             <span className="flex items-center gap-1.5">
-              <Clock size={14} className="text-lavender" /> {booking.startTime} – {booking.endTime}
+              <Clock size={14} className="text-lavender" /> {booking.startTime} – {booking.endTime}{booking.endDate && booking.endDate !== booking.date ? (locale === 'zh' ? '（翌日）' : ' (next day)') : ''}
             </span>
             <span className="flex items-center gap-1.5">
               <Users size={14} className="text-coral" /> {booking.guestCount} {locale === 'zh' ? '人' : 'pax'}

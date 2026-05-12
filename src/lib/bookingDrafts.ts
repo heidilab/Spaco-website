@@ -92,22 +92,31 @@ export function isDraftActionable(draft: BookingDraft): boolean {
 }
 
 /** Returns true if any blocked_slot overlaps the draft's time on the same
- *  venue (or any venue sharing physical space). */
+ *  venue (or any venue sharing physical space). Cross-midnight drafts are
+ *  split into Day 1 (start → 23:59) and Day 2 (00:00 → end) and each side
+ *  is checked against blocks on its own date. */
 async function hasSlotConflict(draft: BookingDraft): Promise<boolean> {
   const startMin = (h: string) => {
     const [hh, mm] = h.split(':').map(Number);
     return hh * 60 + (mm || 0);
   };
-  const draftStart = startMin(draft.startTime);
-  const draftEnd = startMin(draft.endTime);
   const venueIds = venuesSharingSpace(draft.venueId);
+  const overnight = !!draft.endDate && draft.endDate !== draft.date;
+  const windows: { date: string; start: number; end: number }[] = overnight
+    ? [
+        { date: draft.date, start: startMin(draft.startTime), end: 24 * 60 },
+        { date: draft.endDate as string, start: 0, end: startMin(draft.endTime) },
+      ]
+    : [{ date: draft.date, start: startMin(draft.startTime), end: startMin(draft.endTime) }];
+
   for (const vid of venueIds) {
-    const blocks: BlockedSlot[] = await getBlockedSlots(vid, draft.date);
-    for (const b of blocks) {
-      const bStart = startMin(b.startTime);
-      const bEnd = startMin(b.endTime);
-      // Overlap if their ranges intersect
-      if (draftStart < bEnd && bStart < draftEnd) return true;
+    for (const w of windows) {
+      const blocks: BlockedSlot[] = await getBlockedSlots(vid, w.date);
+      for (const b of blocks) {
+        const bStart = startMin(b.startTime);
+        const bEnd = startMin(b.endTime);
+        if (w.start < bEnd && bStart < w.end) return true;
+      }
     }
   }
   return false;
@@ -148,6 +157,7 @@ export async function claimBookingDraft(
     date: draft.date,
     startTime: draft.startTime,
     endTime: draft.endTime,
+    endDate: draft.endDate,
     hours: draft.hours,
     guestCount: draft.guestCount,
     adultCount: draft.adultCount,
@@ -196,6 +206,7 @@ export async function recreateBookingDraft(
     date: oldDraft.date,
     startTime: oldDraft.startTime,
     endTime: oldDraft.endTime,
+    ...(oldDraft.endDate ? { endDate: oldDraft.endDate } : {}),
     hours: oldDraft.hours,
     guestCount: oldDraft.guestCount,
     adultCount: oldDraft.adultCount,

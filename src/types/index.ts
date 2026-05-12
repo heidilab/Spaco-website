@@ -317,6 +317,9 @@ export interface BookingDraft {
   date: string;               // YYYY-MM-DD
   startTime: string;          // HH:mm
   endTime: string;
+  /** End date when the booking spans midnight. Same semantics as
+   *  BookingRecord.endDate — absent or equal to `date` means same-day. */
+  endDate?: string;
   hours: number;
   /** Total head count = adultCount + childCount. Kept for backward
    *  compatibility with bookings created before the adult/child split. */

@@ -89,6 +89,7 @@ export async function POST(req: NextRequest) {
         date:         b.date,
         startTime:    b.startTime,
         endTime:      b.endTime,
+        endDate:      b.endDate,
         passcode:     b.lockPasscode.passcode,
         validFromMs:  b.lockPasscode.validFrom,
         validToMs:    b.lockPasscode.validTo,

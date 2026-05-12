@@ -109,9 +109,12 @@ export default function MyBookingDetailPage() {
 
   const showPayBalance = booking.status === 'confirmed' && balanceDue > 0;
 
+  const overnightSuffix = booking.endDate && booking.endDate !== booking.date
+    ? (locale === 'zh' ? `（翌日 ${booking.endDate}）` : ` (next day ${booking.endDate})`)
+    : '';
   const whatsappMsg = locale === 'zh'
-    ? `你好，預訂編號：${booking.id}\n場地：${venueName}\n日期：${booking.date} ${booking.startTime}-${booking.endTime}`
-    : `Hi, Booking ID: ${booking.id}\nVenue: ${venueName}\nDate: ${booking.date} ${booking.startTime}-${booking.endTime}`;
+    ? `你好，預訂編號：${booking.id}\n場地：${venueName}\n日期：${booking.date} ${booking.startTime}-${booking.endTime}${overnightSuffix}`
+    : `Hi, Booking ID: ${booking.id}\nVenue: ${venueName}\nDate: ${booking.date} ${booking.startTime}-${booking.endTime}${overnightSuffix}`;
   const whatsappLink = generateWhatsAppLink(PAYMENT_DETAILS.fps.digitsOnly, whatsappMsg);
 
   return (
@@ -140,7 +143,7 @@ export default function MyBookingDetailPage() {
           <div className="rounded-3xl p-6 bg-gradient-to-br from-pink/15 to-peach/15 border border-pink/20">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <SummaryStat icon={<CalendarDays size={16} />} label={locale === 'zh' ? '日期' : 'Date'} value={booking.date} />
-              <SummaryStat icon={<Clock size={16} />} label={locale === 'zh' ? '時段' : 'Time'} value={`${booking.startTime} – ${booking.endTime}`} />
+              <SummaryStat icon={<Clock size={16} />} label={locale === 'zh' ? '時段' : 'Time'} value={`${booking.startTime} – ${booking.endTime}${overnightSuffix}`} />
               <SummaryStat icon={<Users size={16} />} label={locale === 'zh' ? '人數' : 'Guests'} value={peopleLine} />
             </div>
           </div>

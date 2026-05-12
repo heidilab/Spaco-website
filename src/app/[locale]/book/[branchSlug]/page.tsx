@@ -166,12 +166,33 @@ export default function BookingPage() {
     });
   }, [selectedDate, minGuests, childCount]);
 
-  // Calculate hours
+  // Calculate hours. Cross-midnight (end-time at or before start-time) is
+  // treated as a next-day end, so 19:00 → 02:00 = 7 hours.
+  const isOvernight = useMemo(() => {
+    const [sh, sm] = startTime.split(':').map(Number);
+    const [eh, em] = endTime.split(':').map(Number);
+    return eh * 60 + em <= sh * 60 + sm;
+  }, [startTime, endTime]);
+
   const hours = useMemo(() => {
     const [sh, sm] = startTime.split(':').map(Number);
     const [eh, em] = endTime.split(':').map(Number);
-    return Math.max(1, (eh * 60 + em - sh * 60 - sm) / 60);
-  }, [startTime, endTime]);
+    const endMinutes = (isOvernight ? eh + 24 : eh) * 60 + em;
+    return Math.max(1, (endMinutes - sh * 60 - sm) / 60);
+  }, [startTime, endTime, isOvernight]);
+
+  // End date (YYYY-MM-DD) when the booking crosses midnight. We assemble
+  // the date from local components — toISOString() rolls back to UTC and
+  // would land on the previous day for HKT users.
+  const endDate = useMemo(() => {
+    if (!selectedDate || !isOvernight) return null;
+    const d = new Date(`${selectedDate}T00:00:00`);
+    d.setDate(d.getDate() + 1);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }, [selectedDate, isOvernight]);
 
   // Pricing calculation
   const pricing = useMemo(() => {
@@ -308,6 +329,20 @@ export default function BookingPage() {
     return `${h}:00`;
   });
 
+  // Start time options: 10:00 → 23:00 (24-hour venue, allow late-night starts).
+  const startTimeOptions = timeSlots.slice(10, 24);
+
+  // End time options: 11:00 → 23:00 same-day, plus 00:00 → 06:00 next-day
+  // (labelled "翌日" so customers see they're crossing midnight).
+  const endTimeOptions: { value: string; label: string; nextDay: boolean }[] = [
+    ...timeSlots.slice(11, 24).map((t) => ({ value: t, label: t, nextDay: false })),
+    ...timeSlots.slice(0, 7).map((t) => ({
+      value: t,
+      label: locale === 'zh' ? `${t}（翌日）` : `${t} (next day)`,
+      nextDay: true,
+    })),
+  ];
+
   // Filter add-ons based on venue
   const visibleAddOns = addOns.filter((a) => {
     if (a.id === 'shisha') return false;
@@ -410,7 +445,7 @@ export default function BookingPage() {
                     onChange={(e) => setStartTime(e.target.value)}
                     className="w-full px-4 py-3 rounded-xl border border-charcoal/10 focus:outline-none focus:border-accent"
                   >
-                    {timeSlots.slice(10, 22).map((time) => (
+                    {startTimeOptions.map((time) => (
                       <option key={time} value={time}>{time}</option>
                     ))}
                   </select>
@@ -422,12 +457,23 @@ export default function BookingPage() {
                     onChange={(e) => setEndTime(e.target.value)}
                     className="w-full px-4 py-3 rounded-xl border border-charcoal/10 focus:outline-none focus:border-accent"
                   >
-                    {timeSlots.slice(11, 24).map((time) => (
-                      <option key={time} value={time}>{time}</option>
+                    {endTimeOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
                     ))}
                   </select>
                 </div>
               </div>
+
+              {isOvernight && endDate && (
+                <div className="mt-4 p-4 bg-blue-50 rounded-xl flex items-start gap-3">
+                  <Info size={18} className="text-blue-500 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-blue-700">
+                    {locale === 'zh'
+                      ? `此預訂跨越凌晨：${selectedDate} ${startTime} → ${endDate} ${endTime}，共 ${hours} 小時`
+                      : `Overnight booking: ${selectedDate} ${startTime} → ${endDate} ${endTime} · ${hours} hours`}
+                  </p>
+                </div>
+              )}
 
               {hours < minHours && (
                 <div className="mt-4 p-4 bg-red-50 rounded-xl flex items-start gap-3">
@@ -1255,6 +1301,7 @@ export default function BookingPage() {
                       date: selectedDate,
                       startTime,
                       endTime,
+                      endDate: endDate || undefined,
                       hours,
                       guestCount,
                       adultCount,

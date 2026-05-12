@@ -18,9 +18,22 @@ function toMinutes(hhmm: string): number {
   return h * 60 + (m || 0);
 }
 function toHHMM(min: number): string {
-  const h = Math.floor(min / 60);
-  const m = min % 60;
+  // Wrap around 24h so overnight bookings (e.g. 22:00 + 5h) produce "03:00"
+  // rather than "27:00". Day rollover is tracked separately via endDate.
+  const wrapped = ((min % (24 * 60)) + 24 * 60) % (24 * 60);
+  const h = Math.floor(wrapped / 60);
+  const m = wrapped % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+function addDays(yyyyMmDd: string, n: number): string {
+  // Reassemble from local components — toISOString() goes to UTC and would
+  // land on the previous day for HKT (UTC+8) users.
+  const d = new Date(`${yyyyMmDd}T00:00:00`);
+  d.setDate(d.getDate() + n);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 export default function AdminNewBookingPage() {
@@ -90,6 +103,15 @@ export default function AdminNewBookingPage() {
     return toHHMM(toMinutes(startTime) + hours * 60);
   }, [startTime, hours]);
 
+  // Day rollover when (start + hours) crosses midnight. Tracked separately
+  // from endTime so the backend can split blocked_slots correctly.
+  const endDate = useMemo(() => {
+    if (!startTime || !date) return undefined;
+    const totalMin = toMinutes(startTime) + hours * 60;
+    const dayOffset = Math.floor(totalMin / (24 * 60));
+    return dayOffset > 0 ? addDays(date, dayOffset) : undefined;
+  }, [startTime, hours, date]);
+
   const branchSlug = useMemo(() => {
     return venue?.slug || '';
   }, [venue]);
@@ -109,6 +131,7 @@ export default function AdminNewBookingPage() {
         date,
         startTime,
         endTime,
+        ...(endDate ? { endDate } : {}),
         hours,
         guestCount,
         adultCount,
@@ -344,7 +367,7 @@ export default function AdminNewBookingPage() {
             </div>
             {endTime && (
               <p className="text-xs text-ink-soft">
-                {locale === 'zh' ? '時段：' : 'Session: '}<span className="font-bold text-ink">{startTime}–{endTime}</span>
+                {locale === 'zh' ? '時段：' : 'Session: '}<span className="font-bold text-ink">{startTime}–{endTime}{endDate ? (locale === 'zh' ? `（翌日 ${endDate}）` : ` (next day ${endDate})`) : ''}</span>
                 {isWeekend && <span className="ml-2 chip text-[10px]">{locale === 'zh' ? '週末/假日價' : 'Weekend rate'}</span>}
               </p>
             )}
