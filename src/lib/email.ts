@@ -486,23 +486,22 @@ export function buildLockPasscodeEmail(params: {
           </table>
         </div>
 
-        <div style="background: #FFF7E6; border-left: 4px solid #F59E0B; border-radius: 14px; padding: 16px 20px; margin-bottom: 16px;">
-          <p style="margin: 0 0 8px; font-weight: 700; color: #92400E; font-size: 14px;">⚠️ 重要提醒</p>
-          <ul style="margin: 0; padding-left: 18px; color: #78350F; font-size: 13px; line-height: 1.7;">
-            <li><strong>🚫 唔好觸摸圓形指模掣</strong> — 系統冇登記你嘅指模，掂咗指模掣之後再入密碼會被當錯誤密碼。請<strong>直接撳數字鍵</strong>輸入密碼。</li>
-            <li>密碼於活動開始前 <strong>1 小時</strong> 開始生效，方便你提早到場準備</li>
-            <li>密碼會喺活動結束時間自動失效</li>
-            <li>請勿將密碼公開或轉發畀非預約名單上嘅人</li>
-            <li>離場時請確認所有電器已關閉、門已鎖好</li>
-          </ul>
-        </div>
-
         ${params.lockGuideImageUrl ? `
         <div style="background: white; border-radius: 18px; padding: 20px; margin-bottom: 16px; text-align: center;">
           <p style="margin: 0 0 12px; font-size: 13px; color: ${EMAIL_INK}; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 700;">🔑 門鎖使用指南</p>
           <img src="${params.lockGuideImageUrl}" alt="Lock usage guide" style="display: block; max-width: 100%; height: auto; margin: 0 auto; border-radius: 12px;" />
         </div>
         ` : ''}
+
+        <div style="background: #FFF7E6; border-left: 4px solid #F59E0B; border-radius: 14px; padding: 16px 20px; margin-bottom: 16px;">
+          <p style="margin: 0 0 8px; font-weight: 700; color: #92400E; font-size: 14px;">⚠️ 重要提醒</p>
+          <ul style="margin: 0; padding-left: 18px; color: #78350F; font-size: 13px; line-height: 1.7;">
+            <li><strong>🚫 唔好觸摸圓形指模掣</strong> — 系統冇登記你嘅指模，掂咗指模掣之後再入密碼會被當錯誤密碼。請<strong>直接撳數字鍵</strong>輸入密碼。</li>
+            <li>密碼會喺活動結束時間自動失效</li>
+            <li>請勿將密碼公開或轉發畀非預約名單上嘅人</li>
+            <li>離場時請確認所有電器已關閉、門已鎖好</li>
+          </ul>
+        </div>
 
         <div style="text-align: center; margin: 0 0 20px;">
           <a href="${params.whatsappLink}" style="display: inline-block; background: #25D366; color: white; padding: 12px 28px; border-radius: 999px; text-decoration: none; font-weight: 600; font-size: 14px;">
