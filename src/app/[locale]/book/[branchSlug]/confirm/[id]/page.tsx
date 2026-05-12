@@ -12,7 +12,7 @@ import {
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { getVenueById } from '@/lib/venues';
-import { addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE } from '@/lib/pricing';
+import { addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE, calculatePricing, freeDrinksVenues } from '@/lib/pricing';
 import { BookingRecord, RefundDetails, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
 import { CalendarDays, Clock, Users, MapPin, ArrowRight, Sparkles, Tag, X as XIcon, Loader2, Check } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -172,13 +172,17 @@ export default function ConfirmBookingPage() {
     setPromoChecking(true);
     setPromoError(null);
     try {
-      // Compute drinks cost from current booking — needed for free_drinks codes.
-      const drinksEntry = booking?.addOns?.find((a) => a.id === 'drinks');
-      // Drinks is per-pax @ $25 — but cost is part of subtotal already.
-      // For free_drinks we just need the rough drinks portion to refund.
+      // Compute the drinks portion as if it were already in the cart —
+      // for `free_drinks` codes we'll auto-add the drinks add-on below
+      // even if the customer hadn't picked it themselves.
       const adultEquiv = (booking?.adultCount ?? booking?.guestCount ?? 0)
         + 0.5 * (booking?.childCount ?? 0);
-      const drinksCost = drinksEntry ? Math.round(25 * adultEquiv) : 0;
+      const venueIncludesDrinksFree = booking
+        ? freeDrinksVenues.includes(booking.venueId)
+        : false;
+      const projectedDrinksCost = venueIncludesDrinksFree
+        ? 0
+        : Math.round(25 * adultEquiv);
 
       const res = await fetch('/api/promo/validate', {
         method: 'POST',
@@ -187,7 +191,7 @@ export default function ConfirmBookingPage() {
           code,
           subtotal: booking?.pricing.subtotal,
           adultEquiv: adultEquiv || 1,
-          drinksCost,
+          drinksCost: projectedDrinksCost,
           userId: user?.uid,
           venueId: booking?.venueId,
         }),
@@ -210,13 +214,51 @@ export default function ConfirmBookingPage() {
         setPromoError(msg);
         return;
       }
-      setApplied({
+      // If the promo grants free drinks but the customer hadn't added the
+      // drinks add-on themselves, auto-add it to the booking now — the
+      // promo discount covers the cost so the net charge is unchanged.
+      // Venues that already include drinks (TST) are skipped because
+      // there's nothing to add.
+      let finalApplied = {
         codeId: data.codeId,
         code: data.code,
         type: data.type,
         amount: data.amount,
         freeDrinks: data.freeDrinks,
-      });
+      };
+      if (
+        data.freeDrinks
+        && booking
+        && !freeDrinksVenues.includes(booking.venueId)
+        && !booking.addOns?.some((a) => a.id === 'drinks')
+      ) {
+        const venue = getVenueById(booking.venueId);
+        if (venue) {
+          const newAddOns = [...(booking.addOns || []), { id: 'drinks', quantity: 1 }];
+          const newPricing = calculatePricing(
+            venue,
+            booking.isWeekend,
+            booking.hours,
+            booking.guestCount,
+            newAddOns,
+            booking.childCount,
+          );
+          await updateDoc(doc(db, 'bookings', booking.id), {
+            addOns: newAddOns,
+            'pricing.baseCharge':  newPricing.baseCharge,
+            'pricing.addOnTotal':  newPricing.addOnTotal,
+            'pricing.subtotal':    newPricing.subtotal,
+          });
+          // Reload the booking so the rest of the page (breakdown, deposit
+          // calc) sees the new add-on + pricing.
+          const fresh = await getBooking(booking.id);
+          if (fresh) setBooking(fresh);
+          // The promo's discount tracks the actual drinks cost we just added.
+          const drinksCost = Math.round(25 * adultEquiv);
+          finalApplied = { ...finalApplied, amount: drinksCost };
+        }
+      }
+      setApplied(finalApplied);
       setPromoError(null);
     } catch {
       setPromoError(locale === 'zh' ? '驗證失敗，請重試' : 'Validation failed');
