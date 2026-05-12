@@ -13,8 +13,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { FieldValue } from 'firebase-admin/firestore';
+import { adminDb } from '@/lib/firebaseAdmin';
 import { processBookingForLockAccess, revokeBookingPasscode, setManualPasscode, getLockGuideUrlForVenue } from '@/lib/lockPasscode';
 import { buildLockPasscodeEmail } from '@/lib/email';
 import { sendAutomatedEmail } from '@/lib/emailAutomations';
@@ -81,17 +81,20 @@ export async function POST(req: NextRequest) {
     }
 
     if (body.action === 'resend') {
-      const ref = doc(db, 'bookings', body.bookingId);
-      const snap = await getDoc(ref);
-      if (!snap.exists()) {
+      // Use the admin SDK throughout — the client SDK has no auth context
+      // on the server, so Firestore rules reject reads/writes with the
+      // "missing or insufficient permissions" error.
+      const ref = adminDb.collection('bookings').doc(body.bookingId);
+      const snap = await ref.get();
+      if (!snap.exists) {
         return NextResponse.json({ error: 'booking-not-found' }, { status: 404 });
       }
       const b = snap.data() as BookingRecord;
       if (!b.lockPasscode) {
         return NextResponse.json({ error: 'no-passcode' }, { status: 400 });
       }
-      const userSnap = await getDoc(doc(db, 'users', b.userId));
-      if (!userSnap.exists()) {
+      const userSnap = await adminDb.collection('users').doc(b.userId).get();
+      if (!userSnap.exists) {
         return NextResponse.json({ error: 'user-not-found' }, { status: 404 });
       }
       const profile = userSnap.data() as UserProfile;
@@ -117,7 +120,7 @@ export async function POST(req: NextRequest) {
         subject: tpl.subject,
         html: tpl.html,
       });
-      await updateDoc(ref, { 'lockPasscode.emailSentAt': serverTimestamp() });
+      await ref.update({ 'lockPasscode.emailSentAt': FieldValue.serverTimestamp() });
       return NextResponse.json({ ok: true });
     }
 
