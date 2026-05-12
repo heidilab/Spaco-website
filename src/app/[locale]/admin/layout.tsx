@@ -1,12 +1,14 @@
 'use client';
 
+import { useState } from 'react';
 import { useLocale } from 'next-intl';
 import { Link, usePathname } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
+import { signInWithGoogle } from '@/lib/auth';
 import {
   LayoutDashboard, CalendarDays, ListOrdered,
   ChevronLeft, Shield, Image, Users, UserCog, Receipt, FileText, HelpCircle, Search, CalendarClock, Mail, Tag, BarChart3,
-  BookOpen,
+  BookOpen, LogIn,
 } from 'lucide-react';
 
 const allSidebarLinks = [
@@ -31,6 +33,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const { user, loading, isAdminUser, userRole, hasPermission } = useAuth();
   const locale = useLocale() as 'zh' | 'en';
   const pathname = usePathname();
+  const [signingIn, setSigningIn] = useState(false);
+  const [signInError, setSignInError] = useState<string | null>(null);
+
+  async function handleGoogleSignIn() {
+    setSigningIn(true);
+    setSignInError(null);
+    try {
+      await signInWithGoogle();
+      // useAuth's onAuthStateChanged subscription re-renders this layout
+      // with the new user; no further work needed here.
+    } catch (err) {
+      setSignInError(err instanceof Error ? err.message : 'Sign-in failed');
+    } finally {
+      setSigningIn(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -40,7 +58,56 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     );
   }
 
-  if (!user || !isAdminUser) {
+  // Not signed in — invite the visitor to log in with Google. We don't
+  // know yet whether they're an admin; the next render after sign-in
+  // will fall through to the access-denied branch if they aren't one.
+  if (!user) {
+    return (
+      <div className="pt-28 min-h-screen flex items-center justify-center">
+        <div className="glass-card p-10 max-w-md text-center">
+          <div className="w-16 h-16 mx-auto mb-5 rounded-2xl bg-gradient-pink flex items-center justify-center text-white shadow-glow">
+            <Shield size={28} />
+          </div>
+          <h1 className="text-2xl font-bold font-display mb-2">
+            <span className="text-gradient-pink">
+              {locale === 'zh' ? '管理員登入' : 'Admin Sign In'}
+            </span>
+          </h1>
+          <p className="text-ink-soft mb-6 text-sm">
+            {locale === 'zh'
+              ? '請用你嘅 Google 帳號登入。如果未開通管理員權限，請聯絡 spacohk@gmail.com。'
+              : 'Sign in with your Google account. If your account is not yet authorised as an admin, contact spacohk@gmail.com.'}
+          </p>
+          <button
+            type="button"
+            onClick={handleGoogleSignIn}
+            disabled={signingIn}
+            className="inline-flex items-center justify-center gap-3 w-full px-5 py-3 rounded-2xl border border-charcoal/15 bg-white hover:bg-white/90 font-semibold disabled:opacity-50"
+          >
+            {/* Inline Google "G" mark — no extra dependency. */}
+            <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+              <path d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.49h4.84a4.13 4.13 0 01-1.79 2.72v2.26h2.9c1.69-1.56 2.69-3.86 2.69-6.63z" fill="#4285F4"/>
+              <path d="M9 18c2.43 0 4.46-.8 5.95-2.18l-2.9-2.26c-.8.54-1.84.86-3.05.86-2.34 0-4.33-1.58-5.04-3.71H.96v2.33A9 9 0 009 18z" fill="#34A853"/>
+              <path d="M3.96 10.71A5.41 5.41 0 013.68 9c0-.6.1-1.17.28-1.71V4.96H.96A9 9 0 000 9c0 1.45.35 2.83.96 4.04l3-2.33z" fill="#FBBC05"/>
+              <path d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58A8.97 8.97 0 009 0 9 9 0 00.96 4.96l3 2.33C4.67 5.16 6.66 3.58 9 3.58z" fill="#EA4335"/>
+            </svg>
+            {signingIn
+              ? (locale === 'zh' ? '登入中…' : 'Signing in…')
+              : (locale === 'zh' ? '用 Google 登入' : 'Continue with Google')}
+          </button>
+          {signInError && (
+            <p className="text-xs text-rose-500 mt-3">{signInError}</p>
+          )}
+          <Link href="/" className="block mt-6 text-xs text-ink-soft hover:text-pink">
+            ← {locale === 'zh' ? '返回首頁' : 'Back to Home'}
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // Signed in but not an authorised admin user.
+  if (!isAdminUser) {
     return (
       <div className="pt-28 min-h-screen flex items-center justify-center">
         <div className="glass-card p-10 max-w-md text-center">
@@ -52,8 +119,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               {locale === 'zh' ? '無權限存取' : 'Access Denied'}
             </span>
           </h1>
-          <p className="text-ink-soft mb-6">
+          <p className="text-ink-soft mb-2 text-sm">
             {locale === 'zh' ? '此頁面僅限管理員存取' : 'This page is restricted to admins'}
+          </p>
+          <p className="text-xs text-ink-soft mb-6 break-all">
+            {locale === 'zh' ? '你登入嘅帳號：' : 'Signed in as: '}<strong>{user.email}</strong>
           </p>
           <Link href="/" className="btn-primary">
             {locale === 'zh' ? '返回首頁' : 'Back to Home'}
