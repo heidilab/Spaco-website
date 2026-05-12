@@ -1301,7 +1301,10 @@ export default function BookingPage() {
                       date: selectedDate,
                       startTime,
                       endTime,
-                      endDate: endDate || undefined,
+                      // Spread conditionally — Firestore's client SDK rejects
+                      // explicit `undefined` field values, so a same-day
+                      // booking can't pass `endDate: undefined`.
+                      ...(endDate ? { endDate } : {}),
                       hours,
                       guestCount,
                       adultCount,
