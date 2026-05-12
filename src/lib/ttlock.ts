@@ -111,28 +111,49 @@ function readEnvOrThrow(name: string): string {
   return v;
 }
 
+/**
+ * Fetch a fresh access_token. Prefers the refresh_token grant (OAuth flow);
+ * falls back to the password grant for legacy setups.
+ *
+ * Refresh-token grant is the recommended path because:
+ *   - The user's TTLock password isn't stored anywhere on our side.
+ *   - The grant survives the customer changing their TTLock password.
+ *   - TTLock's password grant only works for accounts registered under your
+ *     own Client ID — existing app-registered accounts must go through
+ *     OAuth at /api/admin/ttlock/oauth-callback to bind first.
+ */
 async function fetchAccessToken(): Promise<CachedToken> {
   const clientId     = readEnvOrThrow('TTLOCK_CLIENT_ID');
   const clientSecret = readEnvOrThrow('TTLOCK_CLIENT_SECRET');
-  const username     = readEnvOrThrow('TTLOCK_USERNAME');
-  // Allow either the raw password (we hash it) or a pre-hashed MD5 — admins
-  // who don't want their cleartext pwd in env can supply TTLOCK_PASSWORD_MD5
-  // directly.
-  const passwordMd5  = process.env.TTLOCK_PASSWORD_MD5
-    || (process.env.TTLOCK_PASSWORD ? md5(process.env.TTLOCK_PASSWORD) : '');
-  if (!passwordMd5) {
-    throw new Error(
-      '[ttlock] Missing TTLOCK_PASSWORD_MD5 (or TTLOCK_PASSWORD). ' +
-      'Set the lowercase MD5 hash of your TTLock account password.'
-    );
-  }
+  const refreshToken = process.env.TTLOCK_REFRESH_TOKEN;
 
-  const body = new URLSearchParams({
-    clientId,
-    clientSecret,
-    username,
-    password: passwordMd5,
-  });
+  let body: URLSearchParams;
+  if (refreshToken) {
+    body = new URLSearchParams({
+      clientId,
+      clientSecret,
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+    });
+  } else {
+    // Legacy: password grant. Only works if the user account was registered
+    // under this Client ID. For app-registered accounts use OAuth instead.
+    const username    = readEnvOrThrow('TTLOCK_USERNAME');
+    const passwordMd5 = process.env.TTLOCK_PASSWORD_MD5
+      || (process.env.TTLOCK_PASSWORD ? md5(process.env.TTLOCK_PASSWORD) : '');
+    if (!passwordMd5) {
+      throw new Error(
+        '[ttlock] Missing TTLOCK_REFRESH_TOKEN (preferred) or TTLOCK_PASSWORD_MD5. ' +
+        'Run the OAuth flow at /api/admin/ttlock/oauth-callback to mint a refresh_token.',
+      );
+    }
+    body = new URLSearchParams({
+      clientId,
+      clientSecret,
+      username,
+      password: passwordMd5,
+    });
+  }
 
   const res = await fetch(`${TTLOCK_API_BASE}/oauth2/token`, {
     method: 'POST',
@@ -298,11 +319,12 @@ export async function deleteKeyboardPasscode(params: {
 }
 
 /** True iff TTLock credentials are configured. Use to gracefully skip work
- *  during local dev when nobody has set up TTLock yet. */
+ *  during local dev when nobody has set up TTLock yet. Accepts either the
+ *  OAuth refresh_token (preferred) or the legacy username+password pair. */
 export function isTTLockConfigured(): boolean {
+  if (!process.env.TTLOCK_CLIENT_ID || !process.env.TTLOCK_CLIENT_SECRET) return false;
+  if (process.env.TTLOCK_REFRESH_TOKEN) return true;
   return Boolean(
-    process.env.TTLOCK_CLIENT_ID &&
-    process.env.TTLOCK_CLIENT_SECRET &&
     process.env.TTLOCK_USERNAME &&
     (process.env.TTLOCK_PASSWORD_MD5 || process.env.TTLOCK_PASSWORD),
   );
