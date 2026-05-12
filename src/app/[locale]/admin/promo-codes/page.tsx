@@ -7,8 +7,9 @@ import {
   listPromoCodes, createPromoCode, updatePromoCode, deletePromoCode,
 } from '@/lib/promoCodes';
 import type { PromoCode, PromoCodeType } from '@/types';
+import { venues } from '@/lib/venues';
 import {
-  Tag, Plus, Edit2, Trash2, X, Check, Loader2, Calendar, Users as UsersIcon, AlertCircle,
+  Tag, Plus, Edit2, Trash2, X, Check, Loader2, Calendar, Users as UsersIcon, AlertCircle, Building2,
 } from 'lucide-react';
 
 interface FormState {
@@ -23,6 +24,8 @@ interface FormState {
   perUserLimit: string;
   enabled: boolean;
   description: string;
+  venueIds: string[];
+  freeDrinks: boolean;
 }
 
 const EMPTY_FORM: FormState = {
@@ -37,6 +40,8 @@ const EMPTY_FORM: FormState = {
   perUserLimit: '1',
   enabled: true,
   description: '',
+  venueIds: [],
+  freeDrinks: false,
 };
 
 const TYPE_LABELS: Record<PromoCodeType, { zh: string; en: string; hint: { zh: string; en: string } }> = {
@@ -92,6 +97,8 @@ export default function PromoCodesPage() {
       perUserLimit: c.perUserLimit != null ? String(c.perUserLimit) : '',
       enabled: c.enabled,
       description: c.description || '',
+      venueIds: c.venueIds || [],
+      freeDrinks: !!c.freeDrinks,
     });
     setEditingId(c.id);
   }
@@ -115,24 +122,32 @@ export default function PromoCodesPage() {
     }
     setSaving(true);
     try {
+      // Firestore's client SDK refuses explicit `undefined` field values,
+      // so we build the payload by spreading the always-present fields
+      // and conditionally adding the optional ones.
       const num = (s: string) => s.trim() === '' ? null : Number(s);
-      const data = {
+      const minSubtotalVal = form.type === 'cash' ? num(form.minSubtotal) : null;
+      const data: Record<string, unknown> = {
         code: form.code,
         type: form.type,
-        percent: form.type === 'percent' ? Number(form.percent) : undefined,
-        amount: (form.type === 'cash' || form.type === 'per_pax') ? Number(form.amount) : undefined,
-        minSubtotal: form.type === 'cash' ? (num(form.minSubtotal) ?? undefined) : undefined,
         startDate: form.startDate || null,
         endDate: form.endDate || null,
         totalUsageLimit: num(form.totalUsageLimit),
         perUserLimit: num(form.perUserLimit),
         enabled: form.enabled,
-        description: form.description.trim() || undefined,
+        freeDrinks: form.freeDrinks,
+        venueIds: form.venueIds,
       };
+      if (form.type === 'percent') data.percent = Number(form.percent);
+      if (form.type === 'cash' || form.type === 'per_pax') data.amount = Number(form.amount);
+      if (minSubtotalVal != null) data.minSubtotal = minSubtotalVal;
+      const desc = form.description.trim();
+      if (desc) data.description = desc;
+
       if (editingId === 'new') {
-        await createPromoCode(data);
+        await createPromoCode(data as Parameters<typeof createPromoCode>[0]);
       } else if (editingId) {
-        await updatePromoCode(editingId, data);
+        await updatePromoCode(editingId, data as Parameters<typeof updatePromoCode>[1]);
       }
       setFlash({ kind: 'ok', text: locale === 'zh' ? '✅ 已儲存' : '✅ Saved' });
       setTimeout(() => setFlash(null), 2000);
@@ -318,6 +333,76 @@ export default function PromoCodesPage() {
             </Field>
           </div>
 
+          {/* Per-branch scope. Empty selection = applies to all branches. */}
+          <Field
+            label={
+              <span className="flex items-center gap-1.5">
+                <Building2 size={13} />
+                {locale === 'zh' ? '適用分店（唔揀 = 所有分店）' : 'Applies to branches (none = all)'}
+              </span>
+            }
+            fullWidth
+          >
+            <div className="flex flex-wrap gap-2">
+              {venues.map((v) => {
+                const checked = form.venueIds.includes(v.id);
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() =>
+                      setForm({
+                        ...form,
+                        venueIds: checked
+                          ? form.venueIds.filter((x) => x !== v.id)
+                          : [...form.venueIds, v.id],
+                      })
+                    }
+                    className={`px-3 py-1.5 rounded-pill text-xs font-medium border transition-all ${
+                      checked
+                        ? 'bg-gradient-pink text-white border-transparent shadow-glow'
+                        : 'bg-white/60 text-ink border-charcoal/15 hover:bg-white'
+                    }`}
+                  >
+                    {checked && '✓ '}{v.name[locale]}
+                  </button>
+                );
+              })}
+            </div>
+            {form.venueIds.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, venueIds: [] })}
+                className="mt-2 text-xs text-ink-soft underline hover:text-pink"
+              >
+                {locale === 'zh' ? '清除選擇（適用所有分店）' : 'Clear (apply to all)'}
+              </button>
+            )}
+          </Field>
+
+          {/* Free-drinks combo flag. Hidden when type is already free_drinks
+              (then it's already implied). */}
+          {form.type !== 'free_drinks' && (
+            <label className="flex items-start gap-2 text-sm pt-2">
+              <input
+                type="checkbox"
+                checked={form.freeDrinks}
+                onChange={(e) => setForm({ ...form, freeDrinks: e.target.checked })}
+                className="w-4 h-4 mt-0.5"
+              />
+              <span>
+                <span className="font-medium">
+                  {locale === 'zh' ? '額外送免費飲品' : 'Also include free drinks'}
+                </span>
+                <span className="block text-xs text-ink-soft mt-0.5">
+                  {locale === 'zh'
+                    ? '飲品 add-on 變免費，可同上面選擇嘅折扣 combo'
+                    : 'Drinks add-on becomes free on top of the monetary discount above'}
+                </span>
+              </span>
+            </label>
+          )}
+
           <label className="flex items-center gap-2 text-sm pt-2">
             <input
               type="checkbox"
@@ -418,7 +503,7 @@ export default function PromoCodesPage() {
   );
 }
 
-function Field({ label, children, fullWidth }: { label: string; children: React.ReactNode; fullWidth?: boolean }) {
+function Field({ label, children, fullWidth }: { label: React.ReactNode; children: React.ReactNode; fullWidth?: boolean }) {
   return (
     <div className={fullWidth ? 'md:col-span-2' : ''}>
       <label className="block text-xs font-semibold text-ink-soft uppercase tracking-wider mb-1.5">{label}</label>

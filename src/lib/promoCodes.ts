@@ -75,6 +75,9 @@ export function calcPromoDiscount(
     /** Cost of the drinks add-on already in the cart (0 if none). Used
      *  for free_drinks to know how much to discount. */
     drinksCost: number;
+    /** Venue the customer is booking — checked against `code.venueIds`
+     *  when the code is scoped to specific branches. */
+    venueId?: string;
   },
 ): PromoDiscount | null {
   if (!code.enabled) return null;
@@ -83,13 +86,22 @@ export function calcPromoDiscount(
   if (code.startDate && todayStr < code.startDate) return null;
   if (code.endDate && todayStr > code.endDate) return null;
 
+  // Branch scope check — empty / undefined venueIds = applies to every
+  // branch. Otherwise the booking's venueId must be in the allowlist.
+  if (code.venueIds && code.venueIds.length > 0) {
+    if (!ctx.venueId || !code.venueIds.includes(ctx.venueId)) return null;
+  }
+
   // Minimum subtotal check (cash type).
   if (code.type === 'cash' && code.minSubtotal && ctx.subtotal < code.minSubtotal) {
     return null;
   }
 
   let amount = 0;
-  let freeDrinks = false;
+  // Free drinks fires either when the primary type is free_drinks OR
+  // when the orthogonal `freeDrinks` flag was set as a combo with a
+  // monetary type.
+  let freeDrinks = code.type === 'free_drinks' || code.freeDrinks === true;
 
   switch (code.type) {
     case 'percent': {
@@ -108,9 +120,14 @@ export function calcPromoDiscount(
     }
     case 'free_drinks': {
       amount = Math.max(0, ctx.drinksCost);
-      freeDrinks = true;
       break;
     }
+  }
+
+  // Stack the drinks-cost discount on top of the monetary discount when
+  // the combo flag is on (not already done by the free_drinks case).
+  if (freeDrinks && code.type !== 'free_drinks') {
+    amount += Math.max(0, ctx.drinksCost);
   }
 
   // Cap discount to subtotal so we never go negative.

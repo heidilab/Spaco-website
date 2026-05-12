@@ -17,6 +17,9 @@ interface ValidateBody {
   adultEquiv?: number;
   drinksCost?: number;
   userId?: string;
+  /** Booking venue id — required when the code is branch-scoped, otherwise
+   *  ignored. Promos with no `venueIds` field apply to every branch. */
+  venueId?: string;
 }
 
 export async function POST(req: NextRequest) {
@@ -46,8 +49,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ valid: false, reason: 'disabled' });
     }
 
-    // Window check + minSubtotal check are inside calcPromoDiscount.
-    const discount = calcPromoDiscount(code, { subtotal, adultEquiv, drinksCost });
+    // Window check + minSubtotal check + venue scope are all inside calcPromoDiscount.
+    const discount = calcPromoDiscount(code, { subtotal, adultEquiv, drinksCost, venueId: body.venueId });
     if (!discount) {
       // Determine specific reason for clearer UI message.
       const todayStr = new Date().toISOString().slice(0, 10);
@@ -56,6 +59,9 @@ export async function POST(req: NextRequest) {
       }
       if (code.endDate && todayStr > code.endDate) {
         return NextResponse.json({ valid: false, reason: 'expired', endDate: code.endDate });
+      }
+      if (code.venueIds && code.venueIds.length > 0 && (!body.venueId || !code.venueIds.includes(body.venueId))) {
+        return NextResponse.json({ valid: false, reason: 'wrong_venue', venueIds: code.venueIds });
       }
       if (code.type === 'cash' && code.minSubtotal && subtotal < code.minSubtotal) {
         return NextResponse.json({ valid: false, reason: 'min_subtotal', minSubtotal: code.minSubtotal });

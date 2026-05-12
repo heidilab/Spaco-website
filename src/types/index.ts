@@ -433,6 +433,12 @@ export interface PromoCode {
   enabled: boolean;
   /** Optional human-friendly description shown in the admin list. */
   description?: string;
+  /** Venue ids the code is valid for. Empty / undefined = all branches. */
+  venueIds?: string[];
+  /** Orthogonal "also make the drinks add-on free" flag — combines with
+   *  any monetary `type` (percent / cash / per_pax). Legacy codes with
+   *  type='free_drinks' behave as if this is true regardless. */
+  freeDrinks?: boolean;
   createdAt: unknown;
   updatedAt?: unknown;
 }

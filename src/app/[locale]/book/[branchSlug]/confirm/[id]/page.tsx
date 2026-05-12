@@ -189,6 +189,7 @@ export default function ConfirmBookingPage() {
           adultEquiv: adultEquiv || 1,
           drinksCost,
           userId: user?.uid,
+          venueId: booking?.venueId,
         }),
       });
       const data = await res.json();
@@ -200,6 +201,7 @@ export default function ConfirmBookingPage() {
           if (reason === 'not_started') return locale === 'zh' ? `優惠由 ${data.startDate} 開始` : `Starts ${data.startDate}`;
           if (reason === 'expired') return locale === 'zh' ? `優惠已於 ${data.endDate} 結束` : `Expired ${data.endDate}`;
           if (reason === 'min_subtotal') return locale === 'zh' ? `需滿 HK$${data.minSubtotal} 先可用` : `Min subtotal HK$${data.minSubtotal}`;
+          if (reason === 'wrong_venue') return locale === 'zh' ? '此優惠碼唔適用於依間分店' : 'Code not valid at this branch';
           if (reason === 'sold_out') return locale === 'zh' ? '優惠碼已用完' : 'Code sold out';
           if (reason === 'per_user_limit') return locale === 'zh' ? `你已用過呢個 code（每人限 ${data.perUserLimit} 次）` : `You've already used this code (limit ${data.perUserLimit})`;
           return locale === 'zh' ? '優惠碼無效' : 'Invalid code';
