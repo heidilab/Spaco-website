@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { getSiteContent } from '@/lib/content';
 import { resendLockPasscode, setManualLockPasscode, tryGenerateLockPasscode } from '@/lib/lockPasscodeClient';
+import { cancelBooking } from '@/lib/cancelBooking';
 
 // Standard fixed deductions — same set as /admin/deposit so the
 // inline form stays in lockstep with the dedicated page.
@@ -336,7 +337,13 @@ export default function AdminBookingDetailPage() {
     if (!booking || next === booking.status) return;
     setStatusSaving(true);
     try {
-      await updateBookingStatus(booking.id, next);
+      if (next === 'cancelled') {
+        // Centralised cancel cleanup — frees blocked_slots, removes from
+        // Google Calendar, revokes any passcode, emails the customer.
+        await cancelBooking(booking.id);
+      } else {
+        await updateBookingStatus(booking.id, next);
+      }
       setStatusValue(next);
       // Mirror the trigger that /admin/receipts and /admin/bookings (list)
       // already fire: when admin manually flips a booking to "confirmed"

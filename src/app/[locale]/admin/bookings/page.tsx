@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { getAllBookings, updateBookingStatus, updateBookingBalance } from '@/lib/firestore';
-import { tryGenerateLockPasscode, revokeLockPasscode, resendLockPasscode } from '@/lib/lockPasscodeClient';
+import { tryGenerateLockPasscode, resendLockPasscode } from '@/lib/lockPasscodeClient';
+import { cancelBooking } from '@/lib/cancelBooking';
 import { BookingRecord, BookingDraft } from '@/types';
 import { venues } from '@/lib/venues';
 import { formatAddOnsForStaff } from '@/lib/pricing';
@@ -98,16 +99,12 @@ export default function AdminBookingsPage() {
   }, [statusFilter, search, bookings]);
 
   const handleStatusChange = async (bookingId: string, newStatus: string) => {
-    await updateBookingStatus(bookingId, newStatus);
-    // If cancelled, also remove from Google Calendar + revoke any TTLock
-    // passcode that was already issued (non-blocking, errors logged).
     if (newStatus === 'cancelled') {
-      fetch(`/api/google/push-booking?bookingId=${encodeURIComponent(bookingId)}`, {
-        method: 'DELETE',
-      }).catch(() => { /* gcal disconnected — fine */ });
-      revokeLockPasscode(bookingId).catch((err) =>
-        console.warn('[ttlock] revoke on cancel failed:', err),
-      );
+      // Centralised cancel cleanup — frees blocked_slots, removes from
+      // Google Calendar, revokes any passcode, emails the customer.
+      await cancelBooking(bookingId);
+    } else {
+      await updateBookingStatus(bookingId, newStatus);
     }
     // If transitioning into 'confirmed' (manual approve), trigger:
     //   • TTLock passcode generation (no-op if > 2 days out)

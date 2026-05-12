@@ -605,6 +605,62 @@ export function buildStaffBookingNotificationEmail(params: {
   };
 }
 
+// ─────────────────────────────────────────────────────────────
+// Booking cancelled — sent when admin cancels a booking.
+// ─────────────────────────────────────────────────────────────
+
+export function buildBookingCancelledEmail(params: {
+  customerName: string;
+  venueName: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  endDate?: string;
+  bookingId: string;
+  whatsappLink: string;
+}) {
+  return {
+    subject: `🔴 SPACO 預約已取消 — ${params.venueName} (${params.date})`,
+    html: `
+      <div style="font-family: ${EMAIL_FONT}; max-width: 600px; margin: 0 auto; background: ${EMAIL_BG}; padding: 40px 20px;">
+        ${emailHeader('預約已取消 · BOOKING CANCELLED')}
+        <div style="background: white; padding: 32px; border-radius: 20px; margin-bottom: 16px;">
+          <p style="margin: 0 0 14px; font-size: 16px; color: ${EMAIL_INK};">Hi ${params.customerName},</p>
+          <p style="margin: 0 0 22px; color: #666; line-height: 1.7;">
+            我哋已經處理咗你嘅取消申請。以下係你已取消嘅預訂資料以作記錄。
+          </p>
+
+          <div style="background: #FEE2E2; border-left: 4px solid #EF4444; border-radius: 14px; padding: 16px 20px; margin: 0 0 22px;">
+            <p style="margin: 0; font-size: 13px; color: #991B1B; font-weight: 600;">
+              ⚠️ 此預訂已取消 — 場地時段已釋放
+            </p>
+          </div>
+
+          <h3 style="margin: 0 0 12px; font-size: 14px; color: ${EMAIL_INK}; letter-spacing: 0.04em; text-transform: uppercase;">📋 預訂資料</h3>
+          <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 22px;">
+            <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">場地</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600; text-decoration: line-through; color: #999;">${params.venueName}</td></tr>
+            <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">日期</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600; text-decoration: line-through; color: #999;">${params.date}</td></tr>
+            <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">時段</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600; text-decoration: line-through; color: #999;">${formatTimeRange(params.startTime, params.endTime, params.date, params.endDate)}</td></tr>
+            <tr><td style="padding: 10px 0; color: #999; font-size: 13px;">預訂編號</td><td style="padding: 10px 0; text-align: right; font-family: 'Courier New', monospace; font-size: 12px; color: #999;">${params.bookingId}</td></tr>
+          </table>
+
+          <div style="background: #F8F8F8; border-radius: 14px; padding: 16px 20px; font-size: 13px; color: #444; line-height: 1.7;">
+            <p style="margin: 0 0 6px; font-weight: 700; color: ${EMAIL_INK};">💸 關於退款</p>
+            <p style="margin: 0;">如有退款查詢或想重新預約，請<strong>WhatsApp 我哋</strong>，我哋會盡快回覆。</p>
+          </div>
+
+          <div style="text-align: center; margin: 24px 0 4px;">
+            <a href="${params.whatsappLink}" style="display: inline-block; background: #25D366; color: white; padding: 12px 28px; border-radius: 999px; text-decoration: none; font-weight: 600; font-size: 14px;">
+              💬 WhatsApp 客服
+            </a>
+          </div>
+        </div>
+        ${emailFooter()}
+      </div>
+    `,
+  };
+}
+
 // `sendStaffBookingNotification` lives in `emailAutomations.ts` (server-only).
 // We keep `email.ts` free of any firebase-admin dependency so client bundles
 // (e.g. /my-bookings) can safely import the pure template helpers and

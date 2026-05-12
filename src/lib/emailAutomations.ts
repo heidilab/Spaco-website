@@ -13,6 +13,7 @@ import { sendEmail, buildStaffBookingNotificationEmail, buildStaffReceiptPending
 
 export type EmailAutomationKey =
   | 'booking_confirmation'
+  | 'booking_cancelled'
   | 'staff_booking_notification'
   | 'staff_receipt_pending'
   | 'offline_payment_pending'
@@ -46,6 +47,19 @@ export const EMAIL_AUTOMATIONS: EmailAutomationDef[] = [
     trigger: {
       zh: 'Stripe 付款成功 / Admin 手動 confirm offline 付款',
       en: 'Stripe payment success / Admin confirms offline payment',
+    },
+    audience: 'customer',
+  },
+  {
+    key: 'booking_cancelled',
+    name: { zh: '預約取消通知', en: 'Booking Cancellation' },
+    description: {
+      zh: '當 admin 喺後台取消 booking 時自動寄畀客人，講明預訂已取消 + 退款指引。',
+      en: 'Auto-fires when an admin cancels a booking. Tells the customer their booking is cancelled and how to ask about refunds.',
+    },
+    trigger: {
+      zh: 'Admin 喺後台將 booking status 改做「已取消」',
+      en: 'Admin flips booking status to "cancelled"',
     },
     audience: 'customer',
   },

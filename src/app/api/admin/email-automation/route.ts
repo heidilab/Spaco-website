@@ -8,7 +8,7 @@ import {
   buildFPSReminderEmail, buildBalanceDueReminderEmail,
   buildLockPasscodeEmail, buildPostEventEmail, buildBirthdayEmail,
   buildWelcomeEmail, buildStaffBookingNotificationEmail,
-  buildStaffReceiptPendingEmail, sendEmail,
+  buildStaffReceiptPendingEmail, buildBookingCancelledEmail, sendEmail,
 } from '@/lib/email';
 
 export const runtime = 'nodejs';
@@ -40,6 +40,16 @@ function buildPreview(key: EmailAutomationKey): { subject: string; html: string 
         balanceDueDate: '2026-06-13',
         addOnsLine: 'BBQ Standard Package ×15, Drinks Package ×15, Shisha 水煙 ×2 (A·芒果×1, C·提子×1, +人手setup)',
         paymentMethod: 'Stripe',
+      });
+    case 'booking_cancelled':
+      return buildBookingCancelledEmail({
+        customerName: SAMPLE.customerName,
+        venueName:    SAMPLE.venueName,
+        date:         SAMPLE.date,
+        startTime:    SAMPLE.startTime,
+        endTime:      SAMPLE.endTime,
+        bookingId:    SAMPLE.bookingId,
+        whatsappLink: SAMPLE.whatsappLink,
       });
     case 'staff_receipt_pending':
       return buildStaffReceiptPendingEmail({

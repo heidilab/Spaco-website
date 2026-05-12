@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
-import { getAllBookings, updateBookingStatus, deleteBlockedSlotsByBooking } from '@/lib/firestore';
-import { tryGenerateLockPasscode, revokeLockPasscode } from '@/lib/lockPasscodeClient';
+import { getAllBookings, updateBookingStatus } from '@/lib/firestore';
+import { tryGenerateLockPasscode } from '@/lib/lockPasscodeClient';
+import { cancelBooking } from '@/lib/cancelBooking';
 import { BookingRecord } from '@/types';
 import { venues } from '@/lib/venues';
 import { Check, X, Eye, Clock, AlertCircle } from 'lucide-react';
@@ -78,15 +79,7 @@ export default function AdminReceiptsPage() {
   };
 
   const handleReject = async (bookingId: string) => {
-    await updateBookingStatus(bookingId, 'cancelled');
-    await deleteBlockedSlotsByBooking(bookingId);
-    // Remove from Google Calendar (Direction A on cancel).
-    fetch(`/api/google/push-booking?bookingId=${encodeURIComponent(bookingId)}`, {
-      method: 'DELETE',
-    }).catch(() => { /* gcal disconnected — fine */ });
-    // If a passcode somehow already exists (shouldn't for awaiting_payment,
-    // but defensive), revoke it on TTLock so the door access is killed.
-    revokeLockPasscode(bookingId).catch(() => { /* no-op */ });
+    await cancelBooking(bookingId);
     await loadBookings();
   };
 
