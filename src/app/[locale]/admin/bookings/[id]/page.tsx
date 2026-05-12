@@ -1265,6 +1265,10 @@ function LockPasscodePanel({ booking, locale, onUpdated }: LockPasscodePanelProp
             {locale === 'zh'
               ? '此場地暫未配 TTLock。請手動輸入鎖上嘅密碼，系統會自動 email 畀客人。'
               : 'This venue is not on TTLock. Enter the physical-lock passcode and we will email it to the customer.'}
+            {' '}
+            <Link href="/admin/help/lock-passcode-manual" className="text-pink underline whitespace-nowrap">
+              📘 {locale === 'zh' ? '查看 SOP' : 'View SOP'}
+            </Link>
           </p>
           <div className="flex items-center gap-2">
             <input
