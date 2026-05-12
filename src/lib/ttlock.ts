@@ -114,68 +114,82 @@ function readEnvOrThrow(name: string): string {
   return v;
 }
 
-/**
- * Fetch a fresh access_token. Prefers the refresh_token grant (OAuth flow);
- * falls back to the password grant for legacy setups.
- *
- * Refresh-token grant is the recommended path because:
- *   - The user's TTLock password isn't stored anywhere on our side.
- *   - The grant survives the customer changing their TTLock password.
- *   - TTLock's password grant only works for accounts registered under your
- *     own Client ID — existing app-registered accounts must go through
- *     OAuth at /api/admin/ttlock/oauth-callback to bind first.
- */
-async function fetchAccessToken(): Promise<CachedToken> {
-  const clientId     = readEnvOrThrow('TTLOCK_CLIENT_ID');
-  const clientSecret = readEnvOrThrow('TTLOCK_CLIENT_SECRET');
-  const refreshToken = process.env.TTLOCK_REFRESH_TOKEN;
+/** Build the token-endpoint body for a refresh_token grant. */
+function refreshTokenBody(clientId: string, clientSecret: string, refreshToken: string): URLSearchParams {
+  return new URLSearchParams({
+    clientId,
+    clientSecret,
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken,
+  });
+}
 
-  let body: URLSearchParams;
-  if (refreshToken) {
-    body = new URLSearchParams({
-      clientId,
-      clientSecret,
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-    });
-  } else {
-    // Legacy: password grant. Only works if the user account was registered
-    // under this Client ID. For app-registered accounts use OAuth instead.
-    const username    = readEnvOrThrow('TTLOCK_USERNAME');
-    const passwordMd5 = process.env.TTLOCK_PASSWORD_MD5
-      || (process.env.TTLOCK_PASSWORD ? md5(process.env.TTLOCK_PASSWORD) : '');
-    if (!passwordMd5) {
-      throw new Error(
-        '[ttlock] Missing TTLOCK_REFRESH_TOKEN (preferred) or TTLOCK_PASSWORD_MD5. ' +
-        'Run the OAuth flow at /api/admin/ttlock/oauth-callback to mint a refresh_token.',
-      );
-    }
-    body = new URLSearchParams({
-      clientId,
-      clientSecret,
-      username,
-      password: passwordMd5,
-    });
-  }
+/** Build the token-endpoint body for the password grant. */
+function passwordGrantBody(clientId: string, clientSecret: string, username: string, passwordMd5: string): URLSearchParams {
+  return new URLSearchParams({ clientId, clientSecret, username, password: passwordMd5 });
+}
 
+async function postTokenRequest(body: URLSearchParams): Promise<TTLockTokenResponse> {
   const res = await fetch(`${TTLOCK_API_BASE}/oauth2/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
   });
-  const data = (await res.json()) as TTLockTokenResponse;
+  return (await res.json()) as TTLockTokenResponse;
+}
 
-  if (data.errcode || !data.access_token) {
+/**
+ * Fetch a fresh access_token. Tries the refresh_token grant first if one is
+ * configured, then falls back to the password grant (and finally throws).
+ *
+ * Why the fallback: TTLock invalidates refresh_tokens on its own schedule
+ * (we hit this in production), and Vercel env vars can't be mutated at
+ * runtime. Keeping a TTLOCK_USERNAME + TTLOCK_PASSWORD_MD5 pair lets us
+ * silently recover the next time the deployment runs.
+ */
+async function fetchAccessToken(): Promise<CachedToken> {
+  const clientId     = readEnvOrThrow('TTLOCK_CLIENT_ID');
+  const clientSecret = readEnvOrThrow('TTLOCK_CLIENT_SECRET');
+  const refreshToken = process.env.TTLOCK_REFRESH_TOKEN;
+  const username     = process.env.TTLOCK_USERNAME;
+  const passwordMd5  = process.env.TTLOCK_PASSWORD_MD5
+    || (process.env.TTLOCK_PASSWORD ? md5(process.env.TTLOCK_PASSWORD) : '');
+
+  if (!refreshToken && !(username && passwordMd5)) {
     throw new Error(
-      `[ttlock] Auth failed: ${data.errcode} ${data.errmsg || 'unknown'}`,
+      '[ttlock] No credentials configured. Set TTLOCK_REFRESH_TOKEN, or ' +
+      'TTLOCK_USERNAME + TTLOCK_PASSWORD_MD5.',
     );
   }
-  return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token,
-    // Refresh 1 day early to avoid using a token that expires mid-request
-    expiresAt: Date.now() + (data.expires_in - 86400) * 1000,
-  };
+
+  // Try refresh_token first if present. On invalid_refresh_token (10011) or
+  // similar auth failure, fall through to password grant when available.
+  let lastErr = '';
+  if (refreshToken) {
+    const data = await postTokenRequest(refreshTokenBody(clientId, clientSecret, refreshToken));
+    if (data.access_token) {
+      return {
+        accessToken:  data.access_token,
+        refreshToken: data.refresh_token,
+        expiresAt:    Date.now() + (data.expires_in - 86400) * 1000,
+      };
+    }
+    lastErr = `refresh_token: ${data.errcode} ${data.errmsg || 'unknown'}`;
+  }
+
+  if (username && passwordMd5) {
+    const data = await postTokenRequest(passwordGrantBody(clientId, clientSecret, username, passwordMd5));
+    if (data.access_token) {
+      return {
+        accessToken:  data.access_token,
+        refreshToken: data.refresh_token,
+        expiresAt:    Date.now() + (data.expires_in - 86400) * 1000,
+      };
+    }
+    lastErr = `${lastErr ? lastErr + '; ' : ''}password: ${data.errcode} ${data.errmsg || 'unknown'}`;
+  }
+
+  throw new Error(`[ttlock] Auth failed: ${lastErr}`);
 }
 
 async function getAccessToken(): Promise<string> {
