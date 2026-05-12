@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
       date: string;
       startTime: string;
       endTime: string;
+      endDate?: string;
       pricing: { deposit: number };
     };
 
