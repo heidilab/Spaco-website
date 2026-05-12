@@ -76,15 +76,22 @@ export async function POST(req: NextRequest) {
 
     // Per-user usage cap — count completed bookings by this user with
     // this code. Skipped when no userId given (public preview).
+    //
+    // We deliberately query by userId alone (which is already covered
+    // by an automatic single-field index) and filter the rest in memory.
+    // A 3-clause query (userId + promoCodeId + promoRedeemedAt != null)
+    // needs a composite index that Firestore won't create on demand —
+    // we hit FAILED_PRECONDITION on the first real customer and the
+    // whole validate route 500s.
     if (code.perUserLimit != null && body.userId) {
       const usage = await adminDb
         .collection('bookings')
         .where('userId', '==', body.userId)
-        .where('promoCodeId', '==', code.id)
-        .where('promoRedeemedAt', '!=', null)
-        .count()
         .get();
-      const count = usage.data().count;
+      const count = usage.docs.reduce((acc, d) => {
+        const data = d.data() as { promoCodeId?: string; promoRedeemedAt?: unknown };
+        return acc + (data.promoCodeId === code.id && data.promoRedeemedAt != null ? 1 : 0);
+      }, 0);
       if (count >= code.perUserLimit) {
         return NextResponse.json({ valid: false, reason: 'per_user_limit', perUserLimit: code.perUserLimit });
       }
