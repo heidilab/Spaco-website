@@ -8,7 +8,7 @@ import { signInWithGoogle } from '@/lib/auth';
 import {
   LayoutDashboard, CalendarDays, ListOrdered,
   ChevronLeft, Shield, Image, Users, UserCog, Receipt, FileText, HelpCircle, Search, CalendarClock, Mail, Tag, BarChart3,
-  BookOpen, LogIn,
+  BookOpen, LogIn, Menu, X,
 } from 'lucide-react';
 
 const allSidebarLinks = [
@@ -35,6 +35,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const pathname = usePathname();
   const [signingIn, setSigningIn] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   async function handleGoogleSignIn() {
     setSigningIn(true);
@@ -146,52 +147,97 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     marketing: { zh: '市場推廣', en: 'Marketing' },
   };
 
+  // Body of the sidebar — reused by the desktop fixed aside and the
+  // mobile slide-in drawer so the two stay in lockstep.
+  const sidebarBody = (
+    <div className="m-4 mr-0 flex-1 glass-strong rounded-3xl flex flex-col overflow-hidden">
+      <div className="p-5 border-b border-white/40">
+        <h2 className="text-lg font-bold font-display flex items-center gap-2 text-ink">
+          <span className="w-7 h-7 rounded-xl bg-gradient-pink flex items-center justify-center text-white shadow-glow">
+            <Shield size={14} />
+          </span>
+          Admin
+        </h2>
+        <p className="text-xs text-ink-soft mt-2 truncate">{user.email}</p>
+        <span className="inline-block mt-2 px-2.5 py-0.5 rounded-pill text-[10px] font-bold bg-gradient-pink text-white uppercase tracking-wider">
+          {roleLabels[userRole || 'admin']?.[locale]}
+        </span>
+      </div>
+
+      <nav className="flex-1 py-3 overflow-y-auto">
+        {visibleLinks.map((link) => {
+          const isActive = pathname === link.href || (link.href !== '/admin' && pathname.startsWith(link.href));
+          return (
+            <Link
+              key={link.href}
+              href={link.href}
+              onClick={() => setMobileNavOpen(false)}
+              className={`flex items-center gap-3 mx-3 px-4 py-2.5 my-0.5 rounded-2xl text-sm transition-all ${
+                isActive
+                  ? 'bg-gradient-pink text-white font-semibold shadow-glow'
+                  : 'text-ink-soft hover:bg-white/60 hover:text-ink'
+              }`}
+            >
+              <link.icon size={18} />
+              {link.label[locale]}
+            </Link>
+          );
+        })}
+      </nav>
+
+      <div className="p-4 border-t border-white/40">
+        <Link
+          href="/"
+          onClick={() => setMobileNavOpen(false)}
+          className="flex items-center gap-2 text-sm text-ink-soft hover:text-pink transition-colors"
+        >
+          <ChevronLeft size={16} />
+          {locale === 'zh' ? '返回網站' : 'Back to Site'}
+        </Link>
+      </div>
+    </div>
+  );
+
   return (
     <div className="pt-28 min-h-screen flex">
-      {/* Sidebar */}
+      {/* Desktop sidebar (lg+) */}
       <aside className="w-64 fixed left-0 top-28 bottom-0 hidden lg:flex flex-col">
-        <div className="m-4 mr-0 flex-1 glass-strong rounded-3xl flex flex-col overflow-hidden">
-          <div className="p-5 border-b border-white/40">
-            <h2 className="text-lg font-bold font-display flex items-center gap-2 text-ink">
-              <span className="w-7 h-7 rounded-xl bg-gradient-pink flex items-center justify-center text-white shadow-glow">
-                <Shield size={14} />
-              </span>
-              Admin
-            </h2>
-            <p className="text-xs text-ink-soft mt-2 truncate">{user.email}</p>
-            <span className="inline-block mt-2 px-2.5 py-0.5 rounded-pill text-[10px] font-bold bg-gradient-pink text-white uppercase tracking-wider">
-              {roleLabels[userRole || 'admin']?.[locale]}
-            </span>
-          </div>
-
-          <nav className="flex-1 py-3 overflow-y-auto">
-            {visibleLinks.map((link) => {
-              const isActive = pathname === link.href || (link.href !== '/admin' && pathname.startsWith(link.href));
-              return (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className={`flex items-center gap-3 mx-3 px-4 py-2.5 my-0.5 rounded-2xl text-sm transition-all ${
-                    isActive
-                      ? 'bg-gradient-pink text-white font-semibold shadow-glow'
-                      : 'text-ink-soft hover:bg-white/60 hover:text-ink'
-                  }`}
-                >
-                  <link.icon size={18} />
-                  {link.label[locale]}
-                </Link>
-              );
-            })}
-          </nav>
-
-          <div className="p-4 border-t border-white/40">
-            <Link href="/" className="flex items-center gap-2 text-sm text-ink-soft hover:text-pink transition-colors">
-              <ChevronLeft size={16} />
-              {locale === 'zh' ? '返回網站' : 'Back to Site'}
-            </Link>
-          </div>
-        </div>
+        {sidebarBody}
       </aside>
+
+      {/* Mobile hamburger — small floating pill on the top-left of the
+          content area, visible only below the lg breakpoint. */}
+      <button
+        type="button"
+        onClick={() => setMobileNavOpen(true)}
+        className="lg:hidden fixed top-32 left-4 z-30 inline-flex items-center gap-2 px-3 py-2 rounded-full glass-strong text-ink shadow-md"
+        aria-label={locale === 'zh' ? '打開選單' : 'Open menu'}
+      >
+        <Menu size={18} />
+        <span className="text-xs font-semibold">{locale === 'zh' ? '選單' : 'Menu'}</span>
+      </button>
+
+      {/* Mobile drawer (below lg). Backdrop closes on tap; the inner
+          panel slides in from the left and contains the same sidebarBody. */}
+      {mobileNavOpen && (
+        <>
+          <div
+            className="lg:hidden fixed inset-0 z-40 bg-black/40"
+            onClick={() => setMobileNavOpen(false)}
+          />
+          <aside className="lg:hidden fixed left-0 top-0 bottom-0 z-50 w-72 flex flex-col">
+            <button
+              type="button"
+              onClick={() => setMobileNavOpen(false)}
+              className="absolute top-6 right-6 z-50 p-1.5 rounded-full bg-white/80 text-ink"
+              aria-label={locale === 'zh' ? '關閉選單' : 'Close menu'}
+            >
+              <X size={18} />
+            </button>
+            {sidebarBody}
+          </aside>
+        </>
+      )}
 
       {/* Main Content */}
       <main className="flex-1 lg:ml-64 p-6 md:p-10">
