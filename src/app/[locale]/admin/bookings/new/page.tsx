@@ -6,11 +6,12 @@ import { Link } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
 import { venues, getVenueBySlug } from '@/lib/venues';
 import { addOns as ALL_ADDONS, calculatePricing, calculateDeposit } from '@/lib/pricing';
+import { ALL_PACKAGES, getPackageBySlug, CATEGORY_LABEL } from '@/lib/packages';
 import { createBookingDraft, buildClaimUrl } from '@/lib/bookingDrafts';
 import { normalizeHkPhone, isValidHkPhone, formatHkPhone } from '@/lib/whatsapp';
 import {
   Calendar, Clock, Users, Plus, Minus, Link as LinkIcon, Copy, Check, ArrowLeft, MessageCircle,
-  Loader2, AlertCircle,
+  Loader2, AlertCircle, Tag, Package as PackageIcon, X as XIcon,
 } from 'lucide-react';
 
 function toMinutes(hhmm: string): number {
@@ -51,6 +52,24 @@ export default function AdminNewBookingPage() {
   const adultEquiv = adultCount + 0.5 * childCount;
   const [addOnQty, setAddOnQty] = useState<Record<string, number>>({});
   const [hasBYOFood, setHasBYOFood] = useState<boolean>(false);
+
+  // ── Package selector ───────────────────────────
+  // null = à-la-carte (default). When set to a slug, venue + hours lock
+  // to the package and the pricing card replaces the per-hour subtotal
+  // with the fixed package fee.
+  const [packageSlug, setPackageSlug] = useState<string | null>(null);
+
+  // ── Promo code (validated via /api/promo/validate) ────────────────
+  const [promoInput, setPromoInput] = useState('');
+  const [promoChecking, setPromoChecking] = useState(false);
+  const [promoError, setPromoError] = useState<string | null>(null);
+  const [promo, setPromo] = useState<{
+    codeId: string;
+    code: string;
+    type: 'percent' | 'cash' | 'free_drinks' | 'per_pax';
+    amount: number;
+    freeDrinks: boolean;
+  } | null>(null);
 
   // ── Customer info ───────────────────────────
   const [customerName, setCustomerName] = useState('');
@@ -93,10 +112,35 @@ export default function AdminNewBookingPage() {
     .filter(([, q]) => q > 0)
     .map(([id, quantity]) => ({ id, quantity }));
 
+  // Resolve the picked package (if any) so the venue + hours lock-ins
+  // and the override pricing logic share a single source of truth.
+  const selectedPackage = useMemo(
+    () => (packageSlug ? getPackageBySlug(packageSlug) : null),
+    [packageSlug],
+  );
+
+  // When a package is picked, force the booking to its locked venue + duration.
+  useEffect(() => {
+    if (!selectedPackage) return;
+    if (venueId !== selectedPackage.venueId) setVenueId(selectedPackage.venueId);
+    if (hours !== selectedPackage.durationHours) setHours(selectedPackage.durationHours);
+  }, [selectedPackage, venueId, hours]);
+
   const pricing = venue
     ? calculatePricing(venue, isWeekend, hours, guestCount, selectedAddOnList, childCount)
     : null;
-  const deposit = pricing ? calculateDeposit(pricing.subtotal) : 0;
+
+  // Apply package override: subtotal becomes the fixed package fee plus
+  // any à-la-carte add-ons admin added on top. Then promo discount cuts
+  // off the top. Deposit recomputed against the effective subtotal so
+  // the customer sees the right "pay now" figure on the claim page.
+  const subtotalAfterPackage = pricing
+    ? (selectedPackage
+        ? selectedPackage.price + pricing.addOnTotal
+        : pricing.subtotal)
+    : 0;
+  const effectiveSubtotal = Math.max(0, subtotalAfterPackage - (promo?.amount || 0));
+  const deposit = selectedPackage?.deposit ?? calculateDeposit(effectiveSubtotal);
 
   const endTime = useMemo(() => {
     if (!startTime) return '';
@@ -120,6 +164,58 @@ export default function AdminNewBookingPage() {
   const whatsappValid = !customerWhatsapp || isValidHkPhone(customerWhatsapp);
   const canSubmit = !!user && !!date && !!startTime && hours > 0 && guestCount > 0 && !!venue && !!pricing && whatsappValid && !submitting;
 
+  async function handleApplyPromo() {
+    const code = promoInput.trim().toUpperCase();
+    if (!code) return;
+    setPromoChecking(true);
+    setPromoError(null);
+    try {
+      // For free-drinks promos we tell the server to project the drinks cost
+      // even if the cart doesn't include drinks — admin can pre-apply the
+      // benefit and the customer claim flow will add drinks automatically.
+      const drinksInCart = selectedAddOnList.some((a) => a.id === 'drinks');
+      const projectedDrinksCost = drinksInCart ? 0 : Math.round(25 * adultEquiv);
+      const res = await fetch('/api/promo/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code,
+          subtotal: subtotalAfterPackage,
+          adultEquiv: adultEquiv || 1,
+          drinksCost: drinksInCart ? Math.round(25 * adultEquiv) : projectedDrinksCost,
+          venueId,
+          // No userId here — admin is creating, not the customer.
+        }),
+      });
+      const data = await res.json();
+      if (!data.valid) {
+        setPromo(null);
+        setPromoError(
+          data.reason === 'not_found'   ? (locale === 'zh' ? '優惠碼不存在' : 'Code not found')
+          : data.reason === 'disabled'  ? (locale === 'zh' ? '優惠碼已暫停' : 'Code disabled')
+          : data.reason === 'expired'   ? (locale === 'zh' ? '優惠碼已過期' : 'Code expired')
+          : data.reason === 'not_started' ? (locale === 'zh' ? `優惠由 ${data.startDate} 開始` : `Starts ${data.startDate}`)
+          : data.reason === 'wrong_venue' ? (locale === 'zh' ? '此優惠碼唔適用於依間分店' : 'Code not valid at this branch')
+          : data.reason === 'sold_out'  ? (locale === 'zh' ? '優惠碼已用完' : 'Code sold out')
+          : data.reason === 'min_subtotal' ? (locale === 'zh' ? `需滿 HK$${data.minSubtotal}` : `Min subtotal HK$${data.minSubtotal}`)
+          : (locale === 'zh' ? `優惠碼無效（${data.reason || 'unknown'}）` : `Invalid code (${data.reason || 'unknown'})`)
+        );
+        return;
+      }
+      setPromo({
+        codeId: data.codeId,
+        code: data.code,
+        type: data.type,
+        amount: data.amount,
+        freeDrinks: data.freeDrinks,
+      });
+    } catch (err) {
+      setPromoError(err instanceof Error ? err.message : 'Failed');
+    } finally {
+      setPromoChecking(false);
+    }
+  }
+
   const handleSubmit = async () => {
     if (!canSubmit || !user || !venue || !pricing) return;
     setSubmitting(true);
@@ -142,13 +238,22 @@ export default function AdminNewBookingPage() {
         pricing: {
           baseCharge: pricing.baseCharge,
           addOnTotal: pricing.addOnTotal,
-          subtotal: pricing.subtotal,
+          subtotal: subtotalAfterPackage,
           deposit,
         },
         ...(customerName ? { customerName } : {}),
         ...(customerWhatsapp ? { customerWhatsapp: normalizeHkPhone(customerWhatsapp) || customerWhatsapp } : {}),
         ...(customerEmail ? { customerEmail } : {}),
         ...(notes ? { notes } : {}),
+        ...(packageSlug ? { packageSlug } : {}),
+        ...(promo
+          ? {
+              promoCode: promo.code,
+              promoCodeId: promo.codeId,
+              promoDiscount: promo.amount,
+              ...(promo.freeDrinks ? { promoFreeDrinksCost: promo.amount } : {}),
+            }
+          : {}),
       });
       setDraftId(id);
     } catch (err) {
@@ -302,20 +407,73 @@ export default function AdminNewBookingPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
+          {/* Package selector. À-la-carte default; picking a package locks
+              the venue + duration and replaces the per-hour subtotal with
+              the fixed package fee. */}
+          <div className="glass-card p-6">
+            <h3 className="text-base font-bold mb-3 text-ink flex items-center gap-2">
+              <PackageIcon size={16} className="text-pink" />
+              {locale === 'zh' ? '套餐（可選）' : 'Package (optional)'}
+            </h3>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setPackageSlug(null)}
+                className={`px-3 py-2 rounded-xl text-sm font-medium transition-all border-2 ${
+                  !packageSlug
+                    ? 'bg-gradient-pink text-white border-transparent shadow-glow'
+                    : 'bg-white/85 text-ink border-charcoal/15 hover:border-pink/60'
+                }`}
+              >
+                {locale === 'zh' ? '自訂預訂（à la carte）' : 'Custom (à la carte)'}
+              </button>
+              {ALL_PACKAGES.map((p) => (
+                <button
+                  key={p.slug}
+                  type="button"
+                  onClick={() => setPackageSlug(p.slug)}
+                  className={`px-3 py-2 rounded-xl text-sm font-medium transition-all border-2 ${
+                    packageSlug === p.slug
+                      ? 'bg-gradient-pink text-white border-transparent shadow-glow'
+                      : 'bg-white/85 text-ink border-charcoal/15 hover:border-pink/60'
+                  }`}
+                >
+                  {p.name[locale]}
+                  <span className="ml-2 text-[10px] opacity-80">${p.price.toLocaleString()}</span>
+                </button>
+              ))}
+            </div>
+            {selectedPackage && (
+              <p className="text-xs text-ink-soft mt-3">
+                {locale === 'zh'
+                  ? `已鎖定：${selectedPackage.name.zh}．${selectedPackage.durationHours} 小時．場地 ${venue?.name.zh}`
+                  : `Locked: ${selectedPackage.name.en} · ${selectedPackage.durationHours}h · ${venue?.name.en}`}
+              </p>
+            )}
+          </div>
+
           {/* Venue */}
           <div className="glass-card p-6">
-            <h3 className="text-base font-bold mb-4 text-ink">{locale === 'zh' ? '揀場地' : 'Venue'}</h3>
+            <h3 className="text-base font-bold mb-4 text-ink">
+              {locale === 'zh' ? '揀場地' : 'Venue'}
+              {selectedPackage && (
+                <span className="ml-2 text-xs font-normal text-ink-soft">
+                  {locale === 'zh' ? '（套餐已鎖定）' : '(locked by package)'}
+                </span>
+              )}
+            </h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
               {venues.map((v) => (
                 <button
                   key={v.id}
                   type="button"
+                  disabled={!!selectedPackage}
                   onClick={() => setVenueId(v.id)}
                   className={`px-3 py-2.5 rounded-xl text-sm font-semibold transition-all border-2 ${
                     venueId === v.id
                       ? 'bg-gradient-pink text-white border-transparent shadow-glow'
                       : 'bg-white/85 text-ink border-charcoal/15 hover:border-pink/60'
-                  }`}
+                  } disabled:opacity-40 disabled:cursor-not-allowed`}
                 >
                   {v.name[locale]}
                 </button>
@@ -459,6 +617,53 @@ export default function AdminNewBookingPage() {
             </label>
           </div>
 
+          {/* Promo code — validated against /api/promo/validate just like
+              the customer confirm page. Applied promo persists to the draft
+              so the customer sees it pre-applied at claim time. */}
+          <div className="glass-card p-6 space-y-3">
+            <h3 className="text-base font-bold text-ink flex items-center gap-2">
+              <Tag size={16} className="text-pink" />
+              {locale === 'zh' ? '優惠碼（可選）' : 'Promo code (optional)'}
+            </h3>
+            {promo ? (
+              <div className="flex items-start justify-between gap-3 p-3 rounded-xl bg-emerald-50 border border-emerald-200">
+                <div className="text-sm">
+                  <p className="font-bold text-emerald-900 font-mono">{promo.code}</p>
+                  <p className="text-xs text-emerald-700 mt-0.5">
+                    {locale === 'zh' ? `折扣：HK$${promo.amount.toLocaleString()}` : `Discount: HK$${promo.amount.toLocaleString()}`}
+                    {promo.freeDrinks ? (locale === 'zh' ? '．免費飲品' : ' · free drinks') : ''}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setPromo(null); setPromoInput(''); setPromoError(null); }}
+                  className="p-1 rounded-md text-ink-soft hover:bg-white"
+                  aria-label="Clear promo"
+                >
+                  <XIcon size={14} />
+                </button>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <input
+                  value={promoInput}
+                  onChange={(e) => setPromoInput(e.target.value.toUpperCase())}
+                  placeholder={locale === 'zh' ? '輸入優惠碼' : 'Enter code'}
+                  className="flex-1 px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85 font-mono tracking-wider"
+                />
+                <button
+                  type="button"
+                  onClick={handleApplyPromo}
+                  disabled={promoChecking || !promoInput.trim()}
+                  className="px-4 py-2 rounded-xl bg-gradient-pink text-white text-sm font-semibold disabled:opacity-40"
+                >
+                  {promoChecking ? <Loader2 size={14} className="animate-spin" /> : (locale === 'zh' ? '應用' : 'Apply')}
+                </button>
+              </div>
+            )}
+            {promoError && <p className="text-xs text-rose-500">{promoError}</p>}
+          </div>
+
           {/* Customer info */}
           <div className="glass-card p-6 space-y-3">
             <h3 className="text-base font-bold text-ink">{locale === 'zh' ? '客人資料（選填）' : 'Customer info (optional)'}</h3>
@@ -481,17 +686,36 @@ export default function AdminNewBookingPage() {
             {pricing ? (
               <>
                 <div className="space-y-1.5 text-sm mb-4">
-                  {pricing.breakdown.map((b, i) => (
-                    <div key={i} className="flex justify-between gap-2">
-                      <span className="text-ink-soft">{b.label[locale]}</span>
-                      <span className="font-medium text-ink">${b.amount.toLocaleString()}</span>
+                  {selectedPackage ? (
+                    <div className="flex justify-between gap-2">
+                      <span className="text-ink-soft">{selectedPackage.name[locale]}</span>
+                      <span className="font-medium text-ink">${selectedPackage.price.toLocaleString()}</span>
                     </div>
-                  ))}
+                  ) : (
+                    pricing.breakdown.map((b, i) => (
+                      <div key={i} className="flex justify-between gap-2">
+                        <span className="text-ink-soft">{b.label[locale]}</span>
+                        <span className="font-medium text-ink">${b.amount.toLocaleString()}</span>
+                      </div>
+                    ))
+                  )}
+                  {selectedPackage && pricing.addOnTotal > 0 && (
+                    <div className="flex justify-between gap-2 text-ink-soft text-xs">
+                      <span>{locale === 'zh' ? '額外加購' : 'Extra add-ons'}</span>
+                      <span>+${pricing.addOnTotal.toLocaleString()}</span>
+                    </div>
+                  )}
+                  {promo && (
+                    <div className="flex justify-between gap-2 text-emerald-600">
+                      <span>{locale === 'zh' ? `優惠 ${promo.code}` : `Promo ${promo.code}`}</span>
+                      <span>−${promo.amount.toLocaleString()}</span>
+                    </div>
+                  )}
                 </div>
                 <div className="border-t border-white/60 pt-3 space-y-1 text-sm">
                   <div className="flex justify-between">
                     <span className="text-ink-soft">{locale === 'zh' ? '小計' : 'Subtotal'}</span>
-                    <span className="font-bold text-ink">HK${pricing.subtotal.toLocaleString()}</span>
+                    <span className="font-bold text-ink">HK${effectiveSubtotal.toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-ink-soft">{locale === 'zh' ? '可退按金' : 'Deposit'}</span>
@@ -499,7 +723,7 @@ export default function AdminNewBookingPage() {
                   </div>
                   <div className="flex justify-between text-base pt-2 border-t border-white/60">
                     <span className="text-ink-soft">{locale === 'zh' ? '客人首期' : 'Customer pays'}</span>
-                    <span className="font-bold font-display text-gradient-pink">HK${(pricing.subtotal + deposit).toLocaleString()}</span>
+                    <span className="font-bold font-display text-gradient-pink">HK${(effectiveSubtotal + deposit).toLocaleString()}</span>
                   </div>
                 </div>
               </>

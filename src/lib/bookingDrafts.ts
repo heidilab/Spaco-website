@@ -149,6 +149,8 @@ export async function claimBookingDraft(
 
   // Build the booking record from the draft. Status starts at
   // 'awaiting_payment' so the customer can immediately upload an FPS receipt.
+  // Optional staff-preset extras (promo / package) are spread in only when
+  // present — Firestore rejects explicit `undefined` values.
   const bookingPayload: Omit<BookingRecord, 'id' | 'createdAt' | 'updatedAt'> = {
     userId: customerUid,
     whatsappPhone: customerWhatsapp || draft.customerWhatsapp,
@@ -171,6 +173,11 @@ export async function claimBookingDraft(
     receiptUrl: null,
     depositRefund: null,
     draftId: draft.id,
+    ...(draft.promoCode ? { promoCode: draft.promoCode } : {}),
+    ...(draft.promoCodeId ? { promoCodeId: draft.promoCodeId } : {}),
+    ...(typeof draft.promoDiscount === 'number' ? { promoDiscount: draft.promoDiscount } : {}),
+    ...(typeof draft.promoFreeDrinksCost === 'number' ? { promoFreeDrinksCost: draft.promoFreeDrinksCost } : {}),
+    ...(draft.packageSlug ? { packageSlug: draft.packageSlug } : {}),
   };
   const bookingId = await createBooking(bookingPayload);
 
@@ -219,6 +226,11 @@ export async function recreateBookingDraft(
     ...(oldDraft.customerWhatsapp ? { customerWhatsapp: oldDraft.customerWhatsapp } : {}),
     ...(oldDraft.customerEmail ? { customerEmail: oldDraft.customerEmail } : {}),
     ...(oldDraft.notes ? { notes: oldDraft.notes } : {}),
+    ...(oldDraft.promoCode ? { promoCode: oldDraft.promoCode } : {}),
+    ...(oldDraft.promoCodeId ? { promoCodeId: oldDraft.promoCodeId } : {}),
+    ...(typeof oldDraft.promoDiscount === 'number' ? { promoDiscount: oldDraft.promoDiscount } : {}),
+    ...(typeof oldDraft.promoFreeDrinksCost === 'number' ? { promoFreeDrinksCost: oldDraft.promoFreeDrinksCost } : {}),
+    ...(oldDraft.packageSlug ? { packageSlug: oldDraft.packageSlug } : {}),
   });
 }
 

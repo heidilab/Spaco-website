@@ -351,6 +351,18 @@ export interface BookingDraft {
   customerWhatsapp?: string;  // E.164
   customerEmail?: string;
   notes?: string;
+
+  // Optional staff-preset extras — carried through to the booking on claim.
+  /** Promo code already validated by staff. The claim flow copies it
+   *  straight onto the booking so the customer doesn't have to re-enter. */
+  promoCode?: string;
+  promoCodeId?: string;
+  promoDiscount?: number;
+  promoFreeDrinksCost?: number;
+  /** When set, the claim flow creates a package booking (fixed price,
+   *  fixed duration). The admin form locks venue + duration + price to
+   *  the chosen package — see /lib/packages.ts. */
+  packageSlug?: string;
 }
 
 export interface BlockedSlot {
