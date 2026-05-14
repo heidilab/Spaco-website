@@ -194,6 +194,27 @@ export default function BookingPage() {
     return `${y}-${m}-${day}`;
   }, [selectedDate, isOvernight]);
 
+  // Last-minute booking guard. CS handles same-day late-night and
+  // <4-hour-notice bookings over WhatsApp because there's no time for
+  // the cleaning + setup flow to complete safely. Two triggers:
+  //   - Same-day booking that STARTS at 22:00 or later (late-night)
+  //   - Any booking whose start is within 4 hours of "now"
+  // Both surface the same red banner + WhatsApp CTA and block proceed.
+  const lastMinuteBlocker = useMemo<null | 'too_soon' | 'late_night'>(() => {
+    if (!selectedDate) return null;
+    const startMs = new Date(`${selectedDate}T${startTime}:00+08:00`).getTime();
+    const now = Date.now();
+    if (startMs - now < 4 * 60 * 60 * 1000) return 'too_soon';
+    // "Today" in HKT — derive from a UTC+8 shifted Date so we compare
+    // calendar days correctly even when the browser locale isn't HKT.
+    const todayHkt = new Date(now + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    if (selectedDate === todayHkt) {
+      const sh = Number(startTime.split(':')[0]);
+      if (sh >= 22) return 'late_night';
+    }
+    return null;
+  }, [selectedDate, startTime]);
+
   // Pricing calculation
   const pricing = useMemo(() => {
     return calculatePricing(venue, isWeekend, Math.max(hours, minHours), guestCount, selectedAddOns, childCount);
@@ -354,7 +375,7 @@ export default function BookingPage() {
   });
 
   // Can proceed check
-  const canProceed = selectedDate && hours >= minHours && adultEquiv >= minGuests && agreedToTerms && whatsappReady;
+  const canProceed = selectedDate && hours >= minHours && adultEquiv >= minGuests && agreedToTerms && whatsappReady && !lastMinuteBlocker;
 
   return (
     <div className="pt-28 pb-20 relative overflow-hidden">
@@ -483,6 +504,32 @@ export default function BookingPage() {
                       ? `最低預訂時數為 ${minHours} 小時`
                       : `Minimum booking is ${minHours} hours`}
                   </p>
+                </div>
+              )}
+
+              {lastMinuteBlocker && (
+                <div className="mt-4 p-4 bg-red-50 rounded-xl flex flex-col gap-3 border border-red-200">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle size={18} className="text-red-500 flex-shrink-0 mt-0.5" />
+                    <p className="text-sm text-red-700 leading-relaxed">
+                      {locale === 'zh'
+                        ? '由於預約時間將近，請客人 WhatsApp 聯絡客服查詢安排。'
+                        : 'Your slot is too close to now — please contact CS via WhatsApp to arrange.'}
+                    </p>
+                  </div>
+                  <a
+                    href={`https://wa.me/${process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || '85292823060'}?text=${encodeURIComponent(
+                      locale === 'zh'
+                        ? `你好，我想預約 ${venue.name.zh}，${selectedDate} ${startTime} – ${endTime}（${hours} 小時）`
+                        : `Hi, I'd like to book ${venue.name.en} on ${selectedDate} ${startTime}–${endTime} (${hours} h)`
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500 text-white font-semibold text-sm hover:bg-emerald-600 transition-colors self-start"
+                  >
+                    <MessageCircle size={16} />
+                    {locale === 'zh' ? 'WhatsApp 客服' : 'WhatsApp CS'}
+                  </a>
                 </div>
               )}
             </div>
