@@ -242,17 +242,11 @@ export default function AccountPage() {
               placeholder={locale === 'zh' ? '你想我哋點稱呼你' : 'How we should call you'}
             />
             <Field
-              label={locale === 'zh' ? '聯絡電話' : 'Phone'}
-              value={phone}
-              onChange={setPhone}
-              placeholder="+852 9XXXXXXX"
-            />
-            <Field
               label={locale === 'zh' ? 'WhatsApp 號碼' : 'WhatsApp'}
               value={whatsappPhone}
               onChange={setWhatsappPhone}
               placeholder="+852 9XXXXXXX"
-              hint={locale === 'zh' ? '預訂確認、場地密碼會 send 去呢個號碼' : 'Booking confirmations and venue passcodes will go here'}
+              hint={locale === 'zh' ? '場地密碼會 send 去呢個號碼及 email' : 'Venue passcode will be sent to this number and your email'}
             />
 
             {error && <p className="text-sm text-rose-500">{error}</p>}

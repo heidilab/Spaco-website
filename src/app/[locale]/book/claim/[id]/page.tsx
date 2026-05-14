@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  getBookingDraft, claimBookingDraft, isDraftExpired, DRAFT_TTL_HOURS,
+  claimBookingDraft, isDraftExpired, DRAFT_TTL_HOURS,
 } from '@/lib/bookingDrafts';
 import { getUserProfile, updateUserWhatsapp } from '@/lib/firestore';
 import { isValidHkPhone, normalizeHkPhone, formatHkPhone } from '@/lib/whatsapp';
@@ -41,10 +41,21 @@ export default function ClaimBookingPage() {
 
   useEffect(() => {
     if (!draftId) return;
-    getBookingDraft(draftId)
-      .then((d) => {
-        if (!d) setError(locale === 'zh' ? '找唔到此預訂連結' : 'Booking link not found');
-        else setDraft(d);
+    // Fetch via the public API rather than the client Firestore SDK —
+    // the customer hits this page from a WhatsApp link before signing
+    // in, and the booking_drafts rule requires auth for direct reads.
+    fetch(`/api/booking-draft/${encodeURIComponent(draftId)}`)
+      .then(async (res) => {
+        if (res.status === 404) {
+          setError(locale === 'zh' ? '找唔到此預訂連結' : 'Booking link not found');
+          return;
+        }
+        if (!res.ok) {
+          setError(locale === 'zh' ? '載入預訂時出錯' : 'Failed to load booking');
+          return;
+        }
+        const d = (await res.json()) as BookingDraft;
+        setDraft(d);
       })
       .catch(() => setError(locale === 'zh' ? '載入預訂時出錯' : 'Failed to load booking'))
       .finally(() => setLoading(false));
@@ -105,7 +116,9 @@ export default function ClaimBookingPage() {
           ? '⚠️ 此時段已被其他客人預訂，連結已即時失效。請聯絡 SPACO 重新安排。'
           : '⚠️ This slot was just booked by another customer, the link is now invalid. Please contact SPACO to reschedule.');
         // Re-fetch draft so the page reflects cancelled status
-        const fresh = await getBookingDraft(draft.id).catch(() => null);
+        const fresh = await fetch(`/api/booking-draft/${encodeURIComponent(draft.id)}`)
+          .then((r) => (r.ok ? r.json() as Promise<BookingDraft> : null))
+          .catch(() => null);
         if (fresh) setDraft(fresh);
       } else {
         alert((locale === 'zh' ? '確認預訂失敗：' : 'Failed to confirm: ') + msg);
