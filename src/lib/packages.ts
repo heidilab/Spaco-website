@@ -45,6 +45,11 @@ export interface EventPackage {
   /** Optional per-head add-ons (e.g. BBQ catering) — booking page renders
    *  a checkbox + headcount input for each. */
   addOns?: PackageAddOn[];
+  /** Number of guests included in the base package price. Optional —
+   *  packages without a per-head rule leave this unset. */
+  basePax?: number;
+  /** HK$ surcharge per guest beyond `basePax`. Pairs with `basePax`. */
+  extraPaxPrice?: number;
 }
 
 /** Localized chip label for a package category. */
@@ -132,6 +137,9 @@ export const MAHJONG_WANCHAI_PACKAGE: EventPackage = {
   earliestStart: '08:00',
   latestEnd: '24:00',
   minAdvanceDays: 2,
+  // Default 4 guests included; each extra guest +$300 ("每位 $300").
+  basePax: 4,
+  extraPaxPrice: 300,
   pitch: {
     zh: '$1,200 平日 8 小時包場．4 人麻雀枱．每位平均 $300．無酒精飲品任飲',
     en: '$1,200 weekday · 8-hour exclusive · 4-player mahjong · ~$300/head · drinks included',
@@ -182,7 +190,7 @@ export const CORPORATE_TST_PACKAGE: EventPackage = {
     ],
   },
   price: 4800,
-  deposit: 1000,
+  deposit: 2000,
   durationHours: 5,
   // 1 = Mon, 4 = Thu — 平日（一至四）only
   allowedDaysOfWeek: [1, 2, 3, 4],

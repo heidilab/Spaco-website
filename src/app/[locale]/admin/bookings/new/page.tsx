@@ -131,12 +131,16 @@ export default function AdminNewBookingPage() {
     : null;
 
   // Apply package override: subtotal becomes the fixed package fee plus
+  // any per-head surcharge for guests above the package's basePax, plus
   // any à-la-carte add-ons admin added on top. Then promo discount cuts
   // off the top. Deposit recomputed against the effective subtotal so
   // the customer sees the right "pay now" figure on the claim page.
+  const extraPaxCharge = (selectedPackage?.basePax != null && selectedPackage?.extraPaxPrice != null)
+    ? Math.max(0, guestCount - selectedPackage.basePax) * selectedPackage.extraPaxPrice
+    : 0;
   const subtotalAfterPackage = pricing
     ? (selectedPackage
-        ? selectedPackage.price + pricing.addOnTotal
+        ? selectedPackage.price + extraPaxCharge + pricing.addOnTotal
         : pricing.subtotal)
     : 0;
   const effectiveSubtotal = Math.max(0, subtotalAfterPackage - (promo?.amount || 0));
@@ -687,10 +691,29 @@ export default function AdminNewBookingPage() {
               <>
                 <div className="space-y-1.5 text-sm mb-4">
                   {selectedPackage ? (
-                    <div className="flex justify-between gap-2">
-                      <span className="text-ink-soft">{selectedPackage.name[locale]}</span>
-                      <span className="font-medium text-ink">${selectedPackage.price.toLocaleString()}</span>
-                    </div>
+                    <>
+                      <div className="flex justify-between gap-2">
+                        <span className="text-ink-soft">
+                          {selectedPackage.name[locale]}
+                          {selectedPackage.basePax != null && (
+                            <span className="text-xs text-ink-soft opacity-70 ml-1">
+                              ({locale === 'zh' ? `包含 ${selectedPackage.basePax} 人` : `${selectedPackage.basePax} pax included`})
+                            </span>
+                          )}
+                        </span>
+                        <span className="font-medium text-ink">${selectedPackage.price.toLocaleString()}</span>
+                      </div>
+                      {extraPaxCharge > 0 && (
+                        <div className="flex justify-between gap-2 text-ink-soft text-xs">
+                          <span>
+                            {locale === 'zh'
+                              ? `額外 ${guestCount - (selectedPackage.basePax || 0)} 人 × $${selectedPackage.extraPaxPrice}`
+                              : `+${guestCount - (selectedPackage.basePax || 0)} pax × $${selectedPackage.extraPaxPrice}`}
+                          </span>
+                          <span>+${extraPaxCharge.toLocaleString()}</span>
+                        </div>
+                      )}
+                    </>
                   ) : (
                     pricing.breakdown.map((b, i) => (
                       <div key={i} className="flex justify-between gap-2">

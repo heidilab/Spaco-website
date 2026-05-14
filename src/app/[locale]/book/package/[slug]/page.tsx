@@ -7,7 +7,7 @@ import { useParams, notFound } from 'next/navigation';
 import { motion } from 'framer-motion';
 import {
   ArrowLeft, ArrowRight, Calendar, Clock, Sparkles, Check,
-  AlertCircle, MessageCircle, Palette, Image as ImageIcon, Plus,
+  AlertCircle, MessageCircle, Palette, Image as ImageIcon, Plus, Minus, Users,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getUserProfile, updateUserWhatsapp } from '@/lib/firestore';
@@ -152,8 +152,17 @@ export default function PackageBookingPage() {
     }, 0);
   }, [pkg.addOns, addOnGuests]);
 
+  // ===== Guest count (extra-pax surcharge) =====
+  // Defaults to the package's basePax (e.g. 4 for the mahjong table).
+  // Each guest above basePax is charged the package's extraPaxPrice.
+  const [guestCount, setGuestCount] = useState<number>(pkg.basePax || 1);
+  const extraPaxCharge = useMemo(() => {
+    if (pkg.basePax == null || pkg.extraPaxPrice == null) return 0;
+    return Math.max(0, guestCount - pkg.basePax) * pkg.extraPaxPrice;
+  }, [pkg.basePax, pkg.extraPaxPrice, guestCount]);
+
   // ===== Totals =====
-  const total = pkg.price + pkg.deposit + addOnTotal;
+  const total = pkg.price + extraPaxCharge + pkg.deposit + addOnTotal;
 
   // ===== Proceed gate =====
   const canProceed =
@@ -281,6 +290,52 @@ export default function PackageBookingPage() {
                 </div>
               )}
             </div>
+
+            {/* Guest count — only shown for packages that charge per-extra-pax
+                (e.g. the mahjong package: 4 included, +$300 each extra). */}
+            {pkg.basePax != null && pkg.extraPaxPrice != null && (
+              <div className="glass-card p-7 md:p-8">
+                <h2 className="text-xl font-bold mb-2 flex items-center gap-2">
+                  <Users size={20} className="text-pink" />
+                  {locale === 'zh' ? '人數' : 'Guests'}
+                </h2>
+                <p className="text-xs text-ink-soft mb-4">
+                  {locale === 'zh'
+                    ? `套餐包括 ${pkg.basePax} 人，每位加 $${pkg.extraPaxPrice}`
+                    : `Package includes ${pkg.basePax} pax; each extra +$${pkg.extraPaxPrice}`}
+                </p>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setGuestCount(Math.max(pkg.basePax || 1, guestCount - 1))}
+                    className="p-2 rounded-xl bg-white/80 border border-white/90"
+                    aria-label="Decrease"
+                  >
+                    <Minus size={14} />
+                  </button>
+                  <input
+                    type="number"
+                    min={pkg.basePax}
+                    value={guestCount}
+                    onChange={(e) => setGuestCount(Math.max(pkg.basePax || 1, parseInt(e.target.value) || pkg.basePax || 1))}
+                    className="w-20 px-3 py-2 rounded-xl bg-white/80 border border-white/90 text-ink text-sm font-bold text-center"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setGuestCount(guestCount + 1)}
+                    className="p-2 rounded-xl bg-white/80 border border-white/90"
+                    aria-label="Increase"
+                  >
+                    <Plus size={14} />
+                  </button>
+                  {extraPaxCharge > 0 && (
+                    <span className="text-sm text-ink-soft ml-2">
+                      {locale === 'zh' ? `額外 ` : `+`}<span className="font-bold text-pink">HK${extraPaxCharge.toLocaleString()}</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Decoration style picker — required, free choice of 3 (birthday only) */}
             {requiresDecoration && (
@@ -522,9 +577,26 @@ export default function PackageBookingPage() {
               {/* Price breakdown */}
               <div className="bg-white/40 backdrop-blur-md rounded-2xl border border-white/60 p-4 space-y-2 mb-5">
                 <div className="flex justify-between text-sm">
-                  <span className="text-ink-soft">{locale === 'zh' ? '套餐費用' : 'Package fee'}</span>
+                  <span className="text-ink-soft">
+                    {locale === 'zh' ? '套餐費用' : 'Package fee'}
+                    {pkg.basePax != null && (
+                      <span className="text-xs opacity-70 ml-1">
+                        ({locale === 'zh' ? `包括 ${pkg.basePax} 人` : `${pkg.basePax} pax incl.`})
+                      </span>
+                    )}
+                  </span>
                   <span className="font-bold text-ink">HK${pkg.price.toLocaleString()}</span>
                 </div>
+                {extraPaxCharge > 0 && pkg.basePax != null && pkg.extraPaxPrice != null && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-ink-soft">
+                      {locale === 'zh'
+                        ? `額外 ${guestCount - pkg.basePax} 人 × $${pkg.extraPaxPrice}`
+                        : `+${guestCount - pkg.basePax} pax × $${pkg.extraPaxPrice}`}
+                    </span>
+                    <span className="font-medium text-ink">HK${extraPaxCharge.toLocaleString()}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-sm">
                   <span className="text-ink-soft">{locale === 'zh' ? '可退按金' : 'Refundable deposit'}</span>
                   <span className="font-medium text-ink">HK${pkg.deposit.toLocaleString()}</span>
