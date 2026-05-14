@@ -507,31 +507,6 @@ export default function BookingPage() {
                 </div>
               )}
 
-              {lastMinuteBlocker && (
-                <div className="mt-4 p-4 bg-red-50 rounded-xl flex flex-col gap-3 border border-red-200">
-                  <div className="flex items-start gap-3">
-                    <AlertCircle size={18} className="text-red-500 flex-shrink-0 mt-0.5" />
-                    <p className="text-sm text-red-700 leading-relaxed">
-                      {locale === 'zh'
-                        ? '由於預約時間將近，請客人 WhatsApp 聯絡客服查詢安排。'
-                        : 'Your slot is too close to now — please contact CS via WhatsApp to arrange.'}
-                    </p>
-                  </div>
-                  <a
-                    href={`https://wa.me/${process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || '85292823060'}?text=${encodeURIComponent(
-                      locale === 'zh'
-                        ? `你好，我想預約 ${venue.name.zh}，${selectedDate} ${startTime} – ${endTime}（${hours} 小時）`
-                        : `Hi, I'd like to book ${venue.name.en} on ${selectedDate} ${startTime}–${endTime} (${hours} h)`
-                    )}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500 text-white font-semibold text-sm hover:bg-emerald-600 transition-colors self-start"
-                  >
-                    <MessageCircle size={16} />
-                    {locale === 'zh' ? 'WhatsApp 客服' : 'WhatsApp CS'}
-                  </a>
-                </div>
-              )}
             </div>
 
             {/* Guest Count — adults + children split */}
@@ -1394,6 +1369,31 @@ export default function BookingPage() {
                 {!isSubmitting && <ArrowRight size={18} />}
               </button>
 
+              {lastMinuteBlocker && (
+                <div className="mt-3 p-4 bg-red-50 rounded-xl flex flex-col gap-3 border border-red-200">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle size={18} className="text-red-500 flex-shrink-0 mt-0.5" />
+                    <p className="text-sm text-red-700 leading-relaxed">
+                      {locale === 'zh'
+                        ? '由於預約時間將近，請客人 WhatsApp 聯絡客服查詢安排。'
+                        : 'Your slot is too close to now — please contact CS via WhatsApp to arrange.'}
+                    </p>
+                  </div>
+                  <a
+                    href={`https://wa.me/${process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || '85292823060'}?text=${encodeURIComponent(
+                      locale === 'zh'
+                        ? `你好，我想預約 ${venue.name.zh}，${selectedDate} ${startTime} – ${endTime}（${hours} 小時）`
+                        : `Hi, I'd like to book ${venue.name.en} on ${selectedDate} ${startTime}–${endTime} (${hours} h)`
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500 text-white font-semibold text-sm hover:bg-emerald-600 transition-colors self-start"
+                  >
+                    <MessageCircle size={16} />
+                    {locale === 'zh' ? 'WhatsApp 客服' : 'WhatsApp CS'}
+                  </a>
+                </div>
+              )}
               {selectedDate && !whatsappReady && (
                 <p className="text-xs text-red-400 mt-3 text-center">
                   {locale === 'zh' ? '請填寫並確認 WhatsApp 聯絡號碼' : 'Please fill in and confirm your WhatsApp number'}
