@@ -5,7 +5,7 @@ import { useLocale } from 'next-intl';
 import { Link } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
 import { venues, getVenueBySlug } from '@/lib/venues';
-import { addOns as ALL_ADDONS, calculatePricing, calculateDeposit } from '@/lib/pricing';
+import { addOns as ALL_ADDONS, calculatePricing, calculateDeposit, calculateSecurityDeposit } from '@/lib/pricing';
 import { ALL_PACKAGES, getPackageBySlug, CATEGORY_LABEL } from '@/lib/packages';
 import { createBookingDraft, buildClaimUrl } from '@/lib/bookingDrafts';
 import { normalizeHkPhone, isValidHkPhone, formatHkPhone } from '@/lib/whatsapp';
@@ -130,11 +130,13 @@ export default function AdminNewBookingPage() {
     ? calculatePricing(venue, isWeekend, hours, guestCount, selectedAddOnList, childCount)
     : null;
 
-  // Apply package override: subtotal becomes the fixed package fee plus
-  // any per-head surcharge for guests above the package's basePax, plus
-  // any à-la-carte add-ons admin added on top. Then promo discount cuts
-  // off the top. Deposit recomputed against the effective subtotal so
-  // the customer sees the right "pay now" figure on the claim page.
+  // Mirror the customer-facing pricing flow exactly so admin-issued
+  // links match what the customer sees on the confirm page.
+  //   subtotal       = rental + add-ons (+ package fee + extra-pax)
+  //   securityDeposit = tiered ($1k/2k/4k) — package overrides with its
+  //                    own deposit field (e.g. corporate-tst = $2k)
+  //   grandTotal     = subtotal + securityDeposit
+  //   deposit        = full grandTotal if ≤ $10k, else 50% (upfront pay-now)
   const extraPaxCharge = (selectedPackage?.basePax != null && selectedPackage?.extraPaxPrice != null)
     ? Math.max(0, guestCount - selectedPackage.basePax) * selectedPackage.extraPaxPrice
     : 0;
@@ -144,7 +146,10 @@ export default function AdminNewBookingPage() {
         : pricing.subtotal)
     : 0;
   const effectiveSubtotal = Math.max(0, subtotalAfterPackage - (promo?.amount || 0));
-  const deposit = selectedPackage?.deposit ?? calculateDeposit(effectiveSubtotal);
+  const securityDeposit = selectedPackage?.deposit ?? calculateSecurityDeposit(effectiveSubtotal);
+  const grandTotal = effectiveSubtotal + securityDeposit;
+  const deposit = calculateDeposit(grandTotal);
+  const balanceDue = Math.max(0, grandTotal - deposit);
 
   const endTime = useMemo(() => {
     if (!startTime) return '';
@@ -243,6 +248,7 @@ export default function AdminNewBookingPage() {
           baseCharge: pricing.baseCharge,
           addOnTotal: pricing.addOnTotal,
           subtotal: subtotalAfterPackage,
+          securityDeposit,
           deposit,
         },
         ...(customerName ? { customerName } : {}),
@@ -741,12 +747,22 @@ export default function AdminNewBookingPage() {
                     <span className="font-bold text-ink">HK${effectiveSubtotal.toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-ink-soft">{locale === 'zh' ? '可退按金' : 'Deposit'}</span>
-                    <span className="font-medium text-ink">HK${deposit.toLocaleString()}</span>
+                    <span className="text-ink-soft">{locale === 'zh' ? '可退按金' : 'Refundable deposit'}</span>
+                    <span className="font-medium text-ink">HK${securityDeposit.toLocaleString()}</span>
                   </div>
+                  <div className="flex justify-between border-t border-white/60 pt-2">
+                    <span className="text-ink-soft">{locale === 'zh' ? '總計' : 'Grand total'}</span>
+                    <span className="font-bold text-ink">HK${grandTotal.toLocaleString()}</span>
+                  </div>
+                  {balanceDue > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-ink-soft">{locale === 'zh' ? '尾數（活動前 2 日找清）' : 'Balance (due 2d before)'}</span>
+                      <span className="text-ink-soft">HK${balanceDue.toLocaleString()}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-base pt-2 border-t border-white/60">
-                    <span className="text-ink-soft">{locale === 'zh' ? '客人首期' : 'Customer pays'}</span>
-                    <span className="font-bold font-display text-gradient-pink">HK${(effectiveSubtotal + deposit).toLocaleString()}</span>
+                    <span className="text-ink-soft">{locale === 'zh' ? '客人首期' : 'Customer pays now'}</span>
+                    <span className="font-bold font-display text-gradient-pink">HK${deposit.toLocaleString()}</span>
                   </div>
                 </div>
               </>
