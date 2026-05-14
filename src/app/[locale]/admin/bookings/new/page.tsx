@@ -8,6 +8,7 @@ import { venues, getVenueBySlug } from '@/lib/venues';
 import { addOns as ALL_ADDONS, calculatePricing, calculateDeposit, calculateSecurityDeposit } from '@/lib/pricing';
 import { ALL_PACKAGES, getPackageBySlug, CATEGORY_LABEL } from '@/lib/packages';
 import { createBookingDraft, buildClaimUrl } from '@/lib/bookingDrafts';
+import { getHoliday } from '@/lib/hkHolidays';
 import { normalizeHkPhone, isValidHkPhone, formatHkPhone } from '@/lib/whatsapp';
 import {
   Calendar, Clock, Users, Plus, Minus, Link as LinkIcon, Copy, Check, ArrowLeft, MessageCircle,
@@ -101,10 +102,21 @@ export default function AdminNewBookingPage() {
   }
 
   const venue = venues.find((v) => v.id === venueId);
+  // Match the customer-side rule (book/[branchSlug]/page.tsx): Fri / Sat /
+  // public holiday / eve-of-public-holiday → weekend rate ($58/pax/hr).
+  // Sun + Mon–Thu remain weekday ($50). Admin used to consider only
+  // Sat + Sun, which both mis-priced Fridays (caught $50 instead of $58)
+  // and over-priced Sundays.
   const isWeekend = useMemo(() => {
     if (!date) return false;
-    const d = new Date(date).getDay();
-    return d === 0 || d === 6;
+    const day = new Date(date).getDay();
+    if (day === 5 || day === 6) return true;
+    if (getHoliday(date)?.type === 'public') return true;
+    const next = new Date(date);
+    next.setDate(next.getDate() + 1);
+    const nextStr = next.toISOString().split('T')[0];
+    if (getHoliday(nextStr)?.type === 'public') return true;
+    return false;
   }, [date]);
 
   // Pricing
