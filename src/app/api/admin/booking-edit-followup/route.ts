@@ -57,6 +57,14 @@ export async function POST(req: NextRequest) {
     // 1. Optional payment recording — split rental / deposit.
     //    Bumps pricing.subtotal + securityDeposit accordingly so
     //    downstream loyalty-credit math + refund math stay accurate.
+    //
+    //    ALSO advances booking.status — recording a payment without
+    //    moving the booking forward leaves the system in an inconsistent
+    //    state (booking shows "待處理" yet has a payment record). Rule:
+    //    - balance fully cleared  → status = 'confirmed'
+    //    - still has balance      → status = 'awaiting_payment'
+    //    We never downgrade a status (e.g. 'completed' or 'cancelled'
+    //    stays put), so admin can correct mistakes without losing state.
     let updatedBalance: number | null = null;
     if (body.payment && (body.payment.rentalAmount > 0 || body.payment.depositAmount > 0)) {
       const rental = Math.max(0, body.payment.rentalAmount || 0);
@@ -66,7 +74,14 @@ export async function POST(req: NextRequest) {
       const newSecurityDeposit = (booking.pricing.securityDeposit || 0) + dep;
       const newDeposit = (booking.pricing.deposit || 0) + total;
       const newBalance = Math.max(0, (booking.balanceDue ?? 0) - total);
-      await bookingRef.update({
+
+      // Status advancement — only from upstream states.
+      const upstreamStates = new Set(['pending', 'awaiting_payment', 'awaiting_review']);
+      const nextStatus = upstreamStates.has(booking.status)
+        ? (newBalance === 0 ? 'confirmed' : 'awaiting_payment')
+        : booking.status;
+
+      const update: Record<string, unknown> = {
         'pricing.subtotal': newSubtotal,
         'pricing.securityDeposit': newSecurityDeposit,
         'pricing.deposit': newDeposit,
@@ -81,8 +96,20 @@ export async function POST(req: NextRequest) {
           recordedBy: body.payment.recordedBy,
           recordedAt: new Date().toISOString(),
         }),
+        status: nextStatus,
         updatedAt: FieldValue.serverTimestamp(),
-      });
+      };
+      // Capture the chosen payment method on the booking if it wasn't
+      // already set — useful for finance reports + receipt rendering.
+      if (!booking.paymentMethod && body.payment.method !== 'cash' && body.payment.method !== 'other') {
+        update.paymentMethod = body.payment.method;
+      }
+      // Mark verified-at the moment we flip to 'confirmed' so the
+      // downstream automations (lock passcode, calendar) trigger.
+      if (nextStatus === 'confirmed' && booking.status !== 'confirmed') {
+        update.paymentVerifiedAt = FieldValue.serverTimestamp();
+      }
+      await bookingRef.update(update);
       updatedBalance = newBalance;
     }
 
