@@ -2,18 +2,22 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
-import { Link } from '@/i18n/routing';
+import { Link, useRouter } from '@/i18n/routing';
 import { useParams, notFound } from 'next/navigation';
 import { motion } from 'framer-motion';
 import {
   ArrowLeft, ArrowRight, Calendar, Clock, Sparkles, Check,
   AlertCircle, MessageCircle, Palette, Image as ImageIcon, Plus, Minus, Users,
+  Loader2, LogIn,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { getUserProfile, updateUserWhatsapp } from '@/lib/firestore';
+import { getUserProfile, updateUserWhatsapp, createBooking } from '@/lib/firestore';
 import { getVenueBySlug } from '@/lib/venues';
 import { getPackageBySlug, CATEGORY_LABEL } from '@/lib/packages';
+import { calculateDeposit } from '@/lib/pricing';
+import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
 import HolidayDatePicker from '@/components/booking/HolidayDatePicker';
+import AuthModal from '@/components/auth/AuthModal';
 import {
   isValidHkPhone, formatHkPhone, normalizeHkPhone,
 } from '@/lib/whatsapp';
@@ -36,6 +40,7 @@ function toHHMM(min: number): string {
 export default function PackageBookingPage() {
   const params = useParams();
   const locale = useLocale() as 'zh' | 'en';
+  const router = useRouter();
   const { user } = useAuth();
   const slug = params.slug as string;
   const pkg = getPackageBySlug(slug);
@@ -65,12 +70,13 @@ export default function PackageBookingPage() {
   }, [pkg.minAdvanceDays]);
 
   // Allowed start time options: from earliestStart up to
-  // (latestEnd − durationHours), in 30-minute increments.
+  // (latestEnd − durationHours), in 15-minute increments — matches the
+  // à-la-carte booking flow (customers expect 19:15 / 19:30 / 19:45 etc).
   const startTimeOptions = useMemo(() => {
     const out: string[] = [];
     const earliest = toMinutes(pkg.earliestStart);
     const latestStart = toMinutes(pkg.latestEnd) - pkg.durationHours * 60;
-    for (let m = earliest; m <= latestStart; m += 30) {
+    for (let m = earliest; m <= latestStart; m += 15) {
       out.push(toHHMM(m));
     }
     return out;
@@ -162,23 +168,112 @@ export default function PackageBookingPage() {
   }, [pkg.basePax, pkg.extraPaxPrice, guestCount]);
 
   // ===== Totals =====
-  const total = pkg.price + extraPaxCharge + pkg.deposit + addOnTotal;
+  // Pricing breakdown for a package booking:
+  //   baseCharge = package price + per-extra-pax surcharge
+  //   addOnTotal = optional add-ons (e.g. BBQ catering × N pax)
+  //   subtotal   = baseCharge + addOnTotal  (rental side)
+  //   securityDeposit = package's fixed refundable deposit
+  //   grandTotal = subtotal + securityDeposit
+  //   upfrontDeposit = grandTotal if ≤ $10k else 50%  (matches à-la-carte rule)
+  const baseCharge = pkg.price + extraPaxCharge;
+  const subtotal = baseCharge + addOnTotal;
+  const securityDeposit = pkg.deposit;
+  const grandTotal = subtotal + securityDeposit;
+  const upfrontDeposit = calculateDeposit(grandTotal);
+  // "Total upfront" shown in the sidebar = the amount the customer pays now.
+  const total = upfrontDeposit;
+
+  // ===== Submit state =====
+  const [authOpen, setAuthOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   // ===== Proceed gate =====
   const canProceed =
     !!selectedDate && !!startTime && isDayAllowed && agreedToTerms && whatsappReady &&
     (!requiresDecoration || !!decorationStyle);
 
-  // ===== Submit (placeholder until full payment flow) =====
+  // ===== Submit =====
+  // Creates a real BookingRecord with `packageSlug` set, then hands off to
+  // the standard confirm page so the customer can choose FPS / Stripe and
+  // upload a receipt — same flow as à-la-carte bookings.
   const handleProceed = async () => {
     if (!canProceed) return;
-    if (user && whatsappReady) {
+    if (!user) {
+      setAuthOpen(true);
+      return;
+    }
+    if (!venue) {
+      setSubmitError(locale === 'zh' ? '場地配置錯誤' : 'Venue configuration error');
+      return;
+    }
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
       const e164 = normalizeHkPhone(whatsappPhone);
       if (e164) {
         try { await updateUserWhatsapp(user.uid, e164); } catch { /* non-blocking */ }
       }
+
+      // Day-of-week for isWeekend flag — for packages the price is fixed,
+      // but the flag still drives downstream displays/exports consistently.
+      const day = new Date(selectedDate).getDay();
+      const isWeekend = day === 0 || day === 5 || day === 6;
+
+      // Map package add-ons (id → guest count) into the BookingRecord shape.
+      const bookingAddOns = (pkg.addOns || [])
+        .map((a) => ({ id: a.id, quantity: addOnGuests[a.id] || 0 }))
+        .filter((a) => a.quantity > 0);
+
+      const balanceDue = Math.max(0, grandTotal - upfrontDeposit);
+      const pendingExpiresAt =
+        Date.now() + PAYMENT_DETAILS.pendingHoldMinutes * 60 * 1000;
+
+      const bookingId = await createBooking({
+        userId: user.uid,
+        whatsappPhone: e164 || undefined,
+        venueId: venue.id,
+        branchSlug: venue.slug,
+        date: selectedDate,
+        startTime,
+        endTime,
+        hours: pkg.durationHours,
+        guestCount,
+        // Treat all as adults for package bookings — packages are flat
+        // priced and don't apply the child-discount rule.
+        adultCount: guestCount,
+        childCount: 0,
+        isWeekend,
+        addOns: bookingAddOns,
+        hasBYOFood: false,
+        pricing: {
+          baseCharge,
+          addOnTotal,
+          subtotal,
+          securityDeposit,
+          deposit: upfrontDeposit,
+        },
+        status: 'pending',
+        paymentMethod: null,
+        receiptUrl: null,
+        balanceDue,
+        pendingExpiresAt,
+        depositRefund: null,
+        packageSlug: pkg.slug,
+        // Birthday packages require a decoration style — captured above.
+        ...(requiresDecoration && decorationStyle ? { decorationStyle } : {}),
+      });
+
+      router.push(`/book/${venue.slug}/confirm/${bookingId}`);
+    } catch (err) {
+      console.error('Package booking submission failed:', err);
+      setSubmitError(
+        locale === 'zh'
+          ? '預訂提交失敗，請稍後再試或聯絡客服。'
+          : 'Booking submission failed. Please try again or contact support.'
+      );
+      setSubmitting(false);
     }
-    // Booking submission not yet wired — see project TODOs.
   };
 
   return (
@@ -616,11 +711,27 @@ export default function PackageBookingPage() {
                   );
                 })}
                 <div className="border-t border-white/60 pt-2 flex justify-between items-baseline">
-                  <span className="text-sm text-ink-soft">{locale === 'zh' ? '總計（首期）' : 'Total (upfront)'}</span>
-                  <span className="font-bold font-display text-2xl text-gradient-pink">
-                    HK${total.toLocaleString()}
+                  <span className="text-sm text-ink-soft">{locale === 'zh' ? '總計' : 'Grand Total'}</span>
+                  <span className="font-bold text-ink">
+                    HK${grandTotal.toLocaleString()}
                   </span>
                 </div>
+                <div className="flex justify-between items-baseline">
+                  <span className="text-sm text-ink-soft">
+                    {grandTotal > 10000
+                      ? (locale === 'zh' ? '今次支付（50%）' : 'Pay now (50%)')
+                      : (locale === 'zh' ? '今次支付' : 'Pay now')}
+                  </span>
+                  <span className="font-bold font-display text-2xl text-gradient-pink">
+                    HK${upfrontDeposit.toLocaleString()}
+                  </span>
+                </div>
+                {grandTotal > upfrontDeposit && (
+                  <div className="flex justify-between text-xs text-ink-soft pt-1">
+                    <span>{locale === 'zh' ? '尾數（活動 2 日前繳付）' : 'Balance (due 2 days before event)'}</span>
+                    <span>HK${(grandTotal - upfrontDeposit).toLocaleString()}</span>
+                  </div>
+                )}
               </div>
 
               <p className="text-xs text-ink-soft mb-4 leading-relaxed">
@@ -636,12 +747,24 @@ export default function PackageBookingPage() {
               {/* Proceed */}
               <button
                 onClick={handleProceed}
-                disabled={!canProceed}
+                disabled={!canProceed || submitting}
                 className="btn-primary w-full justify-center text-base disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                {locale === 'zh' ? '繼續預訂' : 'Continue to Payment'}
-                <ArrowRight size={16} />
+                {submitting ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : !user ? (
+                  <LogIn size={16} />
+                ) : null}
+                {submitting
+                  ? (locale === 'zh' ? '處理中…' : 'Processing…')
+                  : !user
+                  ? (locale === 'zh' ? '登入並繼續預訂' : 'Log in & Continue')
+                  : (locale === 'zh' ? '繼續預訂' : 'Continue to Payment')}
+                {!submitting && user && <ArrowRight size={16} />}
               </button>
+              {submitError && (
+                <p className="mt-2 text-xs text-rose-600 text-center">{submitError}</p>
+              )}
               {!canProceed && selectedDate && (
                 <p className="mt-2 text-xs text-rose-600 text-center">
                   {requiresDecoration && !decorationStyle
@@ -656,6 +779,7 @@ export default function PackageBookingPage() {
                 </p>
               )}
             </motion.div>
+            <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} />
           </div>
         </div>
       </div>

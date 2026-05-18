@@ -153,10 +153,17 @@ export default function DocumentPrintPage() {
           </button>
         </div>
 
-        {/* Printable doc */}
-        <div
-          ref={printAreaRef}
-          className="max-w-3xl mx-auto bg-white rounded-3xl shadow-glass-lg p-10 md:p-14 print-area">
+        {/*
+          Preview wrapper — allows horizontal scroll on mobile so the
+          fixed-width receipt stays at desktop proportions. Without this
+          the print-area would shrink to viewport width on phones and the
+          captured PDF would inherit the cramped mobile layout.
+        */}
+        <div className="px-4 overflow-x-auto">
+          <div
+            ref={printAreaRef}
+            style={{ width: 768, padding: 56 }}
+            className="mx-auto bg-white rounded-3xl shadow-glass-lg print-area">
           {/* Header — brand logo + type */}
           <div className="flex items-start justify-between gap-6 pb-6 border-b border-ink/10">
             <div>
@@ -287,6 +294,7 @@ export default function DocumentPrintPage() {
             {doc.status === 'void' && (
               <p className="text-rose-600 font-bold mt-3 text-base tracking-widest">VOID 作廢</p>
             )}
+          </div>
           </div>
         </div>
       </div>

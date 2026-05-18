@@ -13,7 +13,7 @@ import {
   getAllUsers,
   getUserProfile,
 } from '@/lib/firestore';
-import { addOns as addOnConfig } from '@/lib/pricing';
+import { addOns as addOnConfig, calculateSecurityDeposit } from '@/lib/pricing';
 import { venues } from '@/lib/venues';
 import {
   BusinessDocument,
@@ -292,13 +292,20 @@ export default function AdminDocumentsPage() {
         });
       }
 
-      // Item — Refundable deposit
-      if (b.pricing.deposit > 0) {
+      // Item — Refundable security deposit (按金).
+      // `pricing.deposit` is the UPFRONT payment (full / 50%), NOT the
+      // refundable deposit. The refundable amount is `securityDeposit` —
+      // tiered HK$1k / 2k / 4k against subtotal. Legacy bookings (created
+      // before the field existed) recompute the tier from subtotal so old
+      // invoices/receipts still reconcile correctly.
+      const securityDeposit =
+        b.pricing.securityDeposit ?? calculateSecurityDeposit(b.pricing.subtotal);
+      if (securityDeposit > 0) {
         items.push({
           description: 'Refundable Venue Deposit 可退場地按金',
           quantity: 1,
-          unitPrice: b.pricing.deposit,
-          amount: b.pricing.deposit,
+          unitPrice: securityDeposit,
+          amount: securityDeposit,
         });
       }
 
@@ -858,8 +865,11 @@ export default function AdminDocumentsPage() {
                                     `User: ${linked.userId.slice(0, 8)}`}
                                   {' · '}
                                   HK${linked.pricing.subtotal.toLocaleString()}
-                                  {' + Deposit '}
-                                  HK${linked.pricing.deposit.toLocaleString()}
+                                  {' + '}
+                                  {locale === 'zh' ? '按金 ' : 'Deposit '}
+                                  HK${(linked.pricing.securityDeposit
+                                      ?? calculateSecurityDeposit(linked.pricing.subtotal)
+                                    ).toLocaleString()}
                                 </div>
                               )}
                             </div>
@@ -1311,12 +1321,19 @@ export default function AdminDocumentsPage() {
                                 <span className="text-ink-soft">
                                   {locale === 'zh' ? '總額' : 'Total'}{' '}
                                   <span className="font-bold text-gradient-pink">HK${b.pricing.subtotal.toLocaleString()}</span>
-                                  {b.pricing.deposit > 0 && (
-                                    <span className="text-ink-soft">
-                                      {' + '}
-                                      {locale === 'zh' ? '按金' : 'Deposit'} HK${b.pricing.deposit.toLocaleString()}
-                                    </span>
-                                  )}
+                                  {(() => {
+                                    // Show the REFUNDABLE security deposit (按金),
+                                    // not the upfront payment amount.
+                                    const sd =
+                                      b.pricing.securityDeposit
+                                      ?? calculateSecurityDeposit(b.pricing.subtotal);
+                                    return sd > 0 ? (
+                                      <span className="text-ink-soft">
+                                        {' + '}
+                                        {locale === 'zh' ? '按金' : 'Deposit'} HK${sd.toLocaleString()}
+                                      </span>
+                                    ) : null;
+                                  })()}
                                 </span>
                                 <span className="text-pink font-semibold flex items-center gap-1 group-hover:translate-x-0.5 transition-transform">
                                   {isLoading ? (

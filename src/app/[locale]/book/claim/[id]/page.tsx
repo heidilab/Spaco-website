@@ -108,7 +108,11 @@ export default function ClaimBookingPage() {
           notes: draft.notes,
         }),
       }).catch(() => { /* gcal disconnected or error — non-blocking */ });
-      router.push(`/my-bookings?just=${bookingId}`);
+      // Send the customer straight to the confirm page so they can
+      // fill the deposit-refund details and immediately pick a payment
+      // method (FPS upload or Stripe checkout). The previous redirect to
+      // /my-bookings left customers wondering how to actually pay.
+      router.push(`/book/${draft.branchSlug}/confirm/${bookingId}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg === 'SLOT_TAKEN') {

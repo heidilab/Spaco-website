@@ -36,10 +36,14 @@ export default function BookingPage() {
     notFound();
   }
 
-  // Booking state
+  // Booking state.
+  // Start time is picked in 15-minute increments (08:00, 08:15, … 23:45).
+  // Duration is picked as a WHOLE number of hours — staff policy. End time
+  // is computed from start + hours so we keep the 15-minute offset on both
+  // ends (e.g. 19:15 + 5h = 00:15 next day, never 00:30 / 00:45).
   const [selectedDate, setSelectedDate] = useState('');
-  const [startTime, setStartTime] = useState('14:00');
-  const [endTime, setEndTime] = useState('19:00');
+  const [startTime, setStartTime] = useState('19:00');
+  const [hours, setHours] = useState<number>(5);
   // Set min-date on client only — avoids SSR / client time mismatch
   const [minDate, setMinDate] = useState<string>('');
   useEffect(() => {
@@ -166,20 +170,21 @@ export default function BookingPage() {
     });
   }, [selectedDate, minGuests, childCount]);
 
-  // Calculate hours. Cross-midnight (end-time at or before start-time) is
-  // treated as a next-day end, so 19:00 → 02:00 = 7 hours.
+  // End time derived from start + hours. Preserves the 15-minute offset,
+  // so 19:15 + 5h becomes 00:15 the next day (never 00:30 / 00:45).
+  const endTime = useMemo(() => {
+    const [sh, sm] = startTime.split(':').map(Number);
+    const total = sh * 60 + sm + hours * 60;
+    const eh = Math.floor(total / 60) % 24;
+    const em = total % 60;
+    return `${String(eh).padStart(2, '0')}:${String(em).padStart(2, '0')}`;
+  }, [startTime, hours]);
+
+  // Cross-midnight detection: total minutes past midnight ≥ 24h.
   const isOvernight = useMemo(() => {
     const [sh, sm] = startTime.split(':').map(Number);
-    const [eh, em] = endTime.split(':').map(Number);
-    return eh * 60 + em <= sh * 60 + sm;
-  }, [startTime, endTime]);
-
-  const hours = useMemo(() => {
-    const [sh, sm] = startTime.split(':').map(Number);
-    const [eh, em] = endTime.split(':').map(Number);
-    const endMinutes = (isOvernight ? eh + 24 : eh) * 60 + em;
-    return Math.max(1, (endMinutes - sh * 60 - sm) / 60);
-  }, [startTime, endTime, isOvernight]);
+    return sh * 60 + sm + hours * 60 >= 24 * 60;
+  }, [startTime, hours]);
 
   // End date (YYYY-MM-DD) when the booking crosses midnight. We assemble
   // the date from local components — toISOString() rolls back to UTC and
@@ -344,25 +349,30 @@ export default function BookingPage() {
     writeShisha({ pipes: shishaPipes, heads: shishaHeads, flavors: shishaFlavors, staffSetup: !shishaStaffSetup });
   }
 
-  // Time slot options
-  const timeSlots = Array.from({ length: 24 }, (_, i) => {
-    const h = String(i).padStart(2, '0');
-    return `${h}:00`;
-  });
+  // Start-time options: 08:00 → 23:45 in 15-minute increments. Operations
+  // open daily at 08:00; customers can pick any quarter-hour after.
+  const startTimeOptions = useMemo(() => {
+    const out: string[] = [];
+    for (let m = 8 * 60; m <= 23 * 60 + 45; m += 15) {
+      const h = Math.floor(m / 60);
+      const mm = m % 60;
+      out.push(`${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`);
+    }
+    return out;
+  }, []);
 
-  // Start time options: 10:00 → 23:00 (24-hour venue, allow late-night starts).
-  const startTimeOptions = timeSlots.slice(10, 24);
+  // Duration options: whole hours from minHours up to 14h. Whole-hour
+  // policy means a 19:15 start can only book 5h → 00:15, never 5h15m.
+  const hourOptions = useMemo(() => {
+    const out: number[] = [];
+    for (let h = Math.max(1, minHours); h <= 14; h++) out.push(h);
+    return out;
+  }, [minHours]);
 
-  // End time options: 11:00 → 23:00 same-day, plus 00:00 → 06:00 next-day
-  // (labelled "翌日" so customers see they're crossing midnight).
-  const endTimeOptions: { value: string; label: string; nextDay: boolean }[] = [
-    ...timeSlots.slice(11, 24).map((t) => ({ value: t, label: t, nextDay: false })),
-    ...timeSlots.slice(0, 7).map((t) => ({
-      value: t,
-      label: locale === 'zh' ? `${t}（翌日）` : `${t} (next day)`,
-      nextDay: true,
-    })),
-  ];
+  // Keep `hours` ≥ minHours whenever the day-of-week / venue floor changes.
+  useEffect(() => {
+    setHours((h) => Math.max(h, minHours));
+  }, [minHours]);
 
   // Filter add-ons based on venue
   const visibleAddOns = addOns.filter((a) => {
@@ -472,29 +482,37 @@ export default function BookingPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="text-sm text-muted mb-2 block">{t('endTime')}</label>
+                  <label className="text-sm text-muted mb-2 block">
+                    {locale === 'zh' ? '預訂時數' : 'Duration'}
+                  </label>
                   <select
-                    value={endTime}
-                    onChange={(e) => setEndTime(e.target.value)}
+                    value={hours}
+                    onChange={(e) => setHours(parseInt(e.target.value, 10))}
                     className="w-full px-4 py-3 rounded-xl border border-charcoal/10 focus:outline-none focus:border-accent"
                   >
-                    {endTimeOptions.map((opt) => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    {hourOptions.map((h) => (
+                      <option key={h} value={h}>
+                        {locale === 'zh' ? `${h} 小時` : `${h} hour${h > 1 ? 's' : ''}`}
+                      </option>
                     ))}
                   </select>
                 </div>
               </div>
 
-              {isOvernight && endDate && (
-                <div className="mt-4 p-4 bg-blue-50 rounded-xl flex items-start gap-3">
-                  <Info size={18} className="text-blue-500 flex-shrink-0 mt-0.5" />
-                  <p className="text-sm text-blue-700">
-                    {locale === 'zh'
-                      ? `此預訂跨越凌晨：${selectedDate} ${startTime} → ${endDate} ${endTime}，共 ${hours} 小時`
-                      : `Overnight booking: ${selectedDate} ${startTime} → ${endDate} ${endTime} · ${hours} hours`}
-                  </p>
-                </div>
-              )}
+              {/* Always-on session summary so customer sees the computed
+                  end time and total length immediately. */}
+              <div className={`mt-4 p-4 rounded-xl flex items-start gap-3 ${isOvernight ? 'bg-blue-50' : 'bg-pink/5 border border-pink/15'}`}>
+                <Info size={18} className={`${isOvernight ? 'text-blue-500' : 'text-pink'} flex-shrink-0 mt-0.5`} />
+                <p className={`text-sm ${isOvernight ? 'text-blue-700' : 'text-ink'}`}>
+                  {isOvernight && endDate
+                    ? (locale === 'zh'
+                        ? `此預訂跨越凌晨：${selectedDate} ${startTime} → ${endDate} ${endTime}，共 ${hours} 小時`
+                        : `Overnight booking: ${selectedDate} ${startTime} → ${endDate} ${endTime} · ${hours} hours`)
+                    : (locale === 'zh'
+                        ? `活動時段：${startTime} – ${endTime}（${hours} 小時）`
+                        : `Session: ${startTime} – ${endTime} (${hours} hours)`)}
+                </p>
+              </div>
 
               {hours < minHours && (
                 <div className="mt-4 p-4 bg-red-50 rounded-xl flex items-start gap-3">
