@@ -13,7 +13,13 @@ import {
   getAllUsers,
   getUserProfile,
 } from '@/lib/firestore';
-import { addOns as addOnConfig, calculateSecurityDeposit } from '@/lib/pricing';
+import {
+  addOns as addOnConfig,
+  calculateSecurityDeposit,
+  bbqStandardPriceByVenue,
+  freeDrinksVenues,
+  adultEquivalent,
+} from '@/lib/pricing';
 import { venues } from '@/lib/venues';
 import {
   BusinessDocument,
@@ -277,18 +283,80 @@ export default function AdminDocumentsPage() {
 
       const items: DocumentLineItem[] = [venueRentalItem];
 
-      // Item(s) — Add-ons (BBQ / Hotpot / Drinks etc.)
+      // Item(s) — Add-ons (BBQ / Hotpot / Drinks etc.). Pricing MUST
+      // mirror calculatePricing() in lib/pricing.ts exactly: per-head
+      // items charge against adult-equivalent headcount (kids = 0.5),
+      // per-unit items multiply by the stored quantity, and BBQ uses a
+      // venue-specific unit price. Failing to mirror this is what made
+      // the BBQ receipt line read $158 × 1 instead of $158 × 7 pax.
+      const adults = Math.max(0, b.guestCount - (b.childCount || 0));
+      const equiv = adultEquivalent(adults, b.childCount || 0);
+      const hasBBQPackage = (b.addOns || []).some(
+        (a) => a.id === 'bbq-standard' || a.id === 'bbq-premium',
+      );
+
       for (const addOn of b.addOns || []) {
         const cfg = addOnConfig.find((a) => a.id === addOn.id);
         if (!cfg) continue;
-        // AddOn pricing is uniform across venues (pricing differences are
-        // already captured in the addOn description text).
-        const price = cfg.pricePerUnit;
+
+        let unitPrice: number;
+        let quantity: number;
+        let amount: number;
+
+        if (addOn.id === 'bbq-standard') {
+          // Per-head, venue-specific. SW: $158, TST: $138, CWB: $158.
+          unitPrice = bbqStandardPriceByVenue[b.venueId] || cfg.pricePerUnit;
+          quantity = equiv;
+          amount = Math.round(unitPrice * equiv);
+        } else if (addOn.id === 'bbq-premium') {
+          unitPrice = 328;
+          quantity = equiv;
+          amount = Math.round(unitPrice * equiv);
+        } else if (addOn.id === 'bbq-grill') {
+          // Grill rental is bundled when a BBQ package is also selected.
+          if (hasBBQPackage) continue;
+          unitPrice = 500;
+          quantity = addOn.quantity;
+          amount = unitPrice * quantity;
+        } else if (addOn.id === 'hotpot-standard') {
+          unitPrice = 168;
+          quantity = equiv;
+          amount = Math.round(unitPrice * equiv);
+        } else if (addOn.id === 'hotpot-seafood') {
+          unitPrice = 348;
+          quantity = equiv;
+          amount = Math.round(unitPrice * equiv);
+        } else if (addOn.id === 'hotpot-extra-soup') {
+          unitPrice = 108;
+          quantity = addOn.quantity;
+          amount = unitPrice * quantity;
+        } else if (addOn.id === 'drinks') {
+          // Skip drinks for venues with unlimited drinks bundled (e.g. TST).
+          if (freeDrinksVenues.includes(b.venueId)) continue;
+          // Skip if customer redeemed a "free drinks" promo on this booking.
+          if (b.promoFreeDrinksCost && b.promoFreeDrinksCost > 0) continue;
+          unitPrice = 25;
+          quantity = equiv;
+          amount = Math.round(unitPrice * equiv);
+        } else if (addOn.id === 'shisha') {
+          // Shisha is tiered (pipes + heads + optional staff setup).
+          // We fall back to the base pricePerUnit × head count — staff
+          // can adjust the line manually for premium tiers if needed.
+          unitPrice = cfg.pricePerUnit;
+          quantity = addOn.quantity;
+          amount = unitPrice * quantity;
+        } else {
+          // Fallback: per-unit
+          unitPrice = cfg.pricePerUnit;
+          quantity = addOn.quantity;
+          amount = unitPrice * quantity;
+        }
+
         items.push({
           description: `${cfg.name.en} ${cfg.name.zh}`,
-          quantity: addOn.quantity,
-          unitPrice: price,
-          amount: price * addOn.quantity,
+          quantity,
+          unitPrice,
+          amount,
         });
       }
 
