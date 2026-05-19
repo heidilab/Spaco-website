@@ -31,10 +31,26 @@ function toMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(':').map(Number);
   return h * 60 + (m || 0);
 }
+/** Convert minutes-past-midnight back to HH:mm. Wraps the hour past
+ *  24h so an 8-hour mahjong session starting at 22:00 renders as
+ *  "06:00" (next day) rather than the invalid "30:00". Overnight is
+ *  tracked separately via `endDate` on the booking record. */
 function toHHMM(min: number): string {
-  const h = Math.floor(min / 60);
-  const m = min % 60;
+  const wrapped = ((min % (24 * 60)) + 24 * 60) % (24 * 60);
+  const h = Math.floor(wrapped / 60);
+  const m = wrapped % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+/** Compute the next-day date string for an overnight session, without
+ *  going through toISOString() — that would roll back to UTC and give
+ *  the wrong day for HKT users. */
+function addDays(yyyyMmDd: string, n: number): string {
+  const d = new Date(`${yyyyMmDd}T00:00:00`);
+  d.setDate(d.getDate() + n);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 export default function PackageBookingPage() {
@@ -69,13 +85,18 @@ export default function PackageBookingPage() {
     setMinDate(d.toISOString().split('T')[0]);
   }, [pkg.minAdvanceDays]);
 
-  // Allowed start time options: from earliestStart up to
-  // (latestEnd − durationHours), in 15-minute increments — matches the
-  // à-la-carte booking flow (customers expect 19:15 / 19:30 / 19:45 etc).
+  // Allowed start time options. With a latestEnd cap (e.g. CWB birthday
+  // package closes at 17:00) the customer can only start at times that
+  // leave room for the full session. For 24-hour venues (Wan Chai
+  // mahjong) latestEnd is undefined and we let them start at any quarter
+  // hour from earliestStart up to 23:45 — the session is allowed to
+  // overflow into the next day.
   const startTimeOptions = useMemo(() => {
     const out: string[] = [];
     const earliest = toMinutes(pkg.earliestStart);
-    const latestStart = toMinutes(pkg.latestEnd) - pkg.durationHours * 60;
+    const latestStart = pkg.latestEnd
+      ? toMinutes(pkg.latestEnd) - pkg.durationHours * 60
+      : 24 * 60 - 15; // 23:45 — any start is OK on a 24-hour venue
     for (let m = earliest; m <= latestStart; m += 15) {
       out.push(toHHMM(m));
     }
@@ -89,11 +110,24 @@ export default function PackageBookingPage() {
     }
   }, [startTimeOptions, startTime]);
 
-  // Computed end time = start + durationHours
+  // Computed end time = start + durationHours. For overnight sessions
+  // (e.g. mahjong 22:00 + 8h = 06:00 next day) toHHMM wraps the hour so
+  // the rendered string is valid HH:mm. The day rollover is captured
+  // separately via endDate / isOvernight.
   const endTime = useMemo(() => {
     if (!startTime) return '';
     return toHHMM(toMinutes(startTime) + pkg.durationHours * 60);
   }, [startTime, pkg.durationHours]);
+
+  const isOvernight = useMemo(() => {
+    if (!startTime) return false;
+    return toMinutes(startTime) + pkg.durationHours * 60 >= 24 * 60;
+  }, [startTime, pkg.durationHours]);
+
+  const endDate = useMemo(() => {
+    if (!selectedDate || !isOvernight) return undefined;
+    return addDays(selectedDate, 1);
+  }, [selectedDate, isOvernight]);
 
   // Day-of-week guard
   const isDayAllowed = useMemo(() => {
@@ -235,6 +269,9 @@ export default function PackageBookingPage() {
         date: selectedDate,
         startTime,
         endTime,
+        // Overnight session — booking record needs endDate so the
+        // cleaning + smart-lock + gcal flows know the second-day slot.
+        ...(endDate ? { endDate } : {}),
         hours: pkg.durationHours,
         guestCount,
         adultCount: guestCount,
@@ -345,8 +382,12 @@ export default function PackageBookingPage() {
               </h2>
               <p className="text-xs text-ink-soft mb-4">
                 {locale === 'zh'
-                  ? `每節 ${pkg.durationHours} 小時固定．最早 ${pkg.earliestStart}．最遲 ${pkg.latestEnd} 完結`
-                  : `${pkg.durationHours}-hour fixed slot · earliest ${pkg.earliestStart} · latest end ${pkg.latestEnd}`}
+                  ? pkg.latestEnd
+                    ? `每節 ${pkg.durationHours} 小時固定．最早 ${pkg.earliestStart}．最遲 ${pkg.latestEnd} 完結`
+                    : `每節 ${pkg.durationHours} 小時固定．24 小時營業，可選任何開始時間（容許跨日）`
+                  : pkg.latestEnd
+                    ? `${pkg.durationHours}-hour fixed slot · earliest ${pkg.earliestStart} · latest end ${pkg.latestEnd}`
+                    : `${pkg.durationHours}-hour fixed slot · 24-hour venue, any start time (overnight OK)`}
               </p>
               <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
                 {startTimeOptions.map((t) => {
@@ -370,7 +411,14 @@ export default function PackageBookingPage() {
               {startTime && (
                 <div className="mt-4 p-3 rounded-2xl bg-pink/10 border border-pink/20 text-sm">
                   <span className="text-ink-soft">{locale === 'zh' ? '活動時段：' : 'Session: '}</span>
-                  <span className="font-bold text-ink">{startTime} – {endTime}</span>
+                  <span className="font-bold text-ink">
+                    {startTime} – {endTime}
+                    {isOvernight && (
+                      <span className="text-ink-soft font-normal ml-1">
+                        {locale === 'zh' ? '（翌日）' : ' (next day)'}
+                      </span>
+                    )}
+                  </span>
                   <span className="text-ink-soft ml-2">({pkg.durationHours} {locale === 'zh' ? '小時' : 'hours'})</span>
                 </div>
               )}

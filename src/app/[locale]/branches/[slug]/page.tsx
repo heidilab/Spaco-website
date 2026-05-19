@@ -337,7 +337,10 @@ export default function BranchPage() {
                         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-white/85 mb-5">
                           <span className="inline-flex items-center gap-1">
                             <Clock size={12} />
-                            {pkg.earliestStart}–{pkg.latestEnd} · {pkg.durationHours}{locale === 'zh' ? '小時' : 'h'}
+                            {pkg.latestEnd
+                              ? `${pkg.earliestStart}–${pkg.latestEnd}`
+                              : (locale === 'zh' ? `${pkg.earliestStart} 起（24 小時）` : `From ${pkg.earliestStart} (24h)`)}
+                            {' · '}{pkg.durationHours}{locale === 'zh' ? '小時' : 'h'}
                           </span>
                           <span>·</span>
                           <span>{dayList}</span>

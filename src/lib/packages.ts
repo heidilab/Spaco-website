@@ -36,8 +36,11 @@ export interface EventPackage {
   allowedDaysOfWeek: number[];
   /** Earliest start time (24h "HH:mm") */
   earliestStart: string;
-  /** Latest END time (booking must finish by this time) */
-  latestEnd: string;
+  /** Latest END time (booking must finish by this time, 24h "HH:mm").
+   *  Omit for 24-hour venues (e.g. the Wan Chai mahjong package) — the
+   *  customer can start at any quarter-hour and the session is allowed
+   *  to roll over into the next day. */
+  latestEnd?: string;
   /** Minimum advance days required (e.g. 5 = booking date must be ≥ today + 5). */
   minAdvanceDays?: number;
   /** Marketing copy for the family / corporate page card */
@@ -134,8 +137,9 @@ export const MAHJONG_WANCHAI_PACKAGE: EventPackage = {
   durationHours: 8,
   // 0 = Sun, 4 = Thu — 平日（日至四）only
   allowedDaysOfWeek: [0, 1, 2, 3, 4],
-  earliestStart: '08:00',
-  latestEnd: '24:00',
+  earliestStart: '00:00',
+  // No latestEnd — Wan Chai is 24-hour, so start anytime and let the
+  // 8-hour session roll over to the next day if needed.
   minAdvanceDays: 2,
   // Default 4 guests included; each extra guest +$300 ("每位 $300").
   basePax: 4,
