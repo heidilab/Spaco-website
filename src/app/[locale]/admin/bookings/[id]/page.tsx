@@ -179,13 +179,33 @@ export default function AdminBookingDetailPage() {
           ? { venueId, branchSlug: targetVenue?.slug || booking.branchSlug }
           : {}),
       });
+
+      // Push the change to Google Calendar immediately — admin should
+      // never have to click anything for the calendar to mirror the
+      // booking. The blocked_slots side of the master calendar is
+      // already updated inside updateBookingDateTime above.
+      // syncOnly=true skips the customer email + payment-recording
+      // branches; admin can still trigger those via the payment modal
+      // below if they want to record a top-up. Failures are non-fatal.
+      try {
+        await fetch('/api/admin/booking-edit-followup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bookingId: booking.id, syncOnly: true }),
+        });
+      } catch (err) {
+        console.warn('[handleSave] gcal auto-sync failed:', err);
+      }
+
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
       // Refresh
       const fresh = await getBooking(booking.id);
       if (fresh) setBooking(fresh);
       // Open the payment / followup modal so admin can record any
-      // top-up payment and trigger email re-send + gcal sync.
+      // top-up payment + send the customer the update email. Gcal +
+      // blocked_slots are already synced above regardless of whether
+      // admin uses the modal.
       setShowPaymentModal(true);
       setFollowupMsg(null);
     } catch (err) {

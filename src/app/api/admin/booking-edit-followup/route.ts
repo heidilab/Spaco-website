@@ -43,6 +43,13 @@ export async function POST(req: NextRequest) {
     const body = await req.json() as {
       bookingId?: string;
       payment?: FollowupPayment;
+      /** When true, ONLY do the Google Calendar sync — no payment recording,
+       *  no customer email. Used by the admin-detail save flow to guarantee
+       *  gcal mirrors every edit (time / guests / venue / date) immediately
+       *  without spamming the customer with a fresh "預訂已更新" email each
+       *  time admin tweaks something. The payment-modal path falls back to
+       *  the full flow (payment + email + gcal). */
+      syncOnly?: boolean;
     };
     const bookingId = body.bookingId;
     if (!bookingId) {
@@ -55,6 +62,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
     }
     const booking = { id: snap.id, ...snap.data() } as BookingRecord;
+    const syncOnly = !!body.syncOnly;
 
     // 1. Optional payment recording — split rental / deposit.
     //    Bumps pricing.subtotal + securityDeposit accordingly so
@@ -68,7 +76,7 @@ export async function POST(req: NextRequest) {
     //    We never downgrade a status (e.g. 'completed' or 'cancelled'
     //    stays put), so admin can correct mistakes without losing state.
     let updatedBalance: number | null = null;
-    if (body.payment && (body.payment.rentalAmount > 0 || body.payment.depositAmount > 0)) {
+    if (!syncOnly && body.payment && (body.payment.rentalAmount > 0 || body.payment.depositAmount > 0)) {
       const rental = Math.max(0, body.payment.rentalAmount || 0);
       const dep = Math.max(0, body.payment.depositAmount || 0);
       const total = rental + dep;
@@ -136,7 +144,7 @@ export async function POST(req: NextRequest) {
     const venue = getVenueById(fresh.venueId);
     const venueName = venue?.name.zh || fresh.branchSlug;
 
-    if (customerEmail) {
+    if (!syncOnly && customerEmail) {
       const whatsappNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || '85292823060';
       const whatsappLink = generateWhatsAppLink(
         whatsappNumber,
