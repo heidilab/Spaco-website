@@ -66,22 +66,14 @@ export default function MyBookingsPage() {
     getUserBookings(user.uid).then(setBookings);
   }
 
-  // Hide bookings that should not appear in the customer's list:
-  //   1. Created but no payment method picked yet (status='pending' + paymentMethod=null)
-  //      — the customer abandoned the flow before committing to anything.
-  //   2. Offline-payment bookings whose 30-min hold expired without a receipt
-  //      — the cron will (or already did) auto-cancel them; hide immediately.
-  const now = Date.now();
+  // Show every booking the customer has interacted with — including
+  // 已確認 / 已完成 / 已取消 / 沒有完成付款 / 待付款. The only thing we
+  // still drop is legacy `pending + paymentMethod=null` rows (pre-2026-05
+  // ghosts from the old "write-before-payment-method" flow that the
+  // expire cron sweeps to payment_not_completed within ~15 minutes of
+  // deploy — no point showing them in their transient state).
   const visibleBookings = bookings.filter((b) => {
     if (b.status === 'pending' && !b.paymentMethod) return false;
-    if (b.status === 'cancelled') return false;
-    const isOfflineAwaiting =
-      b.status === 'awaiting_payment' &&
-      b.paymentMethod !== 'stripe' &&
-      !b.receiptUrl;
-    if (isOfflineAwaiting && typeof b.pendingExpiresAt === 'number' && b.pendingExpiresAt <= now) {
-      return false;
-    }
     return true;
   });
 
@@ -195,14 +187,12 @@ function BookingCard({
   }
 
   const balanceDue = booking.balanceDue ?? 0;
-  const showResumePayment = booking.status === 'pending' || (booking.status === 'awaiting_payment' && !booking.receiptUrl);
-  const showUploadReceipt =
-    (booking.status === 'pending' || booking.status === 'awaiting_payment') && booking.paymentMethod !== 'stripe';
-  const showPayBalance = booking.status === 'confirmed' && balanceDue > 0;
 
-  // Live 30-min countdown for offline-payment bookings awaiting a receipt.
-  // After expiry the row will be filtered out by the parent on the next render,
-  // and the server cron will flip the booking to `cancelled` shortly after.
+  // Live 30-min countdown for offline-payment bookings awaiting a
+  // receipt. When `msLeft` hits 0 the server cron (runs every 15 min)
+  // flips the booking to `payment_not_completed` and releases the slot.
+  // We need msLeft to gate the action buttons too — once the window has
+  // lapsed there's nothing actionable until the cron catches up.
   const isOfflineAwaiting =
     booking.status === 'awaiting_payment' &&
     booking.paymentMethod !== 'stripe' &&
@@ -213,6 +203,16 @@ function BookingCard({
     : 0;
   const minsLeft = Math.floor(msLeft / 60000);
   const secsLeft = Math.floor((msLeft % 60000) / 1000);
+  const stillInHoldWindow = !isOfflineAwaiting || msLeft > 0;
+
+  const showResumePayment =
+    (booking.status === 'pending' || (booking.status === 'awaiting_payment' && !booking.receiptUrl))
+    && stillInHoldWindow;
+  const showUploadReceipt =
+    (booking.status === 'pending' || booking.status === 'awaiting_payment')
+    && booking.paymentMethod !== 'stripe'
+    && stillInHoldWindow;
+  const showPayBalance = booking.status === 'confirmed' && balanceDue > 0;
 
   const whatsappMsg =
     locale === 'zh'
@@ -277,20 +277,41 @@ function BookingCard({
           <div className="flex-1 text-xs leading-relaxed">
             <p className="font-semibold text-amber-800">
               {locale === 'zh'
-                ? `預約將於 ${minsLeft} 分 ${secsLeft.toString().padStart(2, '0')} 秒後自動取消`
-                : `Booking auto-cancels in ${minsLeft}m ${secsLeft.toString().padStart(2, '0')}s`}
+                ? `請於 ${minsLeft} 分 ${secsLeft.toString().padStart(2, '0')} 秒內完成付款，否則此預約會標記為「沒有完成付款」`
+                : `Complete payment within ${minsLeft}m ${secsLeft.toString().padStart(2, '0')}s, or this booking will be marked "Payment Not Completed"`}
             </p>
             <p className="text-amber-700 mt-1">
               {locale === 'zh'
-                ? '系統目前並未為閣下預留場地，以收到款項時間為準（先到先得）。請於 30 分鐘內完成付款並上載截圖，否則此預約會自動取消。'
-                : 'The slot is NOT reserved yet — first-come-first-served, based on payment receipt time. Complete payment and upload your receipt within 30 minutes or this booking will auto-cancel.'}
+                ? '系統目前並未為閣下預留場地，以收到款項時間為準（先到先得）。請於 30 分鐘內完成付款並上載截圖。'
+                : 'The slot is NOT reserved yet — first-come-first-served, based on payment receipt time. Complete payment and upload your receipt within 30 minutes.'}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* "Payment Not Completed" — slot already released; show a WhatsApp
+       *  CTA so the customer can still ask CS to re-arrange if they want. */}
+      {booking.status === 'payment_not_completed' && (
+        <div className="rounded-xl bg-stone-50 border border-stone-200 px-4 py-3 mb-3 flex items-start gap-2.5">
+          <AlertCircle size={16} className="text-stone-600 mt-0.5 flex-shrink-0" />
+          <div className="flex-1 text-xs leading-relaxed">
+            <p className="font-semibold text-stone-800">
+              {locale === 'zh'
+                ? '此預約沒有完成付款，時段已釋放'
+                : 'This booking was not paid in time — the slot has been released'}
+            </p>
+            <p className="text-stone-700 mt-1">
+              {locale === 'zh'
+                ? '如仍想預訂，請 WhatsApp 聯絡我哋，或重新預訂。'
+                : 'To still book, WhatsApp us, or place a new booking.'}
             </p>
           </div>
         </div>
       )}
 
       {/* Action buttons */}
-      {(showResumePayment || showUploadReceipt || showPayBalance) && (
+      {(showResumePayment || showUploadReceipt || showPayBalance
+        || booking.status === 'payment_not_completed') && (
         <div className="border-t border-white/40 pt-4 mt-2 flex flex-wrap gap-2">
           {showResumePayment && (
             <Link
@@ -342,6 +363,21 @@ function BookingCard({
               {locale === 'zh' ? '找尾數' : 'Pay balance'}
               <span className="ml-1">HK${balanceDue.toLocaleString()}</span>
             </Link>
+          )}
+
+          {/* Payment-not-completed: only a WhatsApp CTA — the slot has
+           *  been released, so there's no inline action that would put
+           *  the booking back into play without CS coordination. */}
+          {booking.status === 'payment_not_completed' && (
+            <a
+              href={whatsappLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-2 bg-[#25D366] text-white rounded-lg text-sm font-medium flex items-center gap-1.5"
+            >
+              <MessageCircle size={14} />
+              {locale === 'zh' ? 'WhatsApp 客服' : 'WhatsApp Support'}
+            </a>
           )}
         </div>
       )}
