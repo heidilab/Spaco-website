@@ -5,7 +5,9 @@ import {
   buildBookingConfirmationEmail, generateWhatsAppLink,
 } from '@/lib/email';
 import { sendAutomatedEmail } from '@/lib/emailAutomations';
-import { updateBookingOnCalendar } from '@/lib/googleCalendar';
+import {
+  updateBookingOnCalendar, pushBookingToCalendar,
+} from '@/lib/googleCalendar';
 import { getVenueById } from '@/lib/venues';
 import { formatAddOnsForStaff } from '@/lib/pricing';
 import type { BookingRecord, UserProfile } from '@/types';
@@ -177,14 +179,34 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 3. Update the matching Google Calendar event
+    // 3. Update / re-create the matching Google Calendar event.
+    //    When admin changes the booking's venue, lib/firestore.ts clears
+    //    `googleEventId` (the old event lives on a different calendar).
+    //    In that case updateBookingOnCalendar would no-op, so we push a
+    //    fresh event on the new venue's calendar instead. The old
+    //    orphaned event on the previous venue's calendar needs manual
+    //    cleanup — admin is told in the success message.
     try {
       const origin = req.nextUrl.origin;
       const redirectUri = `${origin}/api/google/callback`;
-      await updateBookingOnCalendar(redirectUri, {
-        booking: fresh,
-        customerName: profile?.displayName,
-      });
+      if (fresh.googleEventId) {
+        await updateBookingOnCalendar(redirectUri, {
+          booking: fresh,
+          customerName: profile?.displayName,
+        });
+      } else {
+        const newEventId = await pushBookingToCalendar(redirectUri, {
+          booking: fresh,
+          customerName: profile?.displayName,
+        });
+        if (newEventId) {
+          // Persist so subsequent edits / cancellations can find the event.
+          await bookingRef.update({
+            googleEventId: newEventId,
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+        }
+      }
     } catch (err) {
       console.warn('[booking-edit-followup] gcal update failed:', err);
       // Non-fatal — booking is already updated; admin can resync.

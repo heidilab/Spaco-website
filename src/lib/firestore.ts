@@ -137,9 +137,76 @@ export async function updateBookingStatus(id: string, status: string) {
  *  two booking blocks are created (date → 23:59 + endDate 00:00 → endTime).
  *  Cleaning buffer (1hr) is placed after the actual end on whichever day
  *  the booking concludes. */
+/**
+ * Throws a SLOT_CONFLICT error (so the admin UI can show a red warning)
+ * if any existing blocked_slot on the target venue (or any venue sharing
+ * the same physical space) overlaps the proposed time window — EXCLUDING
+ * blocks owned by `excludeBookingId` itself, so editing a booking's own
+ * time doesn't fight with its own slots.
+ *
+ * Used by updateBookingDateTime when admin is changing the venue on a
+ * booking (e.g. moving a customer from CWB to TST due to a leak / clash).
+ */
+async function assertNoSlotConflict(opts: {
+  venueId: string;
+  date: string;
+  endDate?: string;
+  startTime: string;
+  endTime: string;
+  excludeBookingId: string;
+}): Promise<void> {
+  const startMin = (h: string) => {
+    const [hh, mm] = h.split(':').map(Number);
+    return hh * 60 + (mm || 0);
+  };
+  const overnight = !!opts.endDate && opts.endDate !== opts.date;
+  const windows = overnight
+    ? [
+        { date: opts.date, start: startMin(opts.startTime), end: 24 * 60 },
+        { date: opts.endDate as string, start: 0, end: startMin(opts.endTime) },
+      ]
+    : [{ date: opts.date, start: startMin(opts.startTime), end: startMin(opts.endTime) }];
+
+  for (const vid of venuesSharingSpace(opts.venueId)) {
+    for (const w of windows) {
+      const snap = await getDocs(query(
+        collection(db, 'blocked_slots'),
+        where('venueId', '==', vid),
+        where('date', '==', w.date),
+      ));
+      for (const docSnap of snap.docs) {
+        const data = docSnap.data() as { bookingId?: string; startTime: string; endTime: string };
+        if (data.bookingId === opts.excludeBookingId) continue;
+        const bStart = startMin(data.startTime);
+        const bEnd = startMin(data.endTime);
+        if (w.start < bEnd && bStart < w.end) {
+          // Include conflicting bookingId in the message so the admin UI
+          // can render a "已被預訂 #abc123" hint.
+          const ref = data.bookingId ? ` #${data.bookingId.slice(0, 8)}` : '';
+          throw new Error(`SLOT_CONFLICT:${vid}${ref}`);
+        }
+      }
+    }
+  }
+}
+
 export async function updateBookingDateTime(
   bookingId: string,
-  next: { date: string; startTime: string; endTime: string; endDate?: string; guestCount?: number }
+  next: {
+    date: string;
+    startTime: string;
+    endTime: string;
+    endDate?: string;
+    guestCount?: number;
+    /** Optional venue change — when present and different from the
+     *  booking's current venueId, blocked_slots are migrated to the new
+     *  venue (and its shared-space siblings) after a conflict check
+     *  against the new venue's existing blocks. googleEventId is cleared
+     *  on venue change so the followup route can create a fresh event
+     *  on the new venue's calendar. */
+    venueId?: string;
+    branchSlug?: string;
+  }
 ) {
   const bookingRef = doc(db, 'bookings', bookingId);
   const bookingSnap = await getDoc(bookingRef);
@@ -148,6 +215,20 @@ export async function updateBookingDateTime(
 
   const endDate = next.endDate && next.endDate !== next.date ? next.endDate : next.date;
   const overnight = endDate !== next.date;
+  const targetVenueId = next.venueId || booking.venueId;
+  const venueChanged = next.venueId !== undefined && next.venueId !== booking.venueId;
+
+  // Conflict check on the TARGET venue (and its shared-space siblings)
+  // before touching anything. We do this BEFORE deleting the old slots
+  // so a failed conflict check leaves the booking exactly as it was.
+  await assertNoSlotConflict({
+    venueId: targetVenueId,
+    date: next.date,
+    endDate: overnight ? endDate : undefined,
+    startTime: next.startTime,
+    endTime: next.endTime,
+    excludeBookingId: bookingId,
+  });
 
   const [endH, endM] = next.endTime.split(':').map(Number);
   // Cleaning buffer: 1 hr after end. If end is past 23:00, buffer pushes
@@ -158,7 +239,7 @@ export async function updateBookingDateTime(
     ? '23:59'      // cap at end of day; rare and admin can extend manually
     : `${String(bufferEndH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
 
-  const venuesToBlock = venuesSharingSpace(booking.venueId);
+  const venuesToBlock = venuesSharingSpace(targetVenueId);
 
   // Replace the blocked_slots tied to this booking.
   const blockedSnap = await getDocs(
@@ -216,6 +297,16 @@ export async function updateBookingDateTime(
     updatedAt: serverTimestamp(),
   };
   if (typeof next.guestCount === 'number') patch.guestCount = next.guestCount;
+  if (venueChanged) {
+    patch.venueId = next.venueId;
+    if (next.branchSlug) patch.branchSlug = next.branchSlug;
+    // Old Google Calendar event lives on the old venue's calendar — clear
+    // the id so the followup route creates a fresh event on the new
+    // venue's calendar via pushBookingToCalendar. The orphan on the old
+    // calendar should be cleaned up by admin manually (or future cleanup
+    // cron) — it's not in our way otherwise.
+    patch.googleEventId = null;
+  }
   await updateDoc(bookingRef, patch);
 }
 

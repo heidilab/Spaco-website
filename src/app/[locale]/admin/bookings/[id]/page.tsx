@@ -67,6 +67,10 @@ export default function AdminBookingDetailPage() {
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [guestCount, setGuestCount] = useState(0);
+  // Venue is editable so admin can relocate a booking (e.g. leak / clash).
+  // The conflict check on save will block the move if the target venue
+  // is already booked at the same time.
+  const [venueId, setVenueId] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [statusValue, setStatusValue] = useState('');
@@ -113,6 +117,7 @@ export default function AdminBookingDetailPage() {
         setStartTime(b.startTime);
         setEndTime(b.endTime);
         setGuestCount(b.guestCount);
+        setVenueId(b.venueId);
         setStatusValue(b.status);
         if (b.userId) {
           const p = await getUserProfile(b.userId).catch(() => null);
@@ -139,13 +144,14 @@ export default function AdminBookingDetailPage() {
     return <div className="text-rose-500 p-8">{error || 'Error'}</div>;
   }
 
-  const venue = venues.find((v) => v.id === booking.venueId);
+  const venue = venues.find((v) => v.id === venueId) ?? venues.find((v) => v.id === booking.venueId);
   const dirty =
     date !== booking.date ||
     endDate !== (booking.endDate || booking.date) ||
     startTime !== booking.startTime ||
     endTime !== booking.endTime ||
-    guestCount !== booking.guestCount;
+    guestCount !== booking.guestCount ||
+    venueId !== booking.venueId;
 
   // Validation: end (date+time) must be strictly after start (date+time).
   const startMs = (date && startTime) ? new Date(`${date}T${startTime}:00+08:00`).getTime() : 0;
@@ -161,7 +167,18 @@ export default function AdminBookingDetailPage() {
     setSaving(true);
     setError(null);
     try {
-      await updateBookingDateTime(booking.id, { date, startTime, endTime, endDate, guestCount });
+      const targetVenue = venues.find((v) => v.id === venueId);
+      const venueChanged = venueId !== booking.venueId;
+      await updateBookingDateTime(booking.id, {
+        date,
+        startTime,
+        endTime,
+        endDate,
+        guestCount,
+        ...(venueChanged
+          ? { venueId, branchSlug: targetVenue?.slug || booking.branchSlug }
+          : {}),
+      });
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
       // Refresh
@@ -173,11 +190,25 @@ export default function AdminBookingDetailPage() {
       setFollowupMsg(null);
     } catch (err) {
       console.error(err);
-      setError(
-        locale === 'zh'
-          ? '儲存失敗，可能與其他預訂衝突'
-          : 'Save failed — may conflict with another booking'
-      );
+      const msg = err instanceof Error ? err.message : String(err);
+      // assertNoSlotConflict in lib/firestore.ts throws this prefix so
+      // we can surface a specific red warning instead of a generic save
+      // failure. Format: SLOT_CONFLICT:<venueId> or SLOT_CONFLICT:<venueId> #<bookingIdPrefix>
+      if (msg.startsWith('SLOT_CONFLICT')) {
+        const target = venues.find((v) => v.id === venueId);
+        const targetName = target?.name[locale] || venueId;
+        setError(
+          locale === 'zh'
+            ? `⚠️ ${targetName} 喺呢個時段已經有其他預訂，無法更改場地。請揀其他場地或時段。`
+            : `⚠️ ${targetName} already has a booking at this time. Cannot move — pick another venue or time.`
+        );
+      } else {
+        setError(
+          locale === 'zh'
+            ? '儲存失敗，可能與其他預訂衝突'
+            : 'Save failed — may conflict with another booking'
+        );
+      }
     } finally {
       setSaving(false);
     }
@@ -449,23 +480,34 @@ export default function AdminBookingDetailPage() {
             </div>
           )}
 
-          {/* Editable date / time */}
+          {/* Editable date / time / venue */}
           <div className="glass-card p-6 space-y-4">
             <h2 className="font-bold">
-              {locale === 'zh' ? '修改日期、時間及人數' : 'Edit Date / Time / Guests'}
+              {locale === 'zh' ? '修改場地、日期、時間及人數' : 'Edit Venue / Date / Time / Guests'}
             </h2>
             <p className="text-xs text-ink-soft -mt-2">
               {locale === 'zh'
-                ? '修改後系統會自動更新場地時段封鎖；如有衝突會儲存失敗。'
-                : 'On save, the venue block is updated. Conflicting bookings will block the save.'}
+                ? '修改後系統會自動更新場地時段封鎖；如目標場地喺指定時間已有預訂，儲存會失敗並顯示紅色警告。'
+                : 'On save, blocked slots are migrated to the new venue. A red warning blocks the save if the target venue is already booked at this time.'}
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label={locale === 'zh' ? '場地' : 'Venue'}>
-                <input
-                  value={venue?.name[locale] || booking.venueId}
-                  disabled
-                  className="w-full px-3 py-2 rounded-lg border border-charcoal/10 bg-cream/60 text-sm"
-                />
+                <select
+                  value={venueId}
+                  onChange={(e) => setVenueId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-charcoal/10 bg-white text-sm focus:outline-none focus:border-accent"
+                >
+                  {venues.map((v) => (
+                    <option key={v.id} value={v.id}>{v.name[locale]}</option>
+                  ))}
+                </select>
+                {venueId !== booking.venueId && (
+                  <p className="mt-1 text-[11px] text-amber-700">
+                    {locale === 'zh'
+                      ? `⚠ 場地改動：${venues.find((v) => v.id === booking.venueId)?.name[locale] || booking.venueId} → ${venues.find((v) => v.id === venueId)?.name[locale] || venueId}（儲存後會檢查衝突）`
+                      : `⚠ Venue change: ${venues.find((v) => v.id === booking.venueId)?.name[locale] || booking.venueId} → ${venues.find((v) => v.id === venueId)?.name[locale] || venueId} (conflict checked on save)`}
+                  </p>
+                )}
               </Field>
               <Field label={locale === 'zh' ? '日期' : 'Date'}>
                 <input
