@@ -60,14 +60,24 @@ export default function PaymentHistory({
     (p) => (p.amount || 0) > 0 && (p.rentalAmount || 0) === 0 && (p.depositAmount || 0) === 0,
   );
 
-  // Synthesize the initial payment from booking data — only safe when all
-  // logged entries are split. Compute the rental / deposit breakdown
-  // independently of pricing.deposit so the math stays consistent across
-  // both "initial" and "all entries logged" states.
+  // Only synthesize an "initial confirmation payment" row when the
+  // booking has actually been paid for. For 'pending' / 'awaiting_*'
+  // bookings, booking.pricing.* reflects the QUOTED amount, not money
+  // received — drawing a synthetic row at that stage was the bug that
+  // made #Ebthocjl show "已收 $8,300 / Stripe" before any payment ever
+  // happened (Stripe dashboard was correctly empty).
+  const isPaid =
+    booking.status === 'confirmed' ||
+    booking.status === 'completed' ||
+    !!booking.paymentVerifiedAt;
+
+  // Synthesize the initial payment from booking data — only safe when
+  // the booking is paid AND all logged entries are split.
   const loggedRentalSum = payments.reduce((s, p) => s + (p.rentalAmount || 0), 0);
   const loggedDepositSum = payments.reduce((s, p) => s + (p.depositAmount || 0), 0);
-  const initialRental = hasUnsplit ? 0 : Math.max(0, (booking.pricing.subtotal || 0) - loggedRentalSum);
-  const initialDeposit = hasUnsplit ? 0 : Math.max(0, (booking.pricing.securityDeposit || 0) - loggedDepositSum);
+  const skipInitial = hasUnsplit || !isPaid;
+  const initialRental = skipInitial ? 0 : Math.max(0, (booking.pricing.subtotal || 0) - loggedRentalSum);
+  const initialDeposit = skipInitial ? 0 : Math.max(0, (booking.pricing.securityDeposit || 0) - loggedDepositSum);
   const initialPaid = initialRental + initialDeposit;
   const initialMethod = (booking.paymentMethod || 'stripe') as 'stripe' | 'fps' | 'bank' | 'cash' | 'other';
 

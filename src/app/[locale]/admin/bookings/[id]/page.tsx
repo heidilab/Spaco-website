@@ -573,7 +573,50 @@ export default function AdminBookingDetailPage() {
             )}
             <Row label={locale === 'zh' ? '小計' : 'Subtotal'} value={`HK$${booking.pricing.subtotal.toLocaleString()}`} />
             <Row label={locale === 'zh' ? '可退按金' : 'Refundable deposit'} value={`HK$${(booking.pricing.securityDeposit ?? 0).toLocaleString()}`} />
-            <Row label={locale === 'zh' ? '已收' : 'Paid'} value={`HK$${booking.pricing.deposit.toLocaleString()}`} />
+            {(() => {
+              // "已收" must reflect money actually received, not the quoted
+              // upfront amount. For unpaid bookings it's the sum of any
+              // admin-logged payments (often zero). For paid bookings it's
+              // grandTotal − balanceDue, which correctly accounts for 50%
+              // upfront + later balance top-ups since pricing.* fields are
+              // mutated on every recorded payment.
+              const grandTotal =
+                (booking.pricing.subtotal || 0) + (booking.pricing.securityDeposit || 0);
+              const loggedSum =
+                (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+              const isPaid =
+                booking.status === 'confirmed' ||
+                booking.status === 'completed' ||
+                !!booking.paymentVerifiedAt;
+              const actualPaid = isPaid
+                ? Math.max(0, grandTotal - (booking.balanceDue || 0))
+                : loggedSum;
+              const upfrontQuote = booking.pricing.deposit || 0;
+              return (
+                <>
+                  <Row
+                    label={locale === 'zh' ? '應付（首期）' : 'Due (upfront)'}
+                    value={`HK$${upfrontQuote.toLocaleString()}`}
+                  />
+                  <Row
+                    label={locale === 'zh' ? '已收' : 'Paid'}
+                    value={
+                      actualPaid > 0
+                        ? `HK$${actualPaid.toLocaleString()}`
+                        : (locale === 'zh' ? '— 未收款' : '— Not yet paid')
+                    }
+                    highlight={actualPaid > 0 ? 'emerald' : undefined}
+                  />
+                  {(booking.balanceDue || 0) > 0 && isPaid && (
+                    <Row
+                      label={locale === 'zh' ? '尚欠（尾數）' : 'Outstanding'}
+                      value={`HK$${(booking.balanceDue || 0).toLocaleString()}`}
+                      highlight="amber"
+                    />
+                  )}
+                </>
+              );
+            })()}
             {(booking.pointsUsed ?? 0) > 0 && (
               <Row
                 icon={<Sparkles size={14} />}
