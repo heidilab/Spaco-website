@@ -15,7 +15,7 @@ import {
 } from '@/lib/firestore';
 import { BookingRecord, UserProfile, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
 import { venues } from '@/lib/venues';
-import { formatAddOnsForStaff } from '@/lib/pricing';
+import { formatAddOnsForStaff, addOns as ADDON_CATALOG } from '@/lib/pricing';
 import PaymentHistory from '@/components/booking/PaymentHistory';
 import { buildWhatsAppLink, formatHkPhone } from '@/lib/whatsapp';
 import {
@@ -71,6 +71,11 @@ export default function AdminBookingDetailPage() {
   // The conflict check on save will block the move if the target venue
   // is already booked at the same time.
   const [venueId, setVenueId] = useState('');
+  // Editable add-ons map — id → quantity. Pre-populated from the booking
+  // on load. Quantity > 0 means selected. Saving runs the full pricing
+  // recompute in lib/firestore.ts so the booking's subtotal /
+  // securityDeposit / balanceDue all reflect the change.
+  const [addOnQty, setAddOnQty] = useState<Record<string, number>>({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [statusValue, setStatusValue] = useState('');
@@ -119,6 +124,13 @@ export default function AdminBookingDetailPage() {
         setGuestCount(b.guestCount);
         setVenueId(b.venueId);
         setStatusValue(b.status);
+        // Hydrate add-on quantities from the booking so the edit panel
+        // reflects what the customer originally booked.
+        const initialQty: Record<string, number> = {};
+        for (const a of b.addOns || []) {
+          initialQty[a.id] = a.quantity;
+        }
+        setAddOnQty(initialQty);
         if (b.userId) {
           const p = await getUserProfile(b.userId).catch(() => null);
           if (p) setProfile(p as unknown as UserProfile);
@@ -145,13 +157,27 @@ export default function AdminBookingDetailPage() {
   }
 
   const venue = venues.find((v) => v.id === venueId) ?? venues.find((v) => v.id === booking.venueId);
+
+  // Compare current add-on selection against what's stored on the booking.
+  // Keyed dirty check: any id whose qty differs (including newly added with
+  // qty>0 or removed by setting qty=0) flips dirty.
+  const storedAddOnMap: Record<string, number> = {};
+  for (const a of booking.addOns || []) storedAddOnMap[a.id] = a.quantity;
+  const addOnIds = new Set([...Object.keys(storedAddOnMap), ...Object.keys(addOnQty)]);
+  const addOnsDirty = Array.from(addOnIds).some((id) => {
+    const cur = addOnQty[id] || 0;
+    const old = storedAddOnMap[id] || 0;
+    return cur !== old;
+  });
+
   const dirty =
     date !== booking.date ||
     endDate !== (booking.endDate || booking.date) ||
     startTime !== booking.startTime ||
     endTime !== booking.endTime ||
     guestCount !== booking.guestCount ||
-    venueId !== booking.venueId;
+    venueId !== booking.venueId ||
+    addOnsDirty;
 
   // Validation: end (date+time) must be strictly after start (date+time).
   const startMs = (date && startTime) ? new Date(`${date}T${startTime}:00+08:00`).getTime() : 0;
@@ -169,6 +195,13 @@ export default function AdminBookingDetailPage() {
     try {
       const targetVenue = venues.find((v) => v.id === venueId);
       const venueChanged = venueId !== booking.venueId;
+      // Build the new addOns array from the qty map. Drops entries with
+      // qty <= 0 so removed add-ons clear from the booking.
+      const newAddOns = addOnsDirty
+        ? Object.entries(addOnQty)
+            .filter(([, q]) => q > 0)
+            .map(([id, quantity]) => ({ id, quantity }))
+        : undefined;
       await updateBookingDateTime(booking.id, {
         date,
         startTime,
@@ -178,6 +211,7 @@ export default function AdminBookingDetailPage() {
         ...(venueChanged
           ? { venueId, branchSlug: targetVenue?.slug || booking.branchSlug }
           : {}),
+        ...(newAddOns ? { addOns: newAddOns } : {}),
       });
 
       // Push the change to Google Calendar immediately — admin should
@@ -579,6 +613,104 @@ export default function AdminBookingDetailPage() {
                 {locale === 'zh'
                   ? `過夜預訂：${date} ${startTime} → ${endDate} ${endTime}。系統會自動分日創建場地封鎖時段。`
                   : `Overnight: ${date} ${startTime} → ${endDate} ${endTime}. Cross-midnight blocked slots will be created automatically.`}
+              </div>
+            )}
+
+            {/* Add-ons editor — checkboxes + quantity inputs. Same catalogue
+             *  as the customer booking flow. On save, lib/firestore.ts
+             *  recomputes the full pricing block (subtotal, addOnTotal,
+             *  securityDeposit, deposit, balanceDue) so admin doesn't need
+             *  to also manually patch numbers. Package bookings are
+             *  excluded — their pricing is flat and follows pkg.price. */}
+            {!booking.packageSlug && (
+              <div className="pt-4 mt-2 border-t border-charcoal/10 space-y-3">
+                <h3 className="font-semibold text-sm flex items-center gap-1.5">
+                  <Package size={14} className="text-accent" />
+                  {locale === 'zh' ? '附加服務' : 'Add-ons'}
+                </h3>
+                <p className="text-xs text-ink-soft -mt-1">
+                  {locale === 'zh'
+                    ? '改動會即時重新計算場租 / 附加服務小計 / 可退按金 / 應付 / 尾數，並寫入預訂。'
+                    : 'Changes re-run pricing (rental / add-on subtotal / refundable / due / balance) on save.'}
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {ADDON_CATALOG.map((cfg) => {
+                    const qty = addOnQty[cfg.id] || 0;
+                    const enabled = qty > 0;
+                    return (
+                      <label
+                        key={cfg.id}
+                        className={`flex items-start gap-2 rounded-lg border px-3 py-2 cursor-pointer text-xs ${
+                          enabled
+                            ? 'border-accent bg-accent/5'
+                            : 'border-charcoal/10 bg-white hover:bg-cream/30'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={enabled}
+                          onChange={(e) => {
+                            setAddOnQty((prev) => ({
+                              ...prev,
+                              [cfg.id]: e.target.checked ? Math.max(prev[cfg.id] || 1, 1) : 0,
+                            }));
+                          }}
+                          className="mt-0.5 accent-accent flex-shrink-0"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-baseline justify-between gap-1">
+                            <span className="font-medium truncate">{cfg.name[locale]}</span>
+                            <span className="text-ink-soft text-[11px] whitespace-nowrap">
+                              ${cfg.pricePerUnit}
+                            </span>
+                          </div>
+                          {enabled && (
+                            <div className="flex items-center gap-1.5 mt-1.5">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  setAddOnQty((prev) => ({
+                                    ...prev,
+                                    [cfg.id]: Math.max(1, (prev[cfg.id] || 1) - 1),
+                                  }));
+                                }}
+                                className="w-6 h-6 rounded-md bg-white border border-charcoal/15 flex items-center justify-center text-ink-soft hover:bg-cream"
+                              >
+                                <Minus size={10} />
+                              </button>
+                              <input
+                                type="number"
+                                min={1}
+                                value={qty}
+                                onChange={(e) =>
+                                  setAddOnQty((prev) => ({
+                                    ...prev,
+                                    [cfg.id]: Math.max(1, parseInt(e.target.value) || 1),
+                                  }))
+                                }
+                                className="w-12 px-1 py-0.5 rounded border border-charcoal/15 text-center text-xs bg-white"
+                              />
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  setAddOnQty((prev) => ({
+                                    ...prev,
+                                    [cfg.id]: (prev[cfg.id] || 1) + 1,
+                                  }));
+                                }}
+                                className="w-6 h-6 rounded-md bg-white border border-charcoal/15 flex items-center justify-center text-ink-soft hover:bg-cream"
+                              >
+                                <Plus size={10} />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
             )}
 

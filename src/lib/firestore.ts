@@ -14,8 +14,10 @@ import {
   arrayUnion,
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { BookingRecord, BlockedSlot, BusinessDocument, DocumentType, DocumentRevision, CalendarEvent } from '@/types';
-import { venuesSharingSpace } from './venues';
+import { BookingRecord, BlockedSlot, BusinessDocument, DocumentType, DocumentRevision, CalendarEvent, AddOnOptions } from '@/types';
+import { venuesSharingSpace, getVenueById } from './venues';
+import { calculatePricing, calculateDeposit } from './pricing';
+import { getHoliday } from './hkHolidays';
 
 // ============ BOOKINGS ============
 
@@ -198,6 +200,10 @@ export async function updateBookingDateTime(
     endTime: string;
     endDate?: string;
     guestCount?: number;
+    /** Adult / child split. When present, used for both per-head pricing
+     *  recompute and to update the stored counts (children at 0.5 rate). */
+    adultCount?: number;
+    childCount?: number;
     /** Optional venue change — when present and different from the
      *  booking's current venueId, blocked_slots are migrated to the new
      *  venue (and its shared-space siblings) after a conflict check
@@ -206,6 +212,14 @@ export async function updateBookingDateTime(
      *  on the new venue's calendar. */
     venueId?: string;
     branchSlug?: string;
+    /** Replacement add-ons list. When provided, pricing.* fields are
+     *  recomputed via calculatePricing() and balanceDue is adjusted to
+     *  reflect the difference against what the customer has already paid
+     *  — so admin can add a BBQ package after the customer already paid
+     *  the original deposit and the booking now correctly shows an
+     *  outstanding balance. */
+    addOns?: { id: string; quantity: number; options?: AddOnOptions }[];
+    hasBYOFood?: boolean;
   }
 ) {
   const bookingRef = doc(db, 'bookings', bookingId);
@@ -297,6 +311,10 @@ export async function updateBookingDateTime(
     updatedAt: serverTimestamp(),
   };
   if (typeof next.guestCount === 'number') patch.guestCount = next.guestCount;
+  if (typeof next.adultCount === 'number') patch.adultCount = next.adultCount;
+  if (typeof next.childCount === 'number') patch.childCount = next.childCount;
+  if (typeof next.hasBYOFood === 'boolean') patch.hasBYOFood = next.hasBYOFood;
+  if (next.addOns) patch.addOns = next.addOns;
   if (venueChanged) {
     patch.venueId = next.venueId;
     if (next.branchSlug) patch.branchSlug = next.branchSlug;
@@ -307,6 +325,101 @@ export async function updateBookingDateTime(
     // cron) — it's not in our way otherwise.
     patch.googleEventId = null;
   }
+
+  // ── Pricing recompute ─────────────────────────────────────────────
+  // When add-ons, guest split, hours, or date change, the per-head rate
+  // and add-on totals shift — recompute the full pricing block via the
+  // same calculatePricing() the customer flow uses, so the booking
+  // reflects what the customer should now owe.
+  //
+  // We DON'T auto-recompute for package bookings — packages are flat
+  // priced and have their own basePax / extraPaxPrice logic that the
+  // package booking page handles. Admin can still record a payment
+  // top-up via the modal for package-booking adjustments.
+  const pricingInputsChanged =
+    next.addOns !== undefined
+    || typeof next.guestCount === 'number'
+    || typeof next.adultCount === 'number'
+    || typeof next.childCount === 'number'
+    || next.date !== booking.date
+    || venueChanged
+    || hours !== booking.hours;
+
+  if (pricingInputsChanged && !booking.packageSlug) {
+    const venueForPricing = getVenueById(targetVenueId);
+    if (venueForPricing) {
+      // Recompute isWeekend from the new date — Fri / Sat / public
+      // holiday / eve-of-public-holiday. Matches the rule used in
+      // calendar booking forms so admin edits don't drift.
+      const day = new Date(next.date).getDay();
+      const holiday = getHoliday(next.date);
+      const nextDayStr = (() => {
+        const d = new Date(`${next.date}T00:00:00`);
+        d.setDate(d.getDate() + 1);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${dd}`;
+      })();
+      const eveHoliday = getHoliday(nextDayStr);
+      const isWeekend =
+        day === 5
+        || day === 6
+        || holiday?.type === 'public'
+        || eveHoliday?.type === 'public';
+      patch.isWeekend = isWeekend;
+
+      const guests = typeof next.guestCount === 'number' ? next.guestCount : booking.guestCount;
+      const adults = typeof next.adultCount === 'number'
+        ? next.adultCount
+        : (booking.adultCount ?? booking.guestCount);
+      const children = typeof next.childCount === 'number'
+        ? next.childCount
+        : (booking.childCount ?? 0);
+      const addOns = next.addOns ?? booking.addOns ?? [];
+      const computed = calculatePricing(
+        venueForPricing,
+        isWeekend,
+        hours,
+        guests,
+        addOns,
+        children,
+      );
+
+      // Preserve any promo discount the customer had applied. We re-apply
+      // it on top of the freshly computed subtotal so the customer
+      // doesn't lose their discount when admin tweaks an add-on.
+      const promoDiscount = booking.promoDiscount || 0;
+      const effectiveSubtotal = Math.max(0, computed.subtotal - promoDiscount);
+      const effectiveGrandTotal = effectiveSubtotal + computed.securityDeposit;
+      const effectiveDeposit = calculateDeposit(effectiveGrandTotal);
+
+      // How much the customer has already paid against this booking.
+      // Confirmed/completed bookings: grandTotal − balanceDue (the old
+      // pricing already reflects past payments via the followup route's
+      // pricing.* mutations). Otherwise sum the logged payments[].
+      const oldGrandTotal = (booking.pricing.subtotal || 0) + (booking.pricing.securityDeposit || 0);
+      const wasPaid =
+        booking.status === 'confirmed'
+        || booking.status === 'completed'
+        || !!booking.paymentVerifiedAt;
+      const loggedSum = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+      const paidSoFar = wasPaid
+        ? Math.max(0, oldGrandTotal - (booking.balanceDue || 0))
+        : loggedSum;
+
+      patch['pricing.baseCharge'] = computed.baseCharge;
+      patch['pricing.addOnTotal'] = computed.addOnTotal;
+      patch['pricing.subtotal'] = effectiveSubtotal;
+      patch['pricing.securityDeposit'] = computed.securityDeposit;
+      patch['pricing.deposit'] = effectiveDeposit;
+      // balanceDue = what the customer still owes after past payments.
+      // Clamp to 0 when customer overpaid (admin handles any refund out
+      // of band — we don't auto-issue refunds from a booking edit).
+      patch.balanceDue = Math.max(0, effectiveGrandTotal - paidSoFar);
+    }
+  }
+
   await updateDoc(bookingRef, patch);
 }
 
