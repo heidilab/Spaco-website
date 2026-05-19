@@ -147,7 +147,13 @@ export function aggregateBookings(
 ): AggregateResult {
   // Filter pass.
   const filtered = bookings.filter((b) => {
-    if (b.status === 'cancelled' || b.status === 'pending') return false;
+    // payment_not_completed bookings never generated revenue, same as
+    // cancelled / legacy pending — keep them out of finance totals.
+    if (
+      b.status === 'cancelled'
+      || b.status === 'pending'
+      || b.status === 'payment_not_completed'
+    ) return false;
     if (filter.from && b.date < filter.from) return false;
     if (filter.to && b.date > filter.to) return false;
     if (filter.branch && filter.branch !== 'all') {

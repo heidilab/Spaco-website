@@ -21,6 +21,7 @@ const statusColors: Record<string, string> = {
   awaiting_review: 'bg-violet-100/80 text-violet-700 border-violet-200',
   confirmed: 'bg-emerald-100/80 text-emerald-700 border-emerald-200',
   completed: 'bg-sky-100/80 text-sky-700 border-sky-200',
+  payment_not_completed: 'bg-stone-100/80 text-stone-700 border-stone-200',
   cancelled: 'bg-rose-100/80 text-rose-700 border-rose-200',
 };
 
@@ -30,6 +31,7 @@ const statusLabels: Record<string, { zh: string; en: string }> = {
   awaiting_review: { zh: '待核實', en: 'Awaiting Review' },
   confirmed: { zh: '已確認', en: 'Confirmed' },
   completed: { zh: '已完成', en: 'Completed' },
+  payment_not_completed: { zh: '沒有完成付款', en: 'Payment Not Completed' },
   cancelled: { zh: '已取消', en: 'Cancelled' },
 };
 

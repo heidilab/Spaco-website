@@ -228,7 +228,32 @@ export interface BookingRecord {
   /** Actual amount deducted (capped at the customer's balance at the
    *  time of deduction; may be < pointsUsed under concurrent race). */
   pointsActuallyDeducted?: number;
-  status: 'pending' | 'awaiting_payment' | 'awaiting_review' | 'confirmed' | 'completed' | 'cancelled';
+  /**
+   * Booking lifecycle:
+   *   awaiting_payment      — customer picked payment method, slot blocked,
+   *                           awaiting actual payment / receipt upload.
+   *   awaiting_review       — customer uploaded FPS receipt, admin to verify.
+   *   confirmed             — admin verified or Stripe webhook fired.
+   *   completed             — event date has passed.
+   *   cancelled             — admin or customer cancelled.
+   *   payment_not_completed — offline-payment customer didn't upload a
+   *                           receipt within the 30-min window. Slots are
+   *                           released so the time is re-bookable; the record
+   *                           is kept for CS follow-up.
+   *
+   * `pending` is legacy: prior to the 2026-05 rewrite, bookings were written
+   * to Firestore on "繼續預訂" before the customer picked a payment method.
+   * No new bookings should enter this state — the customer flow now buffers
+   * the draft in sessionStorage and only writes after method selection.
+   */
+  status:
+    | 'pending'
+    | 'awaiting_payment'
+    | 'awaiting_review'
+    | 'confirmed'
+    | 'completed'
+    | 'cancelled'
+    | 'payment_not_completed';
   paymentMethod: 'fps' | 'stripe' | 'bank' | null;
   receiptUrl: string | null;
   /** When the customer uploaded their offline-payment receipt screenshot.

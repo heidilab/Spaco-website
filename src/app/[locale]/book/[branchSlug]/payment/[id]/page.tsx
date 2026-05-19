@@ -5,11 +5,61 @@ import { useLocale } from 'next-intl';
 import { useParams } from 'next/navigation';
 import { useRouter } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
-import { getBooking, updateBookingPaymentMethod } from '@/lib/firestore';
+import { getBooking, updateBookingPaymentMethod, createBooking } from '@/lib/firestore';
 import { getVenueById } from '@/lib/venues';
 import { BookingRecord } from '@/types';
 import { CreditCard, Building2, ArrowRight } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
+import {
+  loadBookingCheckoutDraft, clearBookingCheckoutDraft,
+  type BookingCheckoutDraft,
+} from '@/lib/bookingCheckoutDraft';
+
+// Local helper — synthesizes a BookingRecord-like object from the draft
+// so the existing summary UI renders without changes. Kept in sync with
+// the same helper on /confirm/[id]/page.tsx.
+function draftToBooking(
+  draft: BookingCheckoutDraft,
+  userId: string,
+): BookingRecord {
+  return {
+    id: 'new',
+    userId,
+    whatsappPhone: draft.whatsappPhone,
+    venueId: draft.venueId,
+    branchSlug: draft.branchSlug,
+    date: draft.date,
+    startTime: draft.startTime,
+    endTime: draft.endTime,
+    endDate: draft.endDate,
+    hours: draft.hours,
+    guestCount: draft.guestCount,
+    adultCount: draft.adultCount,
+    childCount: draft.childCount,
+    isWeekend: draft.isWeekend,
+    addOns: draft.addOns,
+    hasBYOFood: draft.hasBYOFood,
+    pricing: draft.pricing,
+    refundDetails: draft.refundDetails,
+    promoCode: draft.promoCode,
+    promoCodeId: draft.promoCodeId,
+    promoDiscount: draft.promoDiscount,
+    promoFreeDrinksCost: draft.promoFreeDrinksCost,
+    pointsUsed: draft.pointsUsed,
+    pointsDiscount: draft.pointsDiscount,
+    marketingChannel: draft.marketingChannel,
+    marketingChannelOther: draft.marketingChannelOther,
+    packageSlug: draft.packageSlug,
+    decorationStyle: draft.decorationStyle,
+    status: 'pending',
+    paymentMethod: null,
+    receiptUrl: null,
+    depositRefund: null,
+    createdAt: null,
+    updatedAt: null,
+  } as unknown as BookingRecord;
+}
 
 export default function PaymentMethodPage() {
   const locale = useLocale() as 'zh' | 'en';
@@ -18,8 +68,10 @@ export default function PaymentMethodPage() {
   const { user, loading: authLoading } = useAuth();
   const bookingId = params.id as string;
   const slug = params.branchSlug as string;
+  const isDraft = bookingId === 'new';
 
   const [booking, setBooking] = useState<BookingRecord | null>(null);
+  const [draft, setDraft] = useState<BookingCheckoutDraft | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<'stripe' | 'fps' | null>(null);
@@ -31,6 +83,28 @@ export default function PaymentMethodPage() {
       router.push('/');
       return;
     }
+
+    if (isDraft) {
+      // Draft mode — read the sessionStorage payload and synthesize a
+      // booking-shaped object. If the draft is missing/expired, bounce
+      // back to the branch booking page so the customer can redo the
+      // form. We refuse to render without refundDetails (same gate as
+      // existing-booking mode).
+      const d = loadBookingCheckoutDraft();
+      if (!d) {
+        router.push(`/book/${slug}`);
+        return;
+      }
+      if (!d.refundDetails) {
+        router.push(`/book/${slug}/confirm/new`);
+        return;
+      }
+      setDraft(d);
+      setBooking(draftToBooking(d, user.uid));
+      setLoading(false);
+      return;
+    }
+
     getBooking(bookingId)
       .then((b) => {
         if (!b) {
@@ -45,7 +119,7 @@ export default function PaymentMethodPage() {
         }
       })
       .finally(() => setLoading(false));
-  }, [bookingId, user, authLoading, router, locale, slug]);
+  }, [bookingId, user, authLoading, router, locale, slug, isDraft]);
 
   if (authLoading || loading) {
     return (
@@ -69,7 +143,61 @@ export default function PaymentMethodPage() {
     if (!selected || !booking) return;
     setSubmitting(true);
     try {
-      await updateBookingPaymentMethod(booking.id, selected);
+      let effectiveBookingId = booking.id;
+
+      // Draft mode — this is the FIRST write of the booking to Firestore.
+      // createBooking is what creates the blocked_slot rows too, so the
+      // physical slot only gets held now that the customer has chosen a
+      // payment method. 30-minute pendingExpiresAt countdown starts here.
+      if (isDraft) {
+        if (!draft || !draft.refundDetails || !user) {
+          throw new Error('Draft missing');
+        }
+        const pendingExpiresAt =
+          Date.now() + PAYMENT_DETAILS.pendingHoldMinutes * 60 * 1000;
+        const newId = await createBooking({
+          userId: user.uid,
+          whatsappPhone: draft.whatsappPhone,
+          venueId: draft.venueId,
+          branchSlug: draft.branchSlug,
+          date: draft.date,
+          startTime: draft.startTime,
+          endTime: draft.endTime,
+          ...(draft.endDate ? { endDate: draft.endDate } : {}),
+          hours: draft.hours,
+          guestCount: draft.guestCount,
+          adultCount: draft.adultCount,
+          childCount: draft.childCount,
+          isWeekend: draft.isWeekend,
+          addOns: draft.addOns,
+          hasBYOFood: draft.hasBYOFood,
+          pricing: draft.pricing,
+          status: 'awaiting_payment',
+          paymentMethod: selected,
+          receiptUrl: null,
+          refundDetails: draft.refundDetails,
+          balanceDue: draft.effectiveBalanceDue ?? 0,
+          pendingExpiresAt,
+          depositRefund: null,
+          ...(draft.promoCode ? { promoCode: draft.promoCode } : {}),
+          ...(draft.promoCodeId ? { promoCodeId: draft.promoCodeId } : {}),
+          ...(typeof draft.promoDiscount === 'number' ? { promoDiscount: draft.promoDiscount } : {}),
+          ...(typeof draft.promoFreeDrinksCost === 'number'
+            ? { promoFreeDrinksCost: draft.promoFreeDrinksCost } : {}),
+          ...(typeof draft.pointsUsed === 'number' ? { pointsUsed: draft.pointsUsed } : {}),
+          ...(typeof draft.pointsDiscount === 'number' ? { pointsDiscount: draft.pointsDiscount } : {}),
+          ...(draft.marketingChannel ? { marketingChannel: draft.marketingChannel } : {}),
+          ...(draft.marketingChannelOther ? { marketingChannelOther: draft.marketingChannelOther } : {}),
+          ...(draft.packageSlug ? { packageSlug: draft.packageSlug } : {}),
+          ...(draft.decorationStyle ? { decorationStyle: draft.decorationStyle } : {}),
+        });
+        effectiveBookingId = newId;
+        // Form payload is no longer needed — wipe it so a Back button
+        // doesn't re-submit the same draft.
+        clearBookingCheckoutDraft();
+      } else {
+        await updateBookingPaymentMethod(booking.id, selected);
+      }
 
       if (selected === 'stripe') {
         // Customer's loyalty redemption (set on the confirm page) reduces
@@ -80,7 +208,7 @@ export default function PaymentMethodPage() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            bookingId: booking.id,
+            bookingId: effectiveBookingId,
             amount: chargeAmount,
             deposit: booking.pricing.deposit,
             venueName,
@@ -97,9 +225,9 @@ export default function PaymentMethodPage() {
         fetch('/api/email/offline-pending', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bookingId: booking.id }),
+          body: JSON.stringify({ bookingId: effectiveBookingId }),
         }).catch((err) => console.warn('[offline-pending email] failed:', err));
-        router.push(`/book/${slug}/pay-offline/${booking.id}`);
+        router.push(`/book/${slug}/pay-offline/${effectiveBookingId}`);
       }
     } catch (err) {
       console.error(err);

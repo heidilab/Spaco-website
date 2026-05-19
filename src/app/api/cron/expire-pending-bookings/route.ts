@@ -7,17 +7,24 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * Sweeps expired bookings and:
- *   1. Marks them `cancelled` (status flips so the slot is logically released).
- *   2. Deletes any blocked_slots created for the booking so the slot is
- *      actually re-bookable by the next customer.
+ * Sweeps offline-payment bookings whose 30-minute "upload your receipt"
+ * window has lapsed without a receipt or admin intervention, and:
+ *   1. Flips status to `payment_not_completed` — the booking stays in the
+ *      system as a record (CS can follow up with the customer) but is
+ *      logically out of the active pipeline.
+ *   2. Deletes any blocked_slots created for the booking so the time is
+ *      immediately re-bookable by the next customer.
+ *   3. Removes the matching Google Calendar event so staff don't see a
+ *      ghost booking.
  *
  * Two cases are swept:
- *   a) `status='pending'` with no payment method picked yet (customer
- *      abandoned the flow before reaching the payment-method step).
+ *   a) `status='pending'` legacy rows from before the 2026-05 rewrite
+ *      (customer-flow bookings now skip pending entirely). Treat them the
+ *      same as offline-payment lapse so they don't linger.
  *   b) `status='awaiting_payment'` for offline payments (FPS / bank) where
  *      the customer never uploaded a receipt within the 30-min hold. Stripe
- *      bookings stay in awaiting_payment until the webhook resolves them.
+ *      bookings stay in awaiting_payment until the checkout webhook
+ *      resolves them.
  *
  * Runs every 15 minutes via Vercel cron. Idempotent — re-running on the
  * same expired booking is a no-op (status check filters them out).
@@ -43,12 +50,12 @@ export async function GET(request: NextRequest) {
     .where('pendingExpiresAt', '<=', now)
     .get();
 
-  const cancelled: string[] = [];
+  const flipped: string[] = [];
   const candidates = [
     ...pendingSnap.docs,
     // Offline-payment only: skip Stripe (its checkout webhook owns the state),
     // and skip bookings where a receipt has already been uploaded (those go
-    // to admin review, not auto-cancel).
+    // to admin review, not auto-flip).
     ...offlineAwaitingSnap.docs.filter((d) => {
       const data = d.data();
       return data.paymentMethod !== 'stripe' && !data.receiptUrl;
@@ -62,7 +69,7 @@ export async function GET(request: NextRequest) {
     try {
       const data = docSnap.data() as { venueId?: string; googleEventId?: string };
       await docSnap.ref.update({
-        status: 'cancelled',
+        status: 'payment_not_completed',
         updatedAt: FieldValue.serverTimestamp(),
       });
       const blockedSnap = await adminDb
@@ -85,7 +92,7 @@ export async function GET(request: NextRequest) {
           console.warn('[expire-pending] gcal cleanup failed for', bookingId, err);
         }
       }
-      cancelled.push(bookingId);
+      flipped.push(bookingId);
     } catch (err) {
       console.error('[expire-pending-bookings] failed for', bookingId, err);
     }
@@ -93,6 +100,6 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     scanned: pendingSnap.size + offlineAwaitingSnap.size,
-    cancelled,
+    flippedToPaymentNotCompleted: flipped,
   });
 }

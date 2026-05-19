@@ -23,14 +23,30 @@ import { useAuth } from '@/contexts/AuthContext';
 
 type View = 'bookings' | 'drafts';
 
-const statusOptions = ['all', 'pending', 'awaiting_payment', 'awaiting_review', 'confirmed', 'completed', 'cancelled'];
+// Filter options shown in the booking-list dropdown. 'pending' is
+// omitted on purpose — customer-flow bookings now skip that state
+// (see lib/bookingCheckoutDraft.ts). Legacy pending rows still get
+// auto-swept to 'payment_not_completed' by the expire cron within 15
+// minutes of deploy.
+const statusOptions = [
+  'all',
+  'awaiting_payment',
+  'awaiting_review',
+  'confirmed',
+  'completed',
+  'payment_not_completed',
+  'cancelled',
+];
 const statusLabels: Record<string, { zh: string; en: string }> = {
   all: { zh: '全部', en: 'All' },
+  // Kept for the rare legacy row that hasn't been swept yet — never
+  // surfaced as a filter option but still rendered as a chip if seen.
   pending: { zh: '待處理', en: 'Pending' },
   awaiting_payment: { zh: '待付款', en: 'Awaiting Payment' },
   awaiting_review: { zh: '待核實入數', en: 'Awaiting Review' },
   confirmed: { zh: '已確認', en: 'Confirmed' },
   completed: { zh: '已完成', en: 'Completed' },
+  payment_not_completed: { zh: '沒有完成付款', en: 'Payment Not Completed' },
   cancelled: { zh: '已取消', en: 'Cancelled' },
 };
 const statusColors: Record<string, string> = {
@@ -39,6 +55,7 @@ const statusColors: Record<string, string> = {
   awaiting_review: 'bg-violet-100/80 text-violet-700 border-violet-200',
   confirmed: 'bg-emerald-100/80 text-emerald-700 border-emerald-200',
   completed: 'bg-sky-100/80 text-sky-700 border-sky-200',
+  payment_not_completed: 'bg-stone-100/80 text-stone-700 border-stone-200',
   cancelled: 'bg-rose-100/80 text-rose-700 border-rose-200',
 };
 

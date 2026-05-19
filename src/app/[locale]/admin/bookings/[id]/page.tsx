@@ -44,6 +44,7 @@ const statusLabels: Record<string, { zh: string; en: string }> = {
   awaiting_review: { zh: '待核實入數', en: 'Awaiting Review' },
   confirmed: { zh: '已確認', en: 'Confirmed' },
   completed: { zh: '已完成', en: 'Completed' },
+  payment_not_completed: { zh: '沒有完成付款', en: 'Payment Not Completed' },
   cancelled: { zh: '已取消', en: 'Cancelled' },
 };
 

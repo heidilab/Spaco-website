@@ -76,7 +76,15 @@ export async function POST(req: NextRequest) {
       const newBalance = Math.max(0, (booking.balanceDue ?? 0) - total);
 
       // Status advancement — only from upstream states.
-      const upstreamStates = new Set(['pending', 'awaiting_payment', 'awaiting_review']);
+      // payment_not_completed is included so that when admin records a
+      // late offline payment (customer paid after the 30-min window), the
+      // booking advances forward instead of being stuck.
+      const upstreamStates = new Set([
+        'pending',
+        'awaiting_payment',
+        'awaiting_review',
+        'payment_not_completed',
+      ]);
       const nextStatus = upstreamStates.has(booking.status)
         ? (newBalance === 0 ? 'confirmed' : 'awaiting_payment')
         : booking.status;

@@ -14,8 +14,58 @@ import { db } from '@/lib/firebase';
 import { getVenueById } from '@/lib/venues';
 import { addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE, calculatePricing, freeDrinksVenues } from '@/lib/pricing';
 import { BookingRecord, RefundDetails, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
+import {
+  loadBookingCheckoutDraft, saveBookingCheckoutDraft,
+  type BookingCheckoutDraft,
+} from '@/lib/bookingCheckoutDraft';
 import { CalendarDays, Clock, Users, MapPin, ArrowRight, Sparkles, Tag, X as XIcon, Loader2, Check } from 'lucide-react';
 import { motion } from 'framer-motion';
+
+/** Build a transient BookingRecord-shaped object from a sessionStorage
+ *  draft. The id is the sentinel 'new' so the rest of the page can branch
+ *  on it; status / timestamps stay placeholder until the booking is
+ *  materialized at the /payment/new step. */
+function draftToBooking(
+  draft: BookingCheckoutDraft,
+  userId: string,
+): BookingRecord {
+  return {
+    id: 'new',
+    userId,
+    whatsappPhone: draft.whatsappPhone,
+    venueId: draft.venueId,
+    branchSlug: draft.branchSlug,
+    date: draft.date,
+    startTime: draft.startTime,
+    endTime: draft.endTime,
+    endDate: draft.endDate,
+    hours: draft.hours,
+    guestCount: draft.guestCount,
+    adultCount: draft.adultCount,
+    childCount: draft.childCount,
+    isWeekend: draft.isWeekend,
+    addOns: draft.addOns,
+    hasBYOFood: draft.hasBYOFood,
+    pricing: draft.pricing,
+    status: 'pending',
+    paymentMethod: null,
+    receiptUrl: null,
+    depositRefund: null,
+    refundDetails: draft.refundDetails,
+    promoCode: draft.promoCode,
+    promoCodeId: draft.promoCodeId,
+    promoDiscount: draft.promoDiscount,
+    promoFreeDrinksCost: draft.promoFreeDrinksCost,
+    pointsUsed: draft.pointsUsed,
+    pointsDiscount: draft.pointsDiscount,
+    marketingChannel: draft.marketingChannel,
+    marketingChannelOther: draft.marketingChannelOther,
+    packageSlug: draft.packageSlug,
+    decorationStyle: draft.decorationStyle,
+    createdAt: null,
+    updatedAt: null,
+  } as unknown as BookingRecord;
+}
 
 export default function ConfirmBookingPage() {
   const locale = useLocale() as 'zh' | 'en';
@@ -24,6 +74,11 @@ export default function ConfirmBookingPage() {
   const { user, loading: authLoading } = useAuth();
   const bookingId = params.id as string;
   const slug = params.branchSlug as string;
+  // 'new' is the sentinel for the draft-mode flow (booking has NOT been
+  // written to Firestore yet — payload lives in sessionStorage). When the
+  // customer picks a payment method on /payment/new, the booking is
+  // materialized atomically. See lib/bookingCheckoutDraft.ts.
+  const isDraft = bookingId === 'new';
 
   const [booking, setBooking] = useState<BookingRecord | null>(null);
   const [loading, setLoading] = useState(true);
@@ -69,6 +124,55 @@ export default function ConfirmBookingPage() {
       router.push('/');
       return;
     }
+
+    if (isDraft) {
+      // Draft mode — booking has not been written to Firestore yet. The
+      // form payload lives in sessionStorage; we synthesize a fake
+      // BookingRecord so the rest of the page renders as if it were a
+      // real booking. If the sessionStorage is empty (customer landed
+      // directly without filling the form), bounce them to the branch.
+      const draft = loadBookingCheckoutDraft();
+      if (!draft) {
+        router.push(`/book/${slug}`);
+        return;
+      }
+      const fake = draftToBooking(draft, user.uid);
+      setBooking(fake);
+      // Restore any confirm-stage fields previously saved on the draft.
+      if (draft.refundDetails) {
+        setMethod(draft.refundDetails.method);
+        setFpsIdentifier(draft.refundDetails.fpsIdentifier || '');
+        setBankName(draft.refundDetails.bankName || '');
+        setAccountHolderName(draft.refundDetails.accountHolderName || '');
+        setAccountNumber(draft.refundDetails.accountNumber || '');
+      }
+      if (draft.pointsDiscount && draft.pointsDiscount > 0) setRedeemHkd(draft.pointsDiscount);
+      if (draft.promoCode && draft.promoCodeId) {
+        setPromoInput(draft.promoCode);
+        setApplied({
+          codeId: draft.promoCodeId,
+          code: draft.promoCode,
+          type: 'cash',
+          amount: draft.promoDiscount || 0,
+          freeDrinks: !!draft.promoFreeDrinksCost,
+        });
+      }
+      getUserProfile(user.uid)
+        .then((profile) => {
+          if (profile) {
+            const p = profile as { loyaltyPoints?: number; firstBookingChannel?: MarketingChannel };
+            setPointsBalance(p.loyaltyPoints || 0);
+            setIsFirstTime(!p.firstBookingChannel);
+          } else {
+            setIsFirstTime(true);
+          }
+        })
+        .catch(() => setIsFirstTime(true))
+        .finally(() => setLoading(false));
+      return;
+    }
+
+    // Existing-booking mode (claim flow / resume payment).
     Promise.all([
       getBooking(bookingId),
       getUserProfile(user.uid).catch(() => null),
@@ -113,7 +217,7 @@ export default function ConfirmBookingPage() {
         }
       })
       .finally(() => setLoading(false));
-  }, [bookingId, user, authLoading, router, locale]);
+  }, [bookingId, user, authLoading, router, locale, slug, isDraft]);
 
   if (authLoading || loading) {
     return (
@@ -247,16 +351,46 @@ export default function ConfirmBookingPage() {
             newAddOns,
             booking.childCount,
           );
-          await updateDoc(doc(db, 'bookings', booking.id), {
-            addOns: newAddOns,
-            'pricing.baseCharge':  newPricing.baseCharge,
-            'pricing.addOnTotal':  newPricing.addOnTotal,
-            'pricing.subtotal':    newPricing.subtotal,
-          });
-          // Reload the booking so the rest of the page (breakdown, deposit
-          // calc) sees the new add-on + pricing.
-          const fresh = await getBooking(booking.id);
-          if (fresh) setBooking(fresh);
+          if (isDraft) {
+            // Draft mode — patch the sessionStorage draft and local state
+            // directly, no Firestore write. Mirrors the same shape the
+            // existing-mode branch would have re-fetched from getBooking.
+            const draft = loadBookingCheckoutDraft();
+            if (draft) {
+              const patched: BookingCheckoutDraft = {
+                ...draft,
+                addOns: newAddOns,
+                pricing: {
+                  ...draft.pricing,
+                  baseCharge: newPricing.baseCharge,
+                  addOnTotal: newPricing.addOnTotal,
+                  subtotal: newPricing.subtotal,
+                },
+              };
+              saveBookingCheckoutDraft(patched);
+              setBooking((b) => b ? ({
+                ...b,
+                addOns: newAddOns,
+                pricing: {
+                  ...b.pricing,
+                  baseCharge: newPricing.baseCharge,
+                  addOnTotal: newPricing.addOnTotal,
+                  subtotal: newPricing.subtotal,
+                },
+              }) : b);
+            }
+          } else {
+            await updateDoc(doc(db, 'bookings', booking.id), {
+              addOns: newAddOns,
+              'pricing.baseCharge':  newPricing.baseCharge,
+              'pricing.addOnTotal':  newPricing.addOnTotal,
+              'pricing.subtotal':    newPricing.subtotal,
+            });
+            // Reload the booking so the rest of the page (breakdown, deposit
+            // calc) sees the new add-on + pricing.
+            const fresh = await getBooking(booking.id);
+            if (fresh) setBooking(fresh);
+          }
           // The promo's discount tracks the actual drinks cost we just added.
           const drinksCost = Math.round(25 * adultEquiv);
           finalApplied = { ...finalApplied, amount: drinksCost };
@@ -290,6 +424,65 @@ export default function ConfirmBookingPage() {
               accountHolderName: accountHolderName.trim(),
               accountNumber: accountNumber.trim(),
             };
+
+      if (isDraft) {
+        // Draft mode — write everything onto the sessionStorage draft and
+        // hand off to /payment/new, which is responsible for picking a
+        // payment method and *only then* materializing the booking in
+        // Firestore. Nothing is persisted server-side at this step.
+        const existing = loadBookingCheckoutDraft();
+        if (!existing) {
+          throw new Error('Draft expired — please redo your booking.');
+        }
+        const marketingValue: MarketingChannel | 'loyalty_member' | undefined =
+          isFirstTime && marketingChannel
+            ? marketingChannel
+            : !isFirstTime
+              ? 'loyalty_member'
+              : undefined;
+        // Recompute pricing.deposit to reflect the promo discount so
+        // /payment/new + Stripe see the right amount.
+        const patchedDraft: BookingCheckoutDraft = {
+          ...existing,
+          refundDetails,
+          pricing: { ...existing.pricing, deposit: effectiveDeposit },
+          ...(applied?.code ? { promoCode: applied.code } : {}),
+          ...(applied?.codeId ? { promoCodeId: applied.codeId } : {}),
+          ...(applied?.amount ? { promoDiscount: applied.amount } : {}),
+          ...(applied?.freeDrinks && applied.amount
+            ? { promoFreeDrinksCost: applied.amount }
+            : {}),
+          ...(pointsUsed > 0 ? { pointsUsed } : {}),
+          ...(clampedRedeem > 0 ? { pointsDiscount: clampedRedeem } : {}),
+          ...(marketingValue ? { marketingChannel: marketingValue } : {}),
+          ...(isFirstTime && marketingChannel === 'other' && marketingOther.trim()
+            ? { marketingChannelOther: marketingOther.trim() }
+            : {}),
+          effectiveDeposit,
+          effectiveBalanceDue: balanceDue,
+        };
+        saveBookingCheckoutDraft(patchedDraft);
+
+        // Persist the firstBookingChannel onto the user profile now so
+        // repeat bookings auto-tag as 'loyalty_member' even if the
+        // customer abandons checkout halfway.
+        if (isFirstTime && marketingChannel && user) {
+          const profilePatch: Record<string, unknown> = {
+            firstBookingChannel: marketingChannel,
+          };
+          if (marketingChannel === 'other') {
+            profilePatch.firstBookingChannelOther = marketingOther.trim();
+          }
+          try { await updateDoc(doc(db, 'users', user.uid), profilePatch); }
+          catch { /* non-blocking */ }
+        }
+
+        router.push(`/book/${slug}/payment/new`);
+        return;
+      }
+
+      // Existing-booking mode (claim flow / resume payment) — write
+      // directly to Firestore on the live booking row.
       await updateBookingRefundDetails(booking.id, refundDetails);
       // Persist promo + points redemption + recomputed deposit.
       const bookingPatch: Record<string, unknown> = {

@@ -11,11 +11,11 @@ import {
   Loader2, LogIn,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { getUserProfile, updateUserWhatsapp, createBooking } from '@/lib/firestore';
+import { getUserProfile, updateUserWhatsapp } from '@/lib/firestore';
 import { getVenueBySlug } from '@/lib/venues';
 import { getPackageBySlug, CATEGORY_LABEL } from '@/lib/packages';
 import { calculateDeposit } from '@/lib/pricing';
-import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
+import { saveBookingCheckoutDraft } from '@/lib/bookingCheckoutDraft';
 import HolidayDatePicker from '@/components/booking/HolidayDatePicker';
 import AuthModal from '@/components/auth/AuthModal';
 import {
@@ -225,22 +225,18 @@ export default function PackageBookingPage() {
         .map((a) => ({ id: a.id, quantity: addOnGuests[a.id] || 0 }))
         .filter((a) => a.quantity > 0);
 
-      const balanceDue = Math.max(0, grandTotal - upfrontDeposit);
-      const pendingExpiresAt =
-        Date.now() + PAYMENT_DETAILS.pendingHoldMinutes * 60 * 1000;
-
-      const bookingId = await createBooking({
-        userId: user.uid,
-        whatsappPhone: e164 || undefined,
-        venueId: venue.id,
+      // Stash the package form payload and hand off to the confirm page.
+      // We deliberately DO NOT call createBooking here — see
+      // lib/bookingCheckoutDraft.ts for rationale.
+      saveBookingCheckoutDraft({
+        source: 'package',
         branchSlug: venue.slug,
+        venueId: venue.id,
         date: selectedDate,
         startTime,
         endTime,
         hours: pkg.durationHours,
         guestCount,
-        // Treat all as adults for package bookings — packages are flat
-        // priced and don't apply the child-discount rule.
         adultCount: guestCount,
         childCount: 0,
         isWeekend,
@@ -253,20 +249,14 @@ export default function PackageBookingPage() {
           securityDeposit,
           deposit: upfrontDeposit,
         },
-        status: 'pending',
-        paymentMethod: null,
-        receiptUrl: null,
-        balanceDue,
-        pendingExpiresAt,
-        depositRefund: null,
         packageSlug: pkg.slug,
-        // Birthday packages require a decoration style — captured above.
         ...(requiresDecoration && decorationStyle ? { decorationStyle } : {}),
+        ...(e164 ? { whatsappPhone: e164 } : {}),
       });
 
-      router.push(`/book/${venue.slug}/confirm/${bookingId}`);
+      router.push(`/book/${venue.slug}/confirm/new`);
     } catch (err) {
-      console.error('Package booking submission failed:', err);
+      console.error('Package checkout-draft save failed:', err);
       setSubmitError(
         locale === 'zh'
           ? '預訂提交失敗，請稍後再試或聯絡客服。'

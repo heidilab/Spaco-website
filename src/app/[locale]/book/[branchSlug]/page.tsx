@@ -17,11 +17,11 @@ import SplitHeading from '@/components/ui/SplitHeading';
 import { getHoliday } from '@/lib/hkHolidays';
 import HolidayDatePicker from '@/components/booking/HolidayDatePicker';
 import { useAuth } from '@/contexts/AuthContext';
-import { getUserProfile, updateUserWhatsapp, createBooking } from '@/lib/firestore';
+import { getUserProfile, updateUserWhatsapp } from '@/lib/firestore';
+import { saveBookingCheckoutDraft } from '@/lib/bookingCheckoutDraft';
 import { isValidHkPhone, formatHkPhone, normalizeHkPhone } from '@/lib/whatsapp';
 import AuthModal from '@/components/auth/AuthModal';
 import { useRouter } from '@/i18n/routing';
-import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
 
 export default function BookingPage() {
   const params = useParams();
@@ -1330,20 +1330,20 @@ export default function BookingPage() {
                       try { await updateUserWhatsapp(user.uid, e164); } catch { /* non-blocking */ }
                     }
 
-                    const balanceDue = Math.max(0, pricing.grandTotal - pricing.deposit);
-                    const pendingExpiresAt =
-                      Date.now() + PAYMENT_DETAILS.pendingHoldMinutes * 60 * 1000;
-                    const bookingId = await createBooking({
-                      userId: user.uid,
-                      whatsappPhone: e164 || undefined,
-                      venueId: venue.id,
+                    // Buffer the form payload into sessionStorage and hand
+                    // off to /confirm/new. We deliberately DO NOT call
+                    // createBooking here — no Firestore row, no
+                    // blocked_slots, no Google Calendar event. The booking
+                    // is materialized only once the customer picks a
+                    // payment method on the confirm page. (See
+                    // lib/bookingCheckoutDraft.ts for rationale.)
+                    saveBookingCheckoutDraft({
+                      source: 'venue',
                       branchSlug: slug,
+                      venueId: venue.id,
                       date: selectedDate,
                       startTime,
                       endTime,
-                      // Spread conditionally — Firestore's client SDK rejects
-                      // explicit `undefined` field values, so a same-day
-                      // booking can't pass `endDate: undefined`.
                       ...(endDate ? { endDate } : {}),
                       hours,
                       guestCount,
@@ -1359,19 +1359,11 @@ export default function BookingPage() {
                         securityDeposit: pricing.securityDeposit,
                         deposit: pricing.deposit,
                       },
-                      status: 'pending',
-                      paymentMethod: null,
-                      receiptUrl: null,
-                      balanceDue,
-                      pendingExpiresAt,
-                      depositRefund: null,
+                      ...(e164 ? { whatsappPhone: e164 } : {}),
                     });
-
-                    // Hand off to the confirmation page — it collects refund
-                    // details and the chosen payment method before any charge.
-                    router.push(`/book/${slug}/confirm/${bookingId}`);
+                    router.push(`/book/${slug}/confirm/new`);
                   } catch (err) {
-                    console.error('Booking submission failed:', err);
+                    console.error('Booking checkout-draft save failed:', err);
                     setSubmitError(
                       locale === 'zh'
                         ? '預訂提交失敗，請稍後再試或聯絡客服。'
