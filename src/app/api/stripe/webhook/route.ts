@@ -6,7 +6,7 @@ import { buildBookingConfirmationEmail, generateWhatsAppLink } from '@/lib/email
 import { sendAutomatedEmail, sendStaffBookingNotification } from '@/lib/emailAutomations';
 import { getVenueById } from '@/lib/venues';
 import { processBookingForLockAccess } from '@/lib/lockPasscode';
-import { pushBookingToCalendar } from '@/lib/googleCalendar';
+import { pushBookingToCalendar, updateBookingOnCalendar } from '@/lib/googleCalendar';
 import { formatAddOnsForStaff } from '@/lib/pricing';
 import { deductLoyaltyPoints } from '@/lib/loyaltyServer';
 import type { BookingRecord, UserProfile } from '@/types';
@@ -201,17 +201,26 @@ export async function POST(request: NextRequest) {
             const userSnap = await adminDb.collection('users').doc(booking.userId).get();
             profileForNotify = userSnap.data() as UserProfile | undefined;
           }
-          if (booking && !booking.googleEventId) {
+          if (booking) {
             const customerName = profileForNotify?.displayName;
             const origin = request.nextUrl.origin;
             const redirectUri = `${origin}/api/google/callback`;
-            const eventId = await pushBookingToCalendar(redirectUri, { booking, customerName });
-            if (eventId) {
-              await bookingRef.update({ googleEventId: eventId });
+            if (booking.googleEventId) {
+              // Balance payment OR re-confirmation — the event already
+              // exists, just refresh its description so the "⚠️ 未找清
+              // 尾數" line disappears and the price totals reflect the
+              // new state. Without this, the calendar showed stale
+              // balance warnings after the customer paid.
+              await updateBookingOnCalendar(redirectUri, { booking, customerName });
+            } else {
+              const eventId = await pushBookingToCalendar(redirectUri, { booking, customerName });
+              if (eventId) {
+                await bookingRef.update({ googleEventId: eventId });
+              }
             }
           }
         } catch (err) {
-          console.warn('[stripe webhook] gcal push failed:', err);
+          console.warn('[stripe webhook] gcal sync failed:', err);
           // Non-fatal — periodic sync cron will reconcile.
         }
 

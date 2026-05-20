@@ -513,6 +513,16 @@ export default function AdminBookingDetailPage() {
         await cancelBooking(booking.id);
       } else {
         await updateBookingStatus(booking.id, next);
+        // Sync gcal so the event description reflects the new status
+        // (e.g. payment_not_completed should drop the booking from the
+        // active calendar surface; awaiting_review hints CS to review).
+        // Skipped for cancel since cancelBooking handles its own gcal
+        // removal. Fire-and-forget — booking is already saved.
+        fetch('/api/admin/booking-edit-followup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bookingId: booking.id, syncOnly: true }),
+        }).catch((err) => console.warn('[status-change gcal sync] failed:', err));
       }
       setStatusValue(next);
       // Mirror the trigger that /admin/receipts and /admin/bookings (list)
@@ -1461,6 +1471,13 @@ function OutstandingBalanceSection({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || 'Settle failed');
+      // Sync Google Calendar — the "⚠️ 未找清尾數" warning line in the
+      // event description needs to disappear now that balance is 0.
+      fetch('/api/admin/booking-edit-followup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookingId: booking.id, syncOnly: true }),
+      }).catch((err) => console.warn('[settle-balance gcal sync] failed:', err));
       setSettleMsg(locale === 'zh' ? '✓ 已標記尾數已收' : '✓ Balance settled');
       onUpdated?.();
     } catch (err) {

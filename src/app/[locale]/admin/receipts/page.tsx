@@ -153,12 +153,18 @@ export default function AdminReceiptsPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ bookingId }),
     }).catch((err) => console.warn('[notify-booking] failed:', err));
-    // Push to Google Calendar (Direction A) — non-blocking.
-    fetch('/api/google/push-booking', {
+    // Sync Google Calendar — use booking-edit-followup syncOnly path,
+    // which handles BOTH cases: updates the existing event if one is
+    // already pushed (so cleared balanceDue / new add-ons / refreshed
+    // pricing reflect on the calendar), or creates a fresh event if
+    // none exists yet. The older /api/google/push-booking POST was a
+    // no-op on already-pushed events, so a balance-receipt approval
+    // never refreshed the "⚠️ 未找清尾數" warning.
+    fetch('/api/admin/booking-edit-followup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bookingId }),
-    }).catch((err) => console.warn('[gcal push] failed:', err));
+      body: JSON.stringify({ bookingId, syncOnly: true }),
+    }).catch((err) => console.warn('[gcal sync] failed:', err));
     // Trigger TTLock passcode generation. The API does eligibility checking,
     // so this no-ops when the booking is > 2 days out (cron picks it up).
     // Failures are non-fatal — admin can retry from the booking detail page.
