@@ -15,7 +15,11 @@ import {
 } from '@/lib/firestore';
 import { BookingRecord, UserProfile, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
 import { venues } from '@/lib/venues';
-import { formatAddOnsForStaff, addOns as ADDON_CATALOG } from '@/lib/pricing';
+import {
+  formatAddOnsForStaff,
+  addOns as ADDON_CATALOG,
+  calculatePricing,
+} from '@/lib/pricing';
 import PaymentHistory from '@/components/booking/PaymentHistory';
 import { buildWhatsAppLink, formatHkPhone } from '@/lib/whatsapp';
 import {
@@ -953,14 +957,55 @@ export default function AdminBookingDetailPage() {
                   : `${booking.guestCount}`
               }
             />
-            {booking.addOns && booking.addOns.length > 0 && (
-              <Row
-                icon={<Package size={14} />}
-                label={locale === 'zh' ? '附加服務' : 'Add-ons'}
-                value={formatAddOnsForStaff(booking.addOns, locale)}
-                highlight="violet"
-              />
-            )}
+            {booking.addOns && booking.addOns.length > 0 && (() => {
+              // Render each add-on with its individual calculation +
+              // amount, NOT just the name. Heidi's spec: "依張單，
+              // 水煙套餐 $390，燒烤套餐 $138×15位＝$2,070, 要清楚
+              // breakdown比客人睇". Pull the breakdown lines from
+              // calculatePricing() so the per-head math comes from the
+              // exact same formula the booking was priced against.
+              const bookingVenue = venues.find((v) => v.id === booking.venueId);
+              const breakdown = bookingVenue
+                ? calculatePricing(
+                    bookingVenue,
+                    booking.isWeekend,
+                    booking.hours,
+                    booking.guestCount,
+                    booking.addOns,
+                    booking.childCount ?? 0,
+                  ).breakdown.slice(1) // drop venue rental — already in 小計 below
+                : [];
+              return (
+                <div className="flex items-start gap-2 py-1 border-b border-charcoal/5">
+                  <div className="text-violet-700 mt-0.5">
+                    <Package size={14} />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-xs text-ink-soft mb-1">
+                      {locale === 'zh' ? '附加服務' : 'Add-ons'}
+                    </p>
+                    <ul className="space-y-0.5 text-sm">
+                      {booking.addOns.map((a, idx) => {
+                        const line = breakdown[idx];
+                        const meta = ADDON_CATALOG.find((c) => c.id === a.id);
+                        return (
+                          <li key={a.id} className="flex items-baseline justify-between gap-3">
+                            <span className="text-violet-700">
+                              {line?.label[locale] || meta?.name[locale] || a.id}
+                            </span>
+                            {line && (
+                              <span className="font-medium text-ink whitespace-nowrap">
+                                HK${line.amount.toLocaleString()}
+                              </span>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                </div>
+              );
+            })()}
             {booking.hasBYOFood && (
               <Row label={locale === 'zh' ? '自攜食物' : 'BYO Food'} value={locale === 'zh' ? '是' : 'Yes'} />
             )}

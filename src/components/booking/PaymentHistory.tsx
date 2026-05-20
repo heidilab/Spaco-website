@@ -83,12 +83,23 @@ export default function PaymentHistory({
     booking.status === 'completed' ||
     !!booking.paymentVerifiedAt;
 
-  // Synthesize the historical "Stripe paid" portion that hasn't been
-  // captured in payments[] yet. Total paid = grandTotal − balanceDue.
-  // Each bucket's synth = (remaining unfilled space for that bucket)
-  // pro-rata, with the deposit slot absorbing rounding remainders so
-  // the three buckets always sum exactly to the synth total (no more
-  // "$4,391 vs $4,390" drift).
+  // Synthesize the historical "paid" portion not yet captured in
+  // payments[] (e.g. Stripe charges from before the webhook started
+  // writing audit entries). Total paid = grandTotal − balanceDue.
+  //
+  // Bucket-fill instead of pro-rata. The booking system's own pricing
+  // flow charges the customer's confirmation payment against the
+  // FOUNDATIONAL buckets first (refundable deposit, then venue rental),
+  // with add-ons treated as optional extras that can be added later.
+  // For Heidi's #6sURGgn9 the first $4,390 was meant to be:
+  //   按金 $1,000   (full deposit)
+  //   場租 $3,000   (full venue rental)
+  //   附加項目 $390 (Shisha only — BBQ was added LATER)
+  // The earlier pro-rata logic split each bucket at the same ratio and
+  // produced $679/$2,039/$1,672, which mangled the breakdown. The
+  // bucket-fill order below reconstructs the correct split for the
+  // common "admin added an add-on after the customer already paid"
+  // case without needing to store a pricing snapshot.
   const grandTotal = (booking.pricing.subtotal || 0) + (booking.pricing.securityDeposit || 0);
   const actualPaidTotal = isPaid ? Math.max(0, grandTotal - (booking.balanceDue || 0)) : 0;
   const loggedTotalAmount = payments.reduce((s, p) => s + (p.amount || 0), 0);
@@ -100,29 +111,21 @@ export default function PaymentHistory({
   const remainingRental = Math.max(0, baseCharge - loggedRentalSum);
   const remainingAddOn = Math.max(0, addOnTotal - loggedAddOnSum);
   const remainingDeposit = Math.max(0, securityDeposit - loggedDepositSum);
-  const remainingTotal = remainingRental + remainingAddOn + remainingDeposit;
 
-  let initialRental = 0;
-  let initialAddOn = 0;
-  let initialDeposit = 0;
-  if (synthAmount > 0 && remainingTotal > 0) {
-    const ratio = synthAmount / remainingTotal;
-    initialRental = Math.round(remainingRental * ratio);
-    initialAddOn = Math.round(remainingAddOn * ratio);
-    // Deposit absorbs the rounding remainder so the sum is exact.
-    initialDeposit = synthAmount - initialRental - initialAddOn;
-    if (initialDeposit < 0) {
-      // Edge case: ratio rounding made deposit go negative — bleed
-      // from addOn first, then rental, to keep all buckets ≥ 0.
-      initialAddOn += initialDeposit;
-      initialDeposit = 0;
-      if (initialAddOn < 0) {
-        initialRental += initialAddOn;
-        initialAddOn = 0;
-      }
-    }
-  }
-  const initialPaid = initialRental + initialAddOn + initialDeposit;
+  // Greedy fill: deposit → rental → add-ons. Each bucket consumes as
+  // much of the synthAmount as it can hold, then the next bucket gets
+  // whatever's left. No rounding drift because we use integer
+  // subtractions, not ratios.
+  let remaining = synthAmount;
+  const initialDeposit = Math.min(remaining, remainingDeposit);
+  remaining -= initialDeposit;
+  const initialRental = Math.min(remaining, remainingRental);
+  remaining -= initialRental;
+  // Any leftover (rare — happens only if grandTotal > sum of buckets
+  // due to data corruption) lumps into add-ons so total still matches.
+  const initialAddOn = remaining;
+
+  const initialPaid = initialDeposit + initialRental + initialAddOn;
   const initialMethod = (booking.paymentMethod || 'stripe') as 'stripe' | 'fps' | 'bank' | 'cash' | 'other';
 
   // Nothing to show? Bail early.
@@ -169,70 +172,12 @@ export default function PaymentHistory({
     }
   }
 
-  /** Hit the Stripe Search API and append a payments[] entry for every
-   *  paid checkout session whose metadata.bookingId matches. Used when
-   *  the booking was paid before the webhook started writing to
-   *  payments[] (legacy bookings — the synth row collapsed two charges
-   *  into one). Re-running is safe: dedupes by session id + amount. */
-  const [backfillBusy, setBackfillBusy] = useState(false);
-  const [backfillMsg, setBackfillMsg] = useState<string | null>(null);
-  async function handleBackfillStripe() {
-    setBackfillBusy(true);
-    setBackfillMsg(null);
-    try {
-      const res = await fetch('/api/admin/booking-backfill-stripe-payments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bookingId: booking.id }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || 'Backfill failed');
-      const addedCount = (data.added || []).length;
-      const skippedCount = (data.skipped || []).length;
-      setBackfillMsg(
-        locale === 'zh'
-          ? `✓ 已從 Stripe 補加 ${addedCount} 筆付款記錄${skippedCount ? `（跳過 ${skippedCount} 筆已存在）` : ''}`
-          : `✓ Imported ${addedCount} payment(s) from Stripe${skippedCount ? ` (skipped ${skippedCount} already-recorded)` : ''}`,
-      );
-      onUpdated?.();
-    } catch (e) {
-      setBackfillMsg(
-        (locale === 'zh' ? '失敗：' : 'Failed: ')
-        + (e instanceof Error ? e.message : 'unknown'),
-      );
-    } finally {
-      setBackfillBusy(false);
-    }
-  }
-
   return (
     <div className="glass-card p-6 space-y-3 text-sm">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="font-bold flex items-center gap-2">
-          <CreditCard size={16} className="text-pink" />
-          {locale === 'zh' ? '付款記錄' : 'Payment History'}
-        </h2>
-        {adminMode && (
-          <button
-            type="button"
-            onClick={handleBackfillStripe}
-            disabled={backfillBusy}
-            className="text-[11px] px-2.5 py-1 rounded-pill bg-white border border-charcoal/15 text-ink-soft hover:border-accent hover:text-accent disabled:opacity-40 flex items-center gap-1"
-            title={locale === 'zh'
-              ? '從 Stripe API 撈取所有此預訂嘅付款，逐筆寫入記錄。安全可多次執行（自動去重）。'
-              : 'Pull every paid Stripe checkout session for this booking and write them as separate payments[] entries. Safe to re-run — dedupes automatically.'}
-          >
-            {backfillBusy
-              ? (locale === 'zh' ? '匯入中…' : 'Importing…')
-              : (locale === 'zh' ? '從 Stripe 補加付款' : 'Backfill from Stripe')}
-          </button>
-        )}
-      </div>
-      {backfillMsg && adminMode && (
-        <div className="text-[11px] rounded-lg px-3 py-1.5 bg-stone-50 text-stone-700">
-          {backfillMsg}
-        </div>
-      )}
+      <h2 className="font-bold flex items-center gap-2">
+        <CreditCard size={16} className="text-pink" />
+        {locale === 'zh' ? '付款記錄' : 'Payment History'}
+      </h2>
 
       <div className="grid grid-cols-3 gap-2 text-xs bg-cream/40 rounded-xl p-3">
         <div>
