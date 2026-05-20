@@ -858,6 +858,29 @@ export default function AdminBookingDetailPage() {
             }}
           />
 
+          {/* Outstanding balance — visible whenever the booking has a
+           *  non-zero balanceDue (typically post-edit when admin added an
+           *  add-on, or for high-value bookings that paid only the 50%
+           *  upfront deposit). Admin sees the amount + can either send
+           *  the customer the online pay-balance link (WhatsApp / copy)
+           *  or record an offline payment via the modal. The same
+           *  balanceDue surfaces on the customer's /my-bookings card as
+           *  a "找尾數" button, so the customer can self-serve too. */}
+          {(booking.balanceDue ?? 0) > 0 && (
+            <OutstandingBalanceSection
+              booking={booking}
+              locale={locale}
+              memberWa={memberWa}
+              onRecordPaymentClick={() => {
+                setPayRentalAmount('');
+                setPayDepositAmount('');
+                setPayNote('');
+                setFollowupMsg(null);
+                setShowPaymentModal(true);
+              }}
+            />
+          )}
+
           {/* Lock passcode panel — for TTLock-mapped venues shows the
            *  auto-generated passcode + resend button. For non-TTLock
            *  venues (sw-b, sw-ab, …) lets admin enter a passcode by hand. */}
@@ -1108,6 +1131,145 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div>
       <label className="block text-xs text-ink-soft mb-1">{label}</label>
       {children}
+    </div>
+  );
+}
+
+/**
+ * "未付尾數" panel for admin — surfaces the outstanding balance + lets
+ * admin (a) WhatsApp the customer-facing pay-balance link, (b) copy
+ * that link, or (c) open the existing payment-recording modal for
+ * offline confirmation. Customer sees a "找尾數" CTA on /my-bookings
+ * for the same balance.
+ */
+function OutstandingBalanceSection({
+  booking,
+  locale,
+  memberWa,
+  onRecordPaymentClick,
+}: {
+  booking: BookingRecord;
+  locale: 'zh' | 'en';
+  memberWa?: string;
+  onRecordPaymentClick: () => void;
+}) {
+  const balance = booking.balanceDue ?? 0;
+  const [origin, setOrigin] = useState<string>('');
+  const [copied, setCopied] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') setOrigin(window.location.origin);
+  }, []);
+
+  if (balance <= 0) return null;
+
+  const payUrl = origin
+    ? `${origin}/${locale}/book/${booking.branchSlug}/pay-balance/${booking.id}`
+    : '';
+
+  const venueName = venues.find((v) => v.id === booking.venueId)?.name[locale] || booking.venueId;
+  const message =
+    locale === 'zh'
+      ? `你好！你嘅 SPACO 預訂 (${venueName} · ${booking.date} ${booking.startTime}) 仲未付尾數 HK$${balance.toLocaleString()}。可以撳呢條連結網上付款：${payUrl}`
+      : `Hi! Your SPACO booking (${venueName} · ${booking.date} ${booking.startTime}) has an outstanding balance of HK$${balance.toLocaleString()}. Click here to pay online: ${payUrl}`;
+  const whatsappHref = memberWa
+    ? buildWhatsAppLink(memberWa, message)
+    : null;
+
+  async function handleCopy() {
+    if (!payUrl) return;
+    try {
+      await navigator.clipboard.writeText(payUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Fallback: select-and-copy not supported in this browser
+      window.prompt(locale === 'zh' ? '複製此連結：' : 'Copy this link:', payUrl);
+    }
+  }
+
+  return (
+    <div className="glass-card p-6 border-2 border-amber-300/60 bg-amber-50/40">
+      <div className="flex items-start gap-3 mb-3">
+        <AlertCircle size={18} className="text-amber-600 mt-0.5 flex-shrink-0" />
+        <div className="flex-1">
+          <h2 className="font-bold text-amber-900 mb-1">
+            {locale === 'zh' ? '預訂未付尾數' : 'Outstanding Balance'}
+          </h2>
+          <p className="text-sm text-amber-800">
+            {locale === 'zh'
+              ? '客人需要補付尾數，請發送付款連結或記錄線下收款。'
+              : 'Customer owes the balance below — send them the pay link, or record an offline payment.'}
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="text-xs text-amber-700 uppercase tracking-wider font-semibold">
+            {locale === 'zh' ? '尚欠' : 'Owed'}
+          </p>
+          <p className="text-2xl font-bold text-amber-900 font-display">
+            HK${balance.toLocaleString()}
+          </p>
+        </div>
+      </div>
+
+      {/* Payment URL — read-only input so admin can see + select manually
+       *  if clipboard write fails (Safari / locked-down browsers). */}
+      <div className="mb-3">
+        <label className="block text-xs text-ink-soft mb-1 font-semibold">
+          {locale === 'zh' ? '線上付款連結（可發送俾客人）' : 'Online payment link (send to customer)'}
+        </label>
+        <div className="flex gap-2">
+          <input
+            value={payUrl}
+            readOnly
+            className="flex-1 px-3 py-2 rounded-lg border border-charcoal/15 bg-white text-xs font-mono text-ink"
+            onFocus={(e) => e.currentTarget.select()}
+          />
+          <button
+            onClick={handleCopy}
+            disabled={!payUrl}
+            className="px-3 py-2 rounded-lg bg-white border border-charcoal/15 text-xs font-medium hover:bg-cream flex items-center gap-1 disabled:opacity-40"
+          >
+            {copied ? <Check size={12} /> : null}
+            {copied
+              ? (locale === 'zh' ? '已複製' : 'Copied')
+              : (locale === 'zh' ? '複製' : 'Copy')}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {whatsappHref ? (
+          <a
+            href={whatsappHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-4 py-2 bg-[#25D366] text-white rounded-lg text-sm font-medium hover:opacity-90 flex items-center gap-1.5"
+          >
+            <MessageCircle size={14} />
+            {locale === 'zh' ? 'WhatsApp 發送連結' : 'Send via WhatsApp'}
+          </a>
+        ) : (
+          <span className="px-4 py-2 bg-stone-100 text-stone-500 rounded-lg text-sm font-medium flex items-center gap-1.5">
+            <MessageCircle size={14} />
+            {locale === 'zh' ? 'WhatsApp 不適用（客人未綁定電話）' : 'WhatsApp unavailable (no phone on file)'}
+          </span>
+        )}
+
+        <button
+          onClick={onRecordPaymentClick}
+          className="px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium hover:bg-accent/90 flex items-center gap-1.5"
+        >
+          <Calculator size={14} />
+          {locale === 'zh' ? '記錄線下付款' : 'Record offline payment'}
+        </button>
+      </div>
+
+      <p className="text-[11px] text-ink-soft mt-3 leading-relaxed">
+        {locale === 'zh'
+          ? '※ 客人會喺「我的預訂」頁面睇到此尾數同「找尾數」按鈕，可自助線上付款。線下付款收到後請用「記錄線下付款」按鈕並填寫場租 + 按金 breakdown。'
+          : '※ Customer sees the balance + a "Pay balance" button on their /my-bookings page. After receiving offline payment, click "Record offline payment" and enter the rental + deposit breakdown.'}
+      </p>
     </div>
   );
 }

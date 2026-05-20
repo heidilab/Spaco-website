@@ -289,6 +289,28 @@ function BookingCard({
         </div>
       )}
 
+      {/* "Outstanding balance" banner — confirmed booking still owes
+       *  money (either because admin added an add-on post-confirmation
+       *  or the customer paid the 50% upfront only). The 找尾數 button
+       *  in the action row below handles the actual payment. */}
+      {showPayBalance && (
+        <div className="rounded-xl bg-amber-50 border-2 border-amber-300/70 px-4 py-3 mb-3 flex items-start gap-2.5">
+          <AlertCircle size={16} className="text-amber-600 mt-0.5 flex-shrink-0" />
+          <div className="flex-1 text-xs leading-relaxed">
+            <p className="font-semibold text-amber-900 text-sm">
+              {locale === 'zh'
+                ? `⚠ 預訂未付尾數 HK$${balanceDue.toLocaleString()}`
+                : `⚠ Outstanding balance HK$${balanceDue.toLocaleString()}`}
+            </p>
+            <p className="text-amber-800 mt-1">
+              {locale === 'zh'
+                ? '請於活動 2 日前完成付款。撳下方「找尾數」按鈕線上付款，或聯絡 SPACO 安排線下付款。'
+                : 'Please pay at least 2 days before the event. Tap "Pay balance" below to pay online, or contact SPACO for offline payment.'}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* "Payment Not Completed" — slot already released; show a WhatsApp
        *  CTA so the customer can still ask CS to re-arrange if they want. */}
       {booking.status === 'payment_not_completed' && (
