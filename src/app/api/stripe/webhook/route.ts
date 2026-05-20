@@ -36,6 +36,10 @@ export async function POST(request: NextRequest) {
       if (bookingId) {
         // 1. Update booking — confirm + (if balance payment) clear balanceDue.
         const bookingRef = adminDb.collection('bookings').doc(bookingId);
+        // Pre-fetch so we can compute the rental/addOn/deposit split for
+        // the payments[] audit entry below.
+        const preStripeSnap = await bookingRef.get();
+        const preStripe = preStripeSnap.data() as BookingRecord | undefined;
         const updates: Record<string, unknown> = {
           status: 'confirmed',
           updatedAt: FieldValue.serverTimestamp(),
@@ -44,6 +48,45 @@ export async function POST(request: NextRequest) {
           updates.balanceDue = 0;
           updates.balancePaidAt = FieldValue.serverTimestamp();
         }
+
+        // Write a payments[] audit entry for EVERY Stripe charge, split
+        // into venue rental (場租) / add-ons (附加項目) / refundable
+        // deposit (按金). This lets PaymentHistory render each payment
+        // separately (vs the old behaviour where it synthesised a single
+        // combined "initial" row from pricing.* fields). Splits use the
+        // booking's pricing snapshot at confirmation time:
+        //   • initial deposit → pro-rata vs upfront/grandTotal
+        //   • balance payment → whatever's left of each bucket
+        if (preStripe) {
+          const baseCharge = preStripe.pricing.baseCharge || 0;
+          const addOnTotal = preStripe.pricing.addOnTotal || 0;
+          const securityDeposit = preStripe.pricing.securityDeposit || 0;
+          const grandTotal = baseCharge + addOnTotal + securityDeposit;
+          const paidAmount = session.amount_total ? Math.round(session.amount_total / 100) : 0;
+          let rentalAmount = 0;
+          let addOnAmount = 0;
+          let depositAmount = 0;
+          if (grandTotal > 0 && paidAmount > 0) {
+            // Pro-rata each bucket against the actual paid amount so a
+            // 50% deposit splits the rental / addOn / refundable cleanly,
+            // and a 100% (≤$10k) payment slots into bucket totals.
+            rentalAmount = Math.round((baseCharge / grandTotal) * paidAmount);
+            addOnAmount = Math.round((addOnTotal / grandTotal) * paidAmount);
+            depositAmount = paidAmount - rentalAmount - addOnAmount;
+          }
+          updates.payments = FieldValue.arrayUnion({
+            rentalAmount,
+            addOnAmount,
+            depositAmount,
+            amount: paidAmount,
+            method: 'stripe',
+            kind: isBalancePayment ? 'balance' : 'initial',
+            note: null,
+            recordedBy: 'stripe-webhook',
+            recordedAt: new Date().toISOString(),
+          });
+        }
+
         await bookingRef.update(updates);
 
         // 1b. If the customer redeemed loyalty points / applied a promo

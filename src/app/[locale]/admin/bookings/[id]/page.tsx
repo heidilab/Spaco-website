@@ -94,7 +94,12 @@ export default function AdminBookingDetailPage() {
   // so the booking's pricing.subtotal and pricing.securityDeposit can
   // be bumped accurately (and loyalty-point credit later stays correct).
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  // Three-bucket payment split — 場租 (baseCharge), 附加項目 (addOnTotal),
+  // 按金 (securityDeposit). Heidi's spec: every payment recorded MUST
+  // be itemised by bucket so the customer's receipt + finance reports
+  // attribute the money correctly.
   const [payRentalAmount, setPayRentalAmount] = useState<string>('');
+  const [payAddOnAmount, setPayAddOnAmount] = useState<string>('');
   const [payDepositAmount, setPayDepositAmount] = useState<string>('');
   const [payMethod, setPayMethod] = useState<'fps' | 'stripe' | 'bank' | 'cash' | 'other'>('fps');
   const [payNote, setPayNote] = useState<string>('');
@@ -414,10 +419,12 @@ export default function AdminBookingDetailPage() {
     try {
       const body: Record<string, unknown> = { bookingId: booking.id };
       const rental = parseFloat(payRentalAmount) || 0;
+      const addOn = parseFloat(payAddOnAmount) || 0;
       const dep = parseFloat(payDepositAmount) || 0;
-      if (!opts.skipPayment && (rental + dep) > 0) {
+      if (!opts.skipPayment && (rental + addOn + dep) > 0) {
         body.payment = {
           rentalAmount: rental,
+          addOnAmount: addOn,
           depositAmount: dep,
           method: payMethod,
           note: payNote.trim() || undefined,
@@ -439,6 +446,7 @@ export default function AdminBookingDetailPage() {
       if (fresh) setBooking(fresh);
       // Reset payment form
       setPayRentalAmount('');
+      setPayAddOnAmount('');
       setPayDepositAmount('');
       setPayNote('');
       setTimeout(() => setShowPaymentModal(false), 1500);
@@ -709,6 +717,10 @@ export default function AdminBookingDetailPage() {
                   {ADDON_CATALOG.map((cfg) => {
                     const qty = addOnQty[cfg.id] || 0;
                     const enabled = qty > 0;
+                    // Per-head add-ons (BBQ / hotpot packages, drinks)
+                    // charge against the full guest count. Stored qty
+                    // is just a presence flag — no qty selector here.
+                    const isPerHead = cfg.unit === 'person';
                     return (
                       <label
                         key={cfg.id}
@@ -733,10 +745,17 @@ export default function AdminBookingDetailPage() {
                           <div className="flex items-baseline justify-between gap-1">
                             <span className="font-medium truncate">{cfg.name[locale]}</span>
                             <span className="text-ink-soft text-[11px] whitespace-nowrap">
-                              ${cfg.pricePerUnit}
+                              ${cfg.pricePerUnit}{isPerHead ? '/位' : ''}
                             </span>
                           </div>
-                          {enabled && (
+                          {enabled && isPerHead && (
+                            <p className="text-[11px] text-ink-soft mt-1">
+                              {locale === 'zh'
+                                ? `全部 ${guestCount} 人，自動按人數計`
+                                : `Applied to all ${guestCount} guests`}
+                            </p>
+                          )}
+                          {enabled && !isPerHead && (
                             <div className="flex items-center gap-1.5 mt-1.5">
                               <button
                                 type="button"
@@ -1052,6 +1071,7 @@ export default function AdminBookingDetailPage() {
               memberWa={memberWa}
               onRecordPaymentClick={() => {
                 setPayRentalAmount('');
+                setPayAddOnAmount('');
                 setPayDepositAmount('');
                 setPayNote('');
                 setFollowupMsg(null);
@@ -1184,7 +1204,7 @@ export default function AdminBookingDetailPage() {
             </p>
 
             <div className="space-y-3 mb-4">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-2">
                 <div>
                   <label className="block text-xs font-semibold text-ink-soft mb-1">
                     {locale === 'zh' ? '場租 (HK$)' : 'Rental (HK$)'}
@@ -1194,11 +1214,20 @@ export default function AdminBookingDetailPage() {
                     value={payRentalAmount}
                     onChange={(e) => setPayRentalAmount(e.target.value)}
                     placeholder="0"
-                    className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white"
+                    className="w-full px-2 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white"
                   />
-                  <p className="text-[11px] text-ink-soft mt-1">
-                    {locale === 'zh' ? '加入小計（賺積分）' : 'Adds to subtotal (earns points)'}
-                  </p>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-ink-soft mb-1">
+                    {locale === 'zh' ? '附加項目 (HK$)' : 'Add-ons (HK$)'}
+                  </label>
+                  <input
+                    type="number"
+                    value={payAddOnAmount}
+                    onChange={(e) => setPayAddOnAmount(e.target.value)}
+                    placeholder="0"
+                    className="w-full px-2 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-ink-soft mb-1">
@@ -1209,18 +1238,28 @@ export default function AdminBookingDetailPage() {
                     value={payDepositAmount}
                     onChange={(e) => setPayDepositAmount(e.target.value)}
                     placeholder="0"
-                    className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white"
+                    className="w-full px-2 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white"
                   />
-                  <p className="text-[11px] text-ink-soft mt-1">
-                    {locale === 'zh' ? '加入按金（活動後退還）' : 'Adds to refundable deposit'}
-                  </p>
                 </div>
               </div>
+              <p className="text-[11px] text-ink-soft -mt-1">
+                {locale === 'zh'
+                  ? '場租 + 附加項目會加入小計（賺積分）；按金活動後退還'
+                  : 'Rental + add-ons adds to subtotal (earns points); deposit refunded after the event'}
+              </p>
 
-              {(parseFloat(payRentalAmount) || 0) + (parseFloat(payDepositAmount) || 0) > 0 && (
+              {(parseFloat(payRentalAmount) || 0)
+                + (parseFloat(payAddOnAmount) || 0)
+                + (parseFloat(payDepositAmount) || 0) > 0 && (
                 <div className="rounded-lg bg-pink/10 px-3 py-2 text-xs">
                   {locale === 'zh' ? '總共記錄：' : 'Total recorded: '}
-                  <span className="font-bold">HK${((parseFloat(payRentalAmount) || 0) + (parseFloat(payDepositAmount) || 0)).toLocaleString()}</span>
+                  <span className="font-bold">
+                    HK${(
+                      (parseFloat(payRentalAmount) || 0)
+                      + (parseFloat(payAddOnAmount) || 0)
+                      + (parseFloat(payDepositAmount) || 0)
+                    ).toLocaleString()}
+                  </span>
                 </div>
               )}
 
@@ -1281,7 +1320,11 @@ export default function AdminBookingDetailPage() {
               </button>
               <button
                 onClick={() => handleFollowup()}
-                disabled={followupBusy || ((parseFloat(payRentalAmount) || 0) + (parseFloat(payDepositAmount) || 0)) <= 0}
+                disabled={followupBusy || (
+                  (parseFloat(payRentalAmount) || 0)
+                  + (parseFloat(payAddOnAmount) || 0)
+                  + (parseFloat(payDepositAmount) || 0)
+                ) <= 0}
                 className="flex-1 btn-primary disabled:opacity-40 flex items-center justify-center gap-1.5"
               >
                 {followupBusy ? '…' : (

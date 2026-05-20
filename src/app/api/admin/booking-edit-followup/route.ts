@@ -27,11 +27,13 @@ export const runtime = 'nodejs';
 // and zero balanceDue if the payment covers it.
 
 interface FollowupPayment {
-  /** HK$ paid against rental (場租 + add-ons). Adds to pricing.subtotal
-   *  so loyalty-point credit at deposit settlement stays accurate. */
+  /** HK$ paid against venue rental (場租, baseCharge only). */
   rentalAmount: number;
-  /** HK$ paid into the refundable security deposit. Adds to
-   *  pricing.securityDeposit so the eventual refund math is right. */
+  /** HK$ paid against add-ons (附加項目, addOnTotal). Optional —
+   *  legacy callers that don't split this bucket pass 0 and the
+   *  amount falls into rentalAmount as before. */
+  addOnAmount?: number;
+  /** HK$ paid into the refundable security deposit (按金). */
   depositAmount: number;
   method: 'stripe' | 'fps' | 'bank' | 'cash' | 'other';
   note?: string;
@@ -76,11 +78,24 @@ export async function POST(req: NextRequest) {
     //    We never downgrade a status (e.g. 'completed' or 'cancelled'
     //    stays put), so admin can correct mistakes without losing state.
     let updatedBalance: number | null = null;
-    if (!syncOnly && body.payment && (body.payment.rentalAmount > 0 || body.payment.depositAmount > 0)) {
+    if (
+      !syncOnly
+      && body.payment
+      && (
+        body.payment.rentalAmount > 0
+        || (body.payment.addOnAmount || 0) > 0
+        || body.payment.depositAmount > 0
+      )
+    ) {
       const rental = Math.max(0, body.payment.rentalAmount || 0);
+      const addOn = Math.max(0, body.payment.addOnAmount || 0);
       const dep = Math.max(0, body.payment.depositAmount || 0);
-      const total = rental + dep;
-      const newSubtotal = (booking.pricing.subtotal || 0) + rental;
+      const total = rental + addOn + dep;
+      // For the booking's running totals, lump rental + addOn into
+      // pricing.subtotal — that field has always represented the rental
+      // side (場租 + 附加項目). The per-payment audit entry keeps them
+      // split so PaymentHistory can show three buckets.
+      const newSubtotal = (booking.pricing.subtotal || 0) + rental + addOn;
       const newSecurityDeposit = (booking.pricing.securityDeposit || 0) + dep;
       const newDeposit = (booking.pricing.deposit || 0) + total;
       const newBalance = Math.max(0, (booking.balanceDue ?? 0) - total);
@@ -107,9 +122,11 @@ export async function POST(req: NextRequest) {
         balancePaidAt: newBalance === 0 ? FieldValue.serverTimestamp() : booking.balancePaidAt,
         payments: FieldValue.arrayUnion({
           rentalAmount: rental,
+          addOnAmount: addOn,
           depositAmount: dep,
           amount: total,
           method: body.payment.method,
+          kind: 'topup',
           note: body.payment.note || null,
           recordedBy: body.payment.recordedBy,
           recordedAt: new Date().toISOString(),

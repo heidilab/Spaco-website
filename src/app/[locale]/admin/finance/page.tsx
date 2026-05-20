@@ -125,7 +125,12 @@ export default function FinanceOverviewPage() {
     const drinks = addOnRevenueForBooking(b, 'drinks');
     // 加時/罰款 = admin-recorded rental top-ups (post-confirmation
     // extensions) + forfeited security deposit (penalties).
-    const topUpRental = (b.payments || []).reduce((s, p) => s + (p.rentalAmount || 0), 0);
+    // Rental top-ups = venue rental + add-on portions of every logged
+    // payment. New entries (post-2026-05) split these into
+    // rentalAmount + addOnAmount; legacy entries lumped both into
+    // rentalAmount so addOnAmount may be undefined. Sum both.
+    const topUpRental = (b.payments || [])
+      .reduce((s, p) => s + (p.rentalAmount || 0) + (p.addOnAmount || 0), 0);
     const initialRental = rent + shisha + bbq + cater + drinks; // baseline rental
     const extensions = Math.max(0, topUpRental - initialRental); // only the delta
     const refund = b.depositRefund as { deductions?: { amount: number }[] } | undefined;

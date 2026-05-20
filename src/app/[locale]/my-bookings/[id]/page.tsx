@@ -9,6 +9,7 @@ import { getBooking } from '@/lib/firestore';
 import { getVenueById } from '@/lib/venues';
 import {
   addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE,
+  calculatePricing,
 } from '@/lib/pricing';
 import { generateWhatsAppLink } from '@/lib/email';
 import PaymentHistory from '@/components/booking/PaymentHistory';
@@ -156,48 +157,67 @@ export default function MyBookingDetailPage() {
             </h2>
             <Row icon={<MapPin size={14} />} label={locale === 'zh' ? '地址' : 'Address'} value={venue?.address[locale] || '—'} />
             <Row label={locale === 'zh' ? '時數' : 'Hours'} value={`${booking.hours} ${locale === 'zh' ? '小時' : 'hrs'}`} />
-            {booking.addOns && booking.addOns.length > 0 && (
-              <div className="border-t border-white/30 pt-3">
-                <p className="text-xs text-ink-soft uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                  <Package size={12} /> {locale === 'zh' ? '附加服務' : 'Add-ons'}
-                </p>
-                <ul className="space-y-1.5 text-sm">
-                  {booking.addOns.map((a) => {
-                    const meta = addOnCatalog.find((c) => c.id === a.id);
-                    return (
-                      <li key={a.id}>
-                        • {meta?.name[locale] || a.id}{a.quantity > 1 ? ` × ${a.quantity}` : ''}
-                        {a.id === 'shisha' && (
-                          <span className="block text-xs text-ink-soft pl-3 mt-0.5">
-                            {(() => {
-                              const pipes = a.options?.pipes ?? Math.min(2, a.quantity);
-                              return locale === 'zh'
-                                ? `${pipes} 支水煙 / ${a.quantity} 個煙頭`
-                                : `${pipes} pipe${pipes > 1 ? 's' : ''} / ${a.quantity} head${a.quantity > 1 ? 's' : ''}`;
-                            })()}
-                          </span>
-                        )}
-                        {a.id === 'shisha' && a.options?.flavors && a.options.flavors.length > 0 && (
-                          <span className="block text-xs text-ink-soft pl-3">
-                            {a.options.flavors.map((f, i) => (
-                              <span key={i}>
-                                #{i + 1} {getShishaFlavorLabel(f, locale)}
-                                {i < a.options!.flavors!.length - 1 ? '、' : ''}
+            {booking.addOns && booking.addOns.length > 0 && (() => {
+              // Render add-ons with each item's individual calculation +
+              // amount, so the customer can verify "15人 × $158 = $2,370"
+              // for themselves. We pull breakdown lines from
+              // calculatePricing() rather than hand-rolling the math —
+              // the customer-facing display then mirrors the same
+              // formula the booking record was priced against, no risk
+              // of drift.
+              const breakdown = venue
+                ? calculatePricing(
+                    venue,
+                    booking.isWeekend,
+                    booking.hours,
+                    booking.guestCount,
+                    booking.addOns,
+                    booking.childCount ?? 0,
+                  ).breakdown.slice(1) // drop "場地費" — already accounted for in subtotal line below
+                : [];
+              return (
+                <div className="border-t border-white/30 pt-3">
+                  <p className="text-xs text-ink-soft uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                    <Package size={12} /> {locale === 'zh' ? '附加服務' : 'Add-ons'}
+                  </p>
+                  <ul className="space-y-2 text-sm">
+                    {booking.addOns.map((a, idx) => {
+                      const meta = addOnCatalog.find((c) => c.id === a.id);
+                      const line = breakdown[idx];
+                      return (
+                        <li key={a.id}>
+                          <div className="flex items-baseline justify-between gap-3">
+                            <span className="text-ink">
+                              • {line?.label[locale] || meta?.name[locale] || a.id}
+                            </span>
+                            {line && (
+                              <span className="font-medium text-ink whitespace-nowrap">
+                                HK${line.amount.toLocaleString()}
                               </span>
-                            ))}
-                          </span>
-                        )}
-                        {a.id === 'shisha' && a.options?.staffSetup && (
-                          <span className="block text-xs text-ink-soft pl-3">
-                            + {locale === 'zh' ? `員工協助 setup (HK$${SHISHA_STAFF_SETUP_FEE})` : `Staff setup (HK$${SHISHA_STAFF_SETUP_FEE})`}
-                          </span>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            )}
+                            )}
+                          </div>
+                          {a.id === 'shisha' && a.options?.flavors && a.options.flavors.length > 0 && (
+                            <span className="block text-xs text-ink-soft pl-3 mt-0.5">
+                              {a.options.flavors.map((f, i) => (
+                                <span key={i}>
+                                  #{i + 1} {getShishaFlavorLabel(f, locale)}
+                                  {i < a.options!.flavors!.length - 1 ? '、' : ''}
+                                </span>
+                              ))}
+                            </span>
+                          )}
+                          {a.id === 'shisha' && a.options?.staffSetup && (
+                            <span className="block text-xs text-ink-soft pl-3">
+                              + {locale === 'zh' ? `員工協助 setup (HK$${SHISHA_STAFF_SETUP_FEE})` : `Staff setup (HK$${SHISHA_STAFF_SETUP_FEE})`}
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              );
+            })()}
             {booking.hasBYOFood && (
               <Row label={locale === 'zh' ? '自攜食物' : 'BYO food'} value={locale === 'zh' ? '是' : 'Yes'} />
             )}

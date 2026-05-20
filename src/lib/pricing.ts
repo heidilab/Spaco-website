@@ -154,12 +154,19 @@ export function getShishaFlavorLabel(variantId: string, locale: 'zh' | 'en' = 'e
  *  surface pipe count + flavor breakdown + setup option:
  *  "Shisha 水煙 (2支/3頭: A·芒果菠蘿×2, C·提子×1, +人手setup)". */
 export function formatAddOnsForStaff(
-  addOns: { id: string; quantity: number; options?: { pipes?: number; flavors?: string[]; staffSetup?: boolean } }[] | undefined,
+  bookingAddOns: { id: string; quantity: number; options?: { pipes?: number; flavors?: string[]; staffSetup?: boolean } }[] | undefined,
   locale: 'zh' | 'en' = 'en',
 ): string {
-  if (!addOns || addOns.length === 0) return '';
-  return addOns.map((a) => {
+  if (!bookingAddOns || bookingAddOns.length === 0) return '';
+  return bookingAddOns.map((a) => {
     if (a.id !== 'shisha') {
+      // Per-head packages (BBQ / hotpot / drinks) charge against the
+      // booking's full guest count — the stored quantity is just a
+      // presence flag, so rendering "×1" was misleading. Look up the
+      // catalog entry (module-level `addOns`, shadowed by the
+      // parameter — hence the alias) to know which unit type this is.
+      const cfg = addOns.find((x) => x.id === a.id);
+      if (cfg?.unit === 'person') return getAddOnLabel(a.id, locale);
       return `${getAddOnLabel(a.id, locale)} ×${a.quantity}`;
     }
     // Shisha: pipes/heads + flavor breakdown + setup flag.

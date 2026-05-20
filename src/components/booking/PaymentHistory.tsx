@@ -57,34 +57,53 @@ export default function PaymentHistory({
   // would be off; we hide the initial row + show a banner asking admin
   // to split before drawing the full audit.
   const hasUnsplit = payments.some(
-    (p) => (p.amount || 0) > 0 && (p.rentalAmount || 0) === 0 && (p.depositAmount || 0) === 0,
+    (p) =>
+      (p.amount || 0) > 0
+      && (p.rentalAmount || 0) === 0
+      && (p.addOnAmount || 0) === 0
+      && (p.depositAmount || 0) === 0,
   );
 
+  // Three-bucket sums across all logged payments (場租 / 附加項目 / 按金).
+  // Legacy entries pre-dating the addOnAmount split lump everything into
+  // rentalAmount — we don't try to retroactively split them here; the
+  // 3-bucket view just shows 附加項目 = 0 for those rows.
+  const loggedRentalSum = payments.reduce((s, p) => s + (p.rentalAmount || 0), 0);
+  const loggedAddOnSum = payments.reduce((s, p) => s + (p.addOnAmount || 0), 0);
+  const loggedDepositSum = payments.reduce((s, p) => s + (p.depositAmount || 0), 0);
+
   // Only synthesize an "initial confirmation payment" row when the
-  // booking has actually been paid for. For 'pending' / 'awaiting_*'
-  // bookings, booking.pricing.* reflects the QUOTED amount, not money
-  // received — drawing a synthetic row at that stage was the bug that
-  // made #Ebthocjl show "已收 $8,300 / Stripe" before any payment ever
-  // happened (Stripe dashboard was correctly empty).
+  // booking has been paid for AND there are no logged entries at all.
+  // Pre-this-commit Stripe webhooks didn't write payments[] entries, so
+  // a legacy confirmed booking would otherwise render an empty list.
+  // Modern bookings have one Stripe entry per charge (initial / balance)
+  // already in payments[], so the synthetic row would double-count.
   const isPaid =
     booking.status === 'confirmed' ||
     booking.status === 'completed' ||
     !!booking.paymentVerifiedAt;
 
-  // Synthesize the initial payment from booking data — only safe when
-  // the booking is paid AND all logged entries are split.
-  const loggedRentalSum = payments.reduce((s, p) => s + (p.rentalAmount || 0), 0);
-  const loggedDepositSum = payments.reduce((s, p) => s + (p.depositAmount || 0), 0);
-  const skipInitial = hasUnsplit || !isPaid;
-  const initialRental = skipInitial ? 0 : Math.max(0, (booking.pricing.subtotal || 0) - loggedRentalSum);
-  const initialDeposit = skipInitial ? 0 : Math.max(0, (booking.pricing.securityDeposit || 0) - loggedDepositSum);
-  const initialPaid = initialRental + initialDeposit;
+  // Pro-rata the legacy synthesis when only part of the grandTotal has
+  // been paid (e.g. confirmed booking that still has a balanceDue).
+  const grandTotal = (booking.pricing.subtotal || 0) + (booking.pricing.securityDeposit || 0);
+  const paidPortion = grandTotal > 0
+    ? Math.max(0, grandTotal - (booking.balanceDue || 0)) / grandTotal
+    : 0;
+  const baseCharge = booking.pricing.baseCharge ?? 0;
+  const addOnTotal = booking.pricing.addOnTotal ?? 0;
+  const securityDeposit = booking.pricing.securityDeposit ?? 0;
+  const skipInitial = hasUnsplit || !isPaid || payments.length > 0;
+  const initialRental = skipInitial ? 0 : Math.round(baseCharge * paidPortion);
+  const initialAddOn = skipInitial ? 0 : Math.round(addOnTotal * paidPortion);
+  const initialDeposit = skipInitial ? 0 : Math.round(securityDeposit * paidPortion);
+  const initialPaid = initialRental + initialAddOn + initialDeposit;
   const initialMethod = (booking.paymentMethod || 'stripe') as 'stripe' | 'fps' | 'bank' | 'cash' | 'other';
 
   // Nothing to show? Bail early.
   if (payments.length === 0 && initialPaid === 0) return null;
 
   const totalRental = loggedRentalSum + initialRental;
+  const totalAddOn = loggedAddOnSum + initialAddOn;
   const totalDeposit = loggedDepositSum + initialDeposit;
 
   async function handleSplitSubmit() {
@@ -131,10 +150,14 @@ export default function PaymentHistory({
         {locale === 'zh' ? '付款記錄' : 'Payment History'}
       </h2>
 
-      <div className="grid grid-cols-2 gap-2 text-xs bg-cream/40 rounded-xl p-3">
+      <div className="grid grid-cols-3 gap-2 text-xs bg-cream/40 rounded-xl p-3">
         <div>
           <p className="text-ink-soft">{locale === 'zh' ? '已收場租' : 'Rental paid'}</p>
           <p className="font-bold text-base">HK${totalRental.toLocaleString()}</p>
+        </div>
+        <div>
+          <p className="text-ink-soft">{locale === 'zh' ? '已收附加項目' : 'Add-ons paid'}</p>
+          <p className="font-bold text-base">HK${totalAddOn.toLocaleString()}</p>
         </div>
         <div>
           <p className="text-ink-soft">{locale === 'zh' ? '已收按金' : 'Deposit paid'}</p>
@@ -154,17 +177,22 @@ export default function PaymentHistory({
       )}
 
       <ul className="space-y-2 text-xs">
-        {/* Synthetic initial payment row — booking confirmation predates
-         *  the payments[] audit log so we back it out from pricing.deposit. */}
+        {/* Legacy-only synthetic row — only renders when there are no
+         *  logged payments[] entries (so pre-Stripe-webhook-write
+         *  bookings still show what was paid). Modern bookings have
+         *  one real entry per Stripe charge so this branch is skipped. */}
         {initialPaid > 0 && (
-          <li className="border-l-2 border-emerald-400/60 pl-3 py-1">
+          <li className="border-l-2 border-emerald-400/60 pl-3 py-1.5">
             <div className="flex items-baseline justify-between gap-2">
               <span className="font-mono font-bold text-sm">HK${initialPaid.toLocaleString()}</span>
               <span className="text-ink-soft">{METHOD_LABELS[initialMethod]?.[locale] || initialMethod}</span>
             </div>
-            <div className="flex items-baseline gap-3 text-ink-soft mt-0.5">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-ink-soft mt-0.5">
               {initialRental > 0 && (
                 <span>{locale === 'zh' ? '場租 ' : 'Rental '}HK${initialRental.toLocaleString()}</span>
+              )}
+              {initialAddOn > 0 && (
+                <span>{locale === 'zh' ? '附加項目 ' : 'Add-ons '}HK${initialAddOn.toLocaleString()}</span>
               )}
               {initialDeposit > 0 && (
                 <span>{locale === 'zh' ? '按金 ' : 'Deposit '}HK${initialDeposit.toLocaleString()}</span>
@@ -178,23 +206,45 @@ export default function PaymentHistory({
           </li>
         )}
         {payments.map((p, i) => {
-          const hasSplit = (p.rentalAmount || 0) > 0 || (p.depositAmount || 0) > 0;
+          const hasSplit =
+            (p.rentalAmount || 0) > 0
+            || (p.addOnAmount || 0) > 0
+            || (p.depositAmount || 0) > 0;
           const isLegacy = !hasSplit && p.amount > 0;
+          // Label each entry by its kind — distinguishes the initial
+          // deposit from a later balance payment from an admin top-up.
+          const kindLabel = (() => {
+            if (!p.kind) return null;
+            if (p.kind === 'initial') return locale === 'zh' ? '首期付款' : 'Initial';
+            if (p.kind === 'balance') return locale === 'zh' ? '尾數付款' : 'Balance';
+            if (p.kind === 'topup') return locale === 'zh' ? '補加付款' : 'Top-up';
+            return null;
+          })();
           return (
-            <li key={i} className="border-l-2 border-pink/40 pl-3 py-1">
+            <li key={i} className="border-l-2 border-pink/40 pl-3 py-1.5">
               <div className="flex items-baseline justify-between gap-2">
                 <span className="font-mono font-bold text-sm">HK${p.amount.toLocaleString()}</span>
                 <span className="text-ink-soft">{METHOD_LABELS[p.method]?.[locale] || p.method}</span>
               </div>
               {hasSplit && (
-                <div className="flex items-baseline gap-3 text-ink-soft mt-0.5">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-ink-soft mt-0.5">
                   {(p.rentalAmount || 0) > 0 && (
                     <span>{locale === 'zh' ? '場租 ' : 'Rental '}HK${p.rentalAmount.toLocaleString()}</span>
+                  )}
+                  {(p.addOnAmount || 0) > 0 && (
+                    <span>{locale === 'zh' ? '附加項目 ' : 'Add-ons '}HK${p.addOnAmount!.toLocaleString()}</span>
                   )}
                   {(p.depositAmount || 0) > 0 && (
                     <span>{locale === 'zh' ? '按金 ' : 'Deposit '}HK${p.depositAmount.toLocaleString()}</span>
                   )}
                 </div>
+              )}
+              {kindLabel && (
+                <p className="text-[11px] text-ink-soft mt-0.5">
+                  {kindLabel}
+                  {' · '}
+                  {fmtRecordedAt(p.recordedAt)}
+                </p>
               )}
               {isLegacy && (
                 <p className="text-amber-700 text-[11px] mt-0.5 flex items-center gap-1">
@@ -217,7 +267,12 @@ export default function PaymentHistory({
               {p.note && (
                 <p className="text-ink-soft italic mt-0.5">「{p.note}」</p>
               )}
-              <p className="text-ink-soft text-[10px] mt-0.5">{fmtRecordedAt(p.recordedAt)}</p>
+              {/* Standalone timestamp only when the kind-label paragraph
+                * isn't already showing one — avoids "首期付款 · 2026-05-20
+                * 12:16 / 2026-05-20 12:16" duplicate. */}
+              {!kindLabel && (
+                <p className="text-ink-soft text-[10px] mt-0.5">{fmtRecordedAt(p.recordedAt)}</p>
+              )}
             </li>
           );
         })}

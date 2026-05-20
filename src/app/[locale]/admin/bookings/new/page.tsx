@@ -669,6 +669,15 @@ export default function AdminNewBookingPage() {
                 const qty = addOnQty[a.id] || 0;
                 const max = a.maxQuantity ?? (a.unit === 'person' ? 1 : 5);
                 const isShisha = a.id === 'shisha';
+                // Per-head add-ons (BBQ packages / hotpot packages /
+                // drinks) MUST charge against the full guest count —
+                // calculatePricing already multiplies by adultEquiv, so
+                // the stored quantity is just a presence flag. Render
+                // them as a checkbox to remove the misleading "×N"
+                // affordance. Shisha is unit:'item' but uses its own
+                // custom pipes/flavors UI below, so keep it on the
+                // qty stepper branch.
+                const isPerHead = a.unit === 'person';
                 return (
                   <div key={a.id} className="rounded-xl bg-white/40 border border-white/60 overflow-hidden">
                     <div className="flex items-center gap-3 p-3">
@@ -676,11 +685,29 @@ export default function AdminNewBookingPage() {
                         <p className="font-semibold text-sm text-ink">{a.name[locale]}</p>
                         <p className="text-xs text-ink-soft">{a.description?.[locale] || ''}</p>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <button type="button" onClick={() => setAddOnQty({ ...addOnQty, [a.id]: Math.max(0, qty - 1) })} className="p-1.5 rounded-md bg-white/80 border border-charcoal/15"><Minus size={12} /></button>
-                        <span className="w-7 text-center text-sm font-bold">{qty}</span>
-                        <button type="button" onClick={() => setAddOnQty({ ...addOnQty, [a.id]: Math.min(max, qty + 1) })} className="p-1.5 rounded-md bg-white/80 border border-charcoal/15"><Plus size={12} /></button>
-                      </div>
+                      {isPerHead ? (
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={qty > 0}
+                            onChange={(e) =>
+                              setAddOnQty({ ...addOnQty, [a.id]: e.target.checked ? 1 : 0 })
+                            }
+                            className="w-4 h-4 accent-accent"
+                          />
+                          <span className="text-xs text-ink-soft">
+                            {qty > 0
+                              ? (locale === 'zh' ? `全部 ${guestCount} 人` : `All ${guestCount} guests`)
+                              : (locale === 'zh' ? '勾選即按人數' : 'Tick to apply per-head')}
+                          </span>
+                        </label>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          <button type="button" onClick={() => setAddOnQty({ ...addOnQty, [a.id]: Math.max(0, qty - 1) })} className="p-1.5 rounded-md bg-white/80 border border-charcoal/15"><Minus size={12} /></button>
+                          <span className="w-7 text-center text-sm font-bold">{qty}</span>
+                          <button type="button" onClick={() => setAddOnQty({ ...addOnQty, [a.id]: Math.min(max, qty + 1) })} className="p-1.5 rounded-md bg-white/80 border border-charcoal/15"><Plus size={12} /></button>
+                        </div>
+                      )}
                     </div>
 
                     {/* Shisha sub-options: pipes (1 or 2) + per-head flavor +

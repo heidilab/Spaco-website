@@ -179,15 +179,24 @@ export interface BookingRecord {
    *  deposit splits let downstream code (loyalty credit, deposit refund)
    *  attribute the money to the right bucket. */
   payments?: Array<{
-    /** HK$ portion paid against rental + add-ons (subtotal). */
+    /** HK$ portion paid against venue rental (場租, baseCharge). */
     rentalAmount: number;
-    /** HK$ portion paid into the refundable security deposit. */
+    /** HK$ portion paid against add-ons (附加項目). Optional for
+     *  backwards compatibility — legacy entries (before the three-way
+     *  split) lumped this in with rentalAmount. */
+    addOnAmount?: number;
+    /** HK$ portion paid into the refundable security deposit (按金). */
     depositAmount: number;
-    /** Total = rentalAmount + depositAmount, stored for convenience. */
+    /** Total = rentalAmount + addOnAmount + depositAmount, stored for
+     *  convenience. */
     amount: number;
     method: 'stripe' | 'fps' | 'bank' | 'cash' | 'other';
     note?: string | null;
-    recordedBy: string;     // admin uid
+    /** Optional tag describing what this payment is for — used to
+     *  distinguish the first deposit from a later balance payment from
+     *  an admin top-up. Keeps the audit log readable. */
+    kind?: 'initial' | 'balance' | 'topup';
+    recordedBy: string;     // admin uid OR 'stripe-webhook' for automated
     recordedAt: unknown;    // Firestore Timestamp / ISO string
   }>;
   /** Marketing channel snapshot — captured on the customer's FIRST
