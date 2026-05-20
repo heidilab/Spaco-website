@@ -149,8 +149,10 @@ export async function claimBookingDraft(
 
   // Build the booking record from the draft. Status starts at
   // 'awaiting_payment' so the customer can immediately upload an FPS receipt.
-  // Optional staff-preset extras (promo / package) are spread in only when
-  // present — Firestore rejects explicit `undefined` values.
+  // EVERY optional field is spread conditionally — Firestore's client SDK
+  // rejects explicit `undefined` values with "Unsupported field value:
+  // undefined", which is what surfaced as "確認預訂失敗" on the claim
+  // page for same-day (non-overnight) admin-issued links.
   const bookingPayload: Omit<BookingRecord, 'id' | 'createdAt' | 'updatedAt'> = {
     userId: customerUid,
     whatsappPhone: customerWhatsapp || draft.customerWhatsapp,
@@ -159,7 +161,6 @@ export async function claimBookingDraft(
     date: draft.date,
     startTime: draft.startTime,
     endTime: draft.endTime,
-    endDate: draft.endDate,
     hours: draft.hours,
     guestCount: draft.guestCount,
     adultCount: draft.adultCount,
@@ -173,6 +174,8 @@ export async function claimBookingDraft(
     receiptUrl: null,
     depositRefund: null,
     draftId: draft.id,
+    // Overnight bookings only — never pass `endDate: undefined` to addDoc.
+    ...(draft.endDate ? { endDate: draft.endDate } : {}),
     ...(draft.promoCode ? { promoCode: draft.promoCode } : {}),
     ...(draft.promoCodeId ? { promoCodeId: draft.promoCodeId } : {}),
     ...(typeof draft.promoDiscount === 'number' ? { promoDiscount: draft.promoDiscount } : {}),

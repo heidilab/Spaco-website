@@ -76,6 +76,15 @@ export default function AdminBookingDetailPage() {
   // recompute in lib/firestore.ts so the booking's subtotal /
   // securityDeposit / balanceDue all reflect the change.
   const [addOnQty, setAddOnQty] = useState<Record<string, number>>({});
+  // Shisha sub-options (pipes / per-head flavors / staff setup). Filling
+  // these in is what Heidi was missing on admin-issued links — admin
+  // can leave flavors blank when creating and finalise here after the
+  // customer tells them which ones they want.
+  const [shishaOptions, setShishaOptions] = useState<{
+    pipes: number;
+    flavors: string[];
+    staffSetup: boolean;
+  }>({ pipes: 1, flavors: [], staffSetup: false });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [statusValue, setStatusValue] = useState('');
@@ -131,6 +140,23 @@ export default function AdminBookingDetailPage() {
           initialQty[a.id] = a.quantity;
         }
         setAddOnQty(initialQty);
+        // Hydrate shisha sub-options (pipes / flavors / staffSetup).
+        // Defaults match the calcShishaPrice fallback when fields are
+        // missing on legacy bookings.
+        const shishaEntry = b.addOns?.find((a) => a.id === 'shisha');
+        if (shishaEntry) {
+          const heads = shishaEntry.quantity;
+          const pipes = Math.min(2, Math.max(1, shishaEntry.options?.pipes ?? Math.min(2, heads)));
+          const flavors = Array.from(
+            { length: heads },
+            (_, i) => shishaEntry.options?.flavors?.[i] || '',
+          );
+          setShishaOptions({
+            pipes,
+            flavors,
+            staffSetup: !!shishaEntry.options?.staffSetup,
+          });
+        }
         if (b.userId) {
           const p = await getUserProfile(b.userId).catch(() => null);
           if (p) setProfile(p as unknown as UserProfile);
@@ -143,6 +169,19 @@ export default function AdminBookingDetailPage() {
       }
     })();
   }, [bookingId, canAccess, locale]);
+
+  // Keep shishaOptions.flavors length in sync with the chosen head
+  // count. Declared before the early returns below so React's hook
+  // order stays stable across renders (eslint react-hooks/rules-of-hooks).
+  const shishaHeadsHook = addOnQty['shisha'] || 0;
+  useEffect(() => {
+    if (shishaHeadsHook === 0) return;
+    setShishaOptions((prev) => {
+      const flavors = Array.from({ length: shishaHeadsHook }, (_, i) => prev.flavors[i] || '');
+      const pipes = Math.min(2, Math.max(1, Math.min(prev.pipes, shishaHeadsHook)));
+      return { ...prev, pipes, flavors };
+    });
+  }, [shishaHeadsHook]);
 
   if (!canAccess) {
     return (
@@ -164,11 +203,27 @@ export default function AdminBookingDetailPage() {
   const storedAddOnMap: Record<string, number> = {};
   for (const a of booking.addOns || []) storedAddOnMap[a.id] = a.quantity;
   const addOnIds = new Set([...Object.keys(storedAddOnMap), ...Object.keys(addOnQty)]);
-  const addOnsDirty = Array.from(addOnIds).some((id) => {
+  const qtyDirty = Array.from(addOnIds).some((id) => {
     const cur = addOnQty[id] || 0;
     const old = storedAddOnMap[id] || 0;
     return cur !== old;
   });
+  // Shisha options dirty: admin can add a flavor pick after the fact
+  // without changing qty, so we need a separate check that diffs pipes
+  // / per-head flavors / staff-setup against what's stored on the
+  // booking's existing shisha entry.
+  const storedShisha = booking.addOns?.find((a) => a.id === 'shisha');
+  const storedFlavors = storedShisha?.options?.flavors || [];
+  const flavorsLine = (arr: string[]) =>
+    arr.map((f) => f || '').join(',');
+  const shishaDirty =
+    (addOnQty['shisha'] || 0) > 0
+    && (
+      (storedShisha?.options?.pipes ?? 1) !== shishaOptions.pipes
+      || !!storedShisha?.options?.staffSetup !== shishaOptions.staffSetup
+      || flavorsLine(storedFlavors) !== flavorsLine(shishaOptions.flavors)
+    );
+  const addOnsDirty = qtyDirty || shishaDirty;
 
   const dirty =
     date !== booking.date ||
@@ -196,11 +251,28 @@ export default function AdminBookingDetailPage() {
       const targetVenue = venues.find((v) => v.id === venueId);
       const venueChanged = venueId !== booking.venueId;
       // Build the new addOns array from the qty map. Drops entries with
-      // qty <= 0 so removed add-ons clear from the booking.
+      // qty <= 0 so removed add-ons clear from the booking. Shisha gets
+      // its pipes / flavors / staffSetup options attached so the saved
+      // BookingRecord (and the gcal description + price recompute) all
+      // see the right tier.
       const newAddOns = addOnsDirty
         ? Object.entries(addOnQty)
             .filter(([, q]) => q > 0)
-            .map(([id, quantity]) => ({ id, quantity }))
+            .map(([id, quantity]) => {
+              if (id === 'shisha') {
+                const flavors = (shishaOptions.flavors || []).filter((f) => !!f);
+                return {
+                  id,
+                  quantity,
+                  options: {
+                    pipes: shishaOptions.pipes,
+                    flavors,
+                    staffSetup: shishaOptions.staffSetup,
+                  },
+                };
+              }
+              return { id, quantity };
+            })
         : undefined;
       await updateBookingDateTime(booking.id, {
         date,
@@ -711,6 +783,113 @@ export default function AdminBookingDetailPage() {
                     );
                   })}
                 </div>
+
+                {/* Shisha sub-options — only renders when shisha is selected.
+                 *  Lets admin finalise pipe count + per-head flavors +
+                 *  staff-setup AFTER the booking was created (Heidi's
+                 *  follow-up workflow: customer doesn't pick flavors
+                 *  upfront, admin fills them in once they let CS know). */}
+                {(addOnQty['shisha'] || 0) > 0 && (() => {
+                  const shishaCfg = ADDON_CATALOG.find((c) => c.id === 'shisha');
+                  if (!shishaCfg?.variants) return null;
+                  const heads = addOnQty['shisha'] || 0;
+                  return (
+                    <div className="mt-3 rounded-lg border border-accent/30 bg-accent/5 p-3 space-y-3">
+                      <p className="text-xs font-semibold text-ink flex items-center gap-1.5">
+                        <Package size={12} className="text-accent" />
+                        {locale === 'zh' ? 'Shisha 詳細設定' : 'Shisha details'}
+                      </p>
+
+                      <div className="flex items-center gap-3 text-xs">
+                        <span className="text-ink-soft font-semibold uppercase tracking-wider">
+                          {locale === 'zh' ? '水煙支數' : 'Pipes'}
+                        </span>
+                        <div className="flex gap-1">
+                          {[1, 2].map((p) => (
+                            <button
+                              key={p}
+                              type="button"
+                              onClick={() =>
+                                setShishaOptions((prev) => ({
+                                  ...prev,
+                                  pipes: Math.min(p, heads),
+                                }))
+                              }
+                              className={`px-3 py-1 rounded-md text-xs font-semibold border transition ${
+                                shishaOptions.pipes === Math.min(p, heads)
+                                  ? 'bg-accent/15 border-accent text-accent'
+                                  : 'bg-white border-charcoal/15 text-ink-soft hover:bg-cream'
+                              }`}
+                              disabled={p > heads}
+                            >
+                              {p}
+                            </button>
+                          ))}
+                        </div>
+                        <span className="text-[11px] text-ink-soft">
+                          {locale === 'zh'
+                            ? `${heads} 個煙頭（自助 DIY 換頭）`
+                            : `${heads} head${heads > 1 ? 's' : ''} (DIY swap)`}
+                        </span>
+                      </div>
+
+                      <div>
+                        <p className="text-xs text-ink-soft font-semibold uppercase tracking-wider mb-1.5">
+                          {locale === 'zh' ? '揀煙頭口味（每個頭一款）' : 'Flavor per head'}
+                          <span className="text-[10px] font-normal normal-case text-ink-soft/70 ml-2">
+                            {locale === 'zh' ? '可留空' : 'Optional'}
+                          </span>
+                        </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                          {Array.from({ length: heads }).map((_, headIndex) => (
+                            <label
+                              key={headIndex}
+                              className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white border border-charcoal/10"
+                            >
+                              <span className="text-[10px] font-bold text-ink-soft uppercase">
+                                #{headIndex + 1}
+                              </span>
+                              <select
+                                value={shishaOptions.flavors[headIndex] || ''}
+                                onChange={(e) => {
+                                  const flavors = [...shishaOptions.flavors];
+                                  flavors[headIndex] = e.target.value;
+                                  setShishaOptions((prev) => ({ ...prev, flavors }));
+                                }}
+                                className="flex-1 text-xs bg-transparent focus:outline-none"
+                              >
+                                <option value="">
+                                  {locale === 'zh' ? '— 未揀 —' : '— Not picked —'}
+                                </option>
+                                {shishaCfg.variants!.map((v) => (
+                                  <option key={v.id} value={v.id}>
+                                    {v.name[locale]}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      <label className="flex items-center gap-2 text-xs cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={shishaOptions.staffSetup}
+                          onChange={(e) =>
+                            setShishaOptions((prev) => ({ ...prev, staffSetup: e.target.checked }))
+                          }
+                          className="w-3.5 h-3.5 accent-accent"
+                        />
+                        <span className="text-ink-soft">
+                          {locale === 'zh'
+                            ? '人手 setup +HK$180'
+                            : 'Staff setup +HK$180'}
+                        </span>
+                      </label>
+                    </div>
+                  );
+                })()}
               </div>
             )}
 

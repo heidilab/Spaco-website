@@ -5,7 +5,15 @@ import { useLocale } from 'next-intl';
 import { Link } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
 import { venues, getVenueBySlug } from '@/lib/venues';
-import { addOns as ALL_ADDONS, calculatePricing, calculateDeposit, calculateSecurityDeposit } from '@/lib/pricing';
+import {
+  addOns as ALL_ADDONS,
+  calculatePricing,
+  calculateDeposit,
+  calculateSecurityDeposit,
+  SHISHA_MAX_PIPES,
+  SHISHA_STAFF_SETUP_FEE,
+  getShishaFlavorLabel,
+} from '@/lib/pricing';
 import { ALL_PACKAGES, getPackageBySlug, CATEGORY_LABEL } from '@/lib/packages';
 import { createBookingDraft, buildClaimUrl } from '@/lib/bookingDrafts';
 import { getHoliday } from '@/lib/hkHolidays';
@@ -53,6 +61,17 @@ export default function AdminNewBookingPage() {
   const adultEquiv = adultCount + 0.5 * childCount;
   const [addOnQty, setAddOnQty] = useState<Record<string, number>>({});
   const [hasBYOFood, setHasBYOFood] = useState<boolean>(false);
+
+  // Shisha-specific options — flavors are picked per head; pipes are
+  // capped by SHISHA_MAX_PIPES (currently 2). Admin can leave this
+  // empty when issuing the link; the customer / admin can fill in
+  // flavors later from /admin/bookings/[id] without invalidating the
+  // booking.
+  const [shishaOptions, setShishaOptions] = useState<{
+    pipes: number;
+    flavors: string[];
+    staffSetup: boolean;
+  }>({ pipes: 1, flavors: [], staffSetup: false });
 
   // ── Package selector ───────────────────────────
   // null = à-la-carte (default). When set to a slug, venue + hours lock
@@ -119,10 +138,41 @@ export default function AdminNewBookingPage() {
     return false;
   }, [date]);
 
-  // Pricing
+  // Sync shisha flavor array length with the chosen head count so
+  // adding/removing a head doesn't leave a dangling entry.
+  const shishaHeads = addOnQty['shisha'] || 0;
+  useEffect(() => {
+    if (shishaHeads === 0) return;
+    setShishaOptions((prev) => {
+      const flavors = Array.from({ length: shishaHeads }, (_, i) => prev.flavors[i] || '');
+      const pipes = Math.min(SHISHA_MAX_PIPES, Math.max(1, Math.min(prev.pipes, shishaHeads)));
+      return { ...prev, pipes, flavors };
+    });
+  }, [shishaHeads]);
+
+  // Pricing — for the shisha add-on we attach the per-head flavor /
+  // pipe / staff-setup options so calculatePricing applies the right
+  // tier and the resulting BookingRecord can render full breakdowns
+  // later. Flavor strings can be empty (admin postpones the pick);
+  // empty entries are dropped from the saved options array so the
+  // booking detail page can show a clean "awaiting flavors" hint.
   const selectedAddOnList = Object.entries(addOnQty)
     .filter(([, q]) => q > 0)
-    .map(([id, quantity]) => ({ id, quantity }));
+    .map(([id, quantity]) => {
+      if (id === 'shisha') {
+        const flavors = (shishaOptions.flavors || []).filter((f) => !!f);
+        return {
+          id,
+          quantity,
+          options: {
+            pipes: shishaOptions.pipes,
+            flavors,
+            staffSetup: shishaOptions.staffSetup,
+          },
+        };
+      }
+      return { id, quantity };
+    });
 
   // Resolve the picked package (if any) so the venue + hours lock-ins
   // and the override pricing logic share a single source of truth.
@@ -618,17 +668,118 @@ export default function AdminNewBookingPage() {
               {ALL_ADDONS.map((a) => {
                 const qty = addOnQty[a.id] || 0;
                 const max = a.maxQuantity ?? (a.unit === 'person' ? 1 : 5);
+                const isShisha = a.id === 'shisha';
                 return (
-                  <div key={a.id} className="flex items-center gap-3 p-3 rounded-xl bg-white/40 border border-white/60">
-                    <div className="flex-1">
-                      <p className="font-semibold text-sm text-ink">{a.name[locale]}</p>
-                      <p className="text-xs text-ink-soft">{a.description?.[locale] || ''}</p>
+                  <div key={a.id} className="rounded-xl bg-white/40 border border-white/60 overflow-hidden">
+                    <div className="flex items-center gap-3 p-3">
+                      <div className="flex-1">
+                        <p className="font-semibold text-sm text-ink">{a.name[locale]}</p>
+                        <p className="text-xs text-ink-soft">{a.description?.[locale] || ''}</p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button type="button" onClick={() => setAddOnQty({ ...addOnQty, [a.id]: Math.max(0, qty - 1) })} className="p-1.5 rounded-md bg-white/80 border border-charcoal/15"><Minus size={12} /></button>
+                        <span className="w-7 text-center text-sm font-bold">{qty}</span>
+                        <button type="button" onClick={() => setAddOnQty({ ...addOnQty, [a.id]: Math.min(max, qty + 1) })} className="p-1.5 rounded-md bg-white/80 border border-charcoal/15"><Plus size={12} /></button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <button type="button" onClick={() => setAddOnQty({ ...addOnQty, [a.id]: Math.max(0, qty - 1) })} className="p-1.5 rounded-md bg-white/80 border border-charcoal/15"><Minus size={12} /></button>
-                      <span className="w-7 text-center text-sm font-bold">{qty}</span>
-                      <button type="button" onClick={() => setAddOnQty({ ...addOnQty, [a.id]: Math.min(max, qty + 1) })} className="p-1.5 rounded-md bg-white/80 border border-charcoal/15"><Plus size={12} /></button>
-                    </div>
+
+                    {/* Shisha sub-options: pipes (1 or 2) + per-head flavor +
+                     *  staff setup. Mirrors the customer booking page so
+                     *  admin-issued links produce identical pricing breakdown
+                     *  + Booking record. Leaving flavors empty is OK — admin
+                     *  can postpone the choice and fill it in later from
+                     *  /admin/bookings/[id]. */}
+                    {isShisha && qty > 0 && a.variants && (
+                      <div className="border-t border-white/60 p-3 space-y-3 bg-white/30">
+                        <div className="flex items-center gap-3 text-xs">
+                          <span className="text-ink-soft font-semibold uppercase tracking-wider">
+                            {locale === 'zh' ? '水煙支數' : 'Pipes'}
+                          </span>
+                          <div className="flex gap-1">
+                            {[1, 2].slice(0, SHISHA_MAX_PIPES).map((p) => (
+                              <button
+                                key={p}
+                                type="button"
+                                onClick={() =>
+                                  setShishaOptions((prev) => ({
+                                    ...prev,
+                                    pipes: Math.min(p, qty),
+                                  }))
+                                }
+                                className={`px-3 py-1 rounded-md text-xs font-semibold border transition ${
+                                  shishaOptions.pipes === Math.min(p, qty)
+                                    ? 'bg-accent/15 border-accent text-accent'
+                                    : 'bg-white border-charcoal/15 text-ink-soft hover:bg-cream'
+                                }`}
+                                disabled={p > qty}
+                              >
+                                {p}
+                              </button>
+                            ))}
+                          </div>
+                          <span className="text-[11px] text-ink-soft">
+                            {locale === 'zh'
+                              ? `${qty} 個煙頭（自助 DIY 換頭）`
+                              : `${qty} head${qty > 1 ? 's' : ''} (DIY swap)`}
+                          </span>
+                        </div>
+
+                        <div>
+                          <p className="text-xs text-ink-soft font-semibold uppercase tracking-wider mb-1.5">
+                            {locale === 'zh' ? '揀煙頭口味（每個頭一款）' : 'Flavor per head'}
+                            <span className="text-[10px] font-normal normal-case text-ink-soft/70 ml-2">
+                              {locale === 'zh' ? '可留空，之後喺預訂管理補加' : 'Optional — can fill in later'}
+                            </span>
+                          </p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                            {Array.from({ length: qty }).map((_, headIndex) => (
+                              <label
+                                key={headIndex}
+                                className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white border border-charcoal/10"
+                              >
+                                <span className="text-[10px] font-bold text-ink-soft uppercase">
+                                  #{headIndex + 1}
+                                </span>
+                                <select
+                                  value={shishaOptions.flavors[headIndex] || ''}
+                                  onChange={(e) => {
+                                    const flavors = [...shishaOptions.flavors];
+                                    flavors[headIndex] = e.target.value;
+                                    setShishaOptions((prev) => ({ ...prev, flavors }));
+                                  }}
+                                  className="flex-1 text-xs bg-transparent focus:outline-none"
+                                >
+                                  <option value="">
+                                    {locale === 'zh' ? '— 未揀（之後補）—' : '— Not picked —'}
+                                  </option>
+                                  {a.variants!.map((v) => (
+                                    <option key={v.id} value={v.id}>
+                                      {v.name[locale]}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+
+                        <label className="flex items-center gap-2 text-xs cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={shishaOptions.staffSetup}
+                            onChange={(e) =>
+                              setShishaOptions((prev) => ({ ...prev, staffSetup: e.target.checked }))
+                            }
+                            className="w-3.5 h-3.5 accent-accent"
+                          />
+                          <span className="text-ink-soft">
+                            {locale === 'zh'
+                              ? `人手 setup +HK$${SHISHA_STAFF_SETUP_FEE}`
+                              : `Staff setup +HK$${SHISHA_STAFF_SETUP_FEE}`}
+                          </span>
+                        </label>
+                      </div>
+                    )}
                   </div>
                 );
               })}
