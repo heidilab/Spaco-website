@@ -83,19 +83,45 @@ export default function PaymentHistory({
     booking.status === 'completed' ||
     !!booking.paymentVerifiedAt;
 
-  // Pro-rata the legacy synthesis when only part of the grandTotal has
-  // been paid (e.g. confirmed booking that still has a balanceDue).
+  // Synthesize the historical "Stripe paid" portion that hasn't been
+  // captured in payments[] yet. Total paid = grandTotal − balanceDue.
+  // Each bucket's synth = (remaining unfilled space for that bucket)
+  // pro-rata, with the deposit slot absorbing rounding remainders so
+  // the three buckets always sum exactly to the synth total (no more
+  // "$4,391 vs $4,390" drift).
   const grandTotal = (booking.pricing.subtotal || 0) + (booking.pricing.securityDeposit || 0);
-  const paidPortion = grandTotal > 0
-    ? Math.max(0, grandTotal - (booking.balanceDue || 0)) / grandTotal
-    : 0;
+  const actualPaidTotal = isPaid ? Math.max(0, grandTotal - (booking.balanceDue || 0)) : 0;
+  const loggedTotalAmount = payments.reduce((s, p) => s + (p.amount || 0), 0);
+  const synthAmount = hasUnsplit ? 0 : Math.max(0, actualPaidTotal - loggedTotalAmount);
+
   const baseCharge = booking.pricing.baseCharge ?? 0;
   const addOnTotal = booking.pricing.addOnTotal ?? 0;
   const securityDeposit = booking.pricing.securityDeposit ?? 0;
-  const skipInitial = hasUnsplit || !isPaid || payments.length > 0;
-  const initialRental = skipInitial ? 0 : Math.round(baseCharge * paidPortion);
-  const initialAddOn = skipInitial ? 0 : Math.round(addOnTotal * paidPortion);
-  const initialDeposit = skipInitial ? 0 : Math.round(securityDeposit * paidPortion);
+  const remainingRental = Math.max(0, baseCharge - loggedRentalSum);
+  const remainingAddOn = Math.max(0, addOnTotal - loggedAddOnSum);
+  const remainingDeposit = Math.max(0, securityDeposit - loggedDepositSum);
+  const remainingTotal = remainingRental + remainingAddOn + remainingDeposit;
+
+  let initialRental = 0;
+  let initialAddOn = 0;
+  let initialDeposit = 0;
+  if (synthAmount > 0 && remainingTotal > 0) {
+    const ratio = synthAmount / remainingTotal;
+    initialRental = Math.round(remainingRental * ratio);
+    initialAddOn = Math.round(remainingAddOn * ratio);
+    // Deposit absorbs the rounding remainder so the sum is exact.
+    initialDeposit = synthAmount - initialRental - initialAddOn;
+    if (initialDeposit < 0) {
+      // Edge case: ratio rounding made deposit go negative — bleed
+      // from addOn first, then rental, to keep all buckets ≥ 0.
+      initialAddOn += initialDeposit;
+      initialDeposit = 0;
+      if (initialAddOn < 0) {
+        initialRental += initialAddOn;
+        initialAddOn = 0;
+      }
+    }
+  }
   const initialPaid = initialRental + initialAddOn + initialDeposit;
   const initialMethod = (booking.paymentMethod || 'stripe') as 'stripe' | 'fps' | 'bank' | 'cash' | 'other';
 
@@ -143,12 +169,70 @@ export default function PaymentHistory({
     }
   }
 
+  /** Hit the Stripe Search API and append a payments[] entry for every
+   *  paid checkout session whose metadata.bookingId matches. Used when
+   *  the booking was paid before the webhook started writing to
+   *  payments[] (legacy bookings — the synth row collapsed two charges
+   *  into one). Re-running is safe: dedupes by session id + amount. */
+  const [backfillBusy, setBackfillBusy] = useState(false);
+  const [backfillMsg, setBackfillMsg] = useState<string | null>(null);
+  async function handleBackfillStripe() {
+    setBackfillBusy(true);
+    setBackfillMsg(null);
+    try {
+      const res = await fetch('/api/admin/booking-backfill-stripe-payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookingId: booking.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Backfill failed');
+      const addedCount = (data.added || []).length;
+      const skippedCount = (data.skipped || []).length;
+      setBackfillMsg(
+        locale === 'zh'
+          ? `✓ 已從 Stripe 補加 ${addedCount} 筆付款記錄${skippedCount ? `（跳過 ${skippedCount} 筆已存在）` : ''}`
+          : `✓ Imported ${addedCount} payment(s) from Stripe${skippedCount ? ` (skipped ${skippedCount} already-recorded)` : ''}`,
+      );
+      onUpdated?.();
+    } catch (e) {
+      setBackfillMsg(
+        (locale === 'zh' ? '失敗：' : 'Failed: ')
+        + (e instanceof Error ? e.message : 'unknown'),
+      );
+    } finally {
+      setBackfillBusy(false);
+    }
+  }
+
   return (
     <div className="glass-card p-6 space-y-3 text-sm">
-      <h2 className="font-bold flex items-center gap-2">
-        <CreditCard size={16} className="text-pink" />
-        {locale === 'zh' ? '付款記錄' : 'Payment History'}
-      </h2>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-bold flex items-center gap-2">
+          <CreditCard size={16} className="text-pink" />
+          {locale === 'zh' ? '付款記錄' : 'Payment History'}
+        </h2>
+        {adminMode && (
+          <button
+            type="button"
+            onClick={handleBackfillStripe}
+            disabled={backfillBusy}
+            className="text-[11px] px-2.5 py-1 rounded-pill bg-white border border-charcoal/15 text-ink-soft hover:border-accent hover:text-accent disabled:opacity-40 flex items-center gap-1"
+            title={locale === 'zh'
+              ? '從 Stripe API 撈取所有此預訂嘅付款，逐筆寫入記錄。安全可多次執行（自動去重）。'
+              : 'Pull every paid Stripe checkout session for this booking and write them as separate payments[] entries. Safe to re-run — dedupes automatically.'}
+          >
+            {backfillBusy
+              ? (locale === 'zh' ? '匯入中…' : 'Importing…')
+              : (locale === 'zh' ? '從 Stripe 補加付款' : 'Backfill from Stripe')}
+          </button>
+        )}
+      </div>
+      {backfillMsg && adminMode && (
+        <div className="text-[11px] rounded-lg px-3 py-1.5 bg-stone-50 text-stone-700">
+          {backfillMsg}
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-2 text-xs bg-cream/40 rounded-xl p-3">
         <div>
