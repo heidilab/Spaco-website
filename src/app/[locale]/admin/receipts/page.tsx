@@ -3,7 +3,9 @@
 import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
-import { getAllBookings, updateBookingStatus } from '@/lib/firestore';
+import { getAllBookings, getBooking, updateBookingStatus } from '@/lib/firestore';
+import { doc, updateDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import { tryGenerateLockPasscode } from '@/lib/lockPasscodeClient';
 import { cancelBooking } from '@/lib/cancelBooking';
 import { BookingRecord } from '@/types';
@@ -48,7 +50,95 @@ export default function AdminReceiptsPage() {
   };
 
   const handleApprove = async (bookingId: string) => {
-    await updateBookingStatus(bookingId, 'confirmed');
+    // Re-read the booking — Heidi reported that approving a BALANCE
+    // receipt left both balanceDue and payments[] untouched, so the
+    // booking still showed "未付尾數" with no new audit row. Fix:
+    //   1. Detect whether this is a balance receipt (paymentVerifiedAt
+    //      already set + balanceDue > 0) or an initial deposit receipt.
+    //   2. Append a payments[] entry split into the three buckets
+    //      (場租 / 附加項目 / 按金) using bucket-fill in opposite
+    //      directions: initial fills 按金 → 場租 → 附加項目 (front
+    //      end first), balance fills 附加項目 → 場租 → 按金 (back
+    //      end first) so the same booking's two charges don't both
+    //      target the same bucket. PaymentHistory's synth row
+    //      handles whatever's still missing.
+    //   3. For balance: also clear balanceDue + stamp balancePaidAt.
+    const booking = await getBooking(bookingId);
+    if (!booking) {
+      console.warn('[handleApprove] booking missing:', bookingId);
+      return;
+    }
+
+    const isBalanceReceipt =
+      !!booking.paymentVerifiedAt && (booking.balanceDue ?? 0) > 0;
+    const paidAmount = isBalanceReceipt
+      ? (booking.balanceDue ?? 0)
+      : (booking.pricing.deposit || 0);
+
+    if (paidAmount > 0) {
+      // Per-bucket capacity = bucket total − already-logged amount.
+      // Synth (in PaymentHistory) fills whatever neither this nor a
+      // future entry covers, so we don't subtract synth here.
+      const baseCharge = booking.pricing.baseCharge || 0;
+      const addOnTotal = booking.pricing.addOnTotal || 0;
+      const securityDeposit = booking.pricing.securityDeposit || 0;
+      const loggedRental = (booking.payments || []).reduce((s, p) => s + (p.rentalAmount || 0), 0);
+      const loggedAddOn = (booking.payments || []).reduce((s, p) => s + (p.addOnAmount || 0), 0);
+      const loggedDeposit = (booking.payments || []).reduce((s, p) => s + (p.depositAmount || 0), 0);
+      let capRental = Math.max(0, baseCharge - loggedRental);
+      let capAddOn = Math.max(0, addOnTotal - loggedAddOn);
+      let capDeposit = Math.max(0, securityDeposit - loggedDeposit);
+
+      let rentalAmount = 0;
+      let addOnAmount = 0;
+      let depositAmount = 0;
+      let remaining = paidAmount;
+      if (isBalanceReceipt) {
+        // Balance fills the END buckets first — the customer's initial
+        // payment was already against deposit + rental, so what's
+        // left is typically post-edit add-ons.
+        addOnAmount = Math.min(remaining, capAddOn); remaining -= addOnAmount; capAddOn -= addOnAmount;
+        rentalAmount = Math.min(remaining, capRental); remaining -= rentalAmount; capRental -= rentalAmount;
+        depositAmount = Math.min(remaining, capDeposit); remaining -= depositAmount; capDeposit -= depositAmount;
+      } else {
+        // Initial fills the FOUNDATIONAL buckets first — refundable
+        // deposit + venue rental cover the booking's commitment;
+        // anything left spills into add-ons.
+        depositAmount = Math.min(remaining, capDeposit); remaining -= depositAmount; capDeposit -= depositAmount;
+        rentalAmount = Math.min(remaining, capRental); remaining -= rentalAmount; capRental -= rentalAmount;
+        addOnAmount = Math.min(remaining, capAddOn); remaining -= addOnAmount; capAddOn -= addOnAmount;
+      }
+      // Edge case — if buckets are full but customer somehow paid
+      // more, dump the overflow into add-ons so the entry total still
+      // matches paidAmount exactly.
+      addOnAmount += remaining;
+
+      const update: Record<string, unknown> = {
+        status: 'confirmed',
+        paymentVerifiedAt: serverTimestamp(),
+        payments: arrayUnion({
+          rentalAmount,
+          addOnAmount,
+          depositAmount,
+          amount: paidAmount,
+          method: (booking.paymentMethod || 'fps') as 'fps' | 'bank' | 'stripe' | 'cash' | 'other',
+          kind: isBalanceReceipt ? 'balance' : 'initial',
+          note: null,
+          recordedBy: 'admin-receipt-approve',
+          recordedAt: new Date().toISOString(),
+        }),
+        updatedAt: serverTimestamp(),
+      };
+      if (isBalanceReceipt) {
+        update.balanceDue = 0;
+        update.balancePaidAt = serverTimestamp();
+      }
+      await updateDoc(doc(db, 'bookings', bookingId), update);
+    } else {
+      // No amount to record (rare — corrupt booking). Just flip status.
+      await updateBookingStatus(bookingId, 'confirmed');
+    }
+
     // Send the booking-confirmation email (mirrors Stripe webhook flow).
     fetch('/api/email/payment-confirmed', {
       method: 'POST',

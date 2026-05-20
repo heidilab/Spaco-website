@@ -1114,6 +1114,10 @@ export default function AdminBookingDetailPage() {
               booking={booking}
               locale={locale}
               memberWa={memberWa}
+              onUpdated={async () => {
+                const fresh = await getBooking(booking.id);
+                if (fresh) setBooking(fresh);
+              }}
               onRecordPaymentClick={() => {
                 setPayRentalAmount('');
                 setPayAddOnAmount('');
@@ -1414,19 +1418,60 @@ function OutstandingBalanceSection({
   locale,
   memberWa,
   onRecordPaymentClick,
+  onUpdated,
 }: {
   booking: BookingRecord;
   locale: 'zh' | 'en';
   memberWa?: string;
   onRecordPaymentClick: () => void;
+  /** Called after the "標記尾數已收" action settles the balance, so
+   *  the parent page reloads the fresh booking. */
+  onUpdated?: () => void;
 }) {
   const balance = booking.balanceDue ?? 0;
   const [origin, setOrigin] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);
+  const [settling, setSettling] = useState<boolean>(false);
+  const [settleMsg, setSettleMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window !== 'undefined') setOrigin(window.location.origin);
   }, []);
+
+  /** Mark the outstanding balance as paid offline — adds a payments[]
+   *  entry split via reverse bucket-fill (附加項目 → 場租 → 按金) and
+   *  clears balanceDue, WITHOUT inflating pricing.* (which is what
+   *  the 「記錄線下付款」 modal does, since it's designed for "extend
+   *  booking & charge more" scenarios). Used when admin already
+   *  verified the customer's balance receipt on /admin/receipts but
+   *  the old approve handler didn't write the audit entry. */
+  async function handleSettleBalance() {
+    if (!confirm(
+      locale === 'zh'
+        ? `確認將 HK$${balance.toLocaleString()} 標記為已收？將會新增付款記錄並清零尾數。`
+        : `Mark HK$${balance.toLocaleString()} as received? Adds a payments[] entry and clears the balance.`,
+    )) return;
+    setSettling(true);
+    setSettleMsg(null);
+    try {
+      const res = await fetch('/api/admin/booking-settle-balance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookingId: booking.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Settle failed');
+      setSettleMsg(locale === 'zh' ? '✓ 已標記尾數已收' : '✓ Balance settled');
+      onUpdated?.();
+    } catch (err) {
+      setSettleMsg(
+        (locale === 'zh' ? '失敗：' : 'Failed: ')
+        + (err instanceof Error ? err.message : 'unknown'),
+      );
+    } finally {
+      setSettling(false);
+    }
+  }
 
   if (balance <= 0) return null;
 
@@ -1524,18 +1569,33 @@ function OutstandingBalanceSection({
         )}
 
         <button
+          onClick={handleSettleBalance}
+          disabled={settling}
+          className="px-4 py-2 bg-emerald-500 text-white rounded-lg text-sm font-medium hover:bg-emerald-600 disabled:opacity-50 flex items-center gap-1.5"
+        >
+          <Check size={14} />
+          {settling
+            ? (locale === 'zh' ? '處理中…' : 'Settling…')
+            : (locale === 'zh' ? '標記尾數已收' : 'Mark balance as paid')}
+        </button>
+
+        <button
           onClick={onRecordPaymentClick}
-          className="px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium hover:bg-accent/90 flex items-center gap-1.5"
+          className="px-4 py-2 bg-white border border-charcoal/15 text-ink rounded-lg text-sm font-medium hover:bg-cream flex items-center gap-1.5"
         >
           <Calculator size={14} />
-          {locale === 'zh' ? '記錄線下付款' : 'Record offline payment'}
+          {locale === 'zh' ? '記錄額外付款（會加入賬單）' : 'Record extra charge (adds to bill)'}
         </button>
       </div>
 
+      {settleMsg && (
+        <p className="text-[11px] text-emerald-700 mt-2">{settleMsg}</p>
+      )}
+
       <p className="text-[11px] text-ink-soft mt-3 leading-relaxed">
         {locale === 'zh'
-          ? '※ 客人會喺「我的預訂」頁面睇到此尾數同「找尾數」按鈕，可自助線上付款。線下付款收到後請用「記錄線下付款」按鈕並填寫場租 + 按金 breakdown。'
-          : '※ Customer sees the balance + a "Pay balance" button on their /my-bookings page. After receiving offline payment, click "Record offline payment" and enter the rental + deposit breakdown.'}
+          ? '※「標記尾數已收」係客人確認交咗尾數（線下/匯款/或者你已喺收據頁批核咗）後撳，只會新增付款記錄同清零尾數，唔會加大張單。「記錄額外付款」係用嚟收新增嘅費用，例如延長場地、額外收費，會將金額加埋落小計。'
+          : '※ "Mark balance as paid" — use this once the customer has paid the existing balance (offline/transfer/already approved on receipts). Adds a payments[] entry and clears balanceDue but does NOT inflate the booking total. "Record extra charge" — for new charges (extended hours, etc.) that increase the bill.'}
       </p>
     </div>
   );
