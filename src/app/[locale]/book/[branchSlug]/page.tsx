@@ -95,32 +95,32 @@ export default function BookingPage() {
 
   // Determine if peak day — charged at weekend rate.
   // Peak = Fri/Sat OR a HK public holiday OR the day BEFORE a public holiday.
+  // Date arithmetic uses `${date}T00:00:00` (LOCAL midnight) + local
+  // component reassembly to avoid the toISOString-rolls-back-to-UTC
+  // bug that previously made some HKT dates miss the eve check.
   const isWeekend = useMemo(() => {
     if (!selectedDate) return false;
-    const day = new Date(selectedDate).getDay();
+    const day = new Date(`${selectedDate}T00:00:00`).getDay();
     if (day === 5 || day === 6) return true;
-    // Public holiday itself
-    const todayHoliday = getHoliday(selectedDate);
-    if (todayHoliday?.type === 'public') return true;
-    // Day before a public holiday (eve)
-    const next = new Date(selectedDate);
+    if (getHoliday(selectedDate)?.type === 'public') return true;
+    const next = new Date(`${selectedDate}T00:00:00`);
     next.setDate(next.getDate() + 1);
-    const nextStr = next.toISOString().split('T')[0];
-    const nextHoliday = getHoliday(nextStr);
-    if (nextHoliday?.type === 'public') return true;
+    const nextStr = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
+    if (getHoliday(nextStr)?.type === 'public') return true;
     return false;
   }, [selectedDate]);
 
   // For UI labelling — distinguish the actual reason for peak pricing
   const peakReason = useMemo(() => {
     if (!selectedDate) return null;
-    const day = new Date(selectedDate).getDay();
+    const day = new Date(`${selectedDate}T00:00:00`).getDay();
     if (day === 5) return 'friday';
     if (day === 6) return 'saturday';
     if (getHoliday(selectedDate)?.type === 'public') return 'holiday';
-    const next = new Date(selectedDate);
+    const next = new Date(`${selectedDate}T00:00:00`);
     next.setDate(next.getDate() + 1);
-    if (getHoliday(next.toISOString().split('T')[0])?.type === 'public') return 'holiday-eve';
+    const nextStr = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
+    if (getHoliday(nextStr)?.type === 'public') return 'holiday-eve';
     return null;
   }, [selectedDate]);
 
@@ -446,9 +446,10 @@ export default function BookingPage() {
                     ) : null;
                   })()}
                   {peakReason === 'holiday-eve' && (() => {
-                    const next = new Date(selectedDate);
+                    const next = new Date(`${selectedDate}T00:00:00`);
                     next.setDate(next.getDate() + 1);
-                    const h = getHoliday(next.toISOString().split('T')[0]);
+                    const nextStr = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
+                    const h = getHoliday(nextStr);
                     return h ? (
                       <p className="text-xs text-rose-600 font-medium">
                         {locale === 'zh' ? `🎉 假期前夕：明日為${h.name.zh}` : `🎉 Holiday Eve: Tomorrow is ${h.name.en}`}

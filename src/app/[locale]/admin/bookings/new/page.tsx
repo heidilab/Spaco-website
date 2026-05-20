@@ -121,22 +121,44 @@ export default function AdminNewBookingPage() {
   }
 
   const venue = venues.find((v) => v.id === venueId);
-  // Match the customer-side rule (book/[branchSlug]/page.tsx): Fri / Sat /
-  // public holiday / eve-of-public-holiday → weekend rate ($58/pax/hr).
-  // Sun + Mon–Thu remain weekday ($50). Admin used to consider only
-  // Sat + Sun, which both mis-priced Fridays (caught $50 instead of $58)
-  // and over-priced Sundays.
+  // Match the customer-side rule (book/[branchSlug]/page.tsx) EXACTLY:
+  // Fri / Sat / public holiday / eve-of-public-holiday → weekend rate
+  // ($58/pax/hr). Sun + Mon–Thu remain weekday ($50). The eve check
+  // assembles next day from LOCAL date components (not toISOString,
+  // which can roll back to UTC and miss the holiday by one day) — so
+  // e.g. 2026-06-30 correctly resolves to 2026-07-01 (HKSAR Day,
+  // public holiday) and lands on the weekend tier.
   const isWeekend = useMemo(() => {
     if (!date) return false;
-    const day = new Date(date).getDay();
+    const day = new Date(`${date}T00:00:00`).getDay();
     if (day === 5 || day === 6) return true;
     if (getHoliday(date)?.type === 'public') return true;
-    const next = new Date(date);
+    const next = new Date(`${date}T00:00:00`);
     next.setDate(next.getDate() + 1);
-    const nextStr = next.toISOString().split('T')[0];
+    const nextStr = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
     if (getHoliday(nextStr)?.type === 'public') return true;
     return false;
   }, [date]);
+
+  // Human-readable reason for the peak chip (PH name / "eve of PH" /
+  // Fri-Sat). Mirrors the customer-side `peakReason` so the admin
+  // sees the same justification that gets surfaced to the customer.
+  const peakReason = useMemo<
+    null | { kind: 'friday' | 'saturday' | 'holiday' | 'holiday-eve'; holidayName?: string }
+  >(() => {
+    if (!date) return null;
+    const day = new Date(`${date}T00:00:00`).getDay();
+    if (day === 5) return { kind: 'friday' };
+    if (day === 6) return { kind: 'saturday' };
+    const todayH = getHoliday(date);
+    if (todayH?.type === 'public') return { kind: 'holiday', holidayName: todayH.name[locale] };
+    const next = new Date(`${date}T00:00:00`);
+    next.setDate(next.getDate() + 1);
+    const nextStr = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
+    const nextH = getHoliday(nextStr);
+    if (nextH?.type === 'public') return { kind: 'holiday-eve', holidayName: nextH.name[locale] };
+    return null;
+  }, [date, locale]);
 
   // Sync shisha flavor array length with the chosen head count so
   // adding/removing a head doesn't leave a dangling entry.
@@ -598,7 +620,20 @@ export default function AdminNewBookingPage() {
             {endTime && (
               <p className="text-xs text-ink-soft">
                 {locale === 'zh' ? '時段：' : 'Session: '}<span className="font-bold text-ink">{startTime}–{endTime}{endDate ? (locale === 'zh' ? `（翌日 ${endDate}）` : ` (next day ${endDate})`) : ''}</span>
-                {isWeekend && <span className="ml-2 chip text-[10px]">{locale === 'zh' ? '週末/假日價' : 'Weekend rate'}</span>}
+                {isWeekend && <span className="ml-2 chip text-[10px]">{locale === 'zh' ? '週末/假日價 $58/位/h' : 'Weekend rate $58/pax/h'}</span>}
+              </p>
+            )}
+            {/* Surface WHY this date is on weekend rate — esp. for the
+             *  non-obvious cases like 2026-06-30 (Tue, eve of HKSAR Day)
+             *  where admin might otherwise expect the $50 weekday rate. */}
+            {peakReason && peakReason.kind === 'holiday' && (
+              <p className="mt-2 text-xs text-rose-600 font-medium">
+                {locale === 'zh' ? `📅 公眾假期：${peakReason.holidayName}` : `📅 Public Holiday: ${peakReason.holidayName}`}
+              </p>
+            )}
+            {peakReason && peakReason.kind === 'holiday-eve' && (
+              <p className="mt-2 text-xs text-rose-600 font-medium">
+                {locale === 'zh' ? `🎉 假期前夕：明日為${peakReason.holidayName}` : `🎉 Holiday Eve: Tomorrow is ${peakReason.holidayName}`}
               </p>
             )}
           </div>
