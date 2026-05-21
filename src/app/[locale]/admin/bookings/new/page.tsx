@@ -14,6 +14,7 @@ import {
   SHISHA_STAFF_SETUP_FEE,
   getShishaFlavorLabel,
   freeDrinksVenues,
+  calcShishaPrice,
 } from '@/lib/pricing';
 import { ALL_PACKAGES, getPackageBySlug, CATEGORY_LABEL } from '@/lib/packages';
 import { createBookingDraft, buildClaimUrl } from '@/lib/bookingDrafts';
@@ -853,6 +854,23 @@ export default function AdminNewBookingPage() {
                               : `Staff setup +HK$${SHISHA_STAFF_SETUP_FEE}`}
                           </span>
                         </label>
+
+                        {/* Live shisha subtotal — same formula as the
+                         *  customer booking page so admin sees the exact
+                         *  number ($390 / $640 / $750 / +180 setup, etc.)
+                         *  the customer will pay before saving. */}
+                        <div className="flex items-center justify-between pt-2 border-t border-charcoal/10 text-xs">
+                          <span className="text-ink-soft">
+                            {locale === 'zh' ? 'Shisha 小計' : 'Shisha subtotal'}
+                          </span>
+                          <span className="font-bold text-ink">
+                            HK${calcShishaPrice(
+                              shishaOptions.pipes,
+                              qty,
+                              shishaOptions.staffSetup,
+                            ).toLocaleString()}
+                          </span>
+                        </div>
                       </div>
                     )}
                   </div>

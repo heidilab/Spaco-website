@@ -19,6 +19,7 @@ import {
   formatAddOnsForStaff,
   addOns as ADDON_CATALOG,
   calculatePricing,
+  calcShishaPrice,
 } from '@/lib/pricing';
 import PaymentHistory from '@/components/booking/PaymentHistory';
 import { buildWhatsAppLink, formatHkPhone } from '@/lib/whatsapp';
@@ -761,7 +762,9 @@ export default function AdminBookingDetailPage() {
                           <div className="flex items-baseline justify-between gap-1">
                             <span className="font-medium truncate">{cfg.name[locale]}</span>
                             <span className="text-ink-soft text-[11px] whitespace-nowrap">
-                              ${cfg.pricePerUnit}{isPerHead ? '/位' : ''}
+                              {cfg.id === 'shisha' && enabled
+                                ? `$${calcShishaPrice(shishaOptions.pipes, qty, shishaOptions.staffSetup).toLocaleString()}`
+                                : `$${cfg.pricePerUnit}${isPerHead ? '/位' : ''}`}
                             </span>
                           </div>
                           {enabled && isPerHead && (
