@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef, type ReactNode } from 'react';
 import { useLocale } from 'next-intl';
-import { getAllBookings, updateBookingStatus, updateBookingBalance } from '@/lib/firestore';
+import { getAllBookings, updateBookingStatus, updateBookingBalance, getAllUsers } from '@/lib/firestore';
 import { tryGenerateLockPasscode, resendLockPasscode } from '@/lib/lockPasscodeClient';
 import { cancelBooking } from '@/lib/cancelBooking';
 import { BookingRecord, BookingDraft } from '@/types';
@@ -12,6 +12,7 @@ import { MARKETING_CHANNEL_LABELS, MarketingChannel } from '@/types';
 import {
   Search, Check, X as XIcon, MessageCircle, Plus, Link2, Copy, RotateCw,
   Calendar, Inbox, ListChecks, Key, DollarSign, Send, Package,
+  MapPin, ChevronDown,
 } from 'lucide-react';
 import { buildWhatsAppLink, formatHkPhone } from '@/lib/whatsapp';
 import { Link } from '@/i18n/routing';
@@ -70,10 +71,19 @@ export default function AdminBookingsPage() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [draftsLoading, setDraftsLoading] = useState(false);
+  // userId → displayName, populated once on mount from the users collection
+  // so the bookings table can show customer names without N round-trips.
+  const [userNames, setUserNames] = useState<Record<string, string>>({});
+  // Venue multi-select filter. `null` means "all venues" (the default —
+  // avoids needing to know venues.length before render). Once admin
+  // touches the dropdown, this flips to a Set of selected venue ids.
+  const [selectedVenues, setSelectedVenues] = useState<Set<string> | null>(null);
+  const [venueFilterOpen, setVenueFilterOpen] = useState(false);
 
   useEffect(() => {
     loadBookings();
     loadDrafts();
+    loadUserNames();
   }, []);
 
   const loadBookings = async () => {
@@ -81,6 +91,22 @@ export default function AdminBookingsPage() {
     setBookings(data);
     setFilteredBookings(data);
     setLoading(false);
+  };
+
+  // One-shot user-profile fetch so booking rows can show customer names.
+  // Lightweight: only the displayName is kept; we don't hold profiles.
+  const loadUserNames = async () => {
+    try {
+      const users = await getAllUsers();
+      const map: Record<string, string> = {};
+      for (const u of users as Array<{ uid: string; displayName?: string; email?: string }>) {
+        const name = u.displayName || u.email?.split('@')[0] || '';
+        if (name) map[u.uid] = name;
+      }
+      setUserNames(map);
+    } catch (err) {
+      console.warn('[admin/bookings] user-name load failed:', err);
+    }
   };
 
   const loadDrafts = async () => {
@@ -104,16 +130,21 @@ export default function AdminBookingsPage() {
     if (statusFilter !== 'all') {
       filtered = filtered.filter((b) => b.status === statusFilter);
     }
+    if (selectedVenues) {
+      filtered = filtered.filter((b) => selectedVenues.has(b.venueId));
+    }
     if (search) {
       const s = search.toLowerCase();
-      filtered = filtered.filter((b) =>
-        b.venueId.toLowerCase().includes(s) ||
-        b.date.includes(s) ||
-        b.id.toLowerCase().includes(s)
-      );
+      filtered = filtered.filter((b) => {
+        const customerName = (userNames[b.userId] || '').toLowerCase();
+        return b.venueId.toLowerCase().includes(s)
+          || b.date.includes(s)
+          || b.id.toLowerCase().includes(s)
+          || customerName.includes(s);
+      });
     }
     setFilteredBookings(filtered);
-  }, [statusFilter, search, bookings]);
+  }, [statusFilter, search, selectedVenues, userNames, bookings]);
 
   const handleStatusChange = async (bookingId: string, newStatus: string) => {
     if (newStatus === 'cancelled') {
@@ -252,10 +283,23 @@ export default function AdminBookingsPage() {
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder={locale === 'zh' ? '搜尋預訂 ID、場地...' : 'Search booking ID, venue...'}
+              placeholder={locale === 'zh' ? '搜尋預訂 ID、場地、客人名...' : 'Search booking ID, venue, customer name...'}
               className="w-full pl-11 pr-4 py-3 rounded-pill border border-white/70 bg-white/60 backdrop-blur-md focus:outline-none focus:border-pink/40 focus:bg-white/80 text-ink placeholder:text-ink-soft/60"
             />
           </div>
+          {/* Venue multi-select dropdown.
+           *  - Default state (selectedVenues === null) treats as "all selected"
+           *    so the count starts at venues.length.
+           *  - Clicking a checkbox initialises the Set with all-except-toggled.
+           *  - Selecting nothing returns to "all" (cleaner mental model than
+           *    "0 selected = nothing shown"). */}
+          <VenueFilterDropdown
+            locale={locale}
+            open={venueFilterOpen}
+            setOpen={setVenueFilterOpen}
+            selectedVenues={selectedVenues}
+            setSelectedVenues={setSelectedVenues}
+          />
           <div className="flex flex-wrap gap-2">
             {statusOptions.map((status) => (
               <button
@@ -321,9 +365,33 @@ export default function AdminBookingsPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredBookings.map((booking) => {
-                  const venue = venues.find((v) => v.id === booking.venueId);
-                  return (
+                {(() => {
+                  // Render bookings with a thin divider whenever the
+                  // createdAt date changes between consecutive rows.
+                  // The list is already sorted by createdAt desc (see
+                  // getAllBookings), so the divider naturally appears at
+                  // the boundary of each "下單日" group. The divider is
+                  // injected as a single-cell <tr> spanning all 7 columns
+                  // — a hairline + inline date label, NOT a full row of
+                  // data (per Heidi's spec).
+                  let lastCreatedAtKey: string | null = null;
+                  const out: ReactNode[] = [];
+                  filteredBookings.forEach((booking) => {
+                    const venue = venues.find((v) => v.id === booking.venueId);
+                    const createdAtKey = formatCreatedAtDate(booking.createdAt);
+                    if (createdAtKey && createdAtKey !== lastCreatedAtKey) {
+                      out.push(
+                        <tr key={`sep-${booking.id}`} className="bg-pink/[0.04]">
+                          <td colSpan={7} className="px-6 py-1 border-y border-pink/30">
+                            <span className="text-[11px] font-semibold text-pink/80 uppercase tracking-wider">
+                              {locale === 'zh' ? `下單日 · ${createdAtKey}` : `Placed · ${createdAtKey}`}
+                            </span>
+                          </td>
+                        </tr>,
+                      );
+                      lastCreatedAtKey = createdAtKey;
+                    }
+                    out.push(
                     <tr key={booking.id} className="border-b border-white/40 last:border-0 hover:bg-white/40 transition-colors cursor-pointer" onClick={(e) => {
                       // Ignore clicks that originate inside the actions cell
                       // (buttons + WhatsApp link) — they have their own handlers.
@@ -335,6 +403,16 @@ export default function AdminBookingsPage() {
                         <Link href={`/admin/bookings/${booking.id}`} className="font-medium text-sm text-ink hover:text-pink hover:underline">
                           {venue?.name[locale] || booking.venueId}
                         </Link>
+                        {/* Customer name — small line under the venue.
+                         *  Fetched once on mount via getAllUsers + the
+                         *  userNames map (avoids one Firestore round-trip
+                         *  per row). Falls back gracefully when the user
+                         *  has no profile yet (still shows venue). */}
+                        {userNames[booking.userId] && (
+                          <div className="text-[11px] text-ink-soft mt-0.5 truncate max-w-[260px]">
+                            {userNames[booking.userId]}
+                          </div>
+                        )}
                         {/* Add-ons chip — surfaces supplier-orderable items
                          *  in the row so staff don't need to click into the
                          *  detail page to see what to order. */}
@@ -467,9 +545,11 @@ export default function AdminBookingsPage() {
                           )}
                         </div>
                       </td>
-                    </tr>
-                  );
-                })}
+                    </tr>,
+                    );
+                  });
+                  return out;
+                })()}
               </tbody>
             </table>
           </div>
@@ -717,5 +797,146 @@ function DraftsTable({ drafts, loading, locale, staffUid, onChange }: DraftsTabl
         </div>
       )}
     </>
+  );
+}
+
+// ────────────────────────────────────────────────────────────
+// Helpers + sub-components
+// ────────────────────────────────────────────────────────────
+
+/** Convert a Firestore Timestamp / Date / ISO string into a HKT yyyy-mm-dd
+ *  key suitable for grouping bookings by 下單日. Uses local-time
+ *  components instead of toISOString().slice(0,10) so a booking placed at
+ *  HKT 00:30 doesn't get bucketed into the previous UTC day. */
+function formatCreatedAtDate(value: unknown): string | null {
+  if (!value) return null;
+  let d: Date | null = null;
+  if (typeof value === 'object' && value !== null && 'toDate' in value) {
+    try { d = (value as { toDate: () => Date }).toDate(); } catch { d = null; }
+  } else if (value instanceof Date) {
+    d = value;
+  } else if (typeof value === 'string') {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) d = parsed;
+  }
+  if (!d) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
+
+interface VenueFilterDropdownProps {
+  locale: 'zh' | 'en';
+  open: boolean;
+  setOpen: (open: boolean) => void;
+  /** `null` = "all venues" (default state — counts as everything selected,
+   *  no filter applied). A Set explicitly lists which venue ids to show. */
+  selectedVenues: Set<string> | null;
+  setSelectedVenues: (next: Set<string> | null) => void;
+}
+
+function VenueFilterDropdown({
+  locale, open, setOpen, selectedVenues, setSelectedVenues,
+}: VenueFilterDropdownProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  // Click-outside to close. Bound only while the dropdown is open so we
+  // don't keep a global mousedown listener around for the whole session.
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open, setOpen]);
+
+  const totalCount = venues.length;
+  const selectedCount = selectedVenues === null ? totalCount : selectedVenues.size;
+  const allSelected = selectedVenues === null || selectedVenues.size === totalCount;
+
+  function toggleVenue(id: string) {
+    // Initialise from "all" — copy every venue then remove the toggled one.
+    const base = selectedVenues ?? new Set(venues.map((v) => v.id));
+    const next = new Set(base);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    // Collapse back to "all" when admin re-selects every venue (cleaner
+    // than carrying around a full Set that means the same thing).
+    if (next.size === totalCount) {
+      setSelectedVenues(null);
+    } else {
+      setSelectedVenues(next);
+    }
+  }
+
+  function selectAll() { setSelectedVenues(null); }
+  function clearAll() { setSelectedVenues(new Set()); }
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className={`flex items-center gap-2 px-4 py-3 rounded-pill border text-sm font-medium transition-all backdrop-blur-md ${
+          allSelected
+            ? 'bg-white/50 text-ink-soft border-white/70 hover:bg-white/80 hover:text-ink'
+            : 'bg-pink/10 text-pink border-pink/30 hover:bg-pink/20'
+        }`}
+        title={locale === 'zh' ? '篩選場地' : 'Filter venues'}
+      >
+        <MapPin size={14} />
+        {allSelected
+          ? (locale === 'zh' ? '所有場地' : 'All venues')
+          : (locale === 'zh'
+              ? `已選 ${selectedCount} 個場地`
+              : `${selectedCount} venues`)}
+        <ChevronDown size={14} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="absolute z-20 mt-2 right-0 sm:left-0 w-64 rounded-2xl bg-white shadow-xl border border-charcoal/10 overflow-hidden">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-charcoal/10 bg-charcoal/[0.02]">
+            <span className="text-[11px] font-semibold text-ink-soft uppercase tracking-wider">
+              {locale === 'zh' ? '篩選場地' : 'Filter venues'}
+            </span>
+            <div className="flex gap-1">
+              <button
+                type="button"
+                onClick={selectAll}
+                className="text-[11px] text-pink hover:underline"
+              >
+                {locale === 'zh' ? '全選' : 'All'}
+              </button>
+              <span className="text-ink-soft text-[11px]">·</span>
+              <button
+                type="button"
+                onClick={clearAll}
+                className="text-[11px] text-ink-soft hover:text-charcoal hover:underline"
+              >
+                {locale === 'zh' ? '清空' : 'None'}
+              </button>
+            </div>
+          </div>
+          <div className="max-h-72 overflow-y-auto py-1">
+            {venues.map((v) => {
+              const checked = selectedVenues === null || selectedVenues.has(v.id);
+              return (
+                <label
+                  key={v.id}
+                  className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-pink/5 text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleVenue(v.id)}
+                    className="rounded border-charcoal/30 text-pink focus:ring-pink"
+                  />
+                  <span className="text-ink truncate">{v.name[locale]}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
