@@ -114,16 +114,25 @@ export default function PaymentHistory({
 
   // Greedy fill: deposit → rental → add-ons. Each bucket consumes as
   // much of the synthAmount as it can hold, then the next bucket gets
-  // whatever's left. No rounding drift because we use integer
-  // subtractions, not ratios.
+  // whatever's left. Every bucket is capped at its `remaining*` value
+  // (= bucket total − amount already logged in payments[]) so a
+  // logged FPS payment in the add-on bucket doesn't get double-
+  // counted by an overflow dump into addOn — the bug Heidi flagged
+  // on #hlJJh9K5 where 已收附加項目 displayed \$1,280 (\$640 phantom
+  // synth + \$640 real FPS) when only \$640 was actually paid.
   let remaining = synthAmount;
   const initialDeposit = Math.min(remaining, remainingDeposit);
   remaining -= initialDeposit;
   const initialRental = Math.min(remaining, remainingRental);
   remaining -= initialRental;
-  // Any leftover (rare — happens only if grandTotal > sum of buckets
-  // due to data corruption) lumps into add-ons so total still matches.
-  const initialAddOn = remaining;
+  const initialAddOn = Math.min(remaining, remainingAddOn);
+  remaining -= initialAddOn;
+  // Anything still left = OVERPAYMENT — synth amount exceeds the
+  // booking's expected grandTotal across all three buckets. Means
+  // pricing.subtotal / pricing.securityDeposit are out of sync with
+  // what the customer actually paid (data corruption). Surface a
+  // warning below instead of silently double-counting.
+  const overflowPaid = remaining;
 
   const initialPaid = initialDeposit + initialRental + initialAddOn;
   const initialMethod = (booking.paymentMethod || 'stripe') as 'stripe' | 'fps' | 'bank' | 'cash' | 'other';
@@ -201,6 +210,26 @@ export default function PaymentHistory({
             {locale === 'zh'
               ? '撳下面條目嘅 🪄 拆分鈕，輸入「場租 vs 按金」金額。拆完之後系統會自動更新小計、可退按金、已收，所有顯示先會啱。'
               : 'Click the 🪄 Split button on the entry below and enter rental vs deposit amounts. Subtotal / refundable / paid totals will then update.'}
+          </p>
+        </div>
+      )}
+
+      {/* Overpayment warning — the synth amount exceeded what the
+       *  three buckets could absorb (rental + add-on + deposit caps).
+       *  Usually means `pricing.subtotal` / `pricing.securityDeposit`
+       *  got bumped by 「記錄額外付款」 when they shouldn't have, leaving
+       *  `grandTotal − balanceDue` higher than the actual cost. Tell
+       *  admin to repair via the booking edit panel's subtotal /
+       *  deposit override fields. */}
+      {overflowPaid > 0 && adminMode && (
+        <div className="rounded-xl bg-rose-50 border border-rose-200 px-3 py-2.5 text-xs text-rose-800 leading-relaxed">
+          <p className="font-semibold mb-1">⚠️ {locale === 'zh'
+            ? `付款記錄超出張單 HK$${overflowPaid.toLocaleString()}`
+            : `Payments exceed bill total by HK$${overflowPaid.toLocaleString()}`}</p>
+          <p>
+            {locale === 'zh'
+              ? '可能係之前撳咗「記錄額外付款」嚟確認客人交尾數（嗰粒掣會加大張單）。請去編輯預訂 panel，喺「消費小計」/「可退按金」override 嗰度修返正確金額，呢個警告會自動消失。'
+              : 'Likely caused by "Record extra charge" being used to settle a balance (that button inflates the bill). Repair via the consumption-subtotal / deposit override fields in the booking edit panel — this warning clears once the numbers reconcile.'}
           </p>
         </div>
       )}
