@@ -119,7 +119,13 @@ export async function POST(req: NextRequest) {
         'pricing.securityDeposit': newSecurityDeposit,
         'pricing.deposit': newDeposit,
         balanceDue: newBalance,
-        balancePaidAt: newBalance === 0 ? FieldValue.serverTimestamp() : booking.balancePaidAt,
+        // Only stamp balancePaidAt when balance hits 0 AND it isn't
+        // already stamped — Firestore admin SDK rejects undefined
+        // values, so we can't fall back to `booking.balancePaidAt`
+        // which is undefined on bookings that never had a balance.
+        ...(newBalance === 0 && !booking.balancePaidAt
+          ? { balancePaidAt: FieldValue.serverTimestamp() }
+          : {}),
         payments: FieldValue.arrayUnion({
           rentalAmount: rental,
           addOnAmount: addOn,

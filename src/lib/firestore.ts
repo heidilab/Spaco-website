@@ -391,7 +391,24 @@ export async function updateBookingDateTime(
       // doesn't lose their discount when admin tweaks an add-on.
       const promoDiscount = booking.promoDiscount || 0;
       const effectiveSubtotal = Math.max(0, computed.subtotal - promoDiscount);
-      const effectiveGrandTotal = effectiveSubtotal + computed.securityDeposit;
+
+      // Refundable security deposit — sticky once the booking has been
+      // paid. The tier formula ($1k/$2k/$4k by subtotal) only runs on
+      // brand-new bookings; admin edits to a confirmed booking should
+      // NOT auto-bump the deposit, because Heidi's expectation is that
+      // when a customer pays $640 worth of Shisha after the fact,
+      // they owe exactly $640 — not $640 plus another $1,000 because
+      // the rental subtotal crossed the next deposit tier. Preserve
+      // the deposit the customer already agreed to.
+      const wasPaid =
+        booking.status === 'confirmed'
+        || booking.status === 'completed'
+        || !!booking.paymentVerifiedAt;
+      const stickyDeposit =
+        wasPaid && typeof booking.pricing.securityDeposit === 'number'
+          ? booking.pricing.securityDeposit
+          : computed.securityDeposit;
+      const effectiveGrandTotal = effectiveSubtotal + stickyDeposit;
       const effectiveDeposit = calculateDeposit(effectiveGrandTotal);
 
       // How much the customer has already paid against this booking.
@@ -399,10 +416,6 @@ export async function updateBookingDateTime(
       // pricing already reflects past payments via the followup route's
       // pricing.* mutations). Otherwise sum the logged payments[].
       const oldGrandTotal = (booking.pricing.subtotal || 0) + (booking.pricing.securityDeposit || 0);
-      const wasPaid =
-        booking.status === 'confirmed'
-        || booking.status === 'completed'
-        || !!booking.paymentVerifiedAt;
       const loggedSum = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
       const paidSoFar = wasPaid
         ? Math.max(0, oldGrandTotal - (booking.balanceDue || 0))
@@ -411,7 +424,7 @@ export async function updateBookingDateTime(
       patch['pricing.baseCharge'] = computed.baseCharge;
       patch['pricing.addOnTotal'] = computed.addOnTotal;
       patch['pricing.subtotal'] = effectiveSubtotal;
-      patch['pricing.securityDeposit'] = computed.securityDeposit;
+      patch['pricing.securityDeposit'] = stickyDeposit;
       patch['pricing.deposit'] = effectiveDeposit;
       // balanceDue = what the customer still owes after past payments.
       // Clamp to 0 when customer overpaid (admin handles any refund out
