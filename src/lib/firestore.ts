@@ -228,6 +228,13 @@ export async function updateBookingDateTime(
      *  deposit was auto-bumped before the sticky rule shipped. Pass
      *  the desired final securityDeposit amount, NOT a delta. */
     securityDepositOverride?: number;
+    /** Manual override for the consumption subtotal (HK$). Bypasses
+     *  the calculatePricing() formula entirely. Use when the venue
+     *  formula doesn't match what the customer was actually charged
+     *  (e.g. legacy data corruption, manual price agreement, or a
+     *  promo applied off-system). Affects loyalty-point credit,
+     *  receipt totals, and balanceDue math. */
+    subtotalOverride?: number;
   }
 ) {
   const bookingRef = doc(db, 'bookings', bookingId);
@@ -397,8 +404,15 @@ export async function updateBookingDateTime(
       // Preserve any promo discount the customer had applied. We re-apply
       // it on top of the freshly computed subtotal so the customer
       // doesn't lose their discount when admin tweaks an add-on.
+      // `subtotalOverride` bypasses the formula entirely — use case:
+      // legacy bookings whose stored subtotal got corrupted, or
+      // off-system price agreements that the venue × pax × hours
+      // formula can't replicate.
       const promoDiscount = booking.promoDiscount || 0;
-      const effectiveSubtotal = Math.max(0, computed.subtotal - promoDiscount);
+      const baseSubtotal = typeof next.subtotalOverride === 'number'
+        ? Math.max(0, next.subtotalOverride)
+        : computed.subtotal;
+      const effectiveSubtotal = Math.max(0, baseSubtotal - promoDiscount);
 
       // Refundable security deposit resolution, in priority order:
       //   1. Explicit `securityDepositOverride` from admin — used both

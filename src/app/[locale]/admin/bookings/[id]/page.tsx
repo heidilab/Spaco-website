@@ -101,6 +101,13 @@ export default function AdminBookingDetailPage() {
   // more refundable, or (b) repair a legacy booking whose deposit
   // was auto-bumped before the sticky rule shipped.
   const [depositOverride, setDepositOverride] = useState<string>('');
+  // Editable consumption subtotal (HK$). Pre-fills from the booking's
+  // stored pricing.subtotal. When admin edits this AND saves, it goes
+  // to lib/firestore.ts as `subtotalOverride`, bypassing the
+  // calculatePricing formula. Use for off-system price agreements
+  // or repairing data corruption — e.g. #WYtymQm7 where the formula
+  // gives $2,700 but Heidi knows the real consumption was $1,700.
+  const [subtotalOverride, setSubtotalOverride] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [statusValue, setStatusValue] = useState('');
@@ -165,6 +172,7 @@ export default function AdminBookingDetailPage() {
         // Hydrate the deposit override input from the stored value so
         // saving with no edits leaves the deposit alone.
         setDepositOverride(String(b.pricing.securityDeposit ?? 0));
+        setSubtotalOverride(String(b.pricing.subtotal ?? 0));
         // Hydrate shisha sub-options (pipes / flavors / staffSetup).
         // Defaults match the calcShishaPrice fallback when fields are
         // missing on legacy bookings.
@@ -254,6 +262,10 @@ export default function AdminBookingDetailPage() {
   const depositDirty =
     Number.isFinite(depositOverrideNum)
     && depositOverrideNum !== (booking.pricing.securityDeposit ?? 0);
+  const subtotalOverrideNum = parseFloat(subtotalOverride);
+  const subtotalDirty =
+    Number.isFinite(subtotalOverrideNum)
+    && subtotalOverrideNum !== (booking.pricing.subtotal ?? 0);
 
   const dirty =
     date !== booking.date ||
@@ -263,7 +275,8 @@ export default function AdminBookingDetailPage() {
     guestCount !== booking.guestCount ||
     venueId !== booking.venueId ||
     addOnsDirty ||
-    depositDirty;
+    depositDirty ||
+    subtotalDirty;
 
   // Validation: end (date+time) must be strictly after start (date+time).
   const startMs = (date && startTime) ? new Date(`${date}T${startTime}:00+08:00`).getTime() : 0;
@@ -318,6 +331,9 @@ export default function AdminBookingDetailPage() {
         // Pass the deposit override only when admin actually changed
         // the input — otherwise sticky-preserve handles things.
         ...(depositDirty ? { securityDepositOverride: depositOverrideNum } : {}),
+        // Pass the subtotal override only when admin changed it —
+        // otherwise calculatePricing's formula stays in charge.
+        ...(subtotalDirty ? { subtotalOverride: subtotalOverrideNum } : {}),
       });
 
       // Push the change to Google Calendar immediately — admin should
@@ -1072,23 +1088,45 @@ export default function AdminBookingDetailPage() {
                     suggestedTier !== null && suggestedTier > currentDeposit;
 
                   return (
-                    <div className="mt-3 pt-3 border-t border-charcoal/10 space-y-2">
-                      <label className="text-xs font-semibold text-ink-soft flex items-center gap-1.5">
-                        <Calculator size={12} className="text-pink" />
-                        {locale === 'zh' ? '可退按金（HK$）' : 'Refundable deposit (HK$)'}
-                      </label>
-                      <input
-                        type="number"
-                        min={0}
-                        value={depositOverride}
-                        onChange={(e) => setDepositOverride(e.target.value)}
-                        className="w-32 px-3 py-1.5 rounded-lg border-2 border-charcoal/15 text-sm bg-white"
-                      />
-                      <p className="text-[11px] text-ink-soft leading-relaxed">
-                        {locale === 'zh'
-                          ? '預設保留原訂單已收按金。如附加項目加碼導致小計超過 $4k / $10k 級別，亦可以選擇加收按金，輸入新嘅總按金額。'
-                          : 'Defaults to the booking\'s existing deposit. If add-ons push subtotal across the $4k / $10k tier, you may opt to collect more refundable here — type the new total amount.'}
-                      </p>
+                    <div className="mt-3 pt-3 border-t border-charcoal/10 space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-xs font-semibold text-ink-soft flex items-center gap-1.5">
+                            <Calculator size={12} className="text-pink" />
+                            {locale === 'zh' ? '消費小計（HK$）' : 'Consumption subtotal (HK$)'}
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={subtotalOverride}
+                            onChange={(e) => setSubtotalOverride(e.target.value)}
+                            className="w-32 px-3 py-1.5 mt-1 rounded-lg border-2 border-charcoal/15 text-sm bg-white"
+                          />
+                          <p className="text-[11px] text-ink-soft mt-1 leading-relaxed">
+                            {locale === 'zh'
+                              ? '預設按 venue × 人 × 鐘頭 + add-ons 計。如實際收費同公式有差距（例如 off-system 議價、或舊單數據錯），可手動覆寫。'
+                              : 'Defaults to venue × pax × hours + add-ons. Override when the actual charge differs from the formula (off-system deal, legacy data fix).'}
+                          </p>
+                        </div>
+                        <div>
+                          <label className="text-xs font-semibold text-ink-soft flex items-center gap-1.5">
+                            <Calculator size={12} className="text-pink" />
+                            {locale === 'zh' ? '可退按金（HK$）' : 'Refundable deposit (HK$)'}
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={depositOverride}
+                            onChange={(e) => setDepositOverride(e.target.value)}
+                            className="w-32 px-3 py-1.5 mt-1 rounded-lg border-2 border-charcoal/15 text-sm bg-white"
+                          />
+                          <p className="text-[11px] text-ink-soft mt-1 leading-relaxed">
+                            {locale === 'zh'
+                              ? '預設保留原訂單已收按金。如附加項目加碼跨咗 tier，可選擇加收按金（輸入新嘅總按金額）。'
+                              : 'Defaults to the booking\'s existing deposit. If add-ons cross a tier you may collect more refundable — type the new total.'}
+                          </p>
+                        </div>
+                      </div>
                       {tierCrossed && (
                         <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] text-amber-800 leading-relaxed flex items-start gap-1.5">
                           <AlertCircle size={12} className="mt-0.5 shrink-0" />
