@@ -1095,17 +1095,38 @@ export default function AdminBookingDetailPage() {
                             <Calculator size={12} className="text-pink" />
                             {locale === 'zh' ? '消費小計（HK$）' : 'Consumption subtotal (HK$)'}
                           </label>
-                          <input
-                            type="number"
-                            min={0}
-                            value={subtotalOverride}
-                            onChange={(e) => setSubtotalOverride(e.target.value)}
-                            className="w-32 px-3 py-1.5 mt-1 rounded-lg border-2 border-charcoal/15 text-sm bg-white"
-                          />
+                          <div className="flex items-center gap-2 mt-1">
+                            <input
+                              type="number"
+                              min={0}
+                              value={subtotalOverride}
+                              onChange={(e) => setSubtotalOverride(e.target.value)}
+                              className="w-32 px-3 py-1.5 rounded-lg border-2 border-charcoal/15 text-sm bg-white"
+                            />
+                            {/* One-click reset to the formula value —
+                             *  shows up only when the stored / typed
+                             *  value differs from what venue × pax ×
+                             *  hours + add-ons would give. Most
+                             *  legacy repairs are exactly this: stored
+                             *  got inflated, click reset to fix. */}
+                            {suggestedSubtotal > 0
+                              && parseFloat(subtotalOverride) !== suggestedSubtotal && (
+                              <button
+                                type="button"
+                                onClick={() => setSubtotalOverride(String(suggestedSubtotal))}
+                                className="px-2 py-1 rounded-pill bg-pink/10 text-pink text-[11px] font-semibold hover:bg-pink/20"
+                                title={locale === 'zh'
+                                  ? `撳一下重設為公式計嘅金額 HK$${suggestedSubtotal.toLocaleString()}`
+                                  : `Click to reset to formula value HK$${suggestedSubtotal.toLocaleString()}`}
+                              >
+                                {locale === 'zh' ? `🔄 重設為 ${suggestedSubtotal.toLocaleString()}` : `🔄 Reset to ${suggestedSubtotal.toLocaleString()}`}
+                              </button>
+                            )}
+                          </div>
                           <p className="text-[11px] text-ink-soft mt-1 leading-relaxed">
                             {locale === 'zh'
-                              ? '預設按 venue × 人 × 鐘頭 + add-ons 計。如實際收費同公式有差距（例如 off-system 議價、或舊單數據錯），可手動覆寫。'
-                              : 'Defaults to venue × pax × hours + add-ons. Override when the actual charge differs from the formula (off-system deal, legacy data fix).'}
+                              ? `預設係 booking 入面已儲存嘅金額（可能因為之前嘅錯誤操作而偏離公式）。公式計算：${suggestedSubtotal > 0 ? `venue × 人 × 鐘頭 + add-ons = HK$${suggestedSubtotal.toLocaleString()}` : '尚未能計算'}。如實際收費同公式有差距（off-system 議價、或舊單數據錯），可手動覆寫。`
+                              : `Pre-fills with the value stored on the booking (which may have drifted from the formula due to past mistakes). Formula gives: ${suggestedSubtotal > 0 ? `venue × pax × hours + add-ons = HK$${suggestedSubtotal.toLocaleString()}` : 'not computable'}. Override when actual charge differs.`}
                           </p>
                         </div>
                         <div>
