@@ -237,6 +237,16 @@ export interface BookingRecord {
   /** Actual amount deducted (capped at the customer's balance at the
    *  time of deduction; may be < pointsUsed under concurrent race). */
   pointsActuallyDeducted?: number;
+  /** Set when loyalty points have been credited to the customer for
+   *  THIS booking. Idempotency guard — prevents double-crediting if
+   *  admin re-clicks settle, or clicks the "補加積分" recovery button
+   *  on a booking that already credited correctly. */
+  pointsCreditedAt?: unknown;
+  /** HK$ amount of loyalty points credited. 1 HK$ = 1 pt.
+   *  Computed as `subtotal + forfeited security deposit` (per product
+   *  spec: refundable amount doesn't earn points, only what SPACO
+   *  actually pocketed does). */
+  pointsActuallyCredited?: number;
   /**
    * Booking lifecycle:
    *   awaiting_payment      — customer picked payment method, slot blocked,

@@ -13,6 +13,8 @@ import {
   updateBookingDepositRefund,
   creditLoyaltyPoints,
 } from '@/lib/firestore';
+import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import { BookingRecord, UserProfile, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
 import { venues } from '@/lib/venues';
 import {
@@ -122,6 +124,7 @@ export default function AdminBookingDetailPage() {
   const [customDeductions, setCustomDeductions] = useState<{ label: string; amount: number }[]>([]);
   const [settling, setSettling] = useState(false);
   const [settleMsg, setSettleMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [recoveringPoints, setRecoveringPoints] = useState(false);
 
   useEffect(() => {
     if (!canAccess) {
@@ -379,13 +382,28 @@ export default function AdminBookingDetailPage() {
 
       await updateBookingDepositRefund(booking.id, { amount: refundAmount, deductions });
 
-      // Credit loyalty points: subtotal (rental + add-ons) + deducted
-      // deposit (forfeited security deposit counts as additional spend
-      // per product spec). 1 HK$ = 1 point.
+      // Credit loyalty points: subtotal (rental + add-ons) + forfeited
+      // security deposit (the part SPACO actually kept). Refundable
+      // amount that went BACK to the customer doesn't count — per
+      // Heidi's spec, only money the company actually pocketed earns
+      // points. 1 HK$ = 1 point.
+      //
+      // Idempotency: skip if booking.pointsCreditedAt is already set
+      // (admin re-clicked settle or used the 補加積分 recovery action).
+      // Returned `creditedPoints` is 0 in that case — the message
+      // below reads as "已 credit 0 積分" but the settled state
+      // panel renders the original pointsActuallyCredited value.
       let creditedPoints = 0;
-      if (booking.userId) {
+      if (booking.userId && !booking.pointsCreditedAt) {
         const points = booking.pricing.subtotal + total;
         creditedPoints = await creditLoyaltyPoints(booking.userId, points);
+        if (creditedPoints > 0) {
+          await updateDoc(doc(db, 'bookings', booking.id), {
+            pointsCreditedAt: serverTimestamp(),
+            pointsActuallyCredited: creditedPoints,
+            updatedAt: serverTimestamp(),
+          });
+        }
       }
 
       setSettleMsg({
@@ -406,6 +424,53 @@ export default function AdminBookingDetailPage() {
       });
     } finally {
       setSettling(false);
+    }
+  }
+
+  /** Credit loyalty points for an already-settled booking whose
+   *  original settle didn't fire the credit (e.g. legacy rows, or
+   *  booking.userId was empty at settle time and customer signed up
+   *  later). Idempotent via pointsCreditedAt — safe to click twice;
+   *  the second click no-ops. */
+  async function handleRecoverPoints() {
+    if (!booking || !booking.userId || booking.pointsCreditedAt) return;
+    setRecoveringPoints(true);
+    try {
+      const settledDeductions =
+        (booking.depositRefund as { deductions?: { amount: number }[] } | null)?.deductions
+          ?.reduce((s, d) => s + (d.amount || 0), 0) || 0;
+      const points = (booking.pricing.subtotal || 0) + settledDeductions;
+      const credited = await creditLoyaltyPoints(booking.userId, points);
+      if (credited > 0) {
+        await updateDoc(doc(db, 'bookings', booking.id), {
+          pointsCreditedAt: serverTimestamp(),
+          pointsActuallyCredited: credited,
+          updatedAt: serverTimestamp(),
+        });
+        const fresh = await getBooking(booking.id);
+        if (fresh) setBooking(fresh);
+        setSettleMsg({
+          kind: 'ok',
+          text: locale === 'zh'
+            ? `✓ 已補加 ${credited.toLocaleString()} 積分`
+            : `✓ Credited ${credited.toLocaleString()} pts`,
+        });
+      } else {
+        setSettleMsg({
+          kind: 'err',
+          text: locale === 'zh'
+            ? '補加失敗：客戶 user doc 唔存在'
+            : 'Credit failed: user doc not found',
+        });
+      }
+    } catch (err) {
+      setSettleMsg({
+        kind: 'err',
+        text: (locale === 'zh' ? '補加失敗：' : 'Credit failed: ') +
+          (err instanceof Error ? err.message : 'unknown'),
+      });
+    } finally {
+      setRecoveringPoints(false);
     }
   }
 
@@ -1172,6 +1237,8 @@ export default function AdminBookingDetailPage() {
               settling={settling}
               settleMsg={settleMsg}
               onSettle={handleSettleDeposit}
+              onRecoverPoints={handleRecoverPoints}
+              recoveringPoints={recoveringPoints}
             />
           )}
         </div>
@@ -1183,7 +1250,20 @@ export default function AdminBookingDetailPage() {
               <UserIcon size={16} className="text-pink" />
               {locale === 'zh' ? '會員資料' : 'Member'}
             </h2>
-            <p className="text-lg font-semibold">{memberName}</p>
+            {/* Name links to the members page pre-filtered to this uid —
+             *  admin can jump to the customer's profile + history with
+             *  one click. Guest bookings (no userId) stay plain text. */}
+            {booking.userId ? (
+              <Link
+                href={`/admin/members?uid=${encodeURIComponent(booking.userId)}`}
+                className="text-lg font-semibold text-pink hover:underline inline-flex items-center gap-1"
+              >
+                {memberName}
+                <span className="text-xs text-ink-soft">→</span>
+              </Link>
+            ) : (
+              <p className="text-lg font-semibold">{memberName}</p>
+            )}
             {memberEmail && (
               <a href={`mailto:${memberEmail}`} className="flex items-center gap-2 text-sm text-ink-soft hover:text-accent">
                 <Mail size={13} /> {memberEmail}
@@ -1660,16 +1740,29 @@ interface DepositSettlementProps {
   settling: boolean;
   settleMsg: { kind: 'ok' | 'err'; text: string } | null;
   onSettle: () => void;
+  /** Settle without re-running deductions — only for already-settled
+   *  bookings that didn't credit loyalty points (e.g. legacy rows or
+   *  bookings settled while the user account didn't exist yet). */
+  onRecoverPoints: () => void;
+  recoveringPoints: boolean;
 }
 
 function DepositSettlement(props: DepositSettlementProps) {
   const {
     booking, locale, selectedFixed, setSelectedFixed,
     customDeductions, setCustomDeductions, total, settling, settleMsg, onSettle,
+    onRecoverPoints, recoveringPoints,
   } = props;
   const securityDeposit = booking.pricing.securityDeposit ?? 0;
   const refundAmount = Math.max(0, securityDeposit - total);
   const alreadySettled = !!booking.depositRefund;
+  const pointsCredited = !!booking.pointsCreditedAt;
+  const expectedPoints = (() => {
+    const settledDeductions =
+      (booking.depositRefund as { deductions?: { amount: number }[] } | null)?.deductions
+        ?.reduce((s, d) => s + (d.amount || 0), 0) || 0;
+    return (booking.pricing.subtotal || 0) + settledDeductions;
+  })();
 
   // Past-event check: settlement should only be done after the event.
   const endMs = new Date(`${booking.date}T${booking.endTime}:00+08:00`).getTime();
@@ -1719,6 +1812,43 @@ function DepositSettlement(props: DepositSettlementProps) {
           ) : (
             <p className="text-xs text-ink-soft">{locale === 'zh' ? '無扣費' : 'No deductions'}</p>
           )}
+
+          {/* Loyalty points status — settled bookings that crashed the
+           *  credit step (e.g. legacy rows, or the user doc didn't exist
+           *  at settle time) get a recovery button so admin can credit
+           *  the points after the fact. Already-credited rows show the
+           *  amount as proof; further clicks are no-ops via the
+           *  pointsCreditedAt idempotency guard. */}
+          <div className="border-t border-emerald-200/60 pt-2 mt-2">
+            {pointsCredited ? (
+              <p className="text-xs text-emerald-700 flex items-center gap-1.5">
+                <Sparkles size={12} />
+                {locale === 'zh'
+                  ? `已 credit ${(booking.pointsActuallyCredited || 0).toLocaleString()} 積分`
+                  : `Credited ${(booking.pointsActuallyCredited || 0).toLocaleString()} pts`}
+              </p>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs text-amber-700 flex items-center gap-1.5">
+                  <AlertCircle size={12} />
+                  {locale === 'zh'
+                    ? `尚未 credit 積分（預計 ${expectedPoints.toLocaleString()} 分）`
+                    : `Points not credited yet (expected ${expectedPoints.toLocaleString()} pts)`}
+                </p>
+                <button
+                  type="button"
+                  onClick={onRecoverPoints}
+                  disabled={recoveringPoints || !booking.userId}
+                  className="px-3 py-1.5 rounded-pill bg-pink/10 text-pink text-xs font-semibold hover:bg-pink/20 disabled:opacity-40 flex items-center gap-1"
+                >
+                  <Sparkles size={11} />
+                  {recoveringPoints
+                    ? (locale === 'zh' ? '處理中…' : 'Crediting…')
+                    : (locale === 'zh' ? `補加 ${expectedPoints.toLocaleString()} 積分` : `Credit ${expectedPoints.toLocaleString()} pts`)}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <>

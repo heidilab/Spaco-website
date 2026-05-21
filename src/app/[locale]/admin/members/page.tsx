@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
+import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllUsers, getUserBookings } from '@/lib/firestore';
 import { BookingRecord } from '@/types';
@@ -21,6 +22,7 @@ interface MemberData {
 
 export default function AdminMembersPage() {
   const locale = useLocale() as 'zh' | 'en';
+  const searchParams = useSearchParams();
   const { hasPermission } = useAuth();
   const [members, setMembers] = useState<MemberData[]>([]);
   const [filtered, setFiltered] = useState<MemberData[]>([]);
@@ -35,10 +37,26 @@ export default function AdminMembersPage() {
   useEffect(() => {
     if (!canAccess) return;
     getAllUsers().then((data) => {
-      setMembers(data as MemberData[]);
-      setFiltered(data as MemberData[]);
+      const list = data as MemberData[];
+      setMembers(list);
+      setFiltered(list);
       setLoading(false);
+      // ?uid=xxx in the URL → auto-open that member's detail. Used by
+      // the "會員資料" name link on /admin/bookings/[id], so admin
+      // can jump directly to the customer profile with one click.
+      const targetUid = searchParams.get('uid');
+      if (targetUid) {
+        const hit = list.find((m) => m.uid === targetUid);
+        if (hit) {
+          setSelectedMember(hit);
+          setLoadingDetail(true);
+          getUserBookings(hit.uid)
+            .then((bs) => setMemberBookings(bs))
+            .finally(() => setLoadingDetail(false));
+        }
+      }
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canAccess]);
 
   useEffect(() => {
@@ -183,6 +201,89 @@ export default function AdminMembersPage() {
               </div>
             )}
           </div>
+        </div>
+
+        {/* Points transaction history — derived from bookings:
+         *  + pointsActuallyCredited on settled bookings (earned)
+         *  − pointsActuallyDeducted on bookings where the customer
+         *    redeemed points at checkout (spent)
+         *  No separate `loyalty_transactions` collection yet; the
+         *  per-booking timestamps + amounts are enough to render a
+         *  full timeline. */}
+        <div className="glass-card p-6 mt-6">
+          <h3 className="font-bold mb-4 flex items-center gap-2">
+            <Award size={18} className="text-accent" />
+            {locale === 'zh' ? '積分交易記錄' : 'Points History'}
+          </h3>
+          {(() => {
+            type Tx = { id: string; ts: number; kind: 'credit' | 'redeem'; amount: number; bookingId: string; note?: string };
+            const txs: Tx[] = [];
+            for (const b of memberBookings) {
+              const credited = b.pointsActuallyCredited || 0;
+              const credAt = b.pointsCreditedAt as { seconds?: number } | undefined;
+              if (credited > 0 && credAt?.seconds) {
+                txs.push({
+                  id: `${b.id}-credit`,
+                  ts: credAt.seconds * 1000,
+                  kind: 'credit',
+                  amount: credited,
+                  bookingId: b.id,
+                  note: `${b.date} ${b.startTime}-${b.endTime}`,
+                });
+              }
+              const deducted = b.pointsActuallyDeducted || 0;
+              const redAt = b.pointsRedeemedAt as { seconds?: number } | undefined;
+              if (deducted > 0 && redAt?.seconds) {
+                txs.push({
+                  id: `${b.id}-redeem`,
+                  ts: redAt.seconds * 1000,
+                  kind: 'redeem',
+                  amount: deducted,
+                  bookingId: b.id,
+                  note: `${b.date} ${b.startTime}-${b.endTime}`,
+                });
+              }
+            }
+            txs.sort((a, b) => b.ts - a.ts);
+            if (txs.length === 0) {
+              return (
+                <p className="text-sm text-muted">
+                  {locale === 'zh' ? '暫無積分交易' : 'No transactions yet'}
+                </p>
+              );
+            }
+            return (
+              <ul className="space-y-2 text-sm max-h-[320px] overflow-y-auto">
+                {txs.map((tx) => (
+                  <li
+                    key={tx.id}
+                    className={`flex items-center justify-between gap-3 p-3 rounded-xl ${
+                      tx.kind === 'credit' ? 'bg-emerald-50' : 'bg-rose-50'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <p className="font-medium text-ink truncate">
+                        {tx.kind === 'credit'
+                          ? (locale === 'zh' ? '消費獲得積分' : 'Earned (booking settled)')
+                          : (locale === 'zh' ? '預訂時抵扣積分' : 'Redeemed at checkout')}
+                      </p>
+                      <p className="text-xs text-muted truncate">
+                        {tx.note}
+                        {' · '}
+                        {new Date(tx.ts).toLocaleString(locale === 'zh' ? 'zh-HK' : 'en-HK')}
+                      </p>
+                    </div>
+                    <span className={`font-bold whitespace-nowrap ${
+                      tx.kind === 'credit' ? 'text-emerald-700' : 'text-rose-700'
+                    }`}>
+                      {tx.kind === 'credit' ? '+' : '−'}
+                      {tx.amount.toLocaleString()}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            );
+          })()}
         </div>
       </div>
     );
