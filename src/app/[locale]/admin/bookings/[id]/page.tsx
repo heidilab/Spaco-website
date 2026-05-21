@@ -1528,10 +1528,53 @@ function OutstandingBalanceSection({
   const [copied, setCopied] = useState<boolean>(false);
   const [settling, setSettling] = useState<boolean>(false);
   const [settleMsg, setSettleMsg] = useState<string | null>(null);
+  const [recalcing, setRecalcing] = useState<boolean>(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined') setOrigin(window.location.origin);
   }, []);
+
+  /** Re-run the pricing recompute for THIS booking using current
+   *  date / time / guests / addOns — picks up any policy fix that
+   *  has shipped since the last edit (e.g. the sticky-deposit fix
+   *  that prevents auto-bumping securityDeposit on already-paid
+   *  bookings). Calls updateBookingDateTime with the booking's
+   *  EXISTING field values so blocked_slots / venueId / etc. don't
+   *  move, only the pricing block + balanceDue get refreshed.
+   *  Triggers the auto gcal sync that handleSave normally fires. */
+  async function handleRecalculate() {
+    setRecalcing(true);
+    setSettleMsg(null);
+    try {
+      await updateBookingDateTime(booking.id, {
+        date: booking.date,
+        startTime: booking.startTime,
+        endTime: booking.endTime,
+        ...(booking.endDate ? { endDate: booking.endDate } : {}),
+        guestCount: booking.guestCount,
+        ...(typeof booking.adultCount === 'number' ? { adultCount: booking.adultCount } : {}),
+        ...(typeof booking.childCount === 'number' ? { childCount: booking.childCount } : {}),
+        addOns: booking.addOns || [],
+        hasBYOFood: booking.hasBYOFood,
+      });
+      // Mirror handleSave's auto-gcal-sync so the event description
+      // reflects the refreshed totals.
+      fetch('/api/admin/booking-edit-followup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookingId: booking.id, syncOnly: true }),
+      }).catch((err) => console.warn('[recalc gcal sync] failed:', err));
+      setSettleMsg(locale === 'zh' ? '✓ 已重新計算金額' : '✓ Pricing recomputed');
+      onUpdated?.();
+    } catch (err) {
+      setSettleMsg(
+        (locale === 'zh' ? '失敗：' : 'Failed: ')
+        + (err instanceof Error ? err.message : 'unknown'),
+      );
+    } finally {
+      setRecalcing(false);
+    }
+  }
 
   /** Mark the outstanding balance as paid offline — adds a payments[]
    *  entry split via reverse bucket-fill (附加項目 → 場租 → 按金) and
@@ -1688,6 +1731,20 @@ function OutstandingBalanceSection({
           <Calculator size={14} />
           {locale === 'zh' ? '記錄額外付款（會加入賬單）' : 'Record extra charge (adds to bill)'}
         </button>
+
+        <button
+          onClick={handleRecalculate}
+          disabled={recalcing}
+          className="px-4 py-2 bg-white border border-charcoal/15 text-ink-soft rounded-lg text-sm font-medium hover:bg-cream disabled:opacity-50 flex items-center gap-1.5"
+          title={locale === 'zh'
+            ? '用現時嘅日期 / 人數 / 附加服務重新行一次定價，套用最新嘅 deposit 政策（不會 bump 已 paid booking 嘅按金）'
+            : 'Re-run pricing with the current date/guests/add-ons, applying the latest policy (e.g. sticky deposit on already-paid bookings)'}
+        >
+          <Calculator size={14} />
+          {recalcing
+            ? (locale === 'zh' ? '計算中…' : 'Recalculating…')
+            : (locale === 'zh' ? '重新計算金額' : 'Recalculate')}
+        </button>
       </div>
 
       {settleMsg && (
@@ -1696,8 +1753,8 @@ function OutstandingBalanceSection({
 
       <p className="text-[11px] text-ink-soft mt-3 leading-relaxed">
         {locale === 'zh'
-          ? '※「標記尾數已收」係客人確認交咗尾數（線下/匯款/或者你已喺收據頁批核咗）後撳，只會新增付款記錄同清零尾數，唔會加大張單。「記錄額外付款」係用嚟收新增嘅費用，例如延長場地、額外收費，會將金額加埋落小計。'
-          : '※ "Mark balance as paid" — use this once the customer has paid the existing balance (offline/transfer/already approved on receipts). Adds a payments[] entry and clears balanceDue but does NOT inflate the booking total. "Record extra charge" — for new charges (extended hours, etc.) that increase the bill.'}
+          ? '※「標記尾數已收」係客人確認交咗尾數（線下/匯款/或者你已喺收據頁批核咗）後撳，只會新增付款記錄同清零尾數，唔會加大張單。「記錄額外付款」係用嚟收新增嘅費用，例如延長場地、額外收費，會將金額加埋落小計。「重新計算金額」係用嚟修補舊有預訂—套用最新政策（例如已 paid booking 加 add-on 唔再 auto-bump 按金 tier）後 refresh 金額。'
+          : '※ "Mark balance as paid" — customer paid the existing balance; adds payments[] entry + clears balanceDue, no bill increase. "Record extra charge" — new charges (extended hours, etc.) inflate the bill. "Recalculate" — re-run pricing with the latest policy; useful to repair old bookings whose deposit was wrongly bumped before the sticky-deposit fix.'}
       </p>
     </div>
   );
