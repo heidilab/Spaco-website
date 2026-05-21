@@ -12,6 +12,7 @@ import {
   updateBookingStatus,
   updateBookingDepositRefund,
   creditLoyaltyPoints,
+  redeemLoyaltyPoints,
 } from '@/lib/firestore';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -1541,6 +1542,13 @@ function OutstandingBalanceSection({
    *  bookings). Calls updateBookingDateTime with the booking's
    *  EXISTING field values so blocked_slots / venueId / etc. don't
    *  move, only the pricing block + balanceDue get refreshed.
+   *
+   *  ALSO reconciles loyalty points if the booking was already
+   *  settled+credited: re-derives the expected credit (subtotal +
+   *  forfeited deposit) against the new pricing.subtotal and
+   *  credits/deducts the diff against the user's balance so
+   *  bookings that got over-credited (e.g. #WYtymQm7's $2,700 →
+   *  $1,700 after subtotal repair) self-heal in one click.
    *  Triggers the auto gcal sync that handleSave normally fires. */
   async function handleRecalculate() {
     setRecalcing(true);
@@ -1557,6 +1565,50 @@ function OutstandingBalanceSection({
         addOns: booking.addOns || [],
         hasBYOFood: booking.hasBYOFood,
       });
+
+      // Points reconciliation — runs only when the booking was already
+      // settled AND credited. Without this, repairing an over-credited
+      // booking (subtotal was inflated when the credit fired) leaves
+      // the user permanently overpaid in points.
+      let pointsMsg = '';
+      const fresh = await getBooking(booking.id);
+      if (fresh && fresh.pointsCreditedAt && fresh.userId) {
+        const settledDeductions =
+          (fresh.depositRefund as { deductions?: { amount: number }[] } | null)?.deductions
+            ?.reduce((s, d) => s + (d.amount || 0), 0) || 0;
+        const expected = (fresh.pricing.subtotal || 0) + settledDeductions;
+        const oldCredited = fresh.pointsActuallyCredited || 0;
+        const diff = expected - oldCredited;
+        if (diff > 0) {
+          // Under-credited — top up by diff.
+          const added = await creditLoyaltyPoints(fresh.userId, diff);
+          await updateDoc(doc(db, 'bookings', fresh.id), {
+            pointsActuallyCredited: oldCredited + added,
+            updatedAt: serverTimestamp(),
+          });
+          pointsMsg = locale === 'zh'
+            ? `；積分補加 +${added.toLocaleString()}`
+            : `; +${added.toLocaleString()} pts credited`;
+        } else if (diff < 0) {
+          // Over-credited — deduct -diff. Falls back to whatever the
+          // user has left if their balance dropped below the amount.
+          const taken = await redeemLoyaltyPoints(fresh.userId, -diff);
+          if (taken) {
+            await updateDoc(doc(db, 'bookings', fresh.id), {
+              pointsActuallyCredited: expected,
+              updatedAt: serverTimestamp(),
+            });
+            pointsMsg = locale === 'zh'
+              ? `；積分扣返 −${(-diff).toLocaleString()}`
+              : `; −${(-diff).toLocaleString()} pts deducted`;
+          } else {
+            pointsMsg = locale === 'zh'
+              ? `；積分需減 ${(-diff).toLocaleString()} 但客戶餘額不足，請手動調整`
+              : `; need to deduct ${(-diff).toLocaleString()} pts but user balance too low, adjust manually`;
+          }
+        }
+      }
+
       // Mirror handleSave's auto-gcal-sync so the event description
       // reflects the refreshed totals.
       fetch('/api/admin/booking-edit-followup', {
@@ -1564,7 +1616,7 @@ function OutstandingBalanceSection({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bookingId: booking.id, syncOnly: true }),
       }).catch((err) => console.warn('[recalc gcal sync] failed:', err));
-      setSettleMsg(locale === 'zh' ? '✓ 已重新計算金額' : '✓ Pricing recomputed');
+      setSettleMsg((locale === 'zh' ? '✓ 已重新計算金額' : '✓ Pricing recomputed') + pointsMsg);
       onUpdated?.();
     } catch (err) {
       setSettleMsg(
