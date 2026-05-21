@@ -13,6 +13,7 @@ import {
   SHISHA_MAX_PIPES,
   SHISHA_STAFF_SETUP_FEE,
   getShishaFlavorLabel,
+  freeDrinksVenues,
 } from '@/lib/pricing';
 import { ALL_PACKAGES, getPackageBySlug, CATEGORY_LABEL } from '@/lib/packages';
 import { createBookingDraft, buildClaimUrl } from '@/lib/bookingDrafts';
@@ -302,6 +303,18 @@ export default function AdminNewBookingPage() {
         amount: data.amount,
         freeDrinks: data.freeDrinks,
       });
+      // free_drinks promo → auto-tick the drinks add-on so the saved
+      // draft includes it. Mirrors the customer confirm page: when the
+      // promo grants free drinks, the drinks add-on is added to the
+      // cart at zero net cost (cost goes into pricing.addOnTotal, then
+      // the promo's discount of equal value cancels it). Skipped for
+      // venues that already bundle drinks (TST) — no add-on to add.
+      if (data.freeDrinks
+        && !drinksInCart
+        && !freeDrinksVenues.includes(venueId)
+      ) {
+        setAddOnQty((prev) => ({ ...prev, drinks: 1 }));
+      }
     } catch (err) {
       setPromoError(err instanceof Error ? err.message : 'Failed');
     } finally {

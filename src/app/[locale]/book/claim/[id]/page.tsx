@@ -203,18 +203,25 @@ export default function ClaimBookingPage() {
     );
   }
 
+  // Promo discount stored separately on the draft — subtotal field is
+  // the PRE-promo amount, deposit is the POST-promo upfront. Apply the
+  // discount here so the displayed grand total / balance reflect the
+  // SAME math the admin saw when generating the link (otherwise the
+  // post-promo deposit leaves a phantom balance equal to the discount).
+  const promoDiscount = draft.promoDiscount || 0;
+  const effectiveSubtotal = Math.max(0, draft.pricing.subtotal - promoDiscount);
   // Refundable security deposit (按金) — tiered $1k / $2k / $4k against
-  // subtotal. Legacy drafts predate the field, fall back to recomputing
-  // from subtotal so they still display consistent numbers.
+  // the effective (post-promo) subtotal. Legacy drafts predate the
+  // field, fall back to recomputing.
   const securityDeposit =
-    draft.pricing.securityDeposit ?? calculateSecurityDeposit(draft.pricing.subtotal);
-  // Grand total = rental subtotal + refundable security deposit.
-  // pricing.deposit is the UPFRONT amount (full if ≤ $10k else 50%) and
-  // is shown as "今次支付" below the grand total — using it for "可退
-  // 按金" was the bug that made admin-issued links show inflated numbers.
-  const grandTotal = draft.pricing.subtotal + securityDeposit;
+    draft.pricing.securityDeposit ?? calculateSecurityDeposit(effectiveSubtotal);
+  const grandTotal = effectiveSubtotal + securityDeposit;
   const upfrontDue = draft.pricing.deposit;
   const balanceDue = Math.max(0, grandTotal - upfrontDue);
+  // Use the grandTotal threshold (not balanceDue > 0) for the "50%"
+  // label so we never show "50%" for a booking that's actually a
+  // full-payment case where pricing only drifted by a few dollars.
+  const isHalfPayment = grandTotal > 10000;
   const selectedAddOns = draft.addOns
     .map((a) => ALL_ADDONS.find((x) => x.id === a.id))
     .filter(Boolean);
@@ -363,6 +370,15 @@ export default function ClaimBookingPage() {
                 <span className="text-ink-soft">{locale === 'zh' ? '小計' : 'Subtotal'}</span>
                 <span className="font-medium text-ink">HK${draft.pricing.subtotal.toLocaleString()}</span>
               </div>
+              {promoDiscount > 0 && (
+                <div className="flex justify-between text-emerald-700">
+                  <span>
+                    {locale === 'zh' ? '優惠碼' : 'Promo'}
+                    {draft.promoCode ? ` ${draft.promoCode}` : ''}
+                  </span>
+                  <span className="font-medium">−HK${promoDiscount.toLocaleString()}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-ink-soft">{locale === 'zh' ? '可退按金' : 'Refundable deposit'}</span>
                 <span className="font-medium text-ink">HK${securityDeposit.toLocaleString()}</span>
@@ -373,7 +389,7 @@ export default function ClaimBookingPage() {
               </div>
               <div className="flex justify-between items-baseline">
                 <span className="text-ink-soft">
-                  {balanceDue > 0
+                  {isHalfPayment
                     ? (locale === 'zh' ? '今次支付（50%）' : 'Pay now (50%)')
                     : (locale === 'zh' ? '應付金額' : 'Total due')}
                 </span>
@@ -381,7 +397,7 @@ export default function ClaimBookingPage() {
                   HK${upfrontDue.toLocaleString()}
                 </span>
               </div>
-              {balanceDue > 0 && (
+              {isHalfPayment && balanceDue > 0 && (
                 <div className="flex justify-between text-xs text-ink-soft pt-1">
                   <span>{locale === 'zh' ? '尾數（活動 2 日前繳付）' : 'Balance (due 2 days before event)'}</span>
                   <span>HK${balanceDue.toLocaleString()}</span>
