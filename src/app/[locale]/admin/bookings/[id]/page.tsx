@@ -93,6 +93,14 @@ export default function AdminBookingDetailPage() {
     flavors: string[];
     staffSetup: boolean;
   }>({ pipes: 1, flavors: [], staffSetup: false });
+  // Editable refundable deposit (HK$). Pre-fills from the booking's
+  // stored securityDeposit. Saving with a different value passes it as
+  // `securityDepositOverride` to updateBookingDateTime — bypasses
+  // sticky preserve for the cases where admin wants to (a) bump
+  // because add-ons crossed a tier and the customer agreed to pay
+  // more refundable, or (b) repair a legacy booking whose deposit
+  // was auto-bumped before the sticky rule shipped.
+  const [depositOverride, setDepositOverride] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [statusValue, setStatusValue] = useState('');
@@ -154,6 +162,9 @@ export default function AdminBookingDetailPage() {
           initialQty[a.id] = a.quantity;
         }
         setAddOnQty(initialQty);
+        // Hydrate the deposit override input from the stored value so
+        // saving with no edits leaves the deposit alone.
+        setDepositOverride(String(b.pricing.securityDeposit ?? 0));
         // Hydrate shisha sub-options (pipes / flavors / staffSetup).
         // Defaults match the calcShishaPrice fallback when fields are
         // missing on legacy bookings.
@@ -239,6 +250,11 @@ export default function AdminBookingDetailPage() {
     );
   const addOnsDirty = qtyDirty || shishaDirty;
 
+  const depositOverrideNum = parseFloat(depositOverride);
+  const depositDirty =
+    Number.isFinite(depositOverrideNum)
+    && depositOverrideNum !== (booking.pricing.securityDeposit ?? 0);
+
   const dirty =
     date !== booking.date ||
     endDate !== (booking.endDate || booking.date) ||
@@ -246,7 +262,8 @@ export default function AdminBookingDetailPage() {
     endTime !== booking.endTime ||
     guestCount !== booking.guestCount ||
     venueId !== booking.venueId ||
-    addOnsDirty;
+    addOnsDirty ||
+    depositDirty;
 
   // Validation: end (date+time) must be strictly after start (date+time).
   const startMs = (date && startTime) ? new Date(`${date}T${startTime}:00+08:00`).getTime() : 0;
@@ -298,6 +315,9 @@ export default function AdminBookingDetailPage() {
           ? { venueId, branchSlug: targetVenue?.slug || booking.branchSlug }
           : {}),
         ...(newAddOns ? { addOns: newAddOns } : {}),
+        // Pass the deposit override only when admin actually changed
+        // the input — otherwise sticky-preserve handles things.
+        ...(depositDirty ? { securityDepositOverride: depositOverrideNum } : {}),
       });
 
       // Push the change to Google Calendar immediately — admin should
@@ -991,6 +1011,101 @@ export default function AdminBookingDetailPage() {
                             : 'Staff setup +HK$180'}
                         </span>
                       </label>
+                    </div>
+                  );
+                })()}
+
+                {/* Refundable deposit override — pre-fills with the
+                 *  booking's current securityDeposit. When admin edits
+                 *  this value, save passes it as securityDepositOverride
+                 *  and lib/firestore.ts uses it verbatim (bypasses the
+                 *  sticky-preserve fallback). Use cases:
+                 *    - Add-on edit crosses a tier threshold and the
+                 *      customer agreed to put down more refundable.
+                 *    - Legacy booking whose deposit was auto-bumped
+                 *      before sticky shipped — admin reverts to the
+                 *      original tier amount.
+                 *  The amber tier-crossed banner above the input
+                 *  surfaces when the computed-from-current-subtotal
+                 *  tier differs from the stored deposit, so admin sees
+                 *  the suggestion without it being forced. */}
+                {(() => {
+                  // Compute the suggested tier deposit against the
+                  // CURRENT (post-edit) subtotal so the banner reflects
+                  // what admin's about to save, not what's stored.
+                  const liveAddOns = Object.entries(addOnQty)
+                    .filter(([, q]) => q > 0)
+                    .map(([id, quantity]) => {
+                      if (id === 'shisha') {
+                        const flavors = (shishaOptions.flavors || []).filter((f) => !!f);
+                        return {
+                          id,
+                          quantity,
+                          options: {
+                            pipes: shishaOptions.pipes,
+                            flavors,
+                            staffSetup: shishaOptions.staffSetup,
+                          },
+                        };
+                      }
+                      return { id, quantity };
+                    });
+                  const liveVenue = venues.find((v) => v.id === venueId);
+                  let suggestedTier: number | null = null;
+                  let suggestedSubtotal = 0;
+                  if (liveVenue) {
+                    try {
+                      const live = calculatePricing(
+                        liveVenue,
+                        booking.isWeekend,
+                        booking.hours,
+                        guestCount,
+                        liveAddOns,
+                        booking.childCount ?? 0,
+                      );
+                      suggestedSubtotal = live.subtotal;
+                      suggestedTier = live.securityDeposit;
+                    } catch { /* venue mismatch — skip suggestion */ }
+                  }
+                  const currentDeposit = booking.pricing.securityDeposit ?? 0;
+                  const tierCrossed =
+                    suggestedTier !== null && suggestedTier > currentDeposit;
+
+                  return (
+                    <div className="mt-3 pt-3 border-t border-charcoal/10 space-y-2">
+                      <label className="text-xs font-semibold text-ink-soft flex items-center gap-1.5">
+                        <Calculator size={12} className="text-pink" />
+                        {locale === 'zh' ? '可退按金（HK$）' : 'Refundable deposit (HK$)'}
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={depositOverride}
+                        onChange={(e) => setDepositOverride(e.target.value)}
+                        className="w-32 px-3 py-1.5 rounded-lg border-2 border-charcoal/15 text-sm bg-white"
+                      />
+                      <p className="text-[11px] text-ink-soft leading-relaxed">
+                        {locale === 'zh'
+                          ? '預設保留原訂單已收按金。如附加項目加碼導致小計超過 $4k / $10k 級別，亦可以選擇加收按金，輸入新嘅總按金額。'
+                          : 'Defaults to the booking\'s existing deposit. If add-ons push subtotal across the $4k / $10k tier, you may opt to collect more refundable here — type the new total amount.'}
+                      </p>
+                      {tierCrossed && (
+                        <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] text-amber-800 leading-relaxed flex items-start gap-1.5">
+                          <AlertCircle size={12} className="mt-0.5 shrink-0" />
+                          <div>
+                            <p className="font-semibold">
+                              {locale === 'zh'
+                                ? `小計 HK$${suggestedSubtotal.toLocaleString()} 已達 HK$${suggestedTier!.toLocaleString()} 按金級別`
+                                : `Subtotal HK$${suggestedSubtotal.toLocaleString()} now in the HK$${suggestedTier!.toLocaleString()} deposit tier`}
+                            </p>
+                            <p className="mt-0.5">
+                              {locale === 'zh'
+                                ? `建議加收按金至 HK$${suggestedTier!.toLocaleString()}（多收 HK$${(suggestedTier! - currentDeposit).toLocaleString()}）。如客人同意，輸入 ${suggestedTier!.toLocaleString()} 並儲存；如無加收，保留原本 HK$${currentDeposit.toLocaleString()}。`
+                                : `Consider bumping to HK$${suggestedTier!.toLocaleString()} (+HK$${(suggestedTier! - currentDeposit).toLocaleString()}). If the customer agrees, enter ${suggestedTier!.toLocaleString()} and save; otherwise leave at HK$${currentDeposit.toLocaleString()}.`}
+                            </p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })()}

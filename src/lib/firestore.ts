@@ -220,6 +220,14 @@ export async function updateBookingDateTime(
      *  outstanding balance. */
     addOns?: { id: string; quantity: number; options?: AddOnOptions }[];
     hasBYOFood?: boolean;
+    /** Manual override for pricing.securityDeposit (HK$). Takes
+     *  precedence over both the auto-tier formula AND the sticky-
+     *  preserve fallback. Use when admin wants to (a) bump deposit
+     *  because add-ons crossed a tier threshold and the customer
+     *  agreed to pay more refundable, or (b) repair a booking whose
+     *  deposit was auto-bumped before the sticky rule shipped. Pass
+     *  the desired final securityDeposit amount, NOT a delta. */
+    securityDepositOverride?: number;
   }
 ) {
   const bookingRef = doc(db, 'bookings', bookingId);
@@ -392,22 +400,25 @@ export async function updateBookingDateTime(
       const promoDiscount = booking.promoDiscount || 0;
       const effectiveSubtotal = Math.max(0, computed.subtotal - promoDiscount);
 
-      // Refundable security deposit — sticky once the booking has been
-      // paid. The tier formula ($1k/$2k/$4k by subtotal) only runs on
-      // brand-new bookings; admin edits to a confirmed booking should
-      // NOT auto-bump the deposit, because Heidi's expectation is that
-      // when a customer pays $640 worth of Shisha after the fact,
-      // they owe exactly $640 — not $640 plus another $1,000 because
-      // the rental subtotal crossed the next deposit tier. Preserve
-      // the deposit the customer already agreed to.
+      // Refundable security deposit resolution, in priority order:
+      //   1. Explicit `securityDepositOverride` from admin — used both
+      //      for opt-in tier bumps and for repairing legacy bookings
+      //      whose deposit was wrongly auto-bumped.
+      //   2. Sticky preserve — already-paid bookings keep their
+      //      existing securityDeposit untouched (admin edits don't
+      //      auto-bump).
+      //   3. Tier formula — brand-new bookings still get the
+      //      $1k/$2k/$4k auto-tier against the fresh subtotal.
       const wasPaid =
         booking.status === 'confirmed'
         || booking.status === 'completed'
         || !!booking.paymentVerifiedAt;
       const stickyDeposit =
-        wasPaid && typeof booking.pricing.securityDeposit === 'number'
-          ? booking.pricing.securityDeposit
-          : computed.securityDeposit;
+        typeof next.securityDepositOverride === 'number'
+          ? Math.max(0, next.securityDepositOverride)
+          : wasPaid && typeof booking.pricing.securityDeposit === 'number'
+            ? booking.pricing.securityDeposit
+            : computed.securityDeposit;
       const effectiveGrandTotal = effectiveSubtotal + stickyDeposit;
       const effectiveDeposit = calculateDeposit(effectiveGrandTotal);
 
