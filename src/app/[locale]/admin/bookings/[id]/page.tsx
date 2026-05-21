@@ -487,7 +487,9 @@ export default function AdminBookingDetailPage() {
       } else {
         setPushMsg({
           kind: 'ok',
-          text: locale === 'zh' ? '✓ 已推送到 Google 日曆' : '✓ Pushed to Google Calendar',
+          text: data.updated
+            ? (locale === 'zh' ? '✓ 已更新 Google 日曆（同步咗最新嘅 add-ons / 賬目）' : '✓ Updated Google Calendar with the latest add-ons / totals')
+            : (locale === 'zh' ? '✓ 已推送到 Google 日曆' : '✓ Pushed to Google Calendar'),
         });
         const fresh = await getBooking(booking.id);
         if (fresh) setBooking(fresh);

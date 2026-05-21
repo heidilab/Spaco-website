@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import {
-  pushBookingToCalendar, removeBookingFromCalendar,
+  pushBookingToCalendar, updateBookingOnCalendar, removeBookingFromCalendar,
 } from '@/lib/googleCalendar';
 import { BookingRecord, UserProfile } from '@/types';
 
@@ -32,10 +32,6 @@ export async function POST(req: NextRequest) {
     if (!booking) {
       return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
     }
-    if (booking.googleEventId) {
-      // Already pushed — no-op (idempotent).
-      return NextResponse.json({ alreadyPushed: true, eventId: booking.googleEventId });
-    }
 
     // Auto-fill customerName from the user profile if not provided. This is
     // the common case when admin clicks "Push to Google Calendar" without
@@ -51,6 +47,20 @@ export async function POST(req: NextRequest) {
 
     const origin = req.nextUrl.origin;
     const redirectUri = `${origin}/api/google/callback`;
+
+    // When the booking already has an event id, UPDATE the event so
+    // recent changes (new add-ons, refreshed totals, cleared balance)
+    // show in the description. The previous "alreadyPushed no-op"
+    // branch was the reason booking #6sURGgn9Pl's added BBQ never
+    // surfaced on Google Calendar — admin clicked Push but the
+    // endpoint short-circuited.
+    if (booking.googleEventId) {
+      await updateBookingOnCalendar(redirectUri, {
+        booking, customerName: resolvedName, notes,
+      });
+      return NextResponse.json({ ok: true, eventId: booking.googleEventId, updated: true });
+    }
+
     const eventId = await pushBookingToCalendar(redirectUri, {
       booking, customerName: resolvedName, notes,
     });
@@ -59,7 +69,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ skipped: true });
     }
     await adminDb.collection('bookings').doc(bookingId).update({ googleEventId: eventId });
-    return NextResponse.json({ ok: true, eventId });
+    return NextResponse.json({ ok: true, eventId, created: true });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Push failed' },
