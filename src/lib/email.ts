@@ -6,9 +6,44 @@ interface EmailParams {
   html: string;
 }
 
+/**
+ * Strip HTML to a readable plain-text alt body. Gmail / Outlook /
+ * Yahoo's spam filters give a slight ranking boost when the email is
+ * multipart (HTML + text) — single-part HTML is a weak spam signal
+ * even when the content itself is clean. Conversion is intentionally
+ * simple: drop the head/scripts/styles, turn block tags into line
+ * breaks, decode the most common HTML entities, then collapse
+ * whitespace. Good enough for transactional emails — we own the
+ * source HTML so no edge cases need handling.
+ */
+function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<head[\s\S]*?<\/head>/gi, '')
+    .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+    .replace(/<\/(p|div|h[1-6]|li|tr|td|th|section|article)\s*>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '• ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 export async function sendEmail({ to, subject, html }: EmailParams) {
   const apiKey = process.env.RESEND_API_KEY;
   const fromEmail = process.env.RESEND_FROM_EMAIL || 'noreply@spacohk.com';
+  // Reply-To routes customer replies to a humans-actually-read address.
+  // Without this, a customer hitting reply just spams noreply@ which
+  // nobody monitors. Defaults to the support inbox; can be overridden
+  // via env if Heidi moves to a different inbox later.
+  const replyTo = process.env.RESEND_REPLY_TO || 'spacohk@gmail.com';
 
   if (!apiKey || apiKey === 're_YOUR_KEY_HERE') {
     console.log('[Email] Skipping send (no API key configured):', { to, subject });
@@ -24,8 +59,20 @@ export async function sendEmail({ to, subject, html }: EmailParams) {
     body: JSON.stringify({
       from: `SPACO <${fromEmail}>`,
       to: [to],
+      // Reply-To so customer replies reach a real inbox; gives the
+      // email a "this is a real business, here's a way to reach us"
+      // signal to spam filters too.
+      reply_to: replyTo,
       subject,
       html,
+      // Multipart alternative — Gmail / Outlook spam scoring treats
+      // HTML-only emails as marginally more suspicious. Auto-derived
+      // from the HTML body so every email is multipart without each
+      // template needing a hand-rolled plain-text version.
+      text: htmlToPlainText(html),
+      // Custom List-Unsubscribe-style headers aren't required for
+      // pure transactional mail but Resend will inject them when
+      // they're warranted. We keep the body strictly transactional.
     }),
   });
 
