@@ -9,7 +9,7 @@
 
 import { useState } from 'react';
 import type { BookingRecord } from '@/types';
-import { CreditCard, Wand2, X as XIcon, Loader2 } from 'lucide-react';
+import { CreditCard, Wand2, X as XIcon, Loader2, Check } from 'lucide-react';
 
 const METHOD_LABELS: Record<string, { zh: string; en: string }> = {
   stripe: { zh: 'Stripe', en: 'Stripe' },
@@ -50,6 +50,11 @@ export default function PaymentHistory({
   const [depInput, setDepInput] = useState<string>('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Freeze-synth action — converts the live-computed initial row
+  // into a permanent payments[] entry so pricing edits stop moving
+  // the historical record.
+  const [freezingSynth, setFreezingSynth] = useState(false);
+  const [freezeMsg, setFreezeMsg] = useState<string | null>(null);
 
   // Legacy detection: any entry that has a positive amount but no split
   // is from the pre-split endpoint. When at least one exists, pricing.*
@@ -143,6 +148,42 @@ export default function PaymentHistory({
   const totalRental = loggedRentalSum + initialRental;
   const totalAddOn = loggedAddOnSum + initialAddOn;
   const totalDeposit = loggedDepositSum + initialDeposit;
+
+  /** Materialise the synth row into a permanent payments[] entry.
+   *  After this fires, the synth disappears (logged covers paid) and
+   *  pricing edits stop moving the displayed number — Heidi's
+   *  "過去式不會改變" semantic. Safe to fail when the synth is
+   *  overpaying its buckets (corrupt pricing) — the endpoint refuses
+   *  and asks admin to fix subtotal/deposit first. */
+  async function handleFreezeSynth() {
+    setFreezingSynth(true);
+    setFreezeMsg(null);
+    try {
+      const res = await fetch('/api/admin/booking-freeze-synth-payment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookingId: booking.id,
+          method: booking.paymentMethod || 'stripe',
+          kind: 'initial',
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        // Server returns a friendly Chinese message for OVERPAYMENT.
+        throw new Error(data?.message || data?.error || 'Freeze failed');
+      }
+      setFreezeMsg(locale === 'zh' ? '✓ 已凍結為永久付款記錄' : '✓ Frozen as permanent record');
+      onUpdated?.();
+    } catch (e) {
+      setFreezeMsg(
+        (locale === 'zh' ? '失敗：' : 'Failed: ')
+        + (e instanceof Error ? e.message : 'unknown'),
+      );
+    } finally {
+      setFreezingSynth(false);
+    }
+  }
 
   async function handleSplitSubmit() {
     if (splittingIdx === null) return;
@@ -257,10 +298,35 @@ export default function PaymentHistory({
               )}
             </div>
             <p className="text-ink-soft text-[11px] mt-0.5">
-              {locale === 'zh' ? '首次確認付款' : 'Initial confirmation payment'}
+              {locale === 'zh' ? '首次確認付款（推算）' : 'Initial confirmation payment (derived)'}
               {' · '}
               {fmtRecordedAt(booking.createdAt)}
             </p>
+            {/* Freeze synth into a real payments[] entry — admin one-
+             *  clicks and this ephemeral derived row becomes a
+             *  permanent record. After freeze the synth disappears
+             *  (logged covers paid) and pricing edits no longer move
+             *  the displayed number. Heidi's spec: 付款記錄應該不會
+             *  隨時更改, 過去式不會改變. */}
+            {adminMode && !overflowPaid && (
+              <button
+                type="button"
+                onClick={handleFreezeSynth}
+                disabled={freezingSynth}
+                className="mt-1.5 px-2 py-0.5 rounded-pill bg-emerald-500/10 text-emerald-700 text-[10px] font-semibold hover:bg-emerald-500/20 disabled:opacity-40 flex items-center gap-1"
+                title={locale === 'zh'
+                  ? '將呢條推算嘅付款記錄寫入 payments[]，成為永久不變嘅歷史記錄。之後嘅 pricing 編輯都唔會再改動到呢一筆。'
+                  : 'Write this derived row to payments[] as a permanent record. Pricing edits won\'t move it after freeze.'}
+              >
+                <Check size={10} />
+                {freezingSynth
+                  ? (locale === 'zh' ? '凍結中…' : 'Freezing…')
+                  : (locale === 'zh' ? '凍結為永久記錄' : 'Freeze as permanent record')}
+              </button>
+            )}
+            {freezeMsg && (
+              <p className="mt-1 text-[10px] text-ink-soft">{freezeMsg}</p>
+            )}
           </li>
         )}
         {payments.map((p, i) => {
