@@ -446,10 +446,13 @@ export default function AdminBookingDetailPage() {
       await updateBookingDepositRefund(booking.id, { amount: refundAmount, deductions });
 
       // Credit loyalty points: subtotal (rental + add-ons) + forfeited
-      // security deposit (the part SPACO actually kept). Refundable
-      // amount that went BACK to the customer doesn't count — per
-      // Heidi's spec, only money the company actually pocketed earns
-      // points. 1 HK$ = 1 point.
+      // security deposit (the part SPACO actually kept), MINUS the
+      // promo / points discounts (free items aren't "消費" per Heidi's
+      // spec — a customer who used DRINK2026 to get free drinks didn't
+      // pay for those drinks, so the drinks add-on doesn't earn points).
+      // Refundable amount that went BACK to the customer doesn't count
+      // either — only money the company actually pocketed earns points.
+      // 1 HK$ = 1 point.
       //
       // Idempotency: skip if booking.pointsCreditedAt is already set
       // (admin re-clicked settle or used the 補加積分 recovery action).
@@ -458,7 +461,9 @@ export default function AdminBookingDetailPage() {
       // panel renders the original pointsActuallyCredited value.
       let creditedPoints = 0;
       if (booking.userId && !booking.pointsCreditedAt) {
-        const points = booking.pricing.subtotal + total;
+        const promoDiscount = booking.promoDiscount || 0;
+        const pointsDiscount = booking.pointsDiscount || 0;
+        const points = Math.max(0, booking.pricing.subtotal - promoDiscount - pointsDiscount) + total;
         creditedPoints = await creditLoyaltyPoints(booking.userId, points);
         if (creditedPoints > 0) {
           await updateDoc(doc(db, 'bookings', booking.id), {
@@ -502,7 +507,11 @@ export default function AdminBookingDetailPage() {
       const settledDeductions =
         (booking.depositRefund as { deductions?: { amount: number }[] } | null)?.deductions
           ?.reduce((s, d) => s + (d.amount || 0), 0) || 0;
-      const points = (booking.pricing.subtotal || 0) + settledDeductions;
+      // Match the settle-deposit formula: subtotal minus promo/points
+      // discounts (free items aren't "消費") plus deposit deductions.
+      const promoDiscount = booking.promoDiscount || 0;
+      const pointsDiscount = booking.pointsDiscount || 0;
+      const points = Math.max(0, (booking.pricing.subtotal || 0) - promoDiscount - pointsDiscount) + settledDeductions;
       const credited = await creditLoyaltyPoints(booking.userId, points);
       if (credited > 0) {
         await updateDoc(doc(db, 'bookings', booking.id), {
@@ -1816,7 +1825,11 @@ function OutstandingBalanceSection({
         const settledDeductions =
           (fresh.depositRefund as { deductions?: { amount: number }[] } | null)?.deductions
             ?.reduce((s, d) => s + (d.amount || 0), 0) || 0;
-        const expected = (fresh.pricing.subtotal || 0) + settledDeductions;
+        // Match settle-deposit formula: exclude promo + points
+        // discounts from the points base.
+        const freshPromoDiscount = fresh.promoDiscount || 0;
+        const freshPointsDiscount = fresh.pointsDiscount || 0;
+        const expected = Math.max(0, (fresh.pricing.subtotal || 0) - freshPromoDiscount - freshPointsDiscount) + settledDeductions;
         const oldCredited = fresh.pointsActuallyCredited || 0;
         const diff = expected - oldCredited;
         if (diff > 0) {

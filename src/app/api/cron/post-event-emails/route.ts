@@ -72,10 +72,13 @@ export async function GET(request: NextRequest) {
       }
 
       // Points earned forecast: rental + add-ons (excluding security
-      // deposit). Admin's deposit settlement may credit a higher
-      // amount later if part of the security deposit was kept; the
-      // customer will see the actual balance when they next check.
-      const pointsEarned = Math.max(0, Math.floor(booking.pricing.subtotal));
+      // deposit), MINUS promo + points discounts (free items aren't
+      // "消費"). Admin's deposit settlement may credit a higher amount
+      // later if part of the security deposit was kept; the customer
+      // will see the actual balance when they next check.
+      const promoDiscount = (booking as { promoDiscount?: number }).promoDiscount || 0;
+      const pointsDiscount = (booking as { pointsDiscount?: number }).pointsDiscount || 0;
+      const pointsEarned = Math.max(0, Math.floor(booking.pricing.subtotal - promoDiscount - pointsDiscount));
       const venue = getVenueById(booking.venueId);
 
       const tpl = buildPostEventEmail({

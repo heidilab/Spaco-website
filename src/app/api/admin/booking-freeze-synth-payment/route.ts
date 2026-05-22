@@ -59,9 +59,19 @@ export async function POST(req: NextRequest) {
 
     // Replicate the synth math exactly (PaymentHistory.tsx). Keep this
     // in sync if the synth bucket-fill rules change there.
+    //
+    // CORRECT formula nets out both discounts:
+    //   actualPaidTotal = subtotal + securityDeposit
+    //                     − promoDiscount − pointsDiscount − balanceDue
+    // — DRINK2026 promo or points redemption reduces real cash out by
+    // exactly the discount amount, so the synth row must shrink to
+    // match (#5SLCw5Ct phantom $500 add-on bug).
+    const promoDiscount = booking.promoDiscount || 0;
+    const pointsDiscount = booking.pointsDiscount || 0;
     const grandTotal =
       (booking.pricing.subtotal || 0) + (booking.pricing.securityDeposit || 0);
-    const actualPaidTotal = Math.max(0, grandTotal - (booking.balanceDue || 0));
+    const realGrandTotal = Math.max(0, grandTotal - promoDiscount - pointsDiscount);
+    const actualPaidTotal = Math.max(0, realGrandTotal - (booking.balanceDue || 0));
     const loggedTotalAmount =
       (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
     const synthAmount = Math.max(0, actualPaidTotal - loggedTotalAmount);

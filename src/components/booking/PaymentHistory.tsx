@@ -90,7 +90,18 @@ export default function PaymentHistory({
 
   // Synthesize the historical "paid" portion not yet captured in
   // payments[] (e.g. Stripe charges from before the webhook started
-  // writing audit entries). Total paid = grandTotal − balanceDue.
+  // writing audit entries).
+  //
+  // CORRECT formula:
+  //   actualPaidTotal = subtotal + securityDeposit
+  //                     − promoDiscount − pointsDiscount − balanceDue
+  //
+  // The discounts MUST be subtracted: a DRINK2026 promo zeroes out
+  // the drinks add-on, so the customer never paid for it — including
+  // it in actualPaidTotal would fabricate a phantom payment record
+  // (the $500 add-on on #5SLCw5Ct that Heidi caught). pointsDiscount
+  // is applied at Stripe charge time (payment/[id]/page.tsx) so it
+  // also reduces real-cash out by the discount amount.
   //
   // Bucket-fill instead of pro-rata. The booking system's own pricing
   // flow charges the customer's confirmation payment against the
@@ -105,8 +116,11 @@ export default function PaymentHistory({
   // bucket-fill order below reconstructs the correct split for the
   // common "admin added an add-on after the customer already paid"
   // case without needing to store a pricing snapshot.
+  const promoDiscount = booking.promoDiscount || 0;
+  const pointsDiscount = booking.pointsDiscount || 0;
   const grandTotal = (booking.pricing.subtotal || 0) + (booking.pricing.securityDeposit || 0);
-  const actualPaidTotal = isPaid ? Math.max(0, grandTotal - (booking.balanceDue || 0)) : 0;
+  const realGrandTotal = Math.max(0, grandTotal - promoDiscount - pointsDiscount);
+  const actualPaidTotal = isPaid ? Math.max(0, realGrandTotal - (booking.balanceDue || 0)) : 0;
   const loggedTotalAmount = payments.reduce((s, p) => s + (p.amount || 0), 0);
   const synthAmount = hasUnsplit ? 0 : Math.max(0, actualPaidTotal - loggedTotalAmount);
 
