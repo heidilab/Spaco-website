@@ -141,6 +141,9 @@ export default function AdminDocumentsPage() {
   const [mounted, setMounted] = useState(false);
   const [docs, setDocs] = useState<BusinessDocument[]>([]);
   const [bookings, setBookings] = useState<BookingRecord[]>([]);
+  // uid → displayName map for the 負責人 column. Populated once on
+  // mount via getAllUsers — same pattern as the bookings list.
+  const [userNames, setUserNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState<DocumentType | 'all'>('all');
   const [statusFilter, setStatusFilter] = useState<DocumentStatus | 'all'>('all');
@@ -195,6 +198,14 @@ export default function AdminDocumentsPage() {
       };
     }
     setUsersById(map);
+    // 負責人 column uses displayName falling back to email's local part.
+    // Built alongside the booking-picker map so we only iterate users once.
+    const names: Record<string, string> = {};
+    for (const user of u as Array<{ uid: string; displayName?: string; email?: string }>) {
+      const name = user.displayName || user.email?.split('@')[0] || '';
+      if (name) names[user.uid] = name;
+    }
+    setUserNames(names);
     setLoading(false);
   };
 
@@ -780,7 +791,7 @@ export default function AdminDocumentsPage() {
                     locale === 'zh' ? '客戶' : 'Customer',
                     locale === 'zh' ? '日期' : 'Date',
                     locale === 'zh' ? '金額' : 'Total',
-                    locale === 'zh' ? '狀態' : 'Status',
+                    locale === 'zh' ? '負責人' : 'Created by',
                     locale === 'zh' ? '操作' : 'Actions',
                   ].map((h) => (
                     <th key={h} className="text-left px-5 py-4 text-xs font-semibold text-ink-soft uppercase tracking-wider">{h}</th>
@@ -790,7 +801,6 @@ export default function AdminDocumentsPage() {
               <tbody>
                 {filteredDocs.map((d) => {
                   const Icon = TYPE_ICONS[d.type];
-                  const statusInfo = STATUS_LABELS[d.status];
                   return (
                     <tr key={d.id} className="border-b border-white/40 last:border-0 hover:bg-white/40 transition-colors">
                       <td className="px-5 py-4">
@@ -812,10 +822,11 @@ export default function AdminDocumentsPage() {
                       <td className="px-5 py-4 text-sm font-bold font-display text-gradient-pink">
                         HK${d.total.toLocaleString()}
                       </td>
-                      <td className="px-5 py-4">
-                        <span className={`px-3 py-1 rounded-pill text-xs font-medium border ${statusInfo.color}`}>
-                          {statusInfo[locale]}
-                        </span>
+                      <td className="px-5 py-4 text-sm">
+                        <p className="font-medium text-ink">
+                          {userNames[d.createdBy]
+                            || (d.createdByEmail ? d.createdByEmail.split('@')[0] : '—')}
+                        </p>
                       </td>
                       <td className="px-5 py-4">
                         <div className="flex gap-1">
