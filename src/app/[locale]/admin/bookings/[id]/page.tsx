@@ -1464,6 +1464,16 @@ export default function AdminBookingDetailPage() {
                   : `${booking.guestCount}`
               }
             />
+            {/* 場租 — venue rental line. Pulled from pricing.baseCharge
+             *  (storage) so it survives off-formula edits. Heidi's spec
+             *  places this between 人數 and 附加服務. */}
+            {(booking.pricing?.baseCharge ?? 0) > 0 && (
+              <Row
+                icon={<Calculator size={14} />}
+                label={locale === 'zh' ? '場租' : 'Venue rental'}
+                value={`HK$${(booking.pricing.baseCharge || 0).toLocaleString()}`}
+              />
+            )}
             {booking.addOns && booking.addOns.length > 0 && (() => {
               // Render each add-on with its individual calculation +
               // amount, NOT just the name. Heidi's spec: "依張單，
@@ -1516,18 +1526,42 @@ export default function AdminBookingDetailPage() {
             {booking.hasBYOFood && (
               <Row label={locale === 'zh' ? '自攜食物' : 'BYO Food'} value={locale === 'zh' ? '是' : 'Yes'} />
             )}
+            {/* Heidi's spec (2026-05-23):
+             *   日期 / 時段 / 人數 / 場租 / 附加服務 / 優惠碼 /
+             *   小計 / 可退按金 / 總額 / 已收 / 尚欠 / 推廣渠道 / 付款方式
+             *
+             * 場租 is the venue rental line from calculatePricing (always
+             * the first breakdown entry). Add-ons are rendered above
+             * this block. 優惠碼 is inserted between add-ons and 小計 so
+             * the math reads as: 場租 + add-ons − 優惠碼 = 小計
+             * (post-promo). 總額 = 小計 + 按金. 尚欠 = 總額 − 已收.
+             *
+             * pricing.subtotal is already stored post-promo, so 小計
+             * displays it directly and 總額 = subtotal + securityDeposit
+             * without further discount subtraction. */}
+            {(booking.promoCode && (booking.promoDiscount ?? 0) > 0) && (
+              <Row
+                label={locale === 'zh' ? '優惠碼' : 'Promo'}
+                value={`${booking.promoCode} (−HK$${(booking.promoDiscount || 0).toLocaleString()})`}
+                highlight="emerald"
+              />
+            )}
+            {(booking.pointsUsed ?? 0) > 0 && (
+              <Row
+                icon={<Sparkles size={14} />}
+                label={locale === 'zh' ? '積分抵扣' : 'Points redeemed'}
+                value={`−HK$${(booking.pointsDiscount || 0).toLocaleString()} (${booking.pointsUsed!.toLocaleString()} ${locale === 'zh' ? '分' : 'pts'})`}
+                highlight="violet"
+              />
+            )}
             <Row label={locale === 'zh' ? '小計' : 'Subtotal'} value={`HK$${booking.pricing.subtotal.toLocaleString()}`} />
             <Row label={locale === 'zh' ? '可退按金' : 'Refundable deposit'} value={`HK$${(booking.pricing.securityDeposit ?? 0).toLocaleString()}`} />
             {(() => {
-              // "已收" mirrors the payment history: sum of payments[]
-              // is the single source of truth (Option C, post-2026-05).
-              // The old `grandTotal − balanceDue` formula silently
-              // double-counted the promo amount on bookings with a
-              // promo code, showing $12,960 when only $11,960 was
-              // received (#WIiQYL2I — Heidi caught it).
+              const grandTotal =
+                (booking.pricing.subtotal || 0) + (booking.pricing.securityDeposit || 0);
               const actualPaid =
                 (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
-              const upfrontQuote = booking.pricing.deposit || 0;
+              const outstanding = Math.max(0, grandTotal - actualPaid);
               const isPaid =
                 booking.status === 'confirmed' ||
                 booking.status === 'completed' ||
@@ -1535,8 +1569,8 @@ export default function AdminBookingDetailPage() {
               return (
                 <>
                   <Row
-                    label={locale === 'zh' ? '應付（首期）' : 'Due (upfront)'}
-                    value={`HK$${upfrontQuote.toLocaleString()}`}
+                    label={locale === 'zh' ? '總額' : 'Grand total'}
+                    value={`HK$${grandTotal.toLocaleString()}`}
                   />
                   <Row
                     label={locale === 'zh' ? '已收' : 'Paid'}
@@ -1547,31 +1581,16 @@ export default function AdminBookingDetailPage() {
                     }
                     highlight={actualPaid > 0 ? 'emerald' : undefined}
                   />
-                  {(booking.balanceDue || 0) > 0 && isPaid && (
+                  {outstanding > 0 && isPaid && (
                     <Row
                       label={locale === 'zh' ? '尚欠（尾數）' : 'Outstanding'}
-                      value={`HK$${(booking.balanceDue || 0).toLocaleString()}`}
+                      value={`HK$${outstanding.toLocaleString()}`}
                       highlight="amber"
                     />
                   )}
                 </>
               );
             })()}
-            {(booking.pointsUsed ?? 0) > 0 && (
-              <Row
-                icon={<Sparkles size={14} />}
-                label={locale === 'zh' ? '積分抵扣' : 'Points redeemed'}
-                value={`−HK$${(booking.pointsDiscount || 0).toLocaleString()} (${booking.pointsUsed!.toLocaleString()} ${locale === 'zh' ? '分' : 'pts'})`}
-                highlight="violet"
-              />
-            )}
-            {booking.promoCode && (booking.promoDiscount ?? 0) > 0 && (
-              <Row
-                label={locale === 'zh' ? '優惠碼' : 'Promo'}
-                value={`${booking.promoCode} (−HK$${(booking.promoDiscount || 0).toLocaleString()})`}
-                highlight="emerald"
-              />
-            )}
             {booking.marketingChannel && (
               <Row
                 label={locale === 'zh' ? '推廣渠道' : 'Channel'}

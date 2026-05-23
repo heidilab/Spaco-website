@@ -61,17 +61,16 @@ export async function POST(req: NextRequest) {
     const booking = { id: snap.id, ...snap.data() } as BookingRecord;
 
     // Recompute balanceDue from scratch using payments[] as the source
-    // of truth (Option C derivation — see lib/firestore.ts).
-    //   realGrandTotal = subtotal + securityDeposit
-    //                    − promoDiscount − pointsDiscount
-    //   balanceDue     = realGrandTotal − sum(payments[] + this entry)
+    // of truth (Option C). pricing.subtotal is ALREADY stored post-
+    // promo by updateBookingDateTime (see lib/firestore.ts where it
+    // assigns `effectiveSubtotal = baseSubtotal − promoDiscount`), so
+    // no further promo subtraction here — that would double-count
+    // (the $18,960 vs $19,960 bug on #WIiQYL2I).
     const subtotal = booking.pricing?.subtotal || 0;
     const securityDeposit = booking.pricing?.securityDeposit || 0;
-    const promoDiscount = booking.promoDiscount || 0;
-    const pointsDiscount = booking.pointsDiscount || 0;
-    const realGrandTotal = Math.max(0, subtotal + securityDeposit - promoDiscount - pointsDiscount);
+    const grandTotal = subtotal + securityDeposit;
     const loggedSum = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
-    const newBalanceDue = Math.max(0, realGrandTotal - loggedSum - total);
+    const newBalanceDue = Math.max(0, grandTotal - loggedSum - total);
 
     // Status advancement (mirrors booking-edit-followup):
     // only from upstream states; never downgrade confirmed/completed.
