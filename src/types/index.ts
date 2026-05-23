@@ -290,6 +290,13 @@ export interface BookingRecord {
   /** ms-since-epoch deadline for `pending` bookings to be paid before the
    *  cron auto-cancels them and frees the slot. Default: createdAt + 30 min. */
   pendingExpiresAt?: number;
+  /** Audit log for cancellations — who cancelled and when. Captured at
+   *  the moment admin clicks 取消 so we can trace mis-clicks back to
+   *  the staff member (Heidi's 2026-05-23 spec). */
+  cancelledBy?: string;       // staff uid; 'cron' / 'customer' for non-admin paths
+  cancelledByEmail?: string;
+  cancelledByName?: string;
+  cancelledAt?: unknown;
   /** Customer-provided refund destination for the security-deposit refund
    *  processed after the event ends. Captured on the confirmation page. */
   refundDetails?: RefundDetails;

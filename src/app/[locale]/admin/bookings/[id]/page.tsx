@@ -756,12 +756,25 @@ export default function AdminBookingDetailPage() {
 
   async function handleStatusChange(next: string) {
     if (!booking || next === booking.status) return;
+    if (next === 'cancelled') {
+      // IRREVERSIBLE — confirm before firing. Captures the current
+      // admin's identity as the cancelledBy audit field (Heidi's
+      // 2026-05-23 spec).
+      const label = `${booking.date} ${booking.startTime} · ${booking.venueId} · #${booking.id.slice(0, 8)}`;
+      if (!confirm(
+        locale === 'zh'
+          ? `⚠️ 確定取消預訂？\n\n${label}\n\n取消後不能還原。會即時釋放時段、移除 Google Calendar event、通知客人。`
+          : `⚠️ Cancel this booking?\n\n${label}\n\nCannot be undone. Slot is released, gcal event removed, and customer is notified immediately.`,
+      )) return;
+    }
     setStatusSaving(true);
     try {
       if (next === 'cancelled') {
-        // Centralised cancel cleanup — frees blocked_slots, removes from
-        // Google Calendar, revokes any passcode, emails the customer.
-        await cancelBooking(booking.id);
+        await cancelBooking(booking.id, {
+          uid: user?.uid,
+          email: user?.email || undefined,
+          displayName: user?.displayName || undefined,
+        });
       } else {
         await updateBookingStatus(booking.id, next);
         // Sync gcal so the event description reflects the new status
@@ -1597,6 +1610,16 @@ export default function AdminBookingDetailPage() {
               />
             )}
             <Row label={locale === 'zh' ? '付款方式' : 'Payment method'} value={booking.paymentMethod || '—'} />
+            {/* Cancellation audit — only renders for cancelled bookings.
+             *  Shows who hit the X (staff name + email) and when, so
+             *  admin can trace a mis-click. */}
+            {booking.status === 'cancelled' && (booking.cancelledByName || booking.cancelledByEmail) && (
+              <Row
+                label={locale === 'zh' ? '取消者' : 'Cancelled by'}
+                value={`${booking.cancelledByName || booking.cancelledByEmail || ''}${booking.cancelledByEmail && booking.cancelledByName ? ` · ${booking.cancelledByEmail}` : ''}`}
+                highlight="amber"
+              />
+            )}
           </div>
 
           {/* Payment history — surfaces the audit log of every payment

@@ -148,9 +148,24 @@ export default function AdminBookingsPage() {
 
   const handleStatusChange = async (bookingId: string, newStatus: string) => {
     if (newStatus === 'cancelled') {
-      // Centralised cancel cleanup — frees blocked_slots, removes from
-      // Google Calendar, revokes any passcode, emails the customer.
-      await cancelBooking(bookingId);
+      // Cancel is IRREVERSIBLE — confirm before firing. Captures the
+      // current admin's uid / email / displayName as the cancelledBy
+      // audit fields so mis-clicks can be traced (Heidi's 2026-05-23
+      // spec post the awaiting_payment / 沒有完成付款 wash-up).
+      const booking = bookings.find((b) => b.id === bookingId);
+      const label = booking
+        ? `${booking.date} ${booking.startTime} · ${booking.venueId} · #${bookingId.slice(0, 8)}`
+        : `#${bookingId.slice(0, 8)}`;
+      if (!confirm(
+        locale === 'zh'
+          ? `⚠️ 確定取消預訂？\n\n${label}\n\n取消後不能還原。會即時釋放時段、移除 Google Calendar event、通知客人。`
+          : `⚠️ Cancel this booking?\n\n${label}\n\nCannot be undone. Slot is released, gcal event removed, and customer is notified immediately.`,
+      )) return;
+      await cancelBooking(bookingId, {
+        uid: user?.uid,
+        email: user?.email || undefined,
+        displayName: user?.displayName || undefined,
+      });
     } else {
       await updateBookingStatus(bookingId, newStatus);
     }

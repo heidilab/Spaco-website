@@ -14,15 +14,36 @@
  * status flip itself.
  */
 
+import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from './firebase';
 import { getBooking, updateBookingStatus, deleteBlockedSlotsByBooking } from './firestore';
 import { revokeLockPasscode } from './lockPasscodeClient';
 
-export async function cancelBooking(bookingId: string): Promise<void> {
+export interface CancelActor {
+  uid?: string;
+  email?: string;
+  displayName?: string;
+}
+
+export async function cancelBooking(
+  bookingId: string,
+  actor?: CancelActor,
+): Promise<void> {
   const booking = await getBooking(bookingId);
   if (!booking) return;
 
   if (booking.status !== 'cancelled') {
     await updateBookingStatus(bookingId, 'cancelled');
+    // Audit log — record who cancelled so admin can trace mis-clicks.
+    // Conditional spread keeps Firestore from rejecting undefined values.
+    if (actor) {
+      await updateDoc(doc(db, 'bookings', bookingId), {
+        ...(actor.uid ? { cancelledBy: actor.uid } : {}),
+        ...(actor.email ? { cancelledByEmail: actor.email } : {}),
+        ...(actor.displayName ? { cancelledByName: actor.displayName } : {}),
+        cancelledAt: serverTimestamp(),
+      });
+    }
   }
   await deleteBlockedSlotsByBooking(bookingId);
 

@@ -14,7 +14,7 @@ import { Check, X, Eye, Clock, AlertCircle } from 'lucide-react';
 
 export default function AdminReceiptsPage() {
   const locale = useLocale() as 'zh' | 'en';
-  const { hasPermission } = useAuth();
+  const { user, hasPermission } = useAuth();
   const [bookings, setBookings] = useState<BookingRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewingReceipt, setViewingReceipt] = useState<string | null>(null);
@@ -175,7 +175,18 @@ export default function AdminReceiptsPage() {
   };
 
   const handleReject = async (bookingId: string) => {
-    await cancelBooking(bookingId);
+    // Rejecting a receipt cancels the booking — irreversible, confirm
+    // first + log who rejected (Heidi's 2026-05-23 spec).
+    if (!confirm(
+      locale === 'zh'
+        ? `⚠️ 確定拒絕呢張入數紙？\n\n會即時取消預訂 #${bookingId.slice(0, 8)}，釋放時段並通知客人。取消後不能還原。`
+        : `⚠️ Reject this receipt?\n\nBooking #${bookingId.slice(0, 8)} is cancelled immediately, the slot is released, and the customer is notified. Cannot be undone.`,
+    )) return;
+    await cancelBooking(bookingId, {
+      uid: user?.uid,
+      email: user?.email || undefined,
+      displayName: user?.displayName || undefined,
+    });
     await loadBookings();
   };
 
