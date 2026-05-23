@@ -205,7 +205,12 @@ export default function AdminBookingDetailPage() {
         // Hydrate the deposit override input from the stored value so
         // saving with no edits leaves the deposit alone.
         setDepositOverride(String(b.pricing.securityDeposit ?? 0));
-        setSubtotalOverride(String(b.pricing.subtotal ?? 0));
+        // Display the EFFECTIVE subtotal (post-promo) — Heidi's spec:
+        // "消費小計" should reflect what the customer actually pays
+        // for consumption, not the gross. Storage stays pre-promo
+        // (promoDiscount is a separate field); on save we add the
+        // discount back so the schema invariant holds.
+        setSubtotalOverride(String(Math.max(0, (b.pricing.subtotal ?? 0) - (b.promoDiscount || 0))));
         // Hydrate shisha sub-options (pipes / flavors / staffSetup).
         // Defaults match the calcShishaPrice fallback when fields are
         // missing on legacy bookings.
@@ -295,7 +300,10 @@ export default function AdminBookingDetailPage() {
         liveAddOns,
         bookingForFormula.childCount ?? 0,
       );
-      setSubtotalOverride(String(live.subtotal));
+      // Display the effective (post-promo) subtotal — see hydrate
+      // comment above. Storage stays pre-promo.
+      const effective = Math.max(0, live.subtotal - (bookingForFormula.promoDiscount || 0));
+      setSubtotalOverride(String(effective));
     } catch { /* venue mismatch — keep current value */ }
     // We intentionally omit setSubtotalOverride from deps — it's a
     // setter (stable identity) and reading bookingForFormula via the
@@ -365,10 +373,21 @@ export default function AdminBookingDetailPage() {
   const depositDirty =
     Number.isFinite(depositOverrideNum)
     && depositOverrideNum !== (booking.pricing.securityDeposit ?? 0);
-  const subtotalOverrideNum = parseFloat(subtotalOverride);
+  // Admin types the EFFECTIVE (post-promo) subtotal in the UI; we
+  // compare against the stored effective value for dirty detection,
+  // and add promoDiscount back when sending to the backend so the
+  // schema's pricing.subtotal stays the pre-promo gross.
+  const subtotalOverrideEffective = parseFloat(subtotalOverride);
+  const storedEffectiveSubtotal = (booking.pricing.subtotal ?? 0) - (booking.promoDiscount || 0);
   const subtotalDirty =
-    Number.isFinite(subtotalOverrideNum)
-    && subtotalOverrideNum !== (booking.pricing.subtotal ?? 0);
+    Number.isFinite(subtotalOverrideEffective)
+    && subtotalOverrideEffective !== storedEffectiveSubtotal;
+  // What we actually pass to lib/firestore.ts — the gross subtotal
+  // including the promo amount (since promoDiscount is preserved
+  // separately on the booking record).
+  const subtotalOverrideNum = Number.isFinite(subtotalOverrideEffective)
+    ? subtotalOverrideEffective + (booking.promoDiscount || 0)
+    : NaN;
   // Derived "paid so far" — what the booking currently thinks the
   // customer has paid. Mirrors lib/firestore.ts's paidSoFar formula
   // (sum of payments[]) so the override input pre-fills with the
@@ -1306,7 +1325,9 @@ export default function AdminBookingDetailPage() {
                   ];
                   const liveVenue = venues.find((v) => v.id === venueId);
                   let suggestedTier: number | null = null;
+                  let suggestedSubtotalGross = 0;
                   let suggestedSubtotal = 0;
+                  const livePromoDiscount = booking.promoDiscount || 0;
                   if (liveVenue) {
                     try {
                       const live = calculatePricing(
@@ -1317,7 +1338,11 @@ export default function AdminBookingDetailPage() {
                         liveAddOns,
                         booking.childCount ?? 0,
                       );
-                      suggestedSubtotal = live.subtotal;
+                      suggestedSubtotalGross = live.subtotal;
+                      // Effective subtotal = formula − promo. The
+                      // input + reset button + hint all show this
+                      // post-promo number per Heidi's spec.
+                      suggestedSubtotal = Math.max(0, live.subtotal - livePromoDiscount);
                       suggestedTier = live.securityDeposit;
                     } catch { /* venue mismatch — skip suggestion */ }
                   }
@@ -1363,8 +1388,24 @@ export default function AdminBookingDetailPage() {
                           </div>
                           <p className="text-[11px] text-ink-soft mt-1 leading-relaxed">
                             {locale === 'zh'
-                              ? `預設係 booking 入面已儲存嘅金額（可能因為之前嘅錯誤操作而偏離公式）。公式計算：${suggestedSubtotal > 0 ? `venue × 人 × 鐘頭 + add-ons = HK$${suggestedSubtotal.toLocaleString()}` : '尚未能計算'}。如實際收費同公式有差距（off-system 議價、或舊單數據錯），可手動覆寫。`
-                              : `Pre-fills with the value stored on the booking (which may have drifted from the formula due to past mistakes). Formula gives: ${suggestedSubtotal > 0 ? `venue × pax × hours + add-ons = HK$${suggestedSubtotal.toLocaleString()}` : 'not computable'}. Override when actual charge differs.`}
+                              ? `已扣減優惠碼後嘅金額（會員積分以此為基礎）。`
+                                + (suggestedSubtotalGross > 0
+                                  ? ` 公式：venue × 人 × 鐘頭 + add-ons = HK$${suggestedSubtotalGross.toLocaleString()}`
+                                    + (livePromoDiscount > 0
+                                      ? ` − 優惠碼${booking.promoCode ? ` ${booking.promoCode}` : ''} HK$${livePromoDiscount.toLocaleString()} = HK$${suggestedSubtotal.toLocaleString()}`
+                                      : '')
+                                    + '。'
+                                  : ' 尚未能計算。')
+                                + ' 如實際收費同公式有差距，可手動覆寫。'
+                              : `Post-promo subtotal (loyalty points are based on this). `
+                                + (suggestedSubtotalGross > 0
+                                  ? `Formula: venue × pax × hours + add-ons = HK$${suggestedSubtotalGross.toLocaleString()}`
+                                    + (livePromoDiscount > 0
+                                      ? ` − promo${booking.promoCode ? ` ${booking.promoCode}` : ''} HK$${livePromoDiscount.toLocaleString()} = HK$${suggestedSubtotal.toLocaleString()}`
+                                      : '')
+                                    + '. '
+                                  : 'Not computable. ')
+                                + 'Override when actual charge differs.'}
                           </p>
                         </div>
                         <div>
