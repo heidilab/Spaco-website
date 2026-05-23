@@ -1519,24 +1519,19 @@ export default function AdminBookingDetailPage() {
             <Row label={locale === 'zh' ? '小計' : 'Subtotal'} value={`HK$${booking.pricing.subtotal.toLocaleString()}`} />
             <Row label={locale === 'zh' ? '可退按金' : 'Refundable deposit'} value={`HK$${(booking.pricing.securityDeposit ?? 0).toLocaleString()}`} />
             {(() => {
-              // "已收" must reflect money actually received, not the quoted
-              // upfront amount. For unpaid bookings it's the sum of any
-              // admin-logged payments (often zero). For paid bookings it's
-              // grandTotal − balanceDue, which correctly accounts for 50%
-              // upfront + later balance top-ups since pricing.* fields are
-              // mutated on every recorded payment.
-              const grandTotal =
-                (booking.pricing.subtotal || 0) + (booking.pricing.securityDeposit || 0);
-              const loggedSum =
+              // "已收" mirrors the payment history: sum of payments[]
+              // is the single source of truth (Option C, post-2026-05).
+              // The old `grandTotal − balanceDue` formula silently
+              // double-counted the promo amount on bookings with a
+              // promo code, showing $12,960 when only $11,960 was
+              // received (#WIiQYL2I — Heidi caught it).
+              const actualPaid =
                 (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+              const upfrontQuote = booking.pricing.deposit || 0;
               const isPaid =
                 booking.status === 'confirmed' ||
                 booking.status === 'completed' ||
                 !!booking.paymentVerifiedAt;
-              const actualPaid = isPaid
-                ? Math.max(0, grandTotal - (booking.balanceDue || 0))
-                : loggedSum;
-              const upfrontQuote = booking.pricing.deposit || 0;
               return (
                 <>
                   <Row
@@ -1586,9 +1581,6 @@ export default function AdminBookingDetailPage() {
                     : `📣 ${MARKETING_CHANNEL_LABELS[booking.marketingChannel as MarketingChannel][locale]}${booking.marketingChannelOther ? `: ${booking.marketingChannelOther}` : ''}`
                 }
               />
-            )}
-            {(booking.balanceDue ?? 0) > 0 && (
-              <Row label={locale === 'zh' ? '欠尾數' : 'Balance due'} value={`HK$${booking.balanceDue!.toLocaleString()}`} highlight="amber" />
             )}
             <Row label={locale === 'zh' ? '付款方式' : 'Payment method'} value={booking.paymentMethod || '—'} />
           </div>
