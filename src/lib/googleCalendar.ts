@@ -410,14 +410,26 @@ function buildEventDescription(b: BookingRecord, customerName?: string, notes?: 
 /** Push a booking to Google Calendar. Returns the created event id, or
  *  null if Google is not connected (silent no-op so booking still succeeds).
  *  Call after `createBooking()`; persist the returned id back on the booking
- *  via a follow-up update. */
+ *  via a follow-up update.
+ *
+ *  Heidi's "先到先得" rule (2026-05-23): only paid bookings hold a slot
+ *  on the public calendars. Awaiting-payment / pending / draft bookings
+ *  must NOT create events — otherwise CS sees a "booked" slot for
+ *  someone who hasn't actually paid and turns away real customers. */
 export async function pushBookingToCalendar(
   redirectUri: string,
   input: PushBookingInput,
 ): Promise<string | null> {
+  const b = input.booking;
+  const isPaid =
+    b.status === 'confirmed'
+    || b.status === 'completed'
+    || !!b.paymentVerifiedAt;
+  if (!isPaid) return null;
+
   const stored = await getStoredToken();
   if (!stored) return null;
-  const calKey = venueIdToCalendarKey(input.booking.venueId);
+  const calKey = venueIdToCalendarKey(b.venueId);
   if (!calKey) return null;
   const calendarId = getCalendarIds()[calKey];
   if (!calendarId) return null;
