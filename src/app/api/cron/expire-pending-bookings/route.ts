@@ -42,26 +42,37 @@ export async function GET(request: NextRequest) {
 
   const now = Date.now();
 
+  // Single-field where queries only — combining `status` + `pendingExpiresAt`
+  // would require a composite index that this project doesn't have set up.
+  // Filter the deadline in JS instead; the result sets are small (<100 rows
+  // each) so the in-memory pass is cheap.
   const pendingSnap = await adminDb
     .collection('bookings')
     .where('status', '==', 'pending')
-    .where('pendingExpiresAt', '<=', now)
     .get();
 
   const offlineAwaitingSnap = await adminDb
     .collection('bookings')
     .where('status', '==', 'awaiting_payment')
-    .where('pendingExpiresAt', '<=', now)
     .get();
+
+  // In-JS deadline filter — keep only bookings whose pendingExpiresAt
+  // has already elapsed (or is missing, in which case they're legacy
+  // rows that should also be swept).
+  const isExpired = (d: { data: () => { pendingExpiresAt?: unknown } }) => {
+    const ts = d.data().pendingExpiresAt;
+    if (typeof ts !== 'number') return true; // no deadline ⇒ treat as expired
+    return ts <= now;
+  };
 
   const flipped: string[] = [];
   const candidates = [
-    ...pendingSnap.docs,
+    ...pendingSnap.docs.filter(isExpired),
     // Sweep ANY paymentMethod (incl. Stripe — its checkout session
     // expires at the same 30-min mark). Skip only when the customer
     // already uploaded an offline receipt; those rows go to admin
     // review on /admin/receipts and shouldn't auto-flip.
-    ...offlineAwaitingSnap.docs.filter((d) => !d.data().receiptUrl),
+    ...offlineAwaitingSnap.docs.filter((d) => isExpired(d) && !d.data().receiptUrl),
   ];
 
   const origin = request.nextUrl.origin;
