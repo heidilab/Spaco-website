@@ -392,10 +392,12 @@ function buildEventDescription(b: BookingRecord, customerName?: string, notes?: 
   if (customerName) lines.push(`姓名: ${customerName}`);
   if (b.whatsappPhone) lines.push(`WhatsApp: ${formatPhone(b.whatsappPhone)}`);
   if (b.guestCount) {
+    // English format on gcal description per Heidi's 2026-05-23 spec.
+    // Example: "No. of people: 15 (13 adults + 2 kids)".
     const split = (b.adultCount ?? 0) > 0 || (b.childCount ?? 0) > 0
-      ? ` (${b.adultCount ?? b.guestCount} 成人${(b.childCount ?? 0) > 0 ? ` + ${b.childCount} 小童` : ''})`
+      ? ` (${b.adultCount ?? b.guestCount} adults${(b.childCount ?? 0) > 0 ? ` + ${b.childCount} kids` : ''})`
       : '';
-    lines.push(`人數: ${b.guestCount}${split}`);
+    lines.push(`No. of people: ${b.guestCount}${split}`);
   }
   if (b.hasBYOFood) lines.push('BYO food');
   const addOnsLine = formatAddOnsForStaff(b.addOns);
