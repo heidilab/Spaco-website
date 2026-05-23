@@ -59,6 +59,13 @@ export interface AddOnOptions {
   flavors?: string[];
   /** Whether the customer wants staff setup (+$180 flat). */
   staffSetup?: boolean;
+  /** Admin-defined name for custom add-on entries (id starts with
+   *  `custom-`). Customers can't add these; admin enters their own
+   *  description here. Shown on the booking detail page + Google
+   *  Calendar description + receipts. */
+  customName?: string;
+  /** Admin-defined flat price in HK$ for custom add-on entries. */
+  customPrice?: number;
 }
 
 export interface BookingState {

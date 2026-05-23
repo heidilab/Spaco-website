@@ -1,4 +1,4 @@
-import { Venue, AddOn } from '@/types';
+import { Venue, AddOn, AddOnOptions } from '@/types';
 
 // Add-on definitions for the booking UI
 export const addOns: AddOn[] = [
@@ -154,11 +154,19 @@ export function getShishaFlavorLabel(variantId: string, locale: 'zh' | 'en' = 'e
  *  surface pipe count + flavor breakdown + setup option:
  *  "Shisha 水煙 (2支/3頭: A·芒果菠蘿×2, C·提子×1, +人手setup)". */
 export function formatAddOnsForStaff(
-  bookingAddOns: { id: string; quantity: number; options?: { pipes?: number; flavors?: string[]; staffSetup?: boolean } }[] | undefined,
+  bookingAddOns: { id: string; quantity: number; options?: AddOnOptions }[] | undefined,
   locale: 'zh' | 'en' = 'en',
 ): string {
   if (!bookingAddOns || bookingAddOns.length === 0) return '';
   return bookingAddOns.map((a) => {
+    // Admin-defined custom add-on. Use the stored customName directly
+    // — there's no catalog entry to look up. Suffix the price so staff
+    // / gcal description tells the reader what was charged for.
+    if (a.id.startsWith('custom-')) {
+      const name = a.options?.customName?.trim() || (locale === 'zh' ? '自訂項目' : 'Custom item');
+      const price = a.options?.customPrice ?? 0;
+      return price > 0 ? `${name} ($${price.toLocaleString()})` : name;
+    }
     if (a.id !== 'shisha') {
       // Per-head packages (BBQ / hotpot / drinks) charge against the
       // booking's full guest count — the stored quantity is just a
@@ -377,7 +385,7 @@ export function calculatePricing(
   isWeekend: boolean,
   hours: number,
   guests: number,
-  selectedAddOns: { id: string; quantity: number; options?: { pipes?: number; flavors?: string[]; staffSetup?: boolean } }[],
+  selectedAddOns: { id: string; quantity: number; options?: AddOnOptions }[],
   /** Optional adult/child split. If omitted, the entire `guests` count
    *  is treated as adults (legacy bookings) and full price applies. */
   childCount: number = 0,
@@ -502,6 +510,26 @@ export function calculatePricing(
         },
         amount: cost,
       });
+      continue;
+    }
+
+    // Admin-only "custom" add-on. Id prefix `custom-` lets the booking
+    // hold multiple custom items in parallel; each carries its own
+    // name + flat price in `options.customName` / `options.customPrice`.
+    // Customer-facing pages never render these (the catalog has no
+    // `custom-…` entries), so this branch is exclusively driven by
+    // admin's manual additions in the booking-link / booking-manage
+    // flows.
+    if (selected.id.startsWith('custom-')) {
+      const customName = selected.options?.customName?.trim() || '自訂項目';
+      const customPrice = Math.max(0, Math.floor(selected.options?.customPrice ?? 0));
+      if (customPrice > 0) {
+        addOnTotal += customPrice;
+        breakdown.push({
+          label: { zh: customName, en: customName },
+          amount: customPrice,
+        });
+      }
       continue;
     }
 

@@ -62,6 +62,11 @@ export default function AdminNewBookingPage() {
   const guestCount = adultCount + childCount;
   const adultEquiv = adultCount + 0.5 * childCount;
   const [addOnQty, setAddOnQty] = useState<Record<string, number>>({});
+  // Admin-defined custom add-ons (name + price). Same shape as on the
+  // booking-edit page; entries get a `custom-<timestamp>` id and the
+  // customName + customPrice live on options. Customers never see
+  // these — staff use them for ad-hoc charges like 「4位代燒員」.
+  const [customAddOns, setCustomAddOns] = useState<Array<{ id: string; name: string; price: number }>>([]);
   const [hasBYOFood, setHasBYOFood] = useState<boolean>(false);
 
   // Shisha-specific options — flavors are picked per head; pipes are
@@ -180,23 +185,32 @@ export default function AdminNewBookingPage() {
   // later. Flavor strings can be empty (admin postpones the pick);
   // empty entries are dropped from the saved options array so the
   // booking detail page can show a clean "awaiting flavors" hint.
-  const selectedAddOnList = Object.entries(addOnQty)
-    .filter(([, q]) => q > 0)
-    .map(([id, quantity]) => {
-      if (id === 'shisha') {
-        const flavors = (shishaOptions.flavors || []).filter((f) => !!f);
-        return {
-          id,
-          quantity,
-          options: {
-            pipes: shishaOptions.pipes,
-            flavors,
-            staffSetup: shishaOptions.staffSetup,
-          },
-        };
-      }
-      return { id, quantity };
-    });
+  const selectedAddOnList = [
+    ...Object.entries(addOnQty)
+      .filter(([, q]) => q > 0)
+      .map(([id, quantity]) => {
+        if (id === 'shisha') {
+          const flavors = (shishaOptions.flavors || []).filter((f) => !!f);
+          return {
+            id,
+            quantity,
+            options: {
+              pipes: shishaOptions.pipes,
+              flavors,
+              staffSetup: shishaOptions.staffSetup,
+            },
+          };
+        }
+        return { id, quantity };
+      }),
+    ...customAddOns
+      .filter((c) => c.price > 0 && c.name.trim() !== '')
+      .map((c) => ({
+        id: c.id,
+        quantity: 1,
+        options: { customName: c.name.trim(), customPrice: Math.max(0, Math.floor(c.price)) },
+      })),
+  ];
 
   // Resolve the picked package (if any) so the venue + hours lock-ins
   // and the override pricing logic share a single source of truth.
@@ -877,6 +891,75 @@ export default function AdminNewBookingPage() {
                 );
               })}
             </div>
+
+            {/* Custom add-ons — admin-defined name + flat price. Each
+             *  entry gets a `custom-<timestamp>-<idx>` id. customName +
+             *  customPrice are stored on options; pricing.ts handles
+             *  them via the `custom-` prefix branch. */}
+            <div className="mt-4 pt-3 border-t border-dashed border-charcoal/15">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
+                  {locale === 'zh' ? '自訂項目' : 'Custom items'}
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const newId = `custom-${Date.now()}-${customAddOns.length}`;
+                    setCustomAddOns((prev) => [...prev, { id: newId, name: '', price: 0 }]);
+                  }}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-pill bg-accent/10 text-accent text-[11px] font-semibold hover:bg-accent/20"
+                >
+                  <Plus size={12} />
+                  {locale === 'zh' ? '新增自訂項目' : 'Add custom item'}
+                </button>
+              </div>
+              {customAddOns.length === 0 ? (
+                <p className="text-[11px] text-ink-soft/70 italic">
+                  {locale === 'zh'
+                    ? '冇自訂項目。撳上面個「新增」掣可以加一條（例如：4位代燒員 $1500、額外清潔費 $300）。'
+                    : 'No custom items. Click "Add" to define one.'}
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {customAddOns.map((c, idx) => (
+                    <div key={c.id} className="grid grid-cols-[1fr,110px,32px] gap-2 items-center">
+                      <input
+                        type="text"
+                        value={c.name}
+                        onChange={(e) => {
+                          const next = [...customAddOns];
+                          next[idx] = { ...next[idx], name: e.target.value };
+                          setCustomAddOns(next);
+                        }}
+                        placeholder={locale === 'zh' ? '項目名稱（例：4位代燒員）' : 'Item name'}
+                        className="px-2 py-1.5 rounded-lg border border-charcoal/15 text-xs bg-white"
+                      />
+                      <input
+                        type="number"
+                        min={0}
+                        value={c.price === 0 ? '' : c.price}
+                        onChange={(e) => {
+                          const next = [...customAddOns];
+                          next[idx] = { ...next[idx], price: Math.max(0, parseInt(e.target.value, 10) || 0) };
+                          setCustomAddOns(next);
+                        }}
+                        placeholder="HK$"
+                        className="px-2 py-1.5 rounded-lg border border-charcoal/15 text-xs bg-white text-right"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setCustomAddOns(customAddOns.filter((_, i) => i !== idx))}
+                        className="w-7 h-7 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 flex items-center justify-center"
+                        title={locale === 'zh' ? '刪除' : 'Remove'}
+                      >
+                        <XIcon size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <label className="flex items-center gap-2 mt-4 text-sm cursor-pointer">
               <input type="checkbox" checked={hasBYOFood} onChange={(e) => setHasBYOFood(e.target.checked)} className="w-4 h-4" />
               <span className="text-ink-soft">{locale === 'zh' ? '客人會自攜食物（BYO）' : 'Customer is bringing their own food (BYO)'}</span>

@@ -29,7 +29,7 @@ import { buildWhatsAppLink, formatHkPhone } from '@/lib/whatsapp';
 import {
   ArrowLeft, CalendarDays, Clock, Users, Save, MessageCircle,
   Mail, Phone, User as UserIcon, Sparkles, AlertCircle, CalendarPlus, Package,
-  Calculator, Plus, Minus, Check, KeyRound, Send,
+  Calculator, Plus, Minus, Check, KeyRound, Send, X as XIcon,
 } from 'lucide-react';
 import { getSiteContent } from '@/lib/content';
 import { resendLockPasscode, setManualLockPasscode, tryGenerateLockPasscode } from '@/lib/lockPasscodeClient';
@@ -84,6 +84,12 @@ export default function AdminBookingDetailPage() {
   // recompute in lib/firestore.ts so the booking's subtotal /
   // securityDeposit / balanceDue all reflect the change.
   const [addOnQty, setAddOnQty] = useState<Record<string, number>>({});
+  // Admin-defined custom add-ons (name + price). Each entry has a
+  // unique `id` of the form `custom-<timestamp>` so the booking can
+  // hold multiple in parallel. Customers never see these (they're not
+  // in the public catalog) — admin uses them for ad-hoc charges like
+  // 「4位代燒員」 or 「額外清潔費」 that aren't pre-defined.
+  const [customAddOns, setCustomAddOns] = useState<Array<{ id: string; name: string; price: number }>>([]);
   // Shisha sub-options (pipes / per-head flavors / staff setup). Filling
   // these in is what Heidi was missing on admin-issued links — admin
   // can leave flavors blank when creating and finalise here after the
@@ -182,10 +188,20 @@ export default function AdminBookingDetailPage() {
         // Hydrate add-on quantities from the booking so the edit panel
         // reflects what the customer originally booked.
         const initialQty: Record<string, number> = {};
+        const initialCustom: Array<{ id: string; name: string; price: number }> = [];
         for (const a of b.addOns || []) {
-          initialQty[a.id] = a.quantity;
+          if (a.id.startsWith('custom-')) {
+            initialCustom.push({
+              id: a.id,
+              name: a.options?.customName || '',
+              price: Math.max(0, a.options?.customPrice ?? 0),
+            });
+          } else {
+            initialQty[a.id] = a.quantity;
+          }
         }
         setAddOnQty(initialQty);
+        setCustomAddOns(initialCustom);
         // Hydrate the deposit override input from the stored value so
         // saving with no edits leaves the deposit alone.
         setDepositOverride(String(b.pricing.securityDeposit ?? 0));
@@ -233,6 +249,63 @@ export default function AdminBookingDetailPage() {
     });
   }, [shishaHeadsHook]);
 
+  // Auto-sync 消費小計 to the live formula value whenever admin edits
+  // add-ons / custom items / shisha options / guest count. Heidi's
+  // spec: "幫客人新增了附加服務，'消費小計'應該即時自動調整為最新嘅
+  // 價錢". Admin can still type a manual override afterward; the next
+  // add-on change will re-sync. Deposit deliberately doesn't auto-sync
+  // — the amber 'tier-crossed' banner asks admin to choose.
+  const bookingForFormula = booking;
+  useEffect(() => {
+    if (!bookingForFormula) return;
+    const liveVenue = venues.find((v) => v.id === venueId);
+    if (!liveVenue) return;
+    const liveAddOns = [
+      ...Object.entries(addOnQty)
+        .filter(([, q]) => q > 0)
+        .map(([id, quantity]) => {
+          if (id === 'shisha') {
+            const flavors = (shishaOptions.flavors || []).filter((f) => !!f);
+            return {
+              id,
+              quantity,
+              options: {
+                pipes: shishaOptions.pipes,
+                flavors,
+                staffSetup: shishaOptions.staffSetup,
+              },
+            };
+          }
+          return { id, quantity };
+        }),
+      ...customAddOns
+        .filter((c) => c.price > 0 && c.name.trim() !== '')
+        .map((c) => ({
+          id: c.id,
+          quantity: 1,
+          options: { customName: c.name.trim(), customPrice: Math.max(0, Math.floor(c.price)) },
+        })),
+    ];
+    try {
+      const live = calculatePricing(
+        liveVenue,
+        bookingForFormula.isWeekend,
+        bookingForFormula.hours,
+        guestCount,
+        liveAddOns,
+        bookingForFormula.childCount ?? 0,
+      );
+      setSubtotalOverride(String(live.subtotal));
+    } catch { /* venue mismatch — keep current value */ }
+    // We intentionally omit setSubtotalOverride from deps — it's a
+    // setter (stable identity) and reading bookingForFormula via the
+    // capture is safe because it's the most recent booking from state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    addOnQty, customAddOns, shishaOptions, guestCount, venueId,
+    bookingForFormula,
+  ]);
+
   if (!canAccess) {
     return (
       <div className="text-center py-20 text-muted">
@@ -273,7 +346,20 @@ export default function AdminBookingDetailPage() {
       || !!storedShisha?.options?.staffSetup !== shishaOptions.staffSetup
       || flavorsLine(storedFlavors) !== flavorsLine(shishaOptions.flavors)
     );
-  const addOnsDirty = qtyDirty || shishaDirty;
+  // Custom add-ons dirty: compare current customAddOns array against
+  // what's stored. Any add / remove / rename / reprice flips dirty.
+  const storedCustomLine = (b: BookingRecord) =>
+    (b.addOns || [])
+      .filter((a) => a.id.startsWith('custom-'))
+      .map((a) => `${a.id}|${a.options?.customName || ''}|${a.options?.customPrice ?? 0}`)
+      .sort()
+      .join('\n');
+  const liveCustomLine = customAddOns
+    .map((c) => `${c.id}|${c.name}|${c.price}`)
+    .sort()
+    .join('\n');
+  const customDirty = liveCustomLine !== storedCustomLine(booking);
+  const addOnsDirty = qtyDirty || shishaDirty || customDirty;
 
   const depositOverrideNum = parseFloat(depositOverride);
   const depositDirty =
@@ -328,23 +414,39 @@ export default function AdminBookingDetailPage() {
       // BookingRecord (and the gcal description + price recompute) all
       // see the right tier.
       const newAddOns = addOnsDirty
-        ? Object.entries(addOnQty)
-            .filter(([, q]) => q > 0)
-            .map(([id, quantity]) => {
-              if (id === 'shisha') {
-                const flavors = (shishaOptions.flavors || []).filter((f) => !!f);
-                return {
-                  id,
-                  quantity,
-                  options: {
-                    pipes: shishaOptions.pipes,
-                    flavors,
-                    staffSetup: shishaOptions.staffSetup,
-                  },
-                };
-              }
-              return { id, quantity };
-            })
+        ? [
+            ...Object.entries(addOnQty)
+              .filter(([, q]) => q > 0)
+              .map(([id, quantity]) => {
+                if (id === 'shisha') {
+                  const flavors = (shishaOptions.flavors || []).filter((f) => !!f);
+                  return {
+                    id,
+                    quantity,
+                    options: {
+                      pipes: shishaOptions.pipes,
+                      flavors,
+                      staffSetup: shishaOptions.staffSetup,
+                    },
+                  };
+                }
+                return { id, quantity };
+              }),
+            // Admin-defined custom add-ons get appended with their
+            // name + price baked into `options`. We drop entries whose
+            // price ≤ 0 OR name is blank (admin-added rows that were
+            // never filled out) to keep the booking clean.
+            ...customAddOns
+              .filter((c) => c.price > 0 && c.name.trim() !== '')
+              .map((c) => ({
+                id: c.id,
+                quantity: 1,
+                options: {
+                  customName: c.name.trim(),
+                  customPrice: Math.max(0, Math.floor(c.price)),
+                },
+              })),
+          ]
         : undefined;
       await updateBookingDateTime(booking.id, {
         date,
@@ -389,12 +491,16 @@ export default function AdminBookingDetailPage() {
       // Refresh
       const fresh = await getBooking(booking.id);
       if (fresh) setBooking(fresh);
-      // Open the payment / followup modal so admin can record any
-      // top-up payment + send the customer the update email. Gcal +
-      // blocked_slots are already synced above regardless of whether
-      // admin uses the modal.
-      setShowPaymentModal(true);
-      setFollowupMsg(null);
+      // Per Heidi's spec post-#WIiQYL2I: save does NOT pop up the
+      // payment modal anymore. Pricing recompute + gcal sync happen
+      // automatically; admin records offline payments separately
+      // via the dedicated 「已於線下付款」 button when the customer
+      // actually pays. The Stripe path is webhook-only (no admin
+      // entry), and the 預訂未付尾數 card surfaces the payment link
+      // + WhatsApp share so the customer can complete payment
+      // through Stripe themselves.
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
     } catch (err) {
       console.error(err);
       const msg = err instanceof Error ? err.message : String(err);
@@ -555,43 +661,56 @@ export default function AdminBookingDetailPage() {
    *  re-sends the customer confirmation email, and updates the
    *  matching Google Calendar event with the new schedule.
    *
-   *  Payment is split into rental + deposit components so the booking's
-   *  pricing.subtotal (rental + add-ons) and pricing.securityDeposit
-   *  can be patched accurately. Without the split, downstream things
-   *  like loyalty-point credit at deposit-settlement time would be off. */
-  async function handleFollowup(opts: { skipPayment?: boolean } = {}) {
+   *  Records an offline payment (FPS / bank / cash / other) without
+   *  inflating pricing.* — pricing was already locked by the booking
+   *  edit save; this only logs what the customer paid and updates
+   *  balanceDue. After write, also fires a gcal-only sync so the
+   *  event description reflects the new balance line. */
+  async function handleRecordOfflinePayment() {
     if (!booking || !user) return;
     setFollowupBusy(true);
     setFollowupMsg(null);
     try {
-      const body: Record<string, unknown> = { bookingId: booking.id };
       const rental = parseFloat(payRentalAmount) || 0;
       const addOn = parseFloat(payAddOnAmount) || 0;
       const dep = parseFloat(payDepositAmount) || 0;
-      if (!opts.skipPayment && (rental + addOn + dep) > 0) {
-        body.payment = {
+      const total = rental + addOn + dep;
+      if (total <= 0) {
+        setFollowupMsg({
+          kind: 'err',
+          text: locale === 'zh' ? '請輸入金額' : 'Enter an amount',
+        });
+        setFollowupBusy(false);
+        return;
+      }
+      const res = await fetch('/api/admin/booking-record-offline-payment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookingId: booking.id,
           rentalAmount: rental,
           addOnAmount: addOn,
           depositAmount: dep,
           method: payMethod,
           note: payNote.trim() || undefined,
           recordedBy: user.uid,
-        };
-      }
-      const res = await fetch('/api/admin/booking-edit-followup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || 'Followup failed');
+      if (!res.ok) throw new Error(data?.error || 'Record failed');
+      // Mirror booking-edit-followup gcal-only sync so the calendar
+      // event description's balance line updates.
+      fetch('/api/admin/booking-edit-followup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookingId: booking.id, syncOnly: true }),
+      }).catch((err) => console.warn('[offline-pay gcal sync] failed:', err));
       setFollowupMsg({
         kind: 'ok',
-        text: locale === 'zh' ? '✓ 已重發 email + 更新 Google 日曆' : '✓ Email resent + Google Calendar updated',
+        text: locale === 'zh' ? '✓ 已記錄付款' : '✓ Payment recorded',
       });
       const fresh = await getBooking(booking.id);
       if (fresh) setBooking(fresh);
-      // Reset payment form
       setPayRentalAmount('');
       setPayAddOnAmount('');
       setPayDepositAmount('');
@@ -964,6 +1083,76 @@ export default function AdminBookingDetailPage() {
                   })}
                 </div>
 
+                {/* Custom add-ons — admin-defined name + flat price. Each
+                 *  entry gets a `custom-<timestamp>-<idx>` id so the
+                 *  booking can hold multiple. customName + customPrice
+                 *  live on the entry's `options`. Pricing math + gcal
+                 *  description handle these via the `custom-` prefix
+                 *  branch in lib/pricing.ts. */}
+                <div className="pt-2 mt-2 border-t border-dashed border-charcoal/15">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <h4 className="text-xs font-semibold text-ink-soft uppercase tracking-wider">
+                      {locale === 'zh' ? '自訂項目' : 'Custom items'}
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newId = `custom-${Date.now()}-${customAddOns.length}`;
+                        setCustomAddOns((prev) => [...prev, { id: newId, name: '', price: 0 }]);
+                      }}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-pill bg-accent/10 text-accent text-[11px] font-semibold hover:bg-accent/20"
+                    >
+                      <Plus size={12} />
+                      {locale === 'zh' ? '新增自訂項目' : 'Add custom item'}
+                    </button>
+                  </div>
+                  {customAddOns.length === 0 ? (
+                    <p className="text-[11px] text-ink-soft/70 italic">
+                      {locale === 'zh'
+                        ? '冇自訂項目。撳上面個「新增」掣可以加一條（例如：4位代燒員 $1500、額外清潔費 $300）。'
+                        : 'No custom items. Click "Add" to define one (e.g. 4 BBQ chefs $1500, extra cleaning $300).'}
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {customAddOns.map((c, idx) => (
+                        <div key={c.id} className="grid grid-cols-[1fr,110px,32px] gap-2 items-center">
+                          <input
+                            type="text"
+                            value={c.name}
+                            onChange={(e) => {
+                              const next = [...customAddOns];
+                              next[idx] = { ...next[idx], name: e.target.value };
+                              setCustomAddOns(next);
+                            }}
+                            placeholder={locale === 'zh' ? '項目名稱（例：4位代燒員）' : 'Item name (e.g. 4 BBQ chefs)'}
+                            className="px-2 py-1.5 rounded-lg border border-charcoal/15 text-xs bg-white"
+                          />
+                          <input
+                            type="number"
+                            min={0}
+                            value={c.price === 0 ? '' : c.price}
+                            onChange={(e) => {
+                              const next = [...customAddOns];
+                              next[idx] = { ...next[idx], price: Math.max(0, parseInt(e.target.value, 10) || 0) };
+                              setCustomAddOns(next);
+                            }}
+                            placeholder="HK$"
+                            className="px-2 py-1.5 rounded-lg border border-charcoal/15 text-xs bg-white text-right"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setCustomAddOns(customAddOns.filter((_, i) => i !== idx))}
+                            className="w-7 h-7 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 flex items-center justify-center"
+                            title={locale === 'zh' ? '刪除' : 'Remove'}
+                          >
+                            <XIcon size={12} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 {/* Shisha sub-options — only renders when shisha is selected.
                  *  Lets admin finalise pipe count + per-head flavors +
                  *  staff-setup AFTER the booking was created (Heidi's
@@ -1089,23 +1278,32 @@ export default function AdminBookingDetailPage() {
                   // Compute the suggested tier deposit against the
                   // CURRENT (post-edit) subtotal so the banner reflects
                   // what admin's about to save, not what's stored.
-                  const liveAddOns = Object.entries(addOnQty)
-                    .filter(([, q]) => q > 0)
-                    .map(([id, quantity]) => {
-                      if (id === 'shisha') {
-                        const flavors = (shishaOptions.flavors || []).filter((f) => !!f);
-                        return {
-                          id,
-                          quantity,
-                          options: {
-                            pipes: shishaOptions.pipes,
-                            flavors,
-                            staffSetup: shishaOptions.staffSetup,
-                          },
-                        };
-                      }
-                      return { id, quantity };
-                    });
+                  const liveAddOns = [
+                    ...Object.entries(addOnQty)
+                      .filter(([, q]) => q > 0)
+                      .map(([id, quantity]) => {
+                        if (id === 'shisha') {
+                          const flavors = (shishaOptions.flavors || []).filter((f) => !!f);
+                          return {
+                            id,
+                            quantity,
+                            options: {
+                              pipes: shishaOptions.pipes,
+                              flavors,
+                              staffSetup: shishaOptions.staffSetup,
+                            },
+                          };
+                        }
+                        return { id, quantity };
+                      }),
+                    ...customAddOns
+                      .filter((c) => c.price > 0 && c.name.trim() !== '')
+                      .map((c) => ({
+                        id: c.id,
+                        quantity: 1,
+                        options: { customName: c.name.trim(), customPrice: Math.max(0, Math.floor(c.price)) },
+                      })),
+                  ];
                   const liveVenue = venues.find((v) => v.id === venueId);
                   let suggestedTier: number | null = null;
                   let suggestedSubtotal = 0;
@@ -1588,18 +1786,21 @@ export default function AdminBookingDetailPage() {
         </div>
       </div>
 
-      {/* Post-edit followup modal — record top-up payment, re-send
-       *  customer email, sync Google Calendar event */}
+      {/* 已於線下付款 — admin records the FPS / bank / cash / other
+       *  payment the customer made offline. Does NOT inflate
+       *  pricing.* (Heidi's spec post-#WIiQYL2I); only appends to
+       *  payments[] + recomputes balanceDue. Stripe payments are
+       *  webhook-only, never entered here. */}
       {showPaymentModal && (
         <div className="fixed inset-0 z-50 bg-charcoal/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-glass-lg max-w-md w-full p-6">
             <h3 className="font-bold text-lg mb-1">
-              {locale === 'zh' ? '修改已儲存' : 'Edit saved'}
+              {locale === 'zh' ? '已於線下付款' : 'Offline payment'}
             </h3>
             <p className="text-sm text-ink-soft mb-4">
               {locale === 'zh'
-                ? '客人有額外付款嗎？確認後會重發 email + 更新 Google 日曆。'
-                : 'Did the customer pay anything extra? On confirm, we re-send the email + update Google Calendar.'}
+                ? '輸入客人實際俾過嘅金額 + 分配（場租 / 附加項目 / 按金）。只會記入付款記錄，唔會改變張單嘅應付金額。'
+                : 'Enter the amount the customer actually paid offline + bucket split. Only logs to payments[]; does not change the bill total.'}
             </p>
 
             <div className="space-y-3 mb-4">
@@ -1716,14 +1917,14 @@ export default function AdminBookingDetailPage() {
 
             <div className="flex gap-2">
               <button
-                onClick={() => handleFollowup({ skipPayment: true })}
+                onClick={() => setShowPaymentModal(false)}
                 disabled={followupBusy}
                 className="flex-1 px-4 py-2.5 rounded-xl bg-white/70 border border-charcoal/15 text-sm font-medium hover:bg-white disabled:opacity-40"
               >
-                {locale === 'zh' ? '冇額外付款' : 'No payment'}
+                {locale === 'zh' ? '取消' : 'Cancel'}
               </button>
               <button
-                onClick={() => handleFollowup()}
+                onClick={() => handleRecordOfflinePayment()}
                 disabled={followupBusy || (
                   (parseFloat(payRentalAmount) || 0)
                   + (parseFloat(payAddOnAmount) || 0)
@@ -1734,17 +1935,11 @@ export default function AdminBookingDetailPage() {
                 {followupBusy ? '…' : (
                   <>
                     <Check size={14} />
-                    {locale === 'zh' ? '記錄並通知' : 'Record + Notify'}
+                    {locale === 'zh' ? '記錄付款' : 'Record payment'}
                   </>
                 )}
               </button>
             </div>
-            <button
-              onClick={() => setShowPaymentModal(false)}
-              className="w-full mt-2 text-xs text-ink-soft hover:text-ink"
-            >
-              {locale === 'zh' ? '稍後再處理' : 'Skip for now'}
-            </button>
           </div>
         </div>
       )}
@@ -2029,22 +2224,11 @@ function OutstandingBalanceSection({
         )}
 
         <button
-          onClick={handleSettleBalance}
-          disabled={settling}
-          className="px-4 py-2 bg-emerald-500 text-white rounded-lg text-sm font-medium hover:bg-emerald-600 disabled:opacity-50 flex items-center gap-1.5"
+          onClick={onRecordPaymentClick}
+          className="px-4 py-2 bg-emerald-500 text-white rounded-lg text-sm font-medium hover:bg-emerald-600 flex items-center gap-1.5"
         >
           <Check size={14} />
-          {settling
-            ? (locale === 'zh' ? '處理中…' : 'Settling…')
-            : (locale === 'zh' ? '標記尾數已收' : 'Mark balance as paid')}
-        </button>
-
-        <button
-          onClick={onRecordPaymentClick}
-          className="px-4 py-2 bg-white border border-charcoal/15 text-ink rounded-lg text-sm font-medium hover:bg-cream flex items-center gap-1.5"
-        >
-          <Calculator size={14} />
-          {locale === 'zh' ? '記錄額外付款（會加入賬單）' : 'Record extra charge (adds to bill)'}
+          {locale === 'zh' ? '已於線下付款' : 'Record offline payment'}
         </button>
 
         <button
@@ -2068,8 +2252,8 @@ function OutstandingBalanceSection({
 
       <p className="text-[11px] text-ink-soft mt-3 leading-relaxed">
         {locale === 'zh'
-          ? '※「標記尾數已收」係客人確認交咗尾數（線下/匯款/或者你已喺收據頁批核咗）後撳，只會新增付款記錄同清零尾數，唔會加大張單。「記錄額外付款」係用嚟收新增嘅費用，例如延長場地、額外收費，會將金額加埋落小計。「重新計算金額」係用嚟修補舊有預訂—套用最新政策（例如已 paid booking 加 add-on 唔再 auto-bump 按金 tier）後 refresh 金額。'
-          : '※ "Mark balance as paid" — customer paid the existing balance; adds payments[] entry + clears balanceDue, no bill increase. "Record extra charge" — new charges (extended hours, etc.) inflate the bill. "Recalculate" — re-run pricing with the latest policy; useful to repair old bookings whose deposit was wrongly bumped before the sticky-deposit fix.'}
+          ? '※「已於線下付款」用嚟記錄客人嘅 FPS / 銀行 / 現金 / 其他 付款，輸入金額 + 場租/附加項目/按金分配；只會記入付款記錄，唔會改變張單嘅應付總額。客人經連結用 Stripe 付款會由系統自動偵測，唔需要 admin 手動輸入。「重新計算金額」係用嚟修補舊有預訂—套用最新政策（例如已 paid booking 加 add-on 唔再 auto-bump 按金 tier）後 refresh 金額。'
+          : '※ "Record offline payment" — log a customer\'s FPS / bank / cash / other payment with bucket split; appends to payments[] only, does not change the bill total. Stripe payments via the customer link are detected automatically by the webhook. "Recalculate" — re-run pricing with the latest policy.'}
       </p>
     </div>
   );
