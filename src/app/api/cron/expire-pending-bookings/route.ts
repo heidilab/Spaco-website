@@ -21,10 +21,14 @@ export const dynamic = 'force-dynamic';
  *   a) `status='pending'` legacy rows from before the 2026-05 rewrite
  *      (customer-flow bookings now skip pending entirely). Treat them the
  *      same as offline-payment lapse so they don't linger.
- *   b) `status='awaiting_payment'` for offline payments (FPS / bank) where
- *      the customer never uploaded a receipt within the 30-min hold. Stripe
- *      bookings stay in awaiting_payment until the checkout webhook
- *      resolves them.
+ *   b) `status='awaiting_payment'` for ANY paymentMethod once
+ *      `pendingExpiresAt` lapses — including Stripe. Heidi's 2026-05-23
+ *      "先到先得" rule: no unpaid booking holds a slot past 30 min.
+ *      The Stripe checkout session is configured with the same 30-min
+ *      expiry (/api/stripe/checkout) so the customer can't pay through
+ *      a stale link after we sweep. Skip rows where the customer
+ *      already uploaded an offline receipt — those go to admin review,
+ *      not auto-flip.
  *
  * Runs every 15 minutes via Vercel cron. Idempotent — re-running on the
  * same expired booking is a no-op (status check filters them out).
@@ -53,13 +57,11 @@ export async function GET(request: NextRequest) {
   const flipped: string[] = [];
   const candidates = [
     ...pendingSnap.docs,
-    // Offline-payment only: skip Stripe (its checkout webhook owns the state),
-    // and skip bookings where a receipt has already been uploaded (those go
-    // to admin review, not auto-flip).
-    ...offlineAwaitingSnap.docs.filter((d) => {
-      const data = d.data();
-      return data.paymentMethod !== 'stripe' && !data.receiptUrl;
-    }),
+    // Sweep ANY paymentMethod (incl. Stripe — its checkout session
+    // expires at the same 30-min mark). Skip only when the customer
+    // already uploaded an offline receipt; those rows go to admin
+    // review on /admin/receipts and shouldn't auto-flip.
+    ...offlineAwaitingSnap.docs.filter((d) => !d.data().receiptUrl),
   ];
 
   const origin = request.nextUrl.origin;

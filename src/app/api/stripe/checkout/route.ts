@@ -12,8 +12,16 @@ export async function POST(request: NextRequest) {
       isBalancePayment,
     } = await request.json();
 
+    // Stripe's minimum is 30 min from `created`; align with the
+    // booking's 30-min pendingExpiresAt so the checkout link dies at
+    // the same moment the expire-pending-bookings cron flips the
+    // booking to payment_not_completed. Without this, the session
+    // would live 24 h by default and a customer could complete payment
+    // long after the slot was released to someone else.
+    const expiresAt = Math.floor(Date.now() / 1000) + 30 * 60;
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
+      expires_at: expiresAt,
       line_items: [
         {
           price_data: {
