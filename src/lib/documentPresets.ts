@@ -126,6 +126,14 @@ export function buildDefaultNotes(termKey: PaymentTermKey): string {
   return `${PAYMENT_METHOD}\n\n${PAYMENT_TERMS[termKey].text}`;
 }
 
+// ===== Receipt-only thank-you note =====
+// Receipts are issued AFTER the customer has paid in full and the
+// booking has been completed, so the payment terms / "請喺 X 日付清"
+// language is irrelevant — replace the entire notes block with a
+// short bilingual thank-you (Heidi's 2026-05-23 spec).
+export const RECEIPT_THANK_YOU = `We've received your payment, thank you!
+我哋已收到你嘅付款，多謝惠顧！`;
+
 // ===== Standard terms & conditions =====
 export const STANDARD_TERMS = `Kindly provide payment record and WhatsApp to us at +852 9282 3060 for booking confirmation.
 請將付款紀錄 WhatsApp 至 +852 9282 3060 以確認預訂。

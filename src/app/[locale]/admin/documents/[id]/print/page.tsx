@@ -276,8 +276,10 @@ export default function DocumentPrintPage() {
             </div>
           )}
 
-          {/* Terms (full width) */}
-          {doc.terms && (
+          {/* Terms (full width) — receipts skip this block since they're
+           *  issued post-payment and don't carry forward-looking T&Cs
+           *  (Heidi's 2026-05-23 spec). */}
+          {doc.type !== 'receipt' && doc.terms && (
             <div className="pt-5 mt-5 border-t border-ink/10">
               <p className="text-xs text-ink-soft uppercase tracking-wider font-semibold mb-2">{L.terms}</p>
               <p className="text-sm text-ink whitespace-pre-line leading-relaxed">{doc.terms}</p>

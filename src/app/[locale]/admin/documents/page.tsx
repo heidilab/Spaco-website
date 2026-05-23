@@ -40,6 +40,7 @@ import {
   PaymentTermKey,
   buildDefaultNotes,
   STANDARD_TERMS,
+  RECEIPT_THANK_YOU,
 } from '@/lib/documentPresets';
 import { buildCsv, downloadCsv } from '@/lib/csvExport';
 
@@ -395,6 +396,9 @@ export default function AdminDocumentsPage() {
       const suggestedTerm: PaymentTermKey = total >= 10000 ? 'half' : 'full';
       setPaymentTerm(suggestedTerm);
 
+      // Receipts: short thank-you note, blank terms. Quotation /
+      // invoice: full payment-terms boilerplate.
+      const isReceipt = form.type === 'receipt';
       updateForm({
         bookingId: b.id,
         venueId: b.venueId,
@@ -409,7 +413,8 @@ export default function AdminDocumentsPage() {
         items,
         dueDate,
         paidDate,
-        notes: buildDefaultNotes(suggestedTerm),
+        notes: isReceipt ? RECEIPT_THANK_YOU : buildDefaultNotes(suggestedTerm),
+        ...(isReceipt ? { terms: '' } : {}),
       });
       setPickerOpen(false);
     } finally {
@@ -854,7 +859,24 @@ export default function AdminDocumentsPage() {
                     <label className="text-xs text-ink-soft mb-1 block font-semibold uppercase tracking-wider">{locale === 'zh' ? '類型' : 'Type'}</label>
                     <select
                       value={form.type}
-                      onChange={(e) => updateForm({ type: e.target.value as DocumentType })}
+                      onChange={(e) => {
+                        const newType = e.target.value as DocumentType;
+                        // When switching to receipt, swap the payment-
+                        // terms boilerplate for the thank-you note and
+                        // clear the terms column. Switching back to
+                        // quotation / invoice restores boilerplate notes.
+                        if (newType === 'receipt' && form.type !== 'receipt') {
+                          updateForm({ type: newType, notes: RECEIPT_THANK_YOU, terms: '' });
+                        } else if (newType !== 'receipt' && form.type === 'receipt') {
+                          updateForm({
+                            type: newType,
+                            notes: buildDefaultNotes(paymentTerm),
+                            terms: STANDARD_TERMS,
+                          });
+                        } else {
+                          updateForm({ type: newType });
+                        }
+                      }}
                       disabled={!!editingId}
                       className="w-full px-4 py-2.5 rounded-pill bg-white/70 backdrop-blur-md border border-white/80 text-ink disabled:opacity-60"
                     >
@@ -1113,59 +1135,86 @@ export default function AdminDocumentsPage() {
                   </div>
                 </div>
 
-                {/* Payment Terms picker */}
-                <div className="mb-3">
-                  <label className="text-xs text-ink-soft mb-2 block font-semibold uppercase tracking-wider inline-flex items-center gap-1.5">
-                    <Wallet size={12} className="text-pink" />
-                    {locale === 'zh' ? '付款條款 (一鍵套用至附註)' : 'Payment terms (auto-fills notes)'}
-                  </label>
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    {(Object.keys(PAYMENT_TERMS) as PaymentTermKey[]).map((k) => (
+                {/* Payment Terms picker — quotation / invoice only.
+                 *  Receipts are issued post-payment, so the terms
+                 *  picker is hidden and the Notes block is replaced
+                 *  with a short thank-you (Heidi's 2026-05-23 spec). */}
+                {form.type !== 'receipt' && (
+                  <div className="mb-3">
+                    <label className="text-xs text-ink-soft mb-2 block font-semibold uppercase tracking-wider inline-flex items-center gap-1.5">
+                      <Wallet size={12} className="text-pink" />
+                      {locale === 'zh' ? '付款條款 (一鍵套用至附註)' : 'Payment terms (auto-fills notes)'}
+                    </label>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      {(Object.keys(PAYMENT_TERMS) as PaymentTermKey[]).map((k) => (
+                        <button
+                          key={k}
+                          type="button"
+                          onClick={() => applyPaymentTerm(k)}
+                          className={`flex-1 px-4 py-2.5 rounded-2xl text-sm font-medium transition-all border text-left ${
+                            paymentTerm === k
+                              ? 'bg-gradient-pink text-white border-transparent shadow-glow'
+                              : 'bg-white/60 text-ink-soft border-white/80 hover:bg-white/90 hover:text-ink backdrop-blur-md'
+                          }`}
+                        >
+                          {PAYMENT_TERMS[k].label[locale]}
+                        </button>
+                      ))}
                       <button
-                        key={k}
                         type="button"
-                        onClick={() => applyPaymentTerm(k)}
-                        className={`flex-1 px-4 py-2.5 rounded-2xl text-sm font-medium transition-all border text-left ${
-                          paymentTerm === k
-                            ? 'bg-gradient-pink text-white border-transparent shadow-glow'
-                            : 'bg-white/60 text-ink-soft border-white/80 hover:bg-white/90 hover:text-ink backdrop-blur-md'
-                        }`}
+                        onClick={() => updateForm({ terms: STANDARD_TERMS })}
+                        className="px-4 py-2.5 rounded-2xl text-xs font-medium border bg-white/60 text-ink-soft border-white/80 hover:bg-white/90 hover:text-ink backdrop-blur-md"
+                        title={locale === 'zh' ? '套用標準條款' : 'Apply standard terms'}
                       >
-                        {PAYMENT_TERMS[k].label[locale]}
+                        {locale === 'zh' ? '↻ 重設條款' : '↻ Reset terms'}
                       </button>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => updateForm({ terms: STANDARD_TERMS })}
-                      className="px-4 py-2.5 rounded-2xl text-xs font-medium border bg-white/60 text-ink-soft border-white/80 hover:bg-white/90 hover:text-ink backdrop-blur-md"
-                      title={locale === 'zh' ? '套用標準條款' : 'Apply standard terms'}
-                    >
-                      {locale === 'zh' ? '↻ 重設條款' : '↻ Reset terms'}
-                    </button>
+                    </div>
                   </div>
-                </div>
+                )}
 
-                {/* Notes & terms */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
-                  <div>
-                    <label className="text-xs text-ink-soft mb-1 block font-semibold uppercase tracking-wider">{locale === 'zh' ? '附註 Notes (中英對照)' : 'Notes (bilingual)'}</label>
+                {/* Notes & terms — receipt skips the terms column
+                 *  entirely and uses a single thank-you notes box. */}
+                {form.type === 'receipt' ? (
+                  <div className="mb-5">
+                    <label className="text-xs text-ink-soft mb-1 block font-semibold uppercase tracking-wider">
+                      {locale === 'zh' ? '附註 Notes (中英對照)' : 'Notes (bilingual)'}
+                    </label>
                     <textarea
                       value={form.notes}
                       onChange={(e) => updateForm({ notes: e.target.value })}
-                      rows={8}
+                      rows={3}
                       className="w-full px-4 py-3 rounded-2xl bg-white/70 backdrop-blur-md border border-white/80 text-ink text-xs leading-relaxed font-mono"
                     />
+                    <button
+                      type="button"
+                      onClick={() => updateForm({ notes: RECEIPT_THANK_YOU })}
+                      className="mt-2 text-[11px] text-pink hover:underline"
+                    >
+                      {locale === 'zh' ? '↻ 重設為標準感謝語' : '↻ Reset to default thank-you'}
+                    </button>
                   </div>
-                  <div>
-                    <label className="text-xs text-ink-soft mb-1 block font-semibold uppercase tracking-wider">{locale === 'zh' ? '條款 Terms (中英對照)' : 'Terms (bilingual)'}</label>
-                    <textarea
-                      value={form.terms}
-                      onChange={(e) => updateForm({ terms: e.target.value })}
-                      rows={8}
-                      className="w-full px-4 py-3 rounded-2xl bg-white/70 backdrop-blur-md border border-white/80 text-ink text-xs leading-relaxed font-mono"
-                    />
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
+                    <div>
+                      <label className="text-xs text-ink-soft mb-1 block font-semibold uppercase tracking-wider">{locale === 'zh' ? '附註 Notes (中英對照)' : 'Notes (bilingual)'}</label>
+                      <textarea
+                        value={form.notes}
+                        onChange={(e) => updateForm({ notes: e.target.value })}
+                        rows={8}
+                        className="w-full px-4 py-3 rounded-2xl bg-white/70 backdrop-blur-md border border-white/80 text-ink text-xs leading-relaxed font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-ink-soft mb-1 block font-semibold uppercase tracking-wider">{locale === 'zh' ? '條款 Terms (中英對照)' : 'Terms (bilingual)'}</label>
+                      <textarea
+                        value={form.terms}
+                        onChange={(e) => updateForm({ terms: e.target.value })}
+                        rows={8}
+                        className="w-full px-4 py-3 rounded-2xl bg-white/70 backdrop-blur-md border border-white/80 text-ink text-xs leading-relaxed font-mono"
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* Edit history */}
                 {editingId && (
