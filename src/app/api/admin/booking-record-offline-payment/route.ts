@@ -27,9 +27,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json() as {
       bookingId?: string;
-      rentalAmount?: number;
-      addOnAmount?: number;
-      depositAmount?: number;
+      amount?: number;
       method?: 'fps' | 'bank' | 'cash' | 'other';
       note?: string;
       recordedBy?: string;
@@ -45,10 +43,7 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-    const rental = Math.max(0, Math.floor(body.rentalAmount || 0));
-    const addOn = Math.max(0, Math.floor(body.addOnAmount || 0));
-    const dep = Math.max(0, Math.floor(body.depositAmount || 0));
-    const total = rental + addOn + dep;
+    const total = Math.max(0, Math.floor(body.amount || 0));
     if (total <= 0) {
       return NextResponse.json({ error: 'amount must be > 0' }, { status: 400 });
     }
@@ -93,9 +88,12 @@ export async function POST(req: NextRequest) {
 
     const update: Record<string, unknown> = {
       payments: FieldValue.arrayUnion({
-        rentalAmount: rental,
-        addOnAmount: addOn,
-        depositAmount: dep,
+        // Per-bucket allocation is no longer tracked on new offline
+        // payments (Heidi's 2026-05-23 spec) — only the running total
+        // matters. Legacy entries keep their bucket fields.
+        rentalAmount: 0,
+        addOnAmount: 0,
+        depositAmount: 0,
         amount: total,
         method: body.method || 'fps',
         kind: entryKind,

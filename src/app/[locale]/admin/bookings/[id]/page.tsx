@@ -127,9 +127,11 @@ export default function AdminBookingDetailPage() {
   // 按金 (securityDeposit). Heidi's spec: every payment recorded MUST
   // be itemised by bucket so the customer's receipt + finance reports
   // attribute the money correctly.
-  const [payRentalAmount, setPayRentalAmount] = useState<string>('');
-  const [payAddOnAmount, setPayAddOnAmount] = useState<string>('');
-  const [payDepositAmount, setPayDepositAmount] = useState<string>('');
+  // Single amount input for offline payments — Heidi's 2026-05-23
+  // spec: payments[] entries don't track per-bucket allocation, only
+  // the running total matters. The bucket fields on the schema stay
+  // (legacy entries still have them) but new entries get 0s.
+  const [payAmount, setPayAmount] = useState<string>('');
   // Admin-entered payments NEVER include 'stripe' — Stripe payments
   // must be system-detected via the webhook (Heidi's spec:
   // "stripe必須透過連結付款而系統亦必然會自動Detect"). Manually typing
@@ -663,10 +665,7 @@ export default function AdminBookingDetailPage() {
     setFollowupBusy(true);
     setFollowupMsg(null);
     try {
-      const rental = parseFloat(payRentalAmount) || 0;
-      const addOn = parseFloat(payAddOnAmount) || 0;
-      const dep = parseFloat(payDepositAmount) || 0;
-      const total = rental + addOn + dep;
+      const total = parseFloat(payAmount) || 0;
       if (total <= 0) {
         setFollowupMsg({
           kind: 'err',
@@ -680,9 +679,7 @@ export default function AdminBookingDetailPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           bookingId: booking.id,
-          rentalAmount: rental,
-          addOnAmount: addOn,
-          depositAmount: dep,
+          amount: total,
           method: payMethod,
           note: payNote.trim() || undefined,
           recordedBy: user.uid,
@@ -703,9 +700,7 @@ export default function AdminBookingDetailPage() {
       });
       const fresh = await getBooking(booking.id);
       if (fresh) setBooking(fresh);
-      setPayRentalAmount('');
-      setPayAddOnAmount('');
-      setPayDepositAmount('');
+      setPayAmount('');
       setPayNote('');
       setTimeout(() => setShowPaymentModal(false), 1500);
     } catch (err) {
@@ -1637,9 +1632,7 @@ export default function AdminBookingDetailPage() {
                 if (fresh) setBooking(fresh);
               }}
               onRecordPaymentClick={() => {
-                setPayRentalAmount('');
-                setPayAddOnAmount('');
-                setPayDepositAmount('');
+                setPayAmount('');
                 setPayNote('');
                 setFollowupMsg(null);
                 setShowPaymentModal(true);
@@ -1784,69 +1777,24 @@ export default function AdminBookingDetailPage() {
             </h3>
             <p className="text-sm text-ink-soft mb-4">
               {locale === 'zh'
-                ? '輸入客人實際俾過嘅金額 + 分配（場租 / 附加項目 / 按金）。只會記入付款記錄，唔會改變張單嘅應付金額。'
-                : 'Enter the amount the customer actually paid offline + bucket split. Only logs to payments[]; does not change the bill total.'}
+                ? '輸入客人實際俾過嘅金額。只會記入付款記錄，唔會改變張單嘅應付金額。'
+                : 'Enter the amount the customer actually paid offline. Only logs to payments[]; does not change the bill total.'}
             </p>
 
             <div className="space-y-3 mb-4">
-              <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <label className="block text-xs font-semibold text-ink-soft mb-1">
-                    {locale === 'zh' ? '場租 (HK$)' : 'Rental (HK$)'}
-                  </label>
-                  <input
-                    type="number"
-                    value={payRentalAmount}
-                    onChange={(e) => setPayRentalAmount(e.target.value)}
-                    placeholder="0"
-                    className="w-full px-2 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-ink-soft mb-1">
-                    {locale === 'zh' ? '附加項目 (HK$)' : 'Add-ons (HK$)'}
-                  </label>
-                  <input
-                    type="number"
-                    value={payAddOnAmount}
-                    onChange={(e) => setPayAddOnAmount(e.target.value)}
-                    placeholder="0"
-                    className="w-full px-2 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-ink-soft mb-1">
-                    {locale === 'zh' ? '按金 (HK$)' : 'Deposit (HK$)'}
-                  </label>
-                  <input
-                    type="number"
-                    value={payDepositAmount}
-                    onChange={(e) => setPayDepositAmount(e.target.value)}
-                    placeholder="0"
-                    className="w-full px-2 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white"
-                  />
-                </div>
+              <div>
+                <label className="block text-xs font-semibold text-ink-soft mb-1">
+                  {locale === 'zh' ? '金額 (HK$)' : 'Amount (HK$)'}
+                </label>
+                <input
+                  type="number"
+                  value={payAmount}
+                  onChange={(e) => setPayAmount(e.target.value)}
+                  placeholder="0"
+                  className="w-full px-3 py-2.5 rounded-xl border-2 border-charcoal/15 text-base font-bold bg-white"
+                  autoFocus
+                />
               </div>
-              <p className="text-[11px] text-ink-soft -mt-1">
-                {locale === 'zh'
-                  ? '場租 + 附加項目會加入小計（賺積分）；按金活動後退還'
-                  : 'Rental + add-ons adds to subtotal (earns points); deposit refunded after the event'}
-              </p>
-
-              {(parseFloat(payRentalAmount) || 0)
-                + (parseFloat(payAddOnAmount) || 0)
-                + (parseFloat(payDepositAmount) || 0) > 0 && (
-                <div className="rounded-lg bg-pink/10 px-3 py-2 text-xs">
-                  {locale === 'zh' ? '總共記錄：' : 'Total recorded: '}
-                  <span className="font-bold">
-                    HK${(
-                      (parseFloat(payRentalAmount) || 0)
-                      + (parseFloat(payAddOnAmount) || 0)
-                      + (parseFloat(payDepositAmount) || 0)
-                    ).toLocaleString()}
-                  </span>
-                </div>
-              )}
 
               {(booking.balanceDue ?? 0) > 0 && (
                 <p className="text-[11px] text-amber-700">
@@ -1910,11 +1858,7 @@ export default function AdminBookingDetailPage() {
               </button>
               <button
                 onClick={() => handleRecordOfflinePayment()}
-                disabled={followupBusy || (
-                  (parseFloat(payRentalAmount) || 0)
-                  + (parseFloat(payAddOnAmount) || 0)
-                  + (parseFloat(payDepositAmount) || 0)
-                ) <= 0}
+                disabled={followupBusy || (parseFloat(payAmount) || 0) <= 0}
                 className="flex-1 btn-primary disabled:opacity-40 flex items-center justify-center gap-1.5"
               >
                 {followupBusy ? '…' : (

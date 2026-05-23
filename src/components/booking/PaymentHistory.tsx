@@ -330,11 +330,6 @@ export default function PaymentHistory({
           </li>
         )}
         {payments.map((p, i) => {
-          const hasSplit =
-            (p.rentalAmount || 0) > 0
-            || (p.addOnAmount || 0) > 0
-            || (p.depositAmount || 0) > 0;
-          const isLegacy = !hasSplit && p.amount > 0;
           // Label each entry by its kind — distinguishes the initial
           // deposit from a later balance payment from an admin top-up.
           const kindLabel = (() => {
@@ -350,42 +345,14 @@ export default function PaymentHistory({
                 <span className="font-mono font-bold text-sm">HK${p.amount.toLocaleString()}</span>
                 <span className="text-ink-soft">{METHOD_LABELS[p.method]?.[locale] || p.method}</span>
               </div>
-              {hasSplit && (
-                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-ink-soft mt-0.5">
-                  {(p.rentalAmount || 0) > 0 && (
-                    <span>{locale === 'zh' ? '場租 ' : 'Rental '}HK${p.rentalAmount.toLocaleString()}</span>
-                  )}
-                  {(p.addOnAmount || 0) > 0 && (
-                    <span>{locale === 'zh' ? '附加項目 ' : 'Add-ons '}HK${p.addOnAmount!.toLocaleString()}</span>
-                  )}
-                  {(p.depositAmount || 0) > 0 && (
-                    <span>{locale === 'zh' ? '按金 ' : 'Deposit '}HK${p.depositAmount.toLocaleString()}</span>
-                  )}
-                </div>
-              )}
+              {/* Per-entry bucket breakdown intentionally omitted per
+               *  Heidi's 2026-05-23 spec — every entry just shows
+               *  amount + method + date. */}
               {kindLabel && (
                 <p className="text-[11px] text-ink-soft mt-0.5">
                   {kindLabel}
                   {' · '}
                   {fmtRecordedAt(p.recordedAt)}
-                </p>
-              )}
-              {isLegacy && (
-                <p className="text-amber-700 text-[11px] mt-0.5 flex items-center gap-1">
-                  ⚠️ {locale === 'zh' ? '未拆分（場租 vs 按金）' : 'Not split into rental/deposit'}
-                  {adminMode && (
-                    <button
-                      onClick={() => {
-                        setSplittingIdx(i);
-                        setRentalInput('');
-                        setDepInput('');
-                        setErr(null);
-                      }}
-                      className="ml-1 px-2 py-0.5 rounded-pill bg-pink/10 text-pink text-[10px] font-semibold hover:bg-pink/20 flex items-center gap-1"
-                    >
-                      <Wand2 size={10} /> {locale === 'zh' ? '拆分' : 'Split'}
-                    </button>
-                  )}
                 </p>
               )}
               {p.note && (
