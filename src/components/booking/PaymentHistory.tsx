@@ -243,19 +243,13 @@ export default function PaymentHistory({
         {locale === 'zh' ? '付款記錄' : 'Payment History'}
       </h2>
 
-      <div className="grid grid-cols-3 gap-2 text-xs bg-cream/40 rounded-xl p-3">
-        <div>
-          <p className="text-ink-soft">{locale === 'zh' ? '已收場租' : 'Rental paid'}</p>
-          <p className="font-bold text-base">HK${totalRental.toLocaleString()}</p>
-        </div>
-        <div>
-          <p className="text-ink-soft">{locale === 'zh' ? '已收附加項目' : 'Add-ons paid'}</p>
-          <p className="font-bold text-base">HK${totalAddOn.toLocaleString()}</p>
-        </div>
-        <div>
-          <p className="text-ink-soft">{locale === 'zh' ? '已收按金' : 'Deposit paid'}</p>
-          <p className="font-bold text-base">HK${totalDeposit.toLocaleString()}</p>
-        </div>
+      <div className="flex items-baseline justify-between bg-cream/40 rounded-xl p-3">
+        <p className="text-xs text-ink-soft">
+          {locale === 'zh' ? '已收總額' : 'Total received'}
+        </p>
+        <p className="font-bold text-lg">
+          HK${(totalRental + totalAddOn + totalDeposit).toLocaleString()}
+        </p>
       </div>
 
       {hasUnsplit && adminMode && (
