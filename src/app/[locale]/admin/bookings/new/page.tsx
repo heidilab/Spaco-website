@@ -494,7 +494,7 @@ export default function AdminNewBookingPage() {
             <p>{date} · {startTime}–{endTime} ({hours}h) · {guestCount} {locale === 'zh' ? '人' : 'pax'}</p>
             {customerName && <p>{locale === 'zh' ? '客人：' : 'Customer: '}{customerName}{customerWhatsapp ? ` · ${formatHkPhone(customerWhatsapp)}` : ''}</p>}
             <p className="text-ink font-semibold pt-1">
-              HK${pricing?.subtotal.toLocaleString()} + HK${deposit.toLocaleString()} {locale === 'zh' ? '可退按金' : 'deposit'}
+              HK${effectiveSubtotal.toLocaleString()} + HK${securityDeposit.toLocaleString()} {locale === 'zh' ? '可退按金' : 'refundable deposit'}
             </p>
           </div>
         </div>

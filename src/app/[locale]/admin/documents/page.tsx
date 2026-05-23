@@ -19,6 +19,8 @@ import {
   bbqStandardPriceByVenue,
   freeDrinksVenues,
   adultEquivalent,
+  calcShishaPrice,
+  SHISHA_MAX_PIPES,
 } from '@/lib/pricing';
 import { venues } from '@/lib/venues';
 import {
@@ -297,6 +299,24 @@ export default function AdminDocumentsPage() {
       );
 
       for (const addOn of b.addOns || []) {
+        // Admin-defined custom items live OUTSIDE the catalog — their
+        // name + price ride on `addOn.options`. Pull those through to
+        // the receipt line so the document mirrors what the customer
+        // was charged. Heidi spec 2026-05-23.
+        if (addOn.id.startsWith('custom-')) {
+          const customName = addOn.options?.customName?.trim() || '自訂項目';
+          const customPrice = Math.max(0, Math.floor(addOn.options?.customPrice ?? 0));
+          if (customPrice > 0) {
+            items.push({
+              description: customName,
+              quantity: 1,
+              unitPrice: customPrice,
+              amount: customPrice,
+            });
+          }
+          continue;
+        }
+
         const cfg = addOnConfig.find((a) => a.id === addOn.id);
         if (!cfg) continue;
 
@@ -340,12 +360,23 @@ export default function AdminDocumentsPage() {
           quantity = equiv;
           amount = Math.round(unitPrice * equiv);
         } else if (addOn.id === 'shisha') {
-          // Shisha is tiered (pipes + heads + optional staff setup).
-          // We fall back to the base pricePerUnit × head count — staff
-          // can adjust the line manually for premium tiers if needed.
-          unitPrice = cfg.pricePerUnit;
-          quantity = addOn.quantity;
-          amount = unitPrice * quantity;
+          // Shisha tiered pricing — MUST mirror calcShishaPrice in
+          // lib/pricing.ts (Heidi caught a $640 vs $780 mismatch on
+          // a 1-pipe/2-heads booking where the receipt used the old
+          // pricePerUnit × heads formula). Stored quantity = head
+          // count; pipes + staffSetup live on options.
+          const heads = addOn.quantity;
+          const pipes = Math.min(
+            SHISHA_MAX_PIPES,
+            Math.max(1, addOn.options?.pipes ?? Math.min(2, heads)),
+          );
+          const staffSetup = !!addOn.options?.staffSetup;
+          amount = calcShishaPrice(pipes, heads, staffSetup);
+          // Render as "1 × $640" so the receipt math matches the line
+          // total. Storing heads as quantity would print "2 × $390 =
+          // $780" again on PDFs that re-derive amount.
+          quantity = 1;
+          unitPrice = amount;
         } else {
           // Fallback: per-unit
           unitPrice = cfg.pricePerUnit;
@@ -353,8 +384,21 @@ export default function AdminDocumentsPage() {
           amount = unitPrice * quantity;
         }
 
+        // Build a richer description for shisha so the receipt
+        // explains why $640 (vs the base $390 single tier) was charged.
+        let description = `${cfg.name.en} ${cfg.name.zh}`;
+        if (addOn.id === 'shisha') {
+          const heads = addOn.quantity;
+          const pipes = Math.min(
+            SHISHA_MAX_PIPES,
+            Math.max(1, addOn.options?.pipes ?? Math.min(2, heads)),
+          );
+          const staffSetup = !!addOn.options?.staffSetup;
+          const suffix = `(${pipes} pipe${pipes > 1 ? 's' : ''} / ${heads} head${heads > 1 ? 's' : ''}${staffSetup ? ' + staff setup' : ''})`;
+          description = `${cfg.name.en} ${cfg.name.zh} ${suffix}`;
+        }
         items.push({
-          description: `${cfg.name.en} ${cfg.name.zh}`,
+          description,
           quantity,
           unitPrice,
           amount,
