@@ -34,13 +34,22 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json() as {
       bookingId?: string;
-      method?: 'fps' | 'bank' | 'cash' | 'stripe' | 'other';
+      method?: 'fps' | 'bank' | 'cash' | 'other';
       note?: string;
       recordedBy?: string;
     };
     const { bookingId } = body;
     if (!bookingId) {
       return NextResponse.json({ error: 'bookingId required' }, { status: 400 });
+    }
+    // Stripe entries must come from the webhook only — refuse to
+    // record an offline-settled balance as a Stripe payment, even if
+    // the caller asks (Heidi's spec post-#WIiQYL2I incident).
+    if ((body.method as string) === 'stripe') {
+      return NextResponse.json(
+        { error: 'Stripe payments cannot be entered manually. Use FPS / bank / cash / other.' },
+        { status: 400 },
+      );
     }
 
     const ref = adminDb.collection('bookings').doc(bookingId);

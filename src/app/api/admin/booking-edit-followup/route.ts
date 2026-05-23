@@ -35,7 +35,9 @@ interface FollowupPayment {
   addOnAmount?: number;
   /** HK$ paid into the refundable security deposit (按金). */
   depositAmount: number;
-  method: 'stripe' | 'fps' | 'bank' | 'cash' | 'other';
+  /** Stripe is REJECTED on this admin path — Stripe entries must come
+   *  from the webhook only (Heidi's spec post-#WIiQYL2I incident). */
+  method: 'fps' | 'bank' | 'cash' | 'other';
   note?: string;
   recordedBy: string;
 }
@@ -87,6 +89,15 @@ export async function POST(req: NextRequest) {
         || body.payment.depositAmount > 0
       )
     ) {
+      // Stripe entries must only be created by the webhook, never by
+      // an admin form (Heidi's spec). Refuse the request so a CS
+      // mistake can't fabricate a Stripe charge that never happened.
+      if ((body.payment.method as string) === 'stripe') {
+        return NextResponse.json(
+          { error: 'Stripe payments cannot be entered manually. Use FPS / bank / cash / other.' },
+          { status: 400 },
+        );
+      }
       const rental = Math.max(0, body.payment.rentalAmount || 0);
       const addOn = Math.max(0, body.payment.addOnAmount || 0);
       const dep = Math.max(0, body.payment.depositAmount || 0);

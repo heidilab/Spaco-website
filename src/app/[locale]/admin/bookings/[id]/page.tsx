@@ -136,7 +136,12 @@ export default function AdminBookingDetailPage() {
   const [payRentalAmount, setPayRentalAmount] = useState<string>('');
   const [payAddOnAmount, setPayAddOnAmount] = useState<string>('');
   const [payDepositAmount, setPayDepositAmount] = useState<string>('');
-  const [payMethod, setPayMethod] = useState<'fps' | 'stripe' | 'bank' | 'cash' | 'other'>('fps');
+  // Admin-entered payments NEVER include 'stripe' — Stripe payments
+  // must be system-detected via the webhook (Heidi's spec:
+  // "stripe必須透過連結付款而系統亦必然會自動Detect"). Manually typing
+  // a Stripe payment created phantom entries on bookings like
+  // #WIiQYL2I that never actually charged.
+  const [payMethod, setPayMethod] = useState<'fps' | 'bank' | 'cash' | 'other'>('fps');
   const [payNote, setPayNote] = useState<string>('');
   const [followupBusy, setFollowupBusy] = useState(false);
   const [followupMsg, setFollowupMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -1667,8 +1672,8 @@ export default function AdminBookingDetailPage() {
                 <label className="block text-xs font-semibold text-ink-soft mb-1">
                   {locale === 'zh' ? '付款方式' : 'Method'}
                 </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {(['fps', 'bank', 'cash', 'stripe', 'other'] as const).map((m) => (
+                <div className="grid grid-cols-2 gap-2">
+                  {(['fps', 'bank', 'cash', 'other'] as const).map((m) => (
                     <button
                       key={m}
                       onClick={() => setPayMethod(m)}
@@ -1678,10 +1683,15 @@ export default function AdminBookingDetailPage() {
                           : 'bg-white/60 border-charcoal/15 text-ink-soft hover:bg-white'
                       }`}
                     >
-                      {m === 'fps' ? 'FPS' : m === 'bank' ? (locale === 'zh' ? '銀行' : 'Bank') : m === 'cash' ? (locale === 'zh' ? '現金' : 'Cash') : m === 'stripe' ? 'Stripe' : (locale === 'zh' ? '其他' : 'Other')}
+                      {m === 'fps' ? 'FPS' : m === 'bank' ? (locale === 'zh' ? '銀行' : 'Bank') : m === 'cash' ? (locale === 'zh' ? '現金' : 'Cash') : (locale === 'zh' ? '其他' : 'Other')}
                     </button>
                   ))}
                 </div>
+                <p className="mt-1.5 text-[11px] text-ink-soft leading-relaxed">
+                  {locale === 'zh'
+                    ? 'Stripe 付款必須由系統自動偵測，唔接受人手輸入。'
+                    : 'Stripe payments must be system-detected; manual entry is disabled.'}
+                </p>
               </div>
 
               <div>
