@@ -235,12 +235,6 @@ export async function updateBookingDateTime(
      *  promo applied off-system). Affects loyalty-point credit,
      *  receipt totals, and balanceDue math. */
     subtotalOverride?: number;
-    /** Manual override for the total amount paid (HK$). Sets
-     *  balanceDue = grandTotal − totalPaidOverride. Use to break the
-     *  derive-from-stale-state loop where past wrong pricing.subtotal
-     *  saves locked in a wrong paidSoFar value that subsequent
-     *  corrections couldn't recover (the $4 phantom on #hlJJh9K5). */
-    totalPaidOverride?: number;
   }
 ) {
   const bookingRef = doc(db, 'bookings', bookingId);
@@ -459,16 +453,9 @@ export async function updateBookingDateTime(
       // next save's paidSoFar (the $4 phantom on #hlJJh9K5). Switched
       // to loggedSum so that pricing edits no longer move "what was
       // paid" — that number lives in payments[] and only changes when
-      // a new payment is recorded.
-      //
-      // `totalPaidOverride` is preserved as a safety valve for cases
-      // where admin needs to force a different total (e.g. payments[]
-      // is incomplete for a one-off reason); preferred path is still
-      // to add the missing payments[] entry.
-      const loggedSum = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
-      const paidSoFar = typeof next.totalPaidOverride === 'number'
-        ? Math.max(0, next.totalPaidOverride)
-        : loggedSum;
+      // a new payment is recorded (via Stripe webhook or the
+      // 「已於線下付款」 admin action).
+      const paidSoFar = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
 
       patch['pricing.baseCharge'] = computed.baseCharge;
       patch['pricing.addOnTotal'] = computed.addOnTotal;

@@ -114,18 +114,6 @@ export default function AdminBookingDetailPage() {
   // or repairing data corruption — e.g. #WYtymQm7 where the formula
   // gives $2,700 but Heidi knows the real consumption was $1,700.
   const [subtotalOverride, setSubtotalOverride] = useState<string>('');
-  // Editable "total amount already paid" (HK$). Pre-fills from the
-  // booking's derived paidSoFar. When admin saves with a value
-  // different from the derived one, it goes to lib/firestore.ts as
-  // `totalPaidOverride` and bypasses the derive-from-old-state formula
-  // (paidSoFar = oldGrandTotal − oldBalanceDue). That formula
-  // compounds past errors: a wrong subtotal save leaves a wrong
-  // balanceDue, and the pair gets baked into the next save's
-  // paidSoFar. Use this to break the loop — type the actual real-world
-  // total the customer paid via Stripe/FPS/bank and it sets balanceDue
-  // directly. Repair case: #hlJJh9K5 stuck at $4 phantom after a
-  // mis-typed subtotal save.
-  const [totalPaidOverride, setTotalPaidOverride] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [statusValue, setStatusValue] = useState('');
@@ -388,17 +376,6 @@ export default function AdminBookingDetailPage() {
   const subtotalOverrideNum = Number.isFinite(subtotalOverrideEffective)
     ? subtotalOverrideEffective + (booking.promoDiscount || 0)
     : NaN;
-  // Derived "paid so far" — what the booking currently thinks the
-  // customer has paid. Mirrors lib/firestore.ts's paidSoFar formula
-  // (sum of payments[]) so the override input pre-fills with the
-  // value the system would use if admin DIDN'T override. Diff against
-  // that to detect dirty.
-  const derivedPaidSoFar = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
-  const totalPaidOverrideNum = parseFloat(totalPaidOverride);
-  const totalPaidDirty =
-    Number.isFinite(totalPaidOverrideNum)
-    && totalPaidOverrideNum !== derivedPaidSoFar;
-
   const dirty =
     date !== booking.date ||
     endDate !== (booking.endDate || booking.date) ||
@@ -408,8 +385,7 @@ export default function AdminBookingDetailPage() {
     venueId !== booking.venueId ||
     addOnsDirty ||
     depositDirty ||
-    subtotalDirty ||
-    totalPaidDirty;
+    subtotalDirty;
 
   // Validation: end (date+time) must be strictly after start (date+time).
   const startMs = (date && startTime) ? new Date(`${date}T${startTime}:00+08:00`).getTime() : 0;
@@ -483,9 +459,6 @@ export default function AdminBookingDetailPage() {
         // Pass the subtotal override only when admin changed it —
         // otherwise calculatePricing's formula stays in charge.
         ...(subtotalDirty ? { subtotalOverride: subtotalOverrideNum } : {}),
-        // Pass the total-paid override only when admin changed it —
-        // otherwise paidSoFar derives from old state as usual.
-        ...(totalPaidDirty ? { totalPaidOverride: totalPaidOverrideNum } : {}),
       });
 
       // Push the change to Google Calendar immediately — admin should
@@ -1444,46 +1417,6 @@ export default function AdminBookingDetailPage() {
                           </div>
                         </div>
                       )}
-                      {/* "已收總額" override — break the
-                       *  derive-from-old-state loop. Past-mistake repairs:
-                       *  type the actual Stripe + FPS + bank total the
-                       *  customer paid. balanceDue gets set directly to
-                       *  effectiveGrandTotal − this value. Without this,
-                       *  paidSoFar derives from (oldGrandTotal − oldBalance)
-                       *  which compounds any earlier wrong subtotal save. */}
-                      <div className="pt-3 border-t border-dashed border-charcoal/15">
-                        <label className="text-xs font-semibold text-ink-soft flex items-center gap-1.5">
-                          <Calculator size={12} className="text-pink" />
-                          {locale === 'zh' ? '已收總額（HK$）— 修復用' : 'Total amount paid (HK$) — repair tool'}
-                        </label>
-                        <div className="flex items-center gap-2 mt-1">
-                          <input
-                            type="number"
-                            min={0}
-                            value={totalPaidOverride}
-                            placeholder={String(derivedPaidSoFar)}
-                            onChange={(e) => setTotalPaidOverride(e.target.value)}
-                            className="w-40 px-3 py-1.5 rounded-lg border-2 border-charcoal/15 text-sm bg-white"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setTotalPaidOverride(String(derivedPaidSoFar))}
-                            className="px-2 py-1 rounded-pill bg-pink/10 text-pink text-[11px] font-semibold hover:bg-pink/20"
-                            title={locale === 'zh'
-                              ? `撳一下預填現時系統計嘅已收金額 HK$${derivedPaidSoFar.toLocaleString()}`
-                              : `Click to prefill with the system's current derived paid amount HK$${derivedPaidSoFar.toLocaleString()}`}
-                          >
-                            {locale === 'zh'
-                              ? `預填 ${derivedPaidSoFar.toLocaleString()}`
-                              : `Prefill ${derivedPaidSoFar.toLocaleString()}`}
-                          </button>
-                        </div>
-                        <p className="text-[11px] text-ink-soft mt-1 leading-relaxed">
-                          {locale === 'zh'
-                            ? `淨係喺修復舊單嘅 balanceDue 偏差時用。現時系統計到嘅已收金額：HK$${derivedPaidSoFar.toLocaleString()}。如客人實際俾過嘅總額同呢個唔同（例如之前儲過錯誤嘅小計而引致 balance 凍結咗錯數），喺度輸入正確嘅 Stripe+FPS+銀行總額，儲存後 balanceDue 會直接 = 大計 − 呢個數，唔再行公式。`
-                            : `Repair tool — use only when an old booking has a stuck balanceDue caused by a past wrong subtotal save. System currently thinks paid = HK$${derivedPaidSoFar.toLocaleString()}. If the real Stripe+FPS+bank total differs, type the correct amount here — balanceDue is set directly to grandTotal − this number, bypassing the formula.`}
-                        </p>
-                      </div>
                     </div>
                   );
                 })()}
