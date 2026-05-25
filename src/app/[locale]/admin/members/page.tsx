@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { getAllUsers, getUserBookings } from '@/lib/firestore';
+import { getAllUsers, getUserBookings, updateMemberPhoneEverywhere } from '@/lib/firestore';
 import { BookingRecord } from '@/types';
 import { Search, CalendarDays, Award, ChevronRight, ArrowLeft, Clock } from 'lucide-react';
 import { doc, updateDoc } from 'firebase/firestore';
@@ -32,6 +32,13 @@ export default function AdminMembersPage() {
   const [memberBookings, setMemberBookings] = useState<BookingRecord[]>([]);
   const [pointsAdjust, setPointsAdjust] = useState(0);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  // Editable phone — Heidi's 2026-05-23 spec: admin must be able to
+  // correct mistyped numbers (customer flags via WhatsApp). Saving
+  // syncs to user.phone AND every booking's whatsappPhone so the
+  // bookings list / pay-balance link all show the right number.
+  const [phoneDraft, setPhoneDraft] = useState('');
+  const [phoneSaving, setPhoneSaving] = useState(false);
+  const [phoneMsg, setPhoneMsg] = useState<string | null>(null);
   const canAccess = hasPermission('members');
 
   useEffect(() => {
@@ -76,9 +83,41 @@ export default function AdminMembersPage() {
     setSelectedMember(member);
     setLoadingDetail(true);
     setPointsAdjust(0);
+    setPhoneDraft(member.phone || '');
+    setPhoneMsg(null);
     const bookings = await getUserBookings(member.uid);
     setMemberBookings(bookings);
     setLoadingDetail(false);
+  };
+
+  const savePhone = async () => {
+    if (!selectedMember) return;
+    const next = phoneDraft.trim();
+    if (next === (selectedMember.phone || '')) return;
+    setPhoneSaving(true);
+    setPhoneMsg(null);
+    try {
+      const count = await updateMemberPhoneEverywhere(selectedMember.uid, next);
+      setSelectedMember({ ...selectedMember, phone: next });
+      setMembers((prev) =>
+        prev.map((m) => (m.uid === selectedMember.uid ? { ...m, phone: next } : m)),
+      );
+      // Refresh booking list so the WhatsApp column / send-link buttons
+      // pick up the new number immediately.
+      setMemberBookings((prev) => prev.map((b) => ({ ...b, whatsappPhone: next })));
+      setPhoneMsg(
+        locale === 'zh'
+          ? `✓ 已更新會員資料同 ${count} 張預訂嘅電話`
+          : `✓ Phone updated on profile + ${count} booking(s)`,
+      );
+    } catch (err) {
+      setPhoneMsg(
+        (locale === 'zh' ? '失敗：' : 'Failed: ')
+        + (err instanceof Error ? err.message : 'unknown'),
+      );
+    } finally {
+      setPhoneSaving(false);
+    }
   };
 
   const adjustPoints = async () => {
@@ -123,9 +162,33 @@ export default function AdminMembersPage() {
             <h2 className="text-xl font-bold">{selectedMember.displayName || '-'}</h2>
             <p className="text-sm text-muted mt-1">{selectedMember.email}</p>
             <div className="mt-4 space-y-3 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted">{locale === 'zh' ? '電話' : 'Phone'}</span>
-                <span className="font-medium">{selectedMember.phone || '-'}</span>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-muted">{locale === 'zh' ? '電話' : 'Phone'}</span>
+                  {phoneDraft.trim() !== (selectedMember.phone || '') && (
+                    <button
+                      onClick={savePhone}
+                      disabled={phoneSaving}
+                      className="px-3 py-1 rounded-pill bg-pink text-white text-xs font-semibold hover:bg-pink/90 disabled:opacity-40"
+                    >
+                      {phoneSaving
+                        ? (locale === 'zh' ? '儲存中…' : 'Saving…')
+                        : (locale === 'zh' ? '儲存 (同步預訂)' : 'Save (sync bookings)')}
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="tel"
+                  value={phoneDraft}
+                  onChange={(e) => setPhoneDraft(e.target.value)}
+                  placeholder={locale === 'zh' ? '例：+852 9282 3060' : 'e.g. +852 9282 3060'}
+                  className="w-full px-3 py-2 rounded-lg border border-charcoal/15 text-sm bg-white"
+                />
+                {phoneMsg && (
+                  <p className={`text-[11px] mt-1 ${phoneMsg.startsWith('✓') ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    {phoneMsg}
+                  </p>
+                )}
               </div>
               <div className="flex justify-between">
                 <span className="text-muted">{locale === 'zh' ? '註冊日期' : 'Joined'}</span>

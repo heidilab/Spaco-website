@@ -135,12 +135,19 @@ export default function AdminBookingsPage() {
     }
     if (search) {
       const s = search.toLowerCase();
+      // Normalise the phone search term so "9282 3060", "92823060",
+      // "+852 9282-3060" all match the same booking. Strip every
+      // non-digit so we compare digits-only against the booking's
+      // stored whatsappPhone (which usually has the +852 prefix).
+      const sDigits = s.replace(/\D/g, '');
       filtered = filtered.filter((b) => {
         const customerName = (userNames[b.userId] || '').toLowerCase();
+        const phone = (b.whatsappPhone || '').replace(/\D/g, '');
         return b.venueId.toLowerCase().includes(s)
           || b.date.includes(s)
           || b.id.toLowerCase().includes(s)
-          || customerName.includes(s);
+          || customerName.includes(s)
+          || (sDigits.length >= 4 && phone.includes(sDigits));
       });
     }
     setFilteredBookings(filtered);
@@ -298,7 +305,7 @@ export default function AdminBookingsPage() {
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder={locale === 'zh' ? '搜尋預訂 ID、場地、客人名...' : 'Search booking ID, venue, customer name...'}
+              placeholder={locale === 'zh' ? '搜尋預訂 ID、場地、客人名、電話...' : 'Search booking ID, venue, customer, phone...'}
               className="w-full pl-11 pr-4 py-3 rounded-pill border border-white/70 bg-white/60 backdrop-blur-md focus:outline-none focus:border-pink/40 focus:bg-white/80 text-ink placeholder:text-ink-soft/60"
             />
           </div>

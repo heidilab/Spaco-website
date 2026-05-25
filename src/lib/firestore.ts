@@ -28,6 +28,16 @@ export async function createBooking(data: Omit<BookingRecord, 'id' | 'createdAt'
     updatedAt: serverTimestamp(),
   });
 
+  // Sync the customer's whatsappPhone back to their user profile so
+  // admin sees it in 會員管理 immediately (Heidi's 2026-05-23 spec —
+  // customers were entering phone at booking time but it never landed
+  // on the profile). Best-effort: a profile-write failure shouldn't
+  // block the booking creation.
+  if (data.userId && data.whatsappPhone) {
+    updateDoc(doc(db, 'users', data.userId), { phone: data.whatsappPhone })
+      .catch((err) => console.warn('[createBooking] phone sync failed:', err));
+  }
+
   const overnight = !!data.endDate && data.endDate !== data.date;
   const endDate = overnight ? (data.endDate as string) : data.date;
 
@@ -129,6 +139,32 @@ export async function updateBookingStatus(id: string, status: string) {
     status,
     updatedAt: serverTimestamp(),
   });
+}
+
+/** Admin updates a member's phone — writes to the user profile AND
+ *  cascades to every booking's whatsappPhone so the bookings list /
+ *  detail / pay-balance flow all show the corrected number.
+ *  Returns the number of bookings updated. */
+export async function updateMemberPhoneEverywhere(
+  userId: string,
+  newPhone: string,
+): Promise<number> {
+  const trimmed = newPhone.trim();
+  await updateDoc(doc(db, 'users', userId), { phone: trimmed });
+  // Cascade to all bookings owned by this user. Pre-existing
+  // whatsappPhone values (even mismatched ones) are overwritten —
+  // admin's correction wins.
+  const q = query(collection(db, 'bookings'), where('userId', '==', userId));
+  const snap = await getDocs(q);
+  let count = 0;
+  for (const docSnap of snap.docs) {
+    await updateDoc(docSnap.ref, {
+      whatsappPhone: trimmed,
+      updatedAt: serverTimestamp(),
+    });
+    count++;
+  }
+  return count;
 }
 
 /** Admin/CS: edit a booking's date / time / guest count. Updates the
