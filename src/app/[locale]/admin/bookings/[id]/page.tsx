@@ -2646,8 +2646,8 @@ function LockPasscodePanel({ booking, locale, onUpdated }: LockPasscodePanelProp
                 venues.find((v) => v.id === booking.venueId)?.name[locale]
                 || booking.venueId;
               const message = locale === 'zh'
-                ? `你好！你嘅 SPACO 預訂 (${venueName} · ${booking.date} ${booking.startTime}) 嘅門鎖密碼係：\n\n🔑 ${existing.passcode}\n\n有效期：${formatHkt(existing.validFrom)} 至 ${formatHkt(existing.validTo)}\n\n請喺活動當日到場時，喺鎖嘅鍵盤輸入呢組密碼即可進場。如有任何問題請隨時 WhatsApp 我哋。`
-                : `Hi! Your SPACO booking (${venueName} · ${booking.date} ${booking.startTime}) lock passcode:\n\n🔑 ${existing.passcode}\n\nValid: ${formatHkt(existing.validFrom)} → ${formatHkt(existing.validTo)}\n\nOn arrival, enter this code on the lock keypad to unlock. WhatsApp us anytime if you run into trouble.`;
+                ? `你好！你嘅 SPACO 預訂 (${venueName} · ${booking.date} ${booking.startTime}) 嘅門鎖密碼係：\n\n🔑 ${existing.passcode}\n\n請喺活動當日到場時，喺鎖嘅鍵盤輸入呢組密碼即可進場。如有任何問題請隨時 WhatsApp 我哋。`
+                : `Hi! Your SPACO booking (${venueName} · ${booking.date} ${booking.startTime}) lock passcode:\n\n🔑 ${existing.passcode}\n\nOn arrival, enter this code on the lock keypad to unlock. WhatsApp us anytime if you run into trouble.`;
               const waLink = buildWhatsAppLink(booking.whatsappPhone, message);
               return (
                 <a
