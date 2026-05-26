@@ -147,8 +147,15 @@ export default function AdminCalendarPage() {
   const getDayItems = useMemo(() => {
     return (date: string): DayItem[] => {
       const items: DayItem[] = [];
+      // Master calendar shows only LIVE bookings — Heidi's 2026-05-23
+      // spec: cancelled / payment_not_completed shouldn't clutter the
+      // day-view popup since they don't reserve the slot anymore.
       bookings
-        .filter((b) => b.date === date)
+        .filter((b) =>
+          b.date === date
+          && b.status !== 'cancelled'
+          && b.status !== 'payment_not_completed',
+        )
         .forEach((b) => items.push({ kind: 'booking', sortTime: b.startTime, data: b }));
 
       blockedSlots
