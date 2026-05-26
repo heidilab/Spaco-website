@@ -9,6 +9,7 @@ import {
   getBlockedSlotsForMonth,
   getCalendarEventsForMonth,
   deleteBlockedSlot,
+  getAllUsers,
 } from '@/lib/firestore';
 import { BookingRecord, BlockedSlot, CalendarEvent } from '@/types';
 import { venues } from '@/lib/venues';
@@ -40,9 +41,12 @@ function venueTag(venueId: string): string {
   return venueId.toUpperCase();
 }
 
-// Booking customer identifier — last 4 digits of phone (no name field on
-// BookingRecord today). Falls back to short booking id.
-function bookingIdent(b: BookingRecord): string {
+// Booking customer identifier — prefer member display name (most
+// helpful for CS scanning the day view), fall back to phone last-4
+// when the profile has no name, then short booking id.
+function bookingIdent(b: BookingRecord, userNames?: Record<string, string>): string {
+  const name = userNames?.[b.userId];
+  if (name) return name;
   if (b.whatsappPhone) {
     const digits = b.whatsappPhone.replace(/\D/g, '');
     if (digits.length >= 4) return digits.slice(-4);
@@ -59,6 +63,7 @@ export default function AdminCalendarPage() {
   const [bookings, setBookings] = useState<BookingRecord[]>([]);
   const [blockedSlots, setBlockedSlots] = useState<BlockedSlot[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [userNames, setUserNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
 
   // Day summary modal — shown when admin clicks any day cell
@@ -92,24 +97,39 @@ export default function AdminCalendarPage() {
 
   const loadData = async () => {
     setLoading(true);
+    // Pull uid → displayName once so the day-view popup can label
+    // bookings by member name (Heidi's 2026-05-23 spec — CS scans
+    // by name, not phone digits). Fire in parallel with the rest.
+    const namesPromise = getAllUsers().then((users) => {
+      const map: Record<string, string> = {};
+      for (const u of users as Array<{ uid: string; displayName?: string; email?: string }>) {
+        const name = u.displayName || u.email?.split('@')[0] || '';
+        if (name) map[u.uid] = name;
+      }
+      return map;
+    });
     if (selectedVenue === 'all') {
-      const [bookingData, allSlots, eventData] = await Promise.all([
+      const [bookingData, allSlots, eventData, names] = await Promise.all([
         getBookingsForMonth(currentMonth),
         Promise.all(venues.map((v) => getBlockedSlotsForMonth(v.id, currentMonth))),
         getCalendarEventsForMonth(currentMonth),
+        namesPromise,
       ]);
       setBookings(bookingData);
       setBlockedSlots(allSlots.flat());
       setCalendarEvents(eventData);
+      setUserNames(names);
     } else {
-      const [bookingData, slotData, eventData] = await Promise.all([
+      const [bookingData, slotData, eventData, names] = await Promise.all([
         getBookingsForMonth(currentMonth),
         getBlockedSlotsForMonth(selectedVenue, currentMonth),
         getCalendarEventsForMonth(currentMonth),
+        namesPromise,
       ]);
       setBookings(bookingData.filter((b) => b.venueId === selectedVenue));
       setBlockedSlots(slotData);
       setCalendarEvents(eventData.filter((e) => e.venueId === selectedVenue));
+      setUserNames(names);
     }
     setLoading(false);
   };
@@ -374,7 +394,7 @@ export default function AdminCalendarPage() {
                   </div>
                   <div className="space-y-1">
                     {items.slice(0, 4).map((item, idx) => (
-                      <DayItemPill key={`${item.kind}-${idx}`} item={item} />
+                      <DayItemPill key={`${item.kind}-${idx}`} item={item} userNames={userNames} />
                     ))}
                     {items.length > 4 && (
                       <div className="text-[10px] text-ink-soft px-1.5">
@@ -396,6 +416,7 @@ export default function AdminCalendarPage() {
           items={getDayItems(summaryDate)}
           locale={locale}
           holiday={holidaysMap.get(summaryDate)}
+          userNames={userNames}
           onClose={() => setSummaryDate(null)}
           onAdd={openAddFromSummary}
           onItemClick={(item) => setDetailsModal(item)}
@@ -443,7 +464,7 @@ export default function AdminCalendarPage() {
 // Day cell pill — informative single line
 // ──────────────────────────────────────────────────────────
 
-function DayItemPill({ item }: { item: DayItem }) {
+function DayItemPill({ item, userNames }: { item: DayItem; userNames?: Record<string, string> }) {
   if (item.kind === 'booking') {
     const b = item.data;
     const cls =
@@ -453,7 +474,7 @@ function DayItemPill({ item }: { item: DayItem }) {
                                    'bg-gray-100 text-gray-600';
     return (
       <div className={`text-[10px] px-1.5 py-0.5 rounded truncate ${cls}`}>
-        {b.startTime} {venueTag(b.venueId)} · {bookingIdent(b)}
+        {b.startTime} {venueTag(b.venueId)} · {bookingIdent(b, userNames)}
       </div>
     );
   }
@@ -500,12 +521,13 @@ function DayItemPill({ item }: { item: DayItem }) {
 // ──────────────────────────────────────────────────────────
 
 function DaySummaryModal({
-  date, items, locale, holiday, onClose, onAdd, onItemClick,
+  date, items, locale, holiday, userNames, onClose, onAdd, onItemClick,
 }: {
   date: string;
   items: DayItem[];
   locale: 'zh' | 'en';
   holiday?: Holiday;
+  userNames: Record<string, string>;
   onClose: () => void;
   onAdd: () => void;
   onItemClick: (item: DayItem) => void;
@@ -551,7 +573,7 @@ function DaySummaryModal({
                     <SummaryItemDot item={item} />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-ink">
-                        <SummaryItemTitle item={item} locale={locale} />
+                        <SummaryItemTitle item={item} locale={locale} userNames={userNames} />
                       </p>
                       <SummaryItemMeta item={item} locale={locale} />
                     </div>
@@ -590,14 +612,14 @@ function SummaryItemDot({ item }: { item: DayItem }) {
   return <span className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${cls}`} />;
 }
 
-function SummaryItemTitle({ item, locale }: { item: DayItem; locale: 'zh' | 'en' }) {
+function SummaryItemTitle({ item, locale, userNames }: { item: DayItem; locale: 'zh' | 'en'; userNames?: Record<string, string> }) {
   const timeRange = `${item.sortTime}–${
     item.kind === 'booking' ? item.data.endTime
     : item.kind === 'event' ? item.data.endTime
     : (item.data as BlockedSlot).endTime
   }`;
   if (item.kind === 'booking') {
-    return <>{timeRange}  <span className="font-semibold">{venueTag(item.data.venueId)}</span>  · {bookingIdent(item.data)}  · {item.data.guestCount}p</>;
+    return <>{timeRange}  <span className="font-semibold">{venueTag(item.data.venueId)}</span>  · {bookingIdent(item.data, userNames)}  · {item.data.guestCount}p</>;
   }
   if (item.kind === 'block') {
     return <>{timeRange}  <span className="font-semibold">{venueTag(item.data.venueId)}</span>  · {locale === 'zh' ? '人手封鎖' : 'Manual block'}</>;
