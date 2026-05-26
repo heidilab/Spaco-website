@@ -482,10 +482,10 @@ export default function AdminBookingsPage() {
                           {booking.lockPasscode?.passcode ? (
                             <span
                               className="inline-flex w-fit items-center gap-1 px-2 py-0.5 rounded-pill text-[10px] font-mono font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200"
-                              title={`${booking.lockPasscode.passcode} · ${locale === 'zh' ? 'lockId' : 'lockId'} ${booking.lockPasscode.lockId}`}
+                              title={`${booking.lockPasscode.passcode}# · ${locale === 'zh' ? 'lockId' : 'lockId'} ${booking.lockPasscode.lockId}`}
                             >
                               <Key size={10} />
-                              {booking.lockPasscode.passcode}
+                              {booking.lockPasscode.passcode}#
                             </span>
                           ) : booking.status === 'confirmed' && (booking.balanceDue ?? 0) === 0 && (
                             <span className="inline-flex w-fit items-center gap-1 px-2 py-0.5 rounded-pill text-[10px] font-medium border bg-amber-50 text-amber-700 border-amber-200">

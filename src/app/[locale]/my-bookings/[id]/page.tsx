@@ -276,7 +276,7 @@ export default function MyBookingDetailPage() {
                 <h2 className="font-bold">{locale === 'zh' ? '門鎖密碼' : 'Door Passcode'}</h2>
               </div>
               <p className="text-3xl font-bold font-mono tracking-widest text-emerald-700 mb-2">
-                {booking.lockPasscode.passcode}
+                {booking.lockPasscode.passcode}#
               </p>
               <p className="text-xs text-emerald-700">
                 {locale === 'zh'

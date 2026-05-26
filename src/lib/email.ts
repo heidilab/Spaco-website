@@ -520,7 +520,7 @@ export function buildLockPasscodeEmail(params: {
           <div style="background: linear-gradient(135deg, ${EMAIL_PINK} 0%, ${EMAIL_PEACH} 100%); color: white; padding: 26px 20px; border-radius: 18px; text-align: center; margin-bottom: 22px;">
             <p style="margin: 0 0 8px; font-size: 11px; opacity: 0.9; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 700;">門鎖密碼 Passcode</p>
             <p style="margin: 0; font-size: 38px; font-weight: 800; letter-spacing: 0.18em; font-family: 'Courier New', monospace;">
-              ${params.passcode}
+              ${params.passcode}#
             </p>
           </div>
 
