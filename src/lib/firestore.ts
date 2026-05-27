@@ -525,16 +525,33 @@ export async function updateBookingDepositRefund(
   refundData: {
     amount: number;
     deductions: { label: string; amount: number }[];
+    /** When deductions exceed the security deposit, this is the
+     *  amount the customer still owes (e.g. +HK$250 for an
+     *  un-deposited overtime charge). When > 0 we keep status as
+     *  'confirmed' + set balanceDue so the booking re-enters the
+     *  "needs follow-up payment" workflow; admin records the
+     *  customer's offline payment via 已於線下付款 → balance hits
+     *  0 → endpoint auto-flips to 'completed'. */
+    overflowAmount?: number;
   }
 ) {
-  await updateDoc(doc(db, 'bookings', id), {
+  const overflow = Math.max(0, refundData.overflowAmount || 0);
+  const patch: Record<string, unknown> = {
     depositRefund: {
-      ...refundData,
+      amount: refundData.amount,
+      deductions: refundData.deductions,
       refundedAt: serverTimestamp(),
     },
-    status: 'completed',
     updatedAt: serverTimestamp(),
-  });
+  };
+  if (overflow > 0) {
+    patch.balanceDue = overflow;
+    patch.status = 'confirmed';
+  } else {
+    patch.balanceDue = 0;
+    patch.status = 'completed';
+  }
+  await updateDoc(doc(db, 'bookings', id), patch);
 }
 
 // ============ BLOCKED SLOTS ============

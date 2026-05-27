@@ -539,6 +539,11 @@ export default function AdminBookingDetailPage() {
       const securityDeposit = booking.pricing.securityDeposit ?? 0;
       const total = totalDeductions();
       const refundAmount = Math.max(0, securityDeposit - total);
+      // Overflow = the part of deductions that EXCEEDED the deposit.
+      // Heidi's case (#B7PlO6qv): deductions 加時 HK$2,250 vs deposit
+      // HK$2,000 → overflow HK$250. Booking goes back to 'confirmed'
+      // with balanceDue = 250 so admin can chase + record payment.
+      const overflowAmount = Math.max(0, total - securityDeposit);
 
       const deductions = [
         ...selectedFixed.map((id) => {
@@ -548,27 +553,29 @@ export default function AdminBookingDetailPage() {
         ...customDeductions.filter((d) => d.label && d.amount > 0),
       ];
 
-      await updateBookingDepositRefund(booking.id, { amount: refundAmount, deductions });
+      await updateBookingDepositRefund(booking.id, {
+        amount: refundAmount,
+        deductions,
+        overflowAmount,
+      });
 
-      // Credit loyalty points: subtotal (rental + add-ons) + forfeited
-      // security deposit (the part SPACO actually kept), MINUS the
-      // promo / points discounts (free items aren't "消費" per Heidi's
-      // spec — a customer who used DRINK2026 to get free drinks didn't
-      // pay for those drinks, so the drinks add-on doesn't earn points).
-      // Refundable amount that went BACK to the customer doesn't count
-      // either — only money the company actually pocketed earns points.
-      // 1 HK$ = 1 point.
+      // Credit loyalty points: subtotal (rental + add-ons) + the
+      // PORTION of deductions the deposit actually covered. The
+      // overflow ($250 in #B7PlO6qv's case) isn't credited yet —
+      // customer hasn't paid it. Admin can credit it manually after
+      // the offline payment via /admin/members → adjust points.
       //
-      // Idempotency: skip if booking.pointsCreditedAt is already set
-      // (admin re-clicked settle or used the 補加積分 recovery action).
-      // Returned `creditedPoints` is 0 in that case — the message
-      // below reads as "已 credit 0 積分" but the settled state
-      // panel renders the original pointsActuallyCredited value.
+      // MINUS the promo / points discounts (free items aren't "消費").
+      // Refunded portion doesn't count either — only money SPACO
+      // actually pocketed earns points. 1 HK$ = 1 point.
+      //
+      // Idempotency: skip if booking.pointsCreditedAt is already set.
       let creditedPoints = 0;
       if (booking.userId && !booking.pointsCreditedAt) {
         const promoDiscount = booking.promoDiscount || 0;
         const pointsDiscount = booking.pointsDiscount || 0;
-        const points = Math.max(0, booking.pricing.subtotal - promoDiscount - pointsDiscount) + total;
+        const consumedDeposit = Math.min(total, securityDeposit);
+        const points = Math.max(0, booking.pricing.subtotal - promoDiscount - pointsDiscount) + consumedDeposit;
         creditedPoints = await creditLoyaltyPoints(booking.userId, points);
         if (creditedPoints > 0) {
           await updateDoc(doc(db, 'bookings', booking.id), {
@@ -581,9 +588,13 @@ export default function AdminBookingDetailPage() {
 
       setSettleMsg({
         kind: 'ok',
-        text: locale === 'zh'
-          ? `✓ 結算完成。退款 HK$${refundAmount.toLocaleString()}，已 credit ${creditedPoints.toLocaleString()} 積分。`
-          : `✓ Settled. Refund HK$${refundAmount.toLocaleString()}; credited ${creditedPoints.toLocaleString()} pts.`,
+        text: overflowAmount > 0
+          ? (locale === 'zh'
+              ? `✓ 結算完成。扣減超出按金 HK$${overflowAmount.toLocaleString()} — 客人需補付，請喺結算後用「已於線下付款」記錄收到嘅金額。已 credit ${creditedPoints.toLocaleString()} 積分。`
+              : `✓ Settled. Deductions exceed deposit by HK$${overflowAmount.toLocaleString()} — customer owes this amount; use 已於線下付款 to record receipt. Credited ${creditedPoints.toLocaleString()} pts.`)
+          : (locale === 'zh'
+              ? `✓ 結算完成。退款 HK$${refundAmount.toLocaleString()}，已 credit ${creditedPoints.toLocaleString()} 積分。`
+              : `✓ Settled. Refund HK$${refundAmount.toLocaleString()}; credited ${creditedPoints.toLocaleString()} pts.`),
       });
       const fresh = await getBooking(booking.id);
       if (fresh) setBooking(fresh);
@@ -2303,14 +2314,32 @@ function DepositSettlement(props: DepositSettlementProps) {
 
       {alreadySettled ? (
         <div className="space-y-2 text-sm">
-          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
-            <p className="font-semibold text-emerald-700 mb-1">
-              {locale === 'zh' ? '✓ 已結算' : '✓ Settled'}
-            </p>
-            <p className="text-xs text-emerald-700">
-              {locale === 'zh' ? '退款金額：' : 'Refund: '}HK${(booking.depositRefund as { amount?: number })?.amount?.toLocaleString() || 0}
-            </p>
-          </div>
+          {/* Detect "deductions exceed deposit" — overflow lives on
+           *  booking.balanceDue when status is still 'confirmed' after
+           *  settlement. Render an amber warning so admin remembers to
+           *  chase the customer for the difference + record receipt
+           *  via 已於線下付款 in the Outstanding Balance card above. */}
+          {(booking.balanceDue ?? 0) > 0 && booking.status === 'confirmed' ? (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+              <p className="font-semibold text-amber-800 mb-1">
+                ⚠️ {locale === 'zh' ? '結算完成 — 客人尚欠' : 'Settled — customer owes'} HK${(booking.balanceDue || 0).toLocaleString()}
+              </p>
+              <p className="text-xs text-amber-700">
+                {locale === 'zh'
+                  ? '扣減超出按金，請喺上面「預訂未付尾數」卡片用「已於線下付款」記錄收到嘅補款。'
+                  : 'Deductions exceeded the deposit. Use 已於線下付款 on the Outstanding Balance card above once the customer pays.'}
+              </p>
+            </div>
+          ) : (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+              <p className="font-semibold text-emerald-700 mb-1">
+                {locale === 'zh' ? '✓ 已結算' : '✓ Settled'}
+              </p>
+              <p className="text-xs text-emerald-700">
+                {locale === 'zh' ? '退款金額：' : 'Refund: '}HK${(booking.depositRefund as { amount?: number })?.amount?.toLocaleString() || 0}
+              </p>
+            </div>
+          )}
           {(booking.depositRefund as { deductions?: { label: string; amount: number }[] })?.deductions?.length ? (
             <ul className="text-xs text-ink-soft space-y-1 pl-4 list-disc">
               {(booking.depositRefund as { deductions?: { label: string; amount: number }[] }).deductions!.map((d, i) => (
