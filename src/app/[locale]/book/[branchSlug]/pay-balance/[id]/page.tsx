@@ -8,8 +8,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getBooking } from '@/lib/firestore';
 import { getVenueById } from '@/lib/venues';
 import { BookingRecord } from '@/types';
-import { CreditCard, Building2, ArrowRight } from 'lucide-react';
+import { CreditCard, Building2, ArrowRight, LogIn } from 'lucide-react';
 import { motion } from 'framer-motion';
+import AuthModal from '@/components/auth/AuthModal';
 
 export default function PayBalancePage() {
   const locale = useLocale() as 'zh' | 'en';
@@ -24,28 +25,79 @@ export default function PayBalancePage() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<'stripe' | 'fps' | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
 
   useEffect(() => {
     if (authLoading) return;
     if (!user) {
-      router.push('/');
+      // Don't bounce to '/' — keep the customer on this URL so when they
+      // log in via AuthModal the useEffect re-runs and loads the booking.
+      // (Heidi 2026-05-28: #uD9WqI2P couldn't reach the payment page from
+      // the WhatsApp link because the homepage redirect dropped the URL.)
+      setLoading(false);
       return;
     }
+    setLoading(true);
     getBooking(bookingId)
       .then((b) => {
         if (!b) setError(locale === 'zh' ? '找不到預訂記錄' : 'Booking not found');
-        else if (b.userId !== user.uid) setError(locale === 'zh' ? '無權查看此預訂' : 'Not authorized');
+        else if (b.userId !== user.uid) setError(locale === 'zh' ? '無權查看此預訂（請用預訂時嘅帳號登入）' : 'Not authorized — please sign in with the account used to make this booking');
         else if ((b.balanceDue ?? 0) <= 0) setError(locale === 'zh' ? '此預訂沒有未繳尾數' : 'No outstanding balance');
-        else setBooking(b);
+        else { setBooking(b); setError(null); }
       })
       .finally(() => setLoading(false));
-  }, [bookingId, user, authLoading, router, locale]);
+  }, [bookingId, user, authLoading, locale]);
 
   if (authLoading || loading) {
     return <div className="pt-28 min-h-screen flex items-center justify-center"><div className="animate-pulse text-ink-soft">Loading...</div></div>;
   }
+
+  // Not signed in → show inline sign-in prompt instead of redirecting away.
+  if (!user) {
+    return (
+      <div className="pt-28 pb-20 min-h-screen flex items-center justify-center px-6">
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="max-w-md w-full text-center space-y-6">
+          <h1 className="text-heading font-display">
+            <span className="text-gradient-pink">{locale === 'zh' ? '繳付尾數' : 'Pay Balance'}</span>
+          </h1>
+          <p className="text-ink-soft text-sm">
+            {locale === 'zh'
+              ? '請先登入您預訂時使用的帳號，以繼續繳付尾數。'
+              : 'Please sign in with the account used to make this booking to continue.'}
+          </p>
+          <button
+            onClick={() => setAuthOpen(true)}
+            className="w-full bg-accent text-white py-4 rounded-xl font-bold text-lg hover:bg-accent/90 transition-colors flex items-center justify-center gap-2"
+          >
+            <LogIn size={18} />
+            {locale === 'zh' ? '登入' : 'Sign In'}
+          </button>
+          <button
+            onClick={() => router.push('/')}
+            className="text-sm text-ink-soft hover:text-ink underline"
+          >
+            {locale === 'zh' ? '返回主頁' : 'Back to home'}
+          </button>
+        </motion.div>
+        <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} />
+      </div>
+    );
+  }
+
   if (error || !booking) {
-    return <div className="pt-28 min-h-screen flex items-center justify-center"><p className="text-rose-500">{error || 'Error'}</p></div>;
+    return (
+      <div className="pt-28 min-h-screen flex items-center justify-center px-6">
+        <div className="max-w-md w-full text-center space-y-4">
+          <p className="text-rose-500">{error || 'Error'}</p>
+          <button
+            onClick={() => router.push('/account')}
+            className="text-sm text-ink-soft hover:text-ink underline"
+          >
+            {locale === 'zh' ? '查看我的預訂' : 'View my bookings'}
+          </button>
+        </div>
+      </div>
+    );
   }
 
   const venue = getVenueById(booking.venueId);
