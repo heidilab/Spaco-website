@@ -280,10 +280,25 @@ export function buildCashierRedirectUrl(opts: {
   const timestamp = Date.now().toString();
   const nonce = generateNonce();
   const language = opts.language || 'zh_HK';
-  // Body is empty for GET. Sign string still gets the trailing \n.
+
+  // KPay GET-cashier signature spec (home/signature.md step 2):
+  //   "如果GET 請求中有請求參數，URL 末尾應附加 '?' 和對應的請求參數字符串"
+  // — i.e. the URL inside the string-to-sign is `path?query`, where
+  // `query` is the exact serialised query string the browser will
+  // send, MINUS the K-Signature param itself. Order must match what
+  // we ultimately put on the final URL, or KPay's verification fails
+  // with 40002 簽名無效.
+  const paramsForSigning = new URLSearchParams({
+    managedOrderNo: opts.managedOrderNo,
+    language,
+    [HEADERS.MERCHANT]: mid,
+    [HEADERS.NONCE]: nonce,
+    [HEADERS.TIMESTAMP]: timestamp,
+  });
+  const signedQueryString = paramsForSigning.toString();
   const stringToSign = buildSignString({
     method: 'GET',
-    url: path,
+    url: `${path}?${signedQueryString}`,
     timestamp,
     nonce,
     mid,
@@ -293,15 +308,9 @@ export function buildCashierRedirectUrl(opts: {
   signer.update(stringToSign, 'utf8');
   const signature = signer.sign(getPrivateKey(), 'base64');
 
-  const params = new URLSearchParams({
-    managedOrderNo: opts.managedOrderNo,
-    language,
-    [HEADERS.MERCHANT]: mid,
-    [HEADERS.NONCE]: nonce,
-    [HEADERS.TIMESTAMP]: timestamp,
-    [HEADERS.SIGNATURE]: signature,
-  });
-  return `${getApiBase()}${path}?${params.toString()}`;
+  // Append K-Signature LAST so the final URL matches paramsForSigning
+  // plus the signature suffix.
+  return `${getApiBase()}${path}?${signedQueryString}&${HEADERS.SIGNATURE}=${encodeURIComponent(signature)}`;
 }
 
 // ──────────────────────────────────────────────────────────
