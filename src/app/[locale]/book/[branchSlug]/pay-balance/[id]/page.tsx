@@ -57,13 +57,14 @@ export default function PayBalancePage() {
     setSubmitting(true);
     try {
       if (selected === 'stripe') {
-        const res = await fetch('/api/stripe/checkout', {
+        // KPay-via-Stripe-label on kpay-integration branch (see
+        // payment/[id]/page.tsx for the same swap explanation).
+        const res = await fetch('/api/kpay/checkout', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             bookingId: booking.id,
             amount: balance,
-            deposit: booking.pricing.deposit,
             venueName: `${venueName} (${locale === 'zh' ? '尾數' : 'balance'})`,
             customerEmail: user?.email,
             isBalancePayment: true,

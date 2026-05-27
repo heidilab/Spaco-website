@@ -200,17 +200,18 @@ export default function PaymentMethodPage() {
       }
 
       if (selected === 'stripe') {
-        // Customer's loyalty redemption (set on the confirm page) reduces
-        // the actual amount we charge.
+        // 'stripe' option label is preserved for now — it routes through
+        // KPay on this branch (kpay-integration). Production main still
+        // uses Stripe. After sandbox passes + we merge, the label can
+        // be renamed to 信用卡 / Card.
         const pointsDiscount = booking.pointsDiscount || 0;
         const chargeAmount = Math.max(1, booking.pricing.deposit - pointsDiscount);
-        const res = await fetch('/api/stripe/checkout', {
+        const res = await fetch('/api/kpay/checkout', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             bookingId: effectiveBookingId,
             amount: chargeAmount,
-            deposit: booking.pricing.deposit,
             venueName,
             customerEmail: user?.email,
           }),
