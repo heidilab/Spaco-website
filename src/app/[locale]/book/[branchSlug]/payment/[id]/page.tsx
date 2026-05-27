@@ -77,6 +77,10 @@ export default function PaymentMethodPage() {
   // entry (no more picker UI). Stays true until the redirect fires
   // OR an error occurs.
   const [submitting, setSubmitting] = useState(true);
+  // `fired` is a one-shot guard for the auto-redirect useEffect so
+  // a re-render doesn't fire two createBooking calls. Declared HERE
+  // (before any early return) to keep the Hook order stable.
+  const [fired, setFired] = useState(false);
 
   useEffect(() => {
     if (authLoading) return;
@@ -121,6 +125,17 @@ export default function PaymentMethodPage() {
       })
       .finally(() => setLoading(false));
   }, [bookingId, user, authLoading, router, locale, slug, isDraft]);
+
+  // Auto-fire KPay redirect once booking + auth are ready. Declared
+  // BEFORE any early-return so the hook count stays stable across
+  // renders. `proceedToKpay` is a function declaration further down
+  // — JS hoists it, so the reference resolves.
+  useEffect(() => {
+    if (fired || !booking || authLoading || loading) return;
+    setFired(true);
+    proceedToKpay();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [booking, authLoading, loading]);
 
   if (authLoading || loading) {
     return (
@@ -228,16 +243,6 @@ export default function PaymentMethodPage() {
     }
   }
 
-  // Auto-fire the KPay redirect as soon as the booking + auth are
-  // ready. Guard with a ref-like flag (in module-private state) so
-  // a re-render doesn't double-create the booking.
-  const [fired, setFired] = useState(false);
-  useEffect(() => {
-    if (fired || !booking || authLoading || loading) return;
-    setFired(true);
-    proceedToKpay();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [booking, authLoading, loading]);
 
   return (
     <div className="pt-28 pb-20 relative overflow-hidden min-h-screen flex items-center justify-center">
