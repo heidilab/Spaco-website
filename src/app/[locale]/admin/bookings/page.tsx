@@ -465,7 +465,40 @@ export default function AdminBookingsPage() {
                       <td className="px-6 py-4 text-sm text-ink">{booking.date}</td>
                       <td className="px-6 py-4 text-sm text-ink">{booking.startTime} - {booking.endTime}</td>
                       <td className="px-6 py-4 text-sm text-ink">{booking.guestCount}</td>
-                      <td className="px-6 py-4 text-sm font-bold font-display text-gradient-pink">HK${booking.pricing?.subtotal?.toLocaleString() || 0}</td>
+                      <td className="px-6 py-4 text-sm font-bold font-display text-gradient-pink">
+                        {(() => {
+                          // 「金額」 = the money SPACO actually receives.
+                          //   • pre-settlement bookings: subtotal − promo
+                          //     − points (the customer's bill before deposit
+                          //     — the deposit is refundable so it doesn't
+                          //     count as revenue yet)
+                          //   • post-settlement bookings (status=completed
+                          //     or balanceDue from overflow): add the
+                          //     PORTION of the deposit that SPACO kept
+                          //     (= sum of deductions). For a full-forfeit
+                          //     like Yan Lui's, this lands at
+                          //     subtotal + securityDeposit = $13,500
+                          //     instead of just $11,250.
+                          const subtotal = booking.pricing?.subtotal || 0;
+                          const promo = booking.promoDiscount || 0;
+                          const pts = booking.pointsDiscount || 0;
+                          const consumed = (
+                            (booking.depositRefund as { deductions?: { amount: number }[] } | null)?.deductions
+                            || []
+                          ).reduce((s, d) => s + (d.amount || 0), 0);
+                          // Cap forfeited deposit at securityDeposit while
+                          // the overflow hasn't been collected (status =
+                          // 'confirmed' with balanceDue). For 'completed'
+                          // bookings the overflow has been paid, so the
+                          // full deductions amount counts as revenue.
+                          const securityDeposit = booking.pricing?.securityDeposit || 0;
+                          const forfeitedDeposit = booking.status === 'completed'
+                            ? consumed
+                            : Math.min(consumed, securityDeposit);
+                          const total = Math.max(0, subtotal - promo - pts) + forfeitedDeposit;
+                          return `HK$${total.toLocaleString()}`;
+                        })()}
+                      </td>
                       <td className="px-6 py-4">
                         <div className="flex flex-col gap-1.5">
                           <span className={`inline-flex w-fit px-3 py-1 rounded-pill text-xs font-medium border ${statusColors[booking.status] || 'bg-white/60 text-ink-soft border-white/70'}`}>
