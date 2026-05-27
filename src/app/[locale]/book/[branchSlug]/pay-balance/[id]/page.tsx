@@ -8,7 +8,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getBooking } from '@/lib/firestore';
 import { getVenueById } from '@/lib/venues';
 import { BookingRecord } from '@/types';
-import { CreditCard, Building2, ArrowRight } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 export default function PayBalancePage() {
@@ -17,13 +16,13 @@ export default function PayBalancePage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   const bookingId = params.id as string;
-  const slug = params.branchSlug as string;
 
   const [booking, setBooking] = useState<BookingRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<'stripe' | 'fps' | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  // Starts at true — we auto-redirect to KPay on entry (no picker).
+  const [submitting, setSubmitting] = useState(true);
+  const [fired, setFired] = useState(false);
 
   useEffect(() => {
     if (authLoading) return;
@@ -41,43 +40,30 @@ export default function PayBalancePage() {
       .finally(() => setLoading(false));
   }, [bookingId, user, authLoading, router, locale]);
 
-  if (authLoading || loading) {
-    return <div className="pt-28 min-h-screen flex items-center justify-center"><div className="animate-pulse text-ink-soft">Loading...</div></div>;
-  }
-  if (error || !booking) {
-    return <div className="pt-28 min-h-screen flex items-center justify-center"><p className="text-rose-500">{error || 'Error'}</p></div>;
-  }
+  const venue = booking ? getVenueById(booking.venueId) : null;
+  const venueName = venue?.name[locale] || booking?.branchSlug || '';
+  const balance = booking?.balanceDue ?? 0;
 
-  const venue = getVenueById(booking.venueId);
-  const venueName = venue?.name[locale] || booking.branchSlug;
-  const balance = booking.balanceDue ?? 0;
-
-  async function handleProceed() {
-    if (!selected || !booking) return;
+  async function proceedToKpay() {
+    if (!booking) return;
+    setError(null);
     setSubmitting(true);
     try {
-      if (selected === 'stripe') {
-        // KPay-via-Stripe-label on kpay-integration branch (see
-        // payment/[id]/page.tsx for the same swap explanation).
-        const res = await fetch('/api/kpay/checkout', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            bookingId: booking.id,
-            amount: balance,
-            venueName: `${venueName} (${locale === 'zh' ? '尾數' : 'balance'})`,
-            customerEmail: user?.email,
-            isBalancePayment: true,
-          }),
-        });
-        if (!res.ok) throw new Error(`Checkout API ${res.status}`);
-        const { sessionUrl } = await res.json();
-        if (!sessionUrl) throw new Error('No checkout URL returned');
-        window.location.href = sessionUrl;
-      } else {
-        // Offline — reuse the offline page (it shows payment details + upload)
-        router.push(`/book/${slug}/pay-offline/${booking.id}`);
-      }
+      const res = await fetch('/api/kpay/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookingId: booking.id,
+          amount: balance,
+          venueName: `${venueName} (${locale === 'zh' ? '尾數' : 'balance'})`,
+          customerEmail: user?.email,
+          isBalancePayment: true,
+        }),
+      });
+      if (!res.ok) throw new Error(`Checkout API ${res.status}`);
+      const { sessionUrl } = await res.json();
+      if (!sessionUrl) throw new Error('No checkout URL returned');
+      window.location.href = sessionUrl;
     } catch (err) {
       console.error(err);
       setError(locale === 'zh' ? '處理失敗，請重試' : 'Processing failed, please retry');
@@ -85,88 +71,68 @@ export default function PayBalancePage() {
     }
   }
 
+  // Auto-fire when booking loads.
+  useEffect(() => {
+    if (fired || !booking || authLoading || loading) return;
+    setFired(true);
+    proceedToKpay();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [booking, authLoading, loading]);
+
+  if (authLoading || loading) {
+    return <div className="pt-28 min-h-screen flex items-center justify-center"><div className="animate-pulse text-ink-soft">Loading...</div></div>;
+  }
+  if (error && !booking) {
+    return <div className="pt-28 min-h-screen flex items-center justify-center"><p className="text-rose-500">{error}</p></div>;
+  }
+  if (!booking) {
+    return <div className="pt-28 min-h-screen flex items-center justify-center"><div className="animate-pulse text-ink-soft">Loading...</div></div>;
+  }
+
   return (
-    <div className="pt-28 pb-20 relative overflow-hidden">
+    <div className="pt-28 pb-20 relative overflow-hidden min-h-screen flex items-center justify-center">
       <div className="orb orb-pink animate-float-slow" style={{ width: 280, height: 280, top: '-60px', right: '-60px', opacity: 0.4 }} />
       <div className="max-content mx-auto px-6 md:px-12 lg:px-20 relative z-10">
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="max-w-xl mx-auto space-y-6">
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="max-w-md mx-auto text-center space-y-6">
+          <h1 className="text-heading font-display">
+            <span className="text-gradient-pink">
+              {error
+                ? (locale === 'zh' ? '處理失敗' : 'Payment Error')
+                : (locale === 'zh' ? '正在跳轉到付款頁面' : 'Redirecting to Payment')}
+            </span>
+          </h1>
           <div>
-            <h1 className="text-heading font-display">
-              <span className="text-gradient-pink">{locale === 'zh' ? '繳付尾數' : 'Pay Balance'}</span>
-            </h1>
-            <p className="text-ink-soft mt-2 text-sm">
-              {venueName} • {booking.date}
-            </p>
+            <p className="text-ink-soft text-sm">{venueName} • {booking.date}</p>
             <p className="text-ink-soft mt-1 text-sm">
               {locale === 'zh' ? '尾數' : 'Balance'}：
               <span className="font-bold text-ink ml-1">HK${balance.toLocaleString()}</span>
             </p>
           </div>
-
-          <div className="space-y-3">
-            <Option
-              selected={selected === 'stripe'}
-              onClick={() => setSelected('stripe')}
-              icon={<CreditCard size={22} />}
-              title={locale === 'zh' ? '信用卡網上付款' : 'Online Credit Card'}
-              subtitle={locale === 'zh' ? '透過 Stripe 安全付款' : 'Secure Stripe checkout'}
-            />
-            <Option
-              selected={selected === 'fps'}
-              onClick={() => setSelected('fps')}
-              icon={<Building2 size={22} />}
-              title={locale === 'zh' ? '線下付款（FPS / 銀行轉賬）' : 'Offline (FPS / Bank Transfer)'}
-              subtitle={locale === 'zh' ? '上載付款截圖' : 'Upload payment screenshot'}
-            />
-          </div>
-
-          {error && <p className="text-sm text-rose-500 text-center">{error}</p>}
-
-          <button
-            disabled={!selected || submitting}
-            onClick={handleProceed}
-            className="w-full bg-accent text-white py-4 rounded-xl font-bold text-lg hover:bg-accent/90 transition-colors flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {submitting ? (locale === 'zh' ? '處理中…' : 'Processing…') : (locale === 'zh' ? '付款' : 'Pay')}
-            {!submitting && <ArrowRight size={18} />}
-          </button>
+          {!error && (
+            <p className="text-ink-soft text-xs">
+              {locale === 'zh'
+                ? 'KPay 安全收銀台支援信用卡 / FPS / AlipayHK / WeChat / PayMe / Apple Pay。請稍候…'
+                : 'KPay secure cashier supports card / FPS / AlipayHK / WeChat / PayMe / Apple Pay. Hang tight…'}
+            </p>
+          )}
+          {submitting && !error && (
+            <div className="flex justify-center pt-2">
+              <div className="w-10 h-10 border-3 border-accent border-t-transparent rounded-full animate-spin" />
+            </div>
+          )}
+          {error && (
+            <>
+              <p className="text-sm text-rose-500">{error}</p>
+              <button
+                onClick={() => { setFired(false); }}
+                className="px-6 py-3 rounded-xl bg-accent text-white font-bold hover:bg-accent/90"
+              >
+                {locale === 'zh' ? '再試一次' : 'Try again'}
+              </button>
+            </>
+          )}
         </motion.div>
       </div>
     </div>
-  );
-}
-
-function Option({
-  selected,
-  onClick,
-  icon,
-  title,
-  subtitle,
-}: {
-  selected: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  title: string;
-  subtitle: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`w-full text-left p-5 rounded-xl border transition-colors ${
-        selected ? 'border-accent bg-accent/5' : 'border-charcoal/15 bg-white/60 hover:border-charcoal/30'
-      }`}
-    >
-      <div className="flex items-start gap-4">
-        <div className={`mt-0.5 ${selected ? 'text-accent' : 'text-ink-soft'}`}>{icon}</div>
-        <div className="flex-1">
-          <p className="font-semibold text-ink">{title}</p>
-          <p className="text-xs text-ink-soft mt-0.5">{subtitle}</p>
-        </div>
-        <div className={`w-5 h-5 rounded-full border-2 mt-1 flex items-center justify-center ${selected ? 'border-accent' : 'border-charcoal/25'}`}>
-          {selected && <div className="w-2.5 h-2.5 rounded-full bg-accent" />}
-        </div>
-      </div>
-    </button>
   );
 }
