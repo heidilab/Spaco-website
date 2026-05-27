@@ -44,11 +44,15 @@ export async function GET(req: NextRequest) {
   let selfTestErr: string | undefined;
   try {
     const headers = signRequest('GET', '/_selftest', '');
-    // The signature inside `headers` was signed with KPAY_PRIVATE_KEY.
-    // Verify it using OUR public key (we don't have a direct env for
-    // that — but we can derive it from the private key for the test).
+    // Derive our public key from our private key for the round-trip
+    // verify. The env var is bare base64 — apply the same PEM wrap
+    // the lib uses internally so OpenSSL can parse it.
+    const rawKey = (process.env.KPAY_PRIVATE_KEY as string).trim().replace(/\\n/g, '\n');
+    const pemPriv = rawKey.includes('-----BEGIN')
+      ? rawKey
+      : `-----BEGIN PRIVATE KEY-----\n${rawKey.match(/.{1,64}/g)?.join('\n') || rawKey}\n-----END PRIVATE KEY-----`;
     const ourPub = crypto.createPublicKey({
-      key: process.env.KPAY_PRIVATE_KEY as string,
+      key: pemPriv,
       format: 'pem',
     });
     const stringToSign = [
