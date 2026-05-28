@@ -37,6 +37,8 @@ const ENDPOINTS = {
   h5Cashier: '/v1/h5/managed/order',
   /** Query managed order result (polling fallback if webhook missed). */
   managedOrderResult: '/v1/managed/order/result',
+  /** Refund a settled transaction. POST + JSON body. */
+  refund: '/v1/refund',
 } as const;
 
 // ──────────────────────────────────────────────────────────
@@ -341,6 +343,78 @@ export async function queryManagedOrder(
     message?: string;
   };
   return { ok: data.code === 10000, code: data.code, message: data.message, data: data.data };
+}
+
+// ──────────────────────────────────────────────────────────
+// API: refund a settled transaction
+// ──────────────────────────────────────────────────────────
+
+export interface RefundOrderInput {
+  /** A NEW unique merchant trade number for THIS refund, ≤32 chars. */
+  outTradeNo: string;
+  /**
+   * The ORIGINAL transaction's orderNo — the `orderNo` returned in the
+   * sales notify callback (stored on payments[].kpayOrderNo) or from a
+   * query. ⚠️ NOT the managedOrderNo from order creation — KPay rejects
+   * the managedOrderNo here (see /v1/refund docs note).
+   */
+  oriOrderNo: string;
+  /** Refund amount in HKD (BigDecimal, 2 dp) — actual dollars, not cents. */
+  refundAmount: number;
+  /** KPay POSTs the refund result here (async). HTTPS, no query string. */
+  notifyUrl: string;
+}
+
+export interface RefundOrderResult {
+  ok: boolean;
+  code: number;
+  /** Refund order number assigned by KPay. */
+  orderNo?: string;
+  /** Business state: 1=pending 2=success 3=failed. */
+  result?: number;
+  /** Human-readable reason (e.g. "退款餘額不足" when balance is short). */
+  reason?: string;
+  message?: string;
+}
+
+/**
+ * Refund (full or partial) against a prior successful transaction.
+ *
+ * Note on KPay's fee model: refundable balance = original amount −
+ * (payment fee + refund fee). Refunding the FULL original amount right
+ * after a single charge typically fails with "退款餘額不足" because the
+ * fee was already deducted — this is expected and is exactly what the
+ * UAT "refund failure" case verifies.
+ */
+export async function refundOrder(
+  input: RefundOrderInput,
+): Promise<RefundOrderResult> {
+  const path = ENDPOINTS.refund;
+  const body = JSON.stringify({
+    outTradeNo: input.outTradeNo,
+    oriOrderNo: input.oriOrderNo,
+    refundAmount: input.refundAmount,
+    notifyUrl: input.notifyUrl,
+  });
+  const headers = signRequest('POST', path, body);
+  const res = await fetch(`${getApiBase()}${path}`, {
+    method: 'POST',
+    headers: headers as unknown as Record<string, string>,
+    body,
+  });
+  const data = (await res.json()) as {
+    code: number;
+    data?: { orderNo: string; result: number; reason: string };
+    message?: string;
+  };
+  return {
+    ok: data.code === 10000,
+    code: data.code,
+    orderNo: data.data?.orderNo,
+    result: data.data?.result,
+    reason: data.data?.reason,
+    message: data.message,
+  };
 }
 
 // ──────────────────────────────────────────────────────────

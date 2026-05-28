@@ -81,8 +81,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 });
   }
 
-  // We only care about SALES (sale/charge) for now; refunds + chargebacks
-  // get their own webhook events later.
+  // REFUND callbacks (fired by /v1/refund) get their own handler. They
+  // recover the booking from our refund outTradeNo (R<bookingId>_<epoch>)
+  // and append to kpayRefunds[] for audit — they do NOT auto-adjust
+  // balanceDue/status (admin decides the booking-side consequence).
+  if (payload.eventType === 'REFUND') {
+    return handleRefundNotify(payload);
+  }
+
+  // Everything else (chargebacks, etc.) is acknowledged but not acted on.
   if (payload.eventType !== 'SALES') {
     console.log('[kpay/webhook] ignoring eventType:', payload.eventType);
     return NextResponse.json({ ok: true, ignored: true });
@@ -213,4 +220,66 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ ok: true, bookingId: bookingRef.id });
+}
+
+/**
+ * Find a booking by the id-prefix encoded in a managed/refund trade no.
+ * Our trade numbers embed the first 12 chars of the bookingId:
+ *   sales:  B<bookingIdFirst12>_<P|B><epoch>
+ *   refund: R<bookingIdFirst12>_<epoch>
+ */
+async function findBookingByTradePrefix(
+  prefix: string,
+): Promise<{ ref: FirebaseFirestore.DocumentReference; booking: BookingRecord } | null> {
+  if (!prefix) return null;
+  const directSnap = await adminDb.collection('bookings').doc(prefix).get();
+  if (directSnap.exists) {
+    return { ref: directSnap.ref, booking: { id: directSnap.id, ...directSnap.data() } as BookingRecord };
+  }
+  const all = await adminDb.collection('bookings').get();
+  const hit = all.docs.find((d) => d.id.startsWith(prefix));
+  if (hit) {
+    return { ref: hit.ref, booking: { id: hit.id, ...hit.data() } as BookingRecord };
+  }
+  return null;
+}
+
+/**
+ * Record a refund result on the booking. Idempotent on the refund's
+ * transactionNo. Does not change balanceDue/status — the security-deposit
+ * settlement flow and admin offline-payment tools own that math.
+ */
+async function handleRefundNotify(payload: KPayNotifyPayload) {
+  // Refund outTradeNo is our own R<bookingIdFirst12>_<epoch>.
+  const tradeNo = payload.outTradeNo || '';
+  const bookingIdPrefix = tradeNo.startsWith('R')
+    ? tradeNo.slice(1).split('_')[0]
+    : '';
+  const found = await findBookingByTradePrefix(bookingIdPrefix);
+  if (!found) {
+    console.error('[kpay/webhook] REFUND booking not found for', tradeNo);
+    return NextResponse.json({ ok: true, notFound: true, tradeNo });
+  }
+  const { ref, booking } = found;
+
+  // Idempotency — skip if this refund transaction is already logged.
+  const existing = (booking as { kpayRefunds?: Array<{ kpayTransactionNo?: string }> }).kpayRefunds || [];
+  if (existing.some((r) => r.kpayTransactionNo === payload.transactionNo)) {
+    return NextResponse.json({ ok: true, alreadyRecorded: true });
+  }
+
+  await ref.update({
+    kpayRefunds: FieldValue.arrayUnion({
+      amount: payload.payAmount,
+      state: payload.transactionState,        // 2=success 3=failed
+      stateDesc: payload.transactionStateDesc || null,
+      kpayOrderNo: payload.orderNo,
+      kpayTransactionNo: payload.transactionNo,
+      refundOutTradeNo: tradeNo,
+      recordedAt: new Date().toISOString(),
+    }),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  return NextResponse.json({ ok: true, bookingId: ref.id, refund: true });
 }

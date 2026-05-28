@@ -206,6 +206,23 @@ export interface BookingRecord {
     recordedBy: string;     // admin uid OR 'stripe-webhook' for automated
     recordedAt: unknown;    // Firestore Timestamp / ISO string
   }>;
+  /** Audit log of KPay refunds issued against this booking's card/QR
+   *  payments (via /api/kpay/refund → KPay /v1/refund). Recorded by the
+   *  REFUND webhook; does not affect balanceDue/status. */
+  kpayRefunds?: Array<{
+    /** Refunded amount in HKD. */
+    amount: number;
+    /** KPay business state: 2=success 3=failed. */
+    state: number;
+    stateDesc?: string | null;
+    /** KPay's refund order number. */
+    kpayOrderNo?: string;
+    /** KPay's refund transaction number (idempotency key). */
+    kpayTransactionNo?: string;
+    /** Our refund merchant trade number (R<bookingId>_<epoch>). */
+    refundOutTradeNo?: string;
+    recordedAt: unknown;
+  }>;
   /** Marketing channel snapshot — captured on the customer's FIRST
    *  booking (mandatory question). Repeat customers auto-tag as
    *  'loyalty_member' (a sentinel that's not a real MarketingChannel).
