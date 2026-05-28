@@ -9,7 +9,7 @@
 
 import { useState } from 'react';
 import type { BookingRecord } from '@/types';
-import { CreditCard, Wand2, X as XIcon, Loader2, Check } from 'lucide-react';
+import { CreditCard, Wand2, X as XIcon, Loader2, Check, Undo2 } from 'lucide-react';
 
 const METHOD_LABELS: Record<string, { zh: string; en: string }> = {
   stripe: { zh: 'Stripe', en: 'Stripe' },
@@ -55,6 +55,13 @@ export default function PaymentHistory({
   // the historical record.
   const [freezingSynth, setFreezingSynth] = useState(false);
   const [freezeMsg, setFreezeMsg] = useState<string | null>(null);
+  // KPay refund state (admin-only). A KPay payment carries kpayOrderNo —
+  // the original transaction's orderNo, which is what /v1/refund needs.
+  const [refundingOrderNo, setRefundingOrderNo] = useState<string | null>(null);
+  const [refundMax, setRefundMax] = useState(0);
+  const [refundAmtInput, setRefundAmtInput] = useState('');
+  const [refundBusy, setRefundBusy] = useState(false);
+  const [refundResult, setRefundResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
   // Legacy detection: any entry that has a positive amount but no split
   // is from the pre-split endpoint. When at least one exists, pricing.*
@@ -228,6 +235,66 @@ export default function PaymentHistory({
     }
   }
 
+  // Refunds already issued against this booking's KPay payments.
+  const refundsLog =
+    (booking as { kpayRefunds?: Array<{
+      amount: number;
+      state: number;
+      stateDesc?: string | null;
+      refundOutTradeNo?: string;
+      recordedAt?: unknown;
+    }> }).kpayRefunds || [];
+
+  async function handleRefundSubmit() {
+    if (!refundingOrderNo) return;
+    const amt = parseFloat(refundAmtInput) || 0;
+    if (amt <= 0) {
+      setRefundResult({ ok: false, msg: locale === 'zh' ? '請輸入有效金額' : 'Enter a valid amount' });
+      return;
+    }
+    setRefundBusy(true);
+    setRefundResult(null);
+    try {
+      const res = await fetch('/api/kpay/refund', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookingId: booking.id,
+          kpayOrderNo: refundingOrderNo,
+          refundAmount: amt,
+        }),
+      });
+      const data = await res.json();
+      // result: 1=pending 2=success 3=failed. code 10000 = request accepted.
+      const success = res.ok && data.ok && data.result === 2;
+      const pending = res.ok && data.ok && data.result === 1;
+      if (success) {
+        setRefundResult({
+          ok: true,
+          msg: (locale === 'zh' ? '✓ 退款成功 HK$' : '✓ Refunded HK$')
+            + amt.toLocaleString()
+            + (data.refundOrderNo ? `（${data.refundOrderNo}）` : ''),
+        });
+        onUpdated?.();
+      } else if (pending) {
+        setRefundResult({
+          ok: true,
+          msg: locale === 'zh' ? '退款處理中，請稍後查看結果' : 'Refund pending — check back shortly',
+        });
+        onUpdated?.();
+      } else {
+        // Failure — surface KPay's reason (e.g. 退款餘額不足).
+        const reason = data.reason || data.message || data.error
+          || (locale === 'zh' ? '退款失敗' : 'Refund failed');
+        setRefundResult({ ok: false, msg: reason });
+      }
+    } catch (e) {
+      setRefundResult({ ok: false, msg: e instanceof Error ? e.message : 'unknown' });
+    } finally {
+      setRefundBusy(false);
+    }
+  }
+
   return (
     <div className="glass-card p-6 space-y-3 text-sm">
       <h2 className="font-bold flex items-center gap-2">
@@ -339,6 +406,7 @@ export default function PaymentHistory({
             if (p.kind === 'topup') return locale === 'zh' ? '補加付款' : 'Top-up';
             return null;
           })();
+          const kpayOrderNo = (p as { kpayOrderNo?: string }).kpayOrderNo;
           return (
             <li key={i} className="border-l-2 border-pink/40 pl-3 py-1.5">
               <div className="flex items-baseline justify-between gap-2">
@@ -364,10 +432,59 @@ export default function PaymentHistory({
               {!kindLabel && (
                 <p className="text-ink-soft text-[10px] mt-0.5">{fmtRecordedAt(p.recordedAt)}</p>
               )}
+              {/* KPay refund — only for KPay card/QR payments (those carry
+               *  kpayOrderNo). Refunds against the original transaction's
+               *  orderNo via /api/kpay/refund. */}
+              {adminMode && kpayOrderNo && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRefundingOrderNo(kpayOrderNo);
+                    setRefundMax(p.amount);
+                    setRefundAmtInput(String(p.amount));
+                    setRefundResult(null);
+                  }}
+                  className="mt-1.5 px-2 py-0.5 rounded-pill bg-rose-500/10 text-rose-700 text-[10px] font-semibold hover:bg-rose-500/20 flex items-center gap-1"
+                  title={locale === 'zh'
+                    ? '透過 KPay 退款此筆交易（退回原付款方式）。退全額可能因手續費而餘額不足。'
+                    : 'Refund this KPay transaction to the original payment method. Full refund may fail on fee balance.'}
+                >
+                  <Undo2 size={10} />
+                  {locale === 'zh' ? '退款' : 'Refund'}
+                </button>
+              )}
             </li>
           );
         })}
       </ul>
+
+      {/* KPay refunds issued against this booking. */}
+      {refundsLog.length > 0 && (
+        <div className="border-t border-charcoal/10 pt-3 space-y-1.5">
+          <p className="text-xs font-semibold text-ink-soft">
+            {locale === 'zh' ? '退款記錄' : 'Refunds'}
+          </p>
+          <ul className="space-y-1.5 text-xs">
+            {refundsLog.map((r, i) => {
+              const ok = r.state === 2;
+              return (
+                <li key={i} className={`border-l-2 pl-3 py-1 ${ok ? 'border-emerald-400/60' : 'border-rose-400/60'}`}>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="font-mono font-bold">−HK${(r.amount || 0).toLocaleString()}</span>
+                    <span className={ok ? 'text-emerald-700' : 'text-rose-700'}>
+                      {ok
+                        ? (locale === 'zh' ? '退款成功' : 'Refunded')
+                        : (locale === 'zh' ? '退款失敗' : 'Failed')}
+                    </span>
+                  </div>
+                  {r.stateDesc && <p className="text-ink-soft mt-0.5">{r.stateDesc}</p>}
+                  <p className="text-ink-soft text-[10px] mt-0.5">{fmtRecordedAt(r.recordedAt)}</p>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
 
       {/* Split modal for legacy entries */}
       {adminMode && splittingIdx !== null && (
@@ -436,6 +553,56 @@ export default function PaymentHistory({
                 ? '拆分後系統會將場租加入小計、按金加入可退按金。已收總額不變。'
                 : 'On confirm, rental adds to subtotal, deposit adds to refundable amount. Total paid is unchanged.'}
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* KPay refund modal */}
+      {adminMode && refundingOrderNo !== null && (
+        <div className="fixed inset-0 z-50 bg-charcoal/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-glass-lg max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-bold text-lg flex items-center gap-2">
+                <Undo2 size={18} className="text-rose-600" />
+                {locale === 'zh' ? 'KPay 退款' : 'KPay Refund'}
+              </h3>
+              <button
+                onClick={() => { setRefundingOrderNo(null); setRefundResult(null); }}
+                className="w-8 h-8 rounded-full hover:bg-white/60 flex items-center justify-center"
+              >
+                <XIcon size={14} />
+              </button>
+            </div>
+            <p className="text-sm text-ink-soft mb-1">
+              {locale === 'zh'
+                ? `原交易金額 HK$${refundMax.toLocaleString()}。輸入退款金額：`
+                : `Original amount HK$${refundMax.toLocaleString()}. Enter refund amount:`}
+            </p>
+            <input
+              type="number"
+              value={refundAmtInput}
+              onChange={(e) => setRefundAmtInput(e.target.value)}
+              className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white mb-2"
+              placeholder="0"
+            />
+            <p className="text-[11px] text-ink-soft mb-3 leading-relaxed">
+              {locale === 'zh'
+                ? '⚠️ KPay 會先扣手續費，退全額時可能顯示「退款餘額不足」。退款結果會透過 webhook 記錄喺下面「退款記錄」。'
+                : '⚠️ KPay deducts fees first, so a full refund may report insufficient balance. The result is recorded under Refunds via webhook.'}
+            </p>
+            {refundResult && (
+              <div className={`text-xs rounded-lg px-3 py-2 mb-3 ${refundResult.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                {refundResult.msg}
+              </div>
+            )}
+            <button
+              onClick={handleRefundSubmit}
+              disabled={refundBusy}
+              className="w-full justify-center disabled:opacity-40 flex items-center gap-2 bg-rose-600 text-white py-3 rounded-xl font-bold hover:bg-rose-700"
+            >
+              {refundBusy ? <Loader2 size={14} className="animate-spin" /> : <Undo2 size={14} />}
+              {locale === 'zh' ? '確認退款' : 'Confirm Refund'}
+            </button>
           </div>
         </div>
       )}
