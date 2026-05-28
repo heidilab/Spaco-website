@@ -8,7 +8,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getBooking, updateBookingPaymentMethod, createBooking } from '@/lib/firestore';
 import { getVenueById } from '@/lib/venues';
 import { BookingRecord } from '@/types';
+import { LogIn } from 'lucide-react';
 import { motion } from 'framer-motion';
+import AuthModal from '@/components/auth/AuthModal';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
 import {
   loadBookingCheckoutDraft, clearBookingCheckoutDraft,
@@ -81,11 +83,17 @@ export default function PaymentMethodPage() {
   // a re-render doesn't fire two createBooking calls. Declared HERE
   // (before any early return) to keep the Hook order stable.
   const [fired, setFired] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
 
   useEffect(() => {
     if (authLoading) return;
     if (!user) {
-      router.push('/');
+      // Don't bounce to '/' — keep the customer on this URL so when they
+      // log in via AuthModal the useEffect re-runs and loads the booking.
+      // (Same fix as pay-balance: an initial-payment link clicked while
+      // logged out used to drop the bookingId and strand the customer.)
+      setLoading(false);
+      setSubmitting(false);
       return;
     }
 
@@ -115,7 +123,7 @@ export default function PaymentMethodPage() {
         if (!b) {
           setError(locale === 'zh' ? '找不到預訂記錄' : 'Booking not found');
         } else if (b.userId !== user.uid) {
-          setError(locale === 'zh' ? '無權查看此預訂' : 'Not authorized');
+          setError(locale === 'zh' ? '無權查看此預訂（請用預訂時嘅帳號登入）' : 'Not authorized — please sign in with the account used to make this booking');
         } else if (!b.refundDetails) {
           // Skip back to confirm if refund details missing
           router.push(`/book/${slug}/confirm/${bookingId}`);
@@ -144,10 +152,51 @@ export default function PaymentMethodPage() {
       </div>
     );
   }
+
+  // Not signed in → show inline sign-in prompt instead of redirecting away.
+  if (!user) {
+    return (
+      <div className="pt-28 pb-20 min-h-screen flex items-center justify-center px-6">
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="max-w-md w-full text-center space-y-6">
+          <h1 className="text-heading font-display">
+            <span className="text-gradient-pink">{locale === 'zh' ? '預訂付款' : 'Booking Payment'}</span>
+          </h1>
+          <p className="text-ink-soft text-sm">
+            {locale === 'zh'
+              ? '請先登入您預訂時使用的帳號，以繼續付款。'
+              : 'Please sign in with the account used to make this booking to continue.'}
+          </p>
+          <button
+            onClick={() => setAuthOpen(true)}
+            className="w-full bg-accent text-white py-4 rounded-xl font-bold text-lg hover:bg-accent/90 transition-colors flex items-center justify-center gap-2"
+          >
+            <LogIn size={18} />
+            {locale === 'zh' ? '登入' : 'Sign In'}
+          </button>
+          <button
+            onClick={() => router.push('/')}
+            className="text-sm text-ink-soft hover:text-ink underline"
+          >
+            {locale === 'zh' ? '返回主頁' : 'Back to home'}
+          </button>
+        </motion.div>
+        <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} />
+      </div>
+    );
+  }
+
   if (error || !booking) {
     return (
-      <div className="pt-28 min-h-screen flex items-center justify-center">
-        <p className="text-rose-500">{error || 'Error'}</p>
+      <div className="pt-28 min-h-screen flex items-center justify-center px-6">
+        <div className="max-w-md w-full text-center space-y-4">
+          <p className="text-rose-500">{error || 'Error'}</p>
+          <button
+            onClick={() => router.push('/account')}
+            className="text-sm text-ink-soft hover:text-ink underline"
+          >
+            {locale === 'zh' ? '查看我的預訂' : 'View my bookings'}
+          </button>
+        </div>
       </div>
     );
   }
