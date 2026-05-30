@@ -70,7 +70,30 @@ export async function POST(req: NextRequest) {
     body: rawBody,
   });
   if (!valid) {
-    console.warn('[kpay/webhook] signature verification FAILED');
+    // Diagnostic dump — KPay's notify signature spec may differ from the
+    // POST-request signing convention (method+url+ts+nonce+mid+body). Log
+    // everything so we can reverse-engineer the right format from a real
+    // notify attempt.
+    console.warn('[kpay/webhook] signature verification FAILED', {
+      receivedHeaders: {
+        'K-Signature': signature,
+        'K-Timestamp': timestamp,
+        'K-Nonce-Str': nonce,
+        'K-Merchant-Code': merchantCode,
+        'content-type': req.headers.get('content-type'),
+      },
+      bodyLen: rawBody.length,
+      bodyPreview: rawBody.slice(0, 500),
+      triedSignStringLines: [
+        'POST',
+        '/api/kpay/webhook',
+        timestamp,
+        nonce,
+        merchantCode,
+        '<rawBody>',
+        '',
+      ],
+    });
     return NextResponse.json({ error: 'invalid signature' }, { status: 401 });
   }
 
