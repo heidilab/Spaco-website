@@ -12,6 +12,12 @@ import type { Metadata } from 'next';
 const PROJECT_ID =
   process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'spaco-website';
 const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://spacohk.com';
+/** Hardcoded last-resort og:image / twitter:image fallback so social
+ *  previews + AI cards always have *something* to show even when the
+ *  admin hasn't uploaded a page banner. Swap this out for a proper
+ *  1200×630 hero banner in /public when one exists — the logo works
+ *  but is square-ish, not the ideal landscape ratio. */
+const DEFAULT_OG_IMAGE = `${SITE_URL}/spaco-logo.png`;
 
 // ────────────────────────────────────────────────────────────
 // Server-side reads via Firestore REST API
@@ -100,7 +106,7 @@ export async function buildMetadata({
   const title = pick('title');
   const description = pick('description');
   const keywords = pick('keywords');
-  const ogImage = entry?.ogImage || fallback?.ogImage || defaults.ogImage;
+  const ogImage = entry?.ogImage || fallback?.ogImage || defaults.ogImage || DEFAULT_OG_IMAGE;
   const siteName = defaults.siteName?.[locale];
   const noindex = entry?.noindex ?? fallback?.noindex ?? false;
 

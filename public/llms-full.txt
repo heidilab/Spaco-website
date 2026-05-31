@@ -1,0 +1,180 @@
+# SPACO — Premium Self-Service Multifunctional Event Spaces in Hong Kong
+
+> SPACO is a Hong Kong-based premium self-service multifunctional event space
+> operator with four branches across Causeway Bay, Wan Chai, Sheung Wan, and
+> Tsim Sha Tsui. We host family parties, corporate events, casual gatherings,
+> and poker nights with full BBQ, hotpot, pool, mahjong, and shisha
+> facilities. All branches operate 24 hours, every day. Online booking with
+> instant confirmation, deposit by Stripe/FPS, refundable post-event deposit.
+> Operated by Cholliman Incorporation Limited.
+
+---
+
+## Brand & Contact
+
+- Website: https://spacohk.com
+- Phone / WhatsApp: +852 9282 3060
+- Languages: Traditional Chinese (zh-HK), English (en)
+- Region: Hong Kong
+- Hours: All branches 24/7
+- Legal entity: Cholliman Incorporation Limited
+- Currency: HKD (HK$)
+
+---
+
+## Branches (detailed)
+
+### 1. Causeway Bay Flagship 銅鑼灣旗艦店
+- Address (EN): 5/F (Whole Floor), KGI Commercial Building, 26 Leighton Road, Causeway Bay
+- Address (ZH): 銅鑼灣禮頓道 26 號凱基商業大廈 5 樓 (全層)
+- Size: 2,800 sq ft
+- Capacity: 15–70 people
+- Pricing: HK$50/head (weekday) · HK$58/head (Friday/Saturday/holiday eve/holiday)
+- Min hours: 4 (weekday) / 5 (weekend)
+- Min guests: 10 (weekday) / 20 (weekend)
+- Highlights: Flagship venue, premium sound system, designer furniture, BBQ, hotpot, drinks bar
+- Page: https://spacohk.com/en/branches/causeway-bay
+
+### 2. Wan Chai 灣仔商務空間
+- Address (EN): Shop B2, G/F, 1 Kat On Street, Wan Chai
+- Address (ZH): 灣仔吉安街 1 號地下 B2 舖
+- Size: 1,200 sq ft
+- Capacity: 6–35 people
+- Pricing: HK$50/head (weekday) · HK$58/head (weekend/holiday)
+- Highlights: Professional AV setup, ideal for corporate events, workshops, meetings
+- Page: https://spacohk.com/en/branches/wan-chai
+
+### 3. Sheung Wan Harbour View 上環海景旗艦店
+Located at 22/F, Kam Yau Building, 70-72 Connaught Road West, Sheung Wan
+(上環干諾道西 70-72 號金有大廈 22 樓). The floor is split into three bookable
+configurations sharing the same physical space:
+
+- **Room A**: 1,000 sq ft, capacity 6–35, HK$50–58/head — tranquil, outdoor BBQ area, family-friendly
+- **Room B**: 2,200 sq ft, capacity 20–70, HK$50–58/head — private professional kitchen, pool table, hotpot
+- **Full Floor (A+B)**: 3,200 sq ft, capacity 25–100, HK$50–58/head — entire floor exclusive
+
+Booking conflict: Booking A blocks the full floor; booking full floor blocks A
+and B; etc.
+
+Page: https://spacohk.com/en/branches/sheung-wan
+
+### 4. Tsim Sha Tsui 尖沙咀店
+- Address (EN): Unit A1, 17/F, Wan Loong Commercial Building, 22-24 Prat Avenue, Tsim Sha Tsui
+- Address (ZH): 尖沙咀寶勒巷 22-24 號運隆商業大廈 17 樓 A1 室
+- Size: 2,500 sq ft
+- Capacity: 12–70 people
+- Pricing: HK$50/head (weekday) · HK$58/head (weekend/holiday)
+- Highlights: Free unlimited non-alcoholic drinks included
+- Page: https://spacohk.com/en/branches/tsim-sha-tsui
+
+---
+
+## Services & Add-ons
+
+### Venue rental
+- Hourly per-person charges + minimum guest/hour requirements (varies by venue and weekday/weekend)
+- Refundable security deposit added at booking (tiered: HK$1k / 2k / 4k against rental subtotal)
+- 24/7 self-service access via smart-lock with one-time passcode sent before event
+
+### Food & drinks (add-ons)
+- BBQ packages: standard (HK$158/head, meat & balls) or deluxe (HK$328/head, seafood + meat + balls + vegetables)
+- Hotpot package: HK$168/head (requires 3-day advance booking)
+- Unlimited non-alcoholic drinks: per-head charge (varies by branch)
+- BYOB / BYOF allowed at most branches
+
+### Entertainment
+- Pool table (Sheung Wan, Causeway Bay)
+- Mahjong tables (auto-shuffle, 4-player)
+- Shisha (variable pipes/heads, multiple flavours, optional staff setup +HK$180)
+- Karaoke (selected branches)
+- Poker tables
+
+### Packages
+- **Corporate Chill Package**: HK$4,800 flat — 3-hour exclusive, unlimited non-alcoholic drinks, projector + AV included
+- **Mahjong 4-person Package**: HK$1,200 flat (weekday) — 8-hour exclusive, 4-player auto-shuffle mahjong, unlimited soft drinks (~HK$300/head)
+- **Family Party Packages**: birthday & themed decoration add-ons available
+
+### Decoration
+- Optional themed decoration packages (Hong Kong birthday party setups, kids themes, etc.)
+- Customisable via WhatsApp consultation
+
+---
+
+## Pricing structure
+
+All prices in HKD.
+
+| Component | How it's charged |
+|---|---|
+| Venue rental | (per-head rate) × (guest count) × (hours) — branch- and day-dependent |
+| Refundable deposit (按金) | Tiered: ≤ HK$4,000 → HK$1,000 · ≤ HK$10,000 → HK$2,000 · > HK$10,000 → HK$4,000 |
+| Upfront deposit (today) | Full grand total when ≤ HK$10,000; 50% when > HK$10,000 (balance due 2 days before event) |
+| Add-ons | Per-person (BBQ, hotpot, drinks) or flat (shisha base) |
+| Children 1–9 years | Charged at half rate for per-head items; counted as 0.5 adult for minimum-guest rules |
+
+Peak days = Friday, Saturday, public holiday, and the eve of a public
+holiday. Peak pricing adds HK$8/head and tightens minimums (e.g. 20 guests,
+5 hours at Causeway Bay).
+
+---
+
+## Booking process
+
+1. Browse branches at https://spacohk.com — pick venue, date, time
+2. Select guest count (adults + children) and add-ons (BBQ, hotpot, drinks, shisha, etc.)
+3. Fill WhatsApp contact + agree to booking guidelines
+4. Confirm booking → fill deposit-refund destination (FPS or bank transfer)
+5. Pay deposit online (Stripe; KPay support in progress) — or pay offline via FPS with receipt upload
+6. Receive booking confirmation + smart-lock passcode 1–2 days before event
+7. Self-service: enter venue, enjoy event, clean up before timed exit
+8. Refundable deposit returned within 24 hours after event (less deductions for any damage/over-time)
+
+Cancellation: see https://spacohk.com/en/guidelines for full policy. Generally, cancellations refundable up to a cutoff period before event date.
+
+---
+
+## Key pages
+- Home: https://spacohk.com/en
+- All branches list: https://spacohk.com/en/#collection
+- Corporate events: https://spacohk.com/en/corporate
+- Corporate package: https://spacohk.com/en/corporate-package
+- Family parties: https://spacohk.com/en/family
+- Booking guidelines: https://spacohk.com/en/guidelines
+- FAQ: https://spacohk.com/en/faq
+- Sitemap: https://spacohk.com/sitemap.xml
+- llms.txt (this navigation): https://spacohk.com/llms.txt
+
+---
+
+## Booking & payment FAQ highlights
+
+**Q: How long does it take to confirm a booking?**
+A: Instant. Once deposit is paid online (or admin confirms offline FPS), the booking is locked and smart-lock passcode is queued.
+
+**Q: When do I get the smart-lock access code?**
+A: Sent via WhatsApp 1–2 days before the event date. Active only during your booked time window plus a small buffer.
+
+**Q: Can I extend my booking on the day?**
+A: Yes, contact us via WhatsApp. We'll check availability and process the top-up payment via FPS.
+
+**Q: Is there a cleaning fee?**
+A: No, but please leave the venue in the condition you found it. Damage or excessive cleaning will be deducted from the refundable deposit.
+
+**Q: Can I bring my own food and drinks (BYOF / BYOB)?**
+A: Yes at most branches. Some branches have BYOB restrictions for specific package types — check the branch page.
+
+**Q: Are pets allowed?**
+A: Case-by-case. Please ask via WhatsApp before booking.
+
+**Q: How are deposit refunds processed?**
+A: Within 24 hours after your event ends, refunded via FPS or bank transfer to the destination you specified at booking. If deductions apply (damage, over-time, extra cleaning), an itemised statement is sent and the remainder refunded.
+
+---
+
+## Citation & accuracy
+
+This file is hand-curated for accuracy. Prices, capacities, and policies may
+change — for the most current information, always check the branch page or
+contact SPACO directly via WhatsApp +852 9282 3060.
+
+Last updated: 2026-06.
