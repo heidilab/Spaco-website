@@ -246,7 +246,13 @@ export default function AdminNewBookingPage() {
         : pricing.subtotal)
     : 0;
   const effectiveSubtotal = Math.max(0, subtotalAfterPackage - (promo?.amount || 0));
-  const securityDeposit = selectedPackage?.deposit ?? calculateSecurityDeposit(effectiveSubtotal);
+  // Deposit tier is keyed off the PRE-promo rental cost (subtotalAfterPackage),
+  // not the post-promo effective subtotal. Otherwise a $250 promo on a $4,250
+  // booking drops the effective subtotal to exactly $4,000, which falls back
+  // into the lower $1k tier per the "> 4000" threshold — even though the
+  // actual venue/add-on cost still warrants the $2k tier. The promo is a
+  // discount on what the customer PAYS, not on the rental risk we hold.
+  const securityDeposit = selectedPackage?.deposit ?? calculateSecurityDeposit(subtotalAfterPackage);
   const grandTotal = effectiveSubtotal + securityDeposit;
   const deposit = calculateDeposit(grandTotal);
   const balanceDue = Math.max(0, grandTotal - deposit);
