@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
-import { verifyNotify, isTransactionSuccess } from '@/lib/kpay';
+import { verifyNotifyMulti, isTransactionSuccess } from '@/lib/kpay';
 import { pushBookingToCalendar, updateBookingOnCalendar } from '@/lib/googleCalendar';
 import type { BookingRecord, UserProfile } from '@/types';
 
@@ -60,21 +60,22 @@ export async function POST(req: NextRequest) {
   }
 
   // Verify the signature so an attacker can't fabricate a "success" callback.
-  const valid = verifyNotify({
+  // We try a handful of signing conventions because KPay's notify format
+  // isn't fully documented in the materials we have; verifyNotifyMulti
+  // returns which variant matched so we can lock down to it later.
+  const fullNotifyUrl = `${req.nextUrl.origin}/api/kpay/webhook`;
+  const verifyResult = verifyNotifyMulti({
     method: 'POST',
     url: '/api/kpay/webhook',
+    fullNotifyUrl,
     signature,
     timestamp,
     nonce,
     merchantCode,
     body: rawBody,
   });
-  if (!valid) {
-    // Diagnostic dump — KPay's notify signature spec may differ from the
-    // POST-request signing convention (method+url+ts+nonce+mid+body). Log
-    // everything so we can reverse-engineer the right format from a real
-    // notify attempt.
-    console.warn('[kpay/webhook] signature verification FAILED', {
+  if (!verifyResult.ok) {
+    console.warn('[kpay/webhook] signature verification FAILED (all variants)', {
       receivedHeaders: {
         'K-Signature': signature,
         'K-Timestamp': timestamp,
@@ -83,19 +84,12 @@ export async function POST(req: NextRequest) {
         'content-type': req.headers.get('content-type'),
       },
       bodyLen: rawBody.length,
-      bodyPreview: rawBody.slice(0, 500),
-      triedSignStringLines: [
-        'POST',
-        '/api/kpay/webhook',
-        timestamp,
-        nonce,
-        merchantCode,
-        '<rawBody>',
-        '',
-      ],
+      bodyPreview: rawBody.slice(0, 800),
+      fullNotifyUrl,
     });
     return NextResponse.json({ error: 'invalid signature' }, { status: 401 });
   }
+  console.log('[kpay/webhook] signature OK via variant:', verifyResult.variant);
 
   let payload: KPayNotifyPayload;
   try {

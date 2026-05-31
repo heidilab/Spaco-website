@@ -160,32 +160,78 @@ export function signRequest(
  * KPay sends:
  *   K-Signature, K-Timestamp, K-Nonce-Str, K-Merchant-Code headers
  *   POST body (JSON) — pass the RAW body string here, not parsed JSON.
+ *
+ * KPay's webhook string-to-sign format isn't documented in the materials
+ * we have, and verification kept failing with the API-request convention.
+ * So we try a handful of plausible variants and accept if ANY of them
+ * verifies. The matching variant's name is returned so we can lock the
+ * webhook down to that one variant once we know which it is.
  */
-export function verifyNotify(opts: {
+export interface VerifyNotifyOpts {
   method: 'POST';
-  url: string;            // path only, e.g. /api/kpay/webhook
+  /** Path-only of OUR webhook URL, e.g. /api/kpay/webhook. */
+  url: string;
+  /** Full notifyUrl we passed to /v1/managed/order/add (e.g.
+   *  https://host/api/kpay/webhook). KPay may sign with this verbatim. */
+  fullNotifyUrl?: string;
   signature: string;
   timestamp: string;
   nonce: string;
   merchantCode: string;
   body: string;
-}): boolean {
-  const stringToSign = buildSignString({
-    method: opts.method,
-    url: opts.url,
-    timestamp: opts.timestamp,
-    nonce: opts.nonce,
-    mid: opts.merchantCode,
-    body: opts.body,
-  });
+}
+
+export interface VerifyNotifyResult {
+  ok: boolean;
+  /** Name of the variant that verified, or null if none. */
+  variant: string | null;
+}
+
+function tryVerify(stringToSign: string, signature: string): boolean {
   try {
     const verifier = crypto.createVerify('RSA-SHA256');
     verifier.update(stringToSign, 'utf8');
-    return verifier.verify(getPlatformPublicKey(), opts.signature, 'base64');
-  } catch (err) {
-    console.warn('[kpay] verifyNotify failed:', err);
+    return verifier.verify(getPlatformPublicKey(), signature, 'base64');
+  } catch {
     return false;
   }
+}
+
+/** Run all known KPay-notify signing variants. */
+export function verifyNotifyMulti(opts: VerifyNotifyOpts): VerifyNotifyResult {
+  const { signature, timestamp: ts, nonce, merchantCode: mid, body, url, fullNotifyUrl } = opts;
+
+  // Variants in priority order. Each builds a different string-to-sign;
+  // the first that verifies wins.
+  const variants: Array<[string, string]> = [
+    // 1. POST-API convention with path-only URL (our current default).
+    ['method+path+ts+nonce+mid+body', ['POST', url, ts, nonce, mid, body, ''].join('\n')],
+    // 2. Same as #1 but with the FULL notifyUrl as we sent it.
+    ...(fullNotifyUrl ? [['method+fullUrl+ts+nonce+mid+body',
+      ['POST', fullNotifyUrl, ts, nonce, mid, body, ''].join('\n')] as [string, string]] : []),
+    // 3. No method, no URL — just headers + body.
+    ['ts+nonce+mid+body', [ts, nonce, mid, body, ''].join('\n')],
+    // 4. Method only, no URL.
+    ['method+ts+nonce+mid+body', ['POST', ts, nonce, mid, body, ''].join('\n')],
+    // 5. Empty URL line (KPay might leave it blank in notify).
+    ['method+empty+ts+nonce+mid+body', ['POST', '', ts, nonce, mid, body, ''].join('\n')],
+    // 6. Body only — some gateways sign just the raw body.
+    ['body', body],
+    // 7. Concatenated, no newlines.
+    ['concat:ts+nonce+mid+body', ts + nonce + mid + body],
+    // 8. Concatenated with body last via &.
+    ['concat&', `timestamp=${ts}&nonce=${nonce}&merchantCode=${mid}&body=${body}`],
+  ];
+
+  for (const [name, s] of variants) {
+    if (tryVerify(s, signature)) return { ok: true, variant: name };
+  }
+  return { ok: false, variant: null };
+}
+
+/** Back-compat wrapper. Returns just the boolean. */
+export function verifyNotify(opts: VerifyNotifyOpts): boolean {
+  return verifyNotifyMulti(opts).ok;
 }
 
 // ──────────────────────────────────────────────────────────
