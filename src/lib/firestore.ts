@@ -49,46 +49,49 @@ export async function createBooking(data: Omit<BookingRecord, 'id' | 'createdAt'
     ? '23:59'
     : `${String(bufferEndH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
 
-  // Block this venue AND every venue sharing the same physical space.
-  // (e.g. booking sheung-wan-a also blocks sheung-wan-ab.)
-  const venuesToBlock = venuesSharingSpace(data.venueId);
-  for (const vid of venuesToBlock) {
-    if (overnight) {
-      // Day 1: start → 23:59
-      await createBlockedSlot({
-        venueId: vid, date: data.date,
-        startTime: data.startTime, endTime: '23:59',
-        reason: 'booking', bookingId: ref.id,
-      });
-      // Day 2: 00:00 → end, plus cleaning buffer after.
-      await createBlockedSlot({
-        venueId: vid, date: endDate,
-        startTime: '00:00', endTime: data.endTime,
-        reason: 'booking', bookingId: ref.id,
-      });
-      await createBlockedSlot({
-        venueId: vid, date: endDate,
-        startTime: data.endTime, endTime: bufferEnd,
-        reason: 'cleaning', bookingId: ref.id,
-      });
-    } else {
-      await createBlockedSlot({
-        venueId: vid,
-        date: data.date,
-        startTime: data.startTime,
-        endTime: data.endTime,
-        reason: 'booking',
-        bookingId: ref.id,
-      });
-      await createBlockedSlot({
-        venueId: vid,
-        date: data.date,
-        startTime: data.endTime,
-        endTime: bufferEnd,
-        reason: 'cleaning',
-        bookingId: ref.id,
-      });
-    }
+  // Write the blocked_slot ONLY for the actual booked venue. Earlier
+  // versions also wrote a copy for every venue sharing the same
+  // physical space (sw-a / sw-b / sw-ab), but the conflict CHECKS
+  // already expand via venuesSharingSpace — doing it on writes too
+  // produces phantom slots that wrongly block sibling venues (a sw-b
+  // booking created an sw-ab phantom, which then made sw-a appear
+  // unbookable via the assertNoSlotConflict broad query). Heidi 2026-06.
+  const vid = data.venueId;
+  if (overnight) {
+    // Day 1: start → 23:59
+    await createBlockedSlot({
+      venueId: vid, date: data.date,
+      startTime: data.startTime, endTime: '23:59',
+      reason: 'booking', bookingId: ref.id,
+    });
+    // Day 2: 00:00 → end, plus cleaning buffer after.
+    await createBlockedSlot({
+      venueId: vid, date: endDate,
+      startTime: '00:00', endTime: data.endTime,
+      reason: 'booking', bookingId: ref.id,
+    });
+    await createBlockedSlot({
+      venueId: vid, date: endDate,
+      startTime: data.endTime, endTime: bufferEnd,
+      reason: 'cleaning', bookingId: ref.id,
+    });
+  } else {
+    await createBlockedSlot({
+      venueId: vid,
+      date: data.date,
+      startTime: data.startTime,
+      endTime: data.endTime,
+      reason: 'booking',
+      bookingId: ref.id,
+    });
+    await createBlockedSlot({
+      venueId: vid,
+      date: data.date,
+      startTime: data.endTime,
+      endTime: bufferEnd,
+      reason: 'cleaning',
+      bookingId: ref.id,
+    });
   }
 
   return ref.id;
@@ -304,47 +307,48 @@ export async function updateBookingDateTime(
     ? '23:59'      // cap at end of day; rare and admin can extend manually
     : `${String(bufferEndH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
 
-  const venuesToBlock = venuesSharingSpace(targetVenueId);
-
-  // Replace the blocked_slots tied to this booking.
+  // Replace the blocked_slots tied to this booking. Single venueId per
+  // slot (no shared-space expansion) — the conflict-check side already
+  // expands via venuesSharingSpace; expanding writes too would create
+  // phantom slots that wrongly block sibling venues. See createBooking
+  // for the same fix and the Heidi 2026-06 incident notes.
   const blockedSnap = await getDocs(
     query(collection(db, 'blocked_slots'), where('bookingId', '==', bookingId))
   );
   for (const b of blockedSnap.docs) {
     await deleteDoc(b.ref);
   }
-  for (const vid of venuesToBlock) {
-    if (overnight) {
-      // Day 1: from start → 23:59
-      await createBlockedSlot({
-        venueId: vid, date: next.date,
-        startTime: next.startTime, endTime: '23:59',
-        reason: 'booking', bookingId,
-      });
-      // Day 2: 00:00 → end + cleaning
-      await createBlockedSlot({
-        venueId: vid, date: endDate,
-        startTime: '00:00', endTime: next.endTime,
-        reason: 'booking', bookingId,
-      });
-      await createBlockedSlot({
-        venueId: vid, date: endDate,
-        startTime: next.endTime, endTime: bufferEnd,
-        reason: 'cleaning', bookingId,
-      });
-    } else {
-      // Same-day booking — original behaviour
-      await createBlockedSlot({
-        venueId: vid, date: next.date,
-        startTime: next.startTime, endTime: next.endTime,
-        reason: 'booking', bookingId,
-      });
-      await createBlockedSlot({
-        venueId: vid, date: next.date,
-        startTime: next.endTime, endTime: bufferEnd,
-        reason: 'cleaning', bookingId,
-      });
-    }
+  const vid = targetVenueId;
+  if (overnight) {
+    // Day 1: from start → 23:59
+    await createBlockedSlot({
+      venueId: vid, date: next.date,
+      startTime: next.startTime, endTime: '23:59',
+      reason: 'booking', bookingId,
+    });
+    // Day 2: 00:00 → end + cleaning
+    await createBlockedSlot({
+      venueId: vid, date: endDate,
+      startTime: '00:00', endTime: next.endTime,
+      reason: 'booking', bookingId,
+    });
+    await createBlockedSlot({
+      venueId: vid, date: endDate,
+      startTime: next.endTime, endTime: bufferEnd,
+      reason: 'cleaning', bookingId,
+    });
+  } else {
+    // Same-day booking — original behaviour
+    await createBlockedSlot({
+      venueId: vid, date: next.date,
+      startTime: next.startTime, endTime: next.endTime,
+      reason: 'booking', bookingId,
+    });
+    await createBlockedSlot({
+      venueId: vid, date: next.date,
+      startTime: next.endTime, endTime: bufferEnd,
+      reason: 'cleaning', bookingId,
+    });
   }
 
   // Recompute hours from the actual start/end timestamps so cross-midnight
@@ -564,22 +568,18 @@ export async function createBlockedSlot(
 }
 
 /**
- * Create a blocked slot AND propagate to every venue sharing the same
- * physical space (Sheung Wan A / B / A+B). Use this for any admin manual
- * block — booking flows already iterate explicitly.
- *
- * Returns the id of the primary block (for the requested venueId).
+ * Create a blocked slot for an admin manual block. Earlier versions
+ * propagated copies to every venue sharing the same physical space
+ * (Sheung Wan A / B / A+B), but conflict CHECKS already expand via
+ * venuesSharingSpace — propagating writes too produced phantom slots
+ * that wrongly blocked sibling venues (Heidi 2026-06 incident: sw-b
+ * booking phantom-blocked sw-a). Now a single write; reads still
+ * correctly catch cross-room blocks via the expanding query.
  */
 export async function createSharedBlockedSlot(
   data: Omit<BlockedSlot, 'id'>
 ): Promise<string> {
-  const ids = venuesSharingSpace(data.venueId);
-  let primaryId = '';
-  for (const vid of ids) {
-    const id = await createBlockedSlot({ ...data, venueId: vid });
-    if (vid === data.venueId) primaryId = id;
-  }
-  return primaryId;
+  return await createBlockedSlot(data);
 }
 
 export async function getBlockedSlots(
