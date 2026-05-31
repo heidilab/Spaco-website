@@ -74,6 +74,29 @@ export async function POST(req: NextRequest) {
     merchantCode,
     body: rawBody,
   });
+  // Persist EVERY attempt to Firestore so we can debug even when Vercel
+  // CLI logs aren't surfacing recent runs. The debug collection auto-
+  // truncates by recency on read.
+  try {
+    await adminDb.collection('_kpay_webhook_debug').add({
+      receivedAt: new Date().toISOString(),
+      headers: {
+        signature,
+        timestamp,
+        nonce,
+        merchantCode,
+        contentType: req.headers.get('content-type'),
+      },
+      bodyLen: rawBody.length,
+      body: rawBody.slice(0, 2000),
+      fullNotifyUrl,
+      verifyOk: verifyResult.ok,
+      matchedVariant: verifyResult.variant,
+    });
+  } catch (dbErr) {
+    console.warn('[kpay/webhook] debug write failed:', dbErr);
+  }
+
   if (!verifyResult.ok) {
     console.warn('[kpay/webhook] signature verification FAILED (all variants)', {
       receivedHeaders: {
