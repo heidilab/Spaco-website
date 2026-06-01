@@ -350,6 +350,11 @@ export default function AdminArticleEditPage() {
         <div className="space-y-5">
           <div className="glass-card p-5 space-y-3">
             <h3 className="font-bold text-sm uppercase tracking-wider text-ink-soft">{locale === 'zh' ? '封面圖' : 'Hero Image'}</h3>
+            <p className="text-[11px] text-ink-soft leading-relaxed -mt-1">
+              {locale === 'zh'
+                ? '建議 1600 × 900 px(16:9),JPG / PNG,< 500 KB 最佳。'
+                : 'Recommended 1600 × 900 px (16:9), JPG/PNG, under 500 KB.'}
+            </p>
             {heroImage ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={heroImage} alt="" className="w-full rounded-xl aspect-video object-cover" />
