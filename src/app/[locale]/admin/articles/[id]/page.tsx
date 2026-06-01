@@ -13,7 +13,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Article } from '@/types';
 import {
   ChevronLeft, Save, Sparkles, Languages, Upload, Eye, EyeOff,
-  Image as ImageIcon, Loader2, AlertCircle, CheckCircle2,
+  Image as ImageIcon, Loader2, AlertCircle, CheckCircle2, ExternalLink,
 } from 'lucide-react';
 import { marked } from 'marked';
 
@@ -169,20 +169,23 @@ export default function AdminArticleEditPage() {
         setSaving(false);
         return;
       }
-      const payload: Omit<Article, 'id' | 'createdAt' | 'updatedAt'> = {
+      // Firestore rejects `undefined` field values. Spread-include only
+      // the fields that actually have a value so optional ones stay absent.
+      const authorName = user?.displayName || user?.email || '';
+      const payload = {
         slug: slug.trim(),
         title: { zh: titleZh.trim(), ...(titleEn.trim() ? { en: titleEn.trim() } : {}) },
         excerpt: {
           ...(excerptZh.trim() ? { zh: excerptZh.trim() } : {}),
           ...(excerptEn.trim() ? { en: excerptEn.trim() } : {}),
         },
-        heroImage: heroImage || undefined,
+        ...(heroImage ? { heroImage } : {}),
         content: { zh: contentZh, ...(contentEn.trim() ? { en: contentEn } : {}) },
         tags: tagsRaw.split(',').map((t) => t.trim()).filter(Boolean),
         status: finalStatus,
-        authorUid: user?.uid,
-        authorName: user?.displayName || user?.email || undefined,
-      };
+        ...(user?.uid ? { authorUid: user.uid } : {}),
+        ...(authorName ? { authorName } : {}),
+      } as Omit<Article, 'id' | 'createdAt' | 'updatedAt'>;
       if (isCreate) {
         const newId = await createArticle(payload);
         router.replace(`/admin/articles/${newId}`);
@@ -216,6 +219,19 @@ export default function AdminArticleEditPage() {
         </Link>
         <div className="flex items-center gap-3">
           {savedMsg && <span className="text-sm text-emerald-700 flex items-center gap-1"><CheckCircle2 size={14} />{savedMsg}</span>}
+          {!isCreate && (
+            <a
+              href={`/${locale}/admin/articles/${id}/preview`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-2 rounded-pill bg-white/70 border border-charcoal/10 text-sm font-medium hover:bg-white flex items-center gap-1.5"
+              title={locale === 'zh' ? '新分頁開預覽(同客人見到嘅一模一樣)' : 'Open preview in new tab'}
+            >
+              <Eye size={14} />
+              {locale === 'zh' ? '預覽' : 'Preview'}
+              <ExternalLink size={12} className="opacity-60" />
+            </a>
+          )}
           <button
             onClick={() => handleSave('draft')}
             disabled={saving}
@@ -395,35 +411,6 @@ export default function AdminArticleEditPage() {
             />
           </div>
 
-          {/* Live preview */}
-          <div className="glass-card p-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold text-sm uppercase tracking-wider text-ink-soft">{locale === 'zh' ? '預覽' : 'Preview'}</h3>
-              <div className="flex gap-1 bg-cream/60 p-0.5 rounded-pill text-xs">
-                <button
-                  onClick={() => setPreviewLocale('zh')}
-                  className={`px-2 py-1 rounded-pill ${previewLocale === 'zh' ? 'bg-white shadow' : 'text-ink-soft'}`}
-                >中</button>
-                <button
-                  onClick={() => setPreviewLocale('en')}
-                  className={`px-2 py-1 rounded-pill ${previewLocale === 'en' ? 'bg-white shadow' : 'text-ink-soft'}`}
-                >EN</button>
-              </div>
-            </div>
-            {heroImage && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={heroImage} alt="" className="w-full rounded-xl aspect-video object-cover" />
-            )}
-            <h4 className="font-bold text-lg">{previewTitle || (locale === 'zh' ? '(無標題)' : '(no title)')}</h4>
-            <div
-              className="prose prose-sm max-w-none text-ink-soft prose-headings:text-ink prose-headings:font-bold prose-h1:text-xl prose-h2:text-lg prose-strong:text-ink prose-a:text-pink prose-blockquote:border-pink prose-img:rounded-xl"
-              dangerouslySetInnerHTML={{ __html: previewHtml }}
-            />
-            {!previewContent && (
-              <p className="text-ink-soft/60 text-sm italic">{locale === 'zh' ? '(內容為空)' : '(empty content)'}</p>
-            )}
-          </div>
-
           <div className="glass-card p-5 space-y-3">
             <h3 className="font-bold text-sm uppercase tracking-wider text-ink-soft">{locale === 'zh' ? '狀態' : 'Status'}</h3>
             <div className="flex items-center gap-2">
@@ -433,9 +420,80 @@ export default function AdminArticleEditPage() {
                 <span className="flex items-center gap-1 text-sm text-amber-700"><EyeOff size={14}/>{locale === 'zh' ? '草稿' : 'Draft'}</span>
               )}
             </div>
+            {!isCreate && (
+              <p className="text-xs text-ink-soft leading-relaxed">
+                {locale === 'zh'
+                  ? '撳右上「預覽」掣,新分頁開大畫面睇實際發佈版排版 + 圖文佈局,中英文都可以切換。'
+                  : 'Click "Preview" top-right to open the full published-style view in a new tab. Switch between zh/en there.'}
+              </p>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Full-width quick preview at bottom of page — gives admin a fast
+          scan-glance without leaving the edit form. Use the 預覽 button
+          at top for the proper full-experience customer view. */}
+      {previewContent && (
+        <div className="mt-8 glass-card p-6 md:p-8">
+          <div className="flex items-center justify-between mb-5 pb-4 border-b border-charcoal/10">
+            <h3 className="font-bold text-sm uppercase tracking-wider text-ink-soft">
+              {locale === 'zh' ? '即時排版預覽(精簡版)' : 'Live Layout Preview (compact)'}
+            </h3>
+            <div className="flex gap-1 bg-cream/60 p-0.5 rounded-pill text-xs">
+              <button
+                onClick={() => setPreviewLocale('zh')}
+                className={`px-3 py-1 rounded-pill ${previewLocale === 'zh' ? 'bg-white shadow font-bold' : 'text-ink-soft'}`}
+              >中文</button>
+              <button
+                onClick={() => setPreviewLocale('en')}
+                className={`px-3 py-1 rounded-pill ${previewLocale === 'en' ? 'bg-white shadow font-bold' : 'text-ink-soft'}`}
+              >English</button>
+            </div>
+          </div>
+          {heroImage && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={heroImage} alt="" className="w-full aspect-video object-cover rounded-2xl mb-6" />
+          )}
+          <h1 className="text-2xl md:text-3xl font-display font-bold mb-2 leading-tight">
+            <span className="text-gradient-pink">{previewTitle || (locale === 'zh' ? '(未填標題)' : '(no title)')}</span>
+          </h1>
+          {tagsRaw && (
+            <div className="flex flex-wrap gap-1.5 mb-5">
+              {tagsRaw.split(',').map((t) => t.trim()).filter(Boolean).map((t) => (
+                <span key={t} className="text-xs px-2.5 py-1 rounded-pill bg-pink/10 text-pink font-medium">#{t}</span>
+              ))}
+            </div>
+          )}
+          <article
+            className="prose prose-base max-w-none
+              prose-headings:font-display prose-headings:text-ink prose-headings:font-bold
+              prose-h2:text-2xl prose-h2:mt-10 prose-h2:mb-4 prose-h3:text-xl prose-h3:mt-7
+              prose-p:text-ink-soft prose-p:leading-relaxed
+              prose-strong:text-ink prose-a:text-pink
+              prose-blockquote:border-l-4 prose-blockquote:border-pink prose-blockquote:bg-pink/5 prose-blockquote:rounded-r-2xl prose-blockquote:py-3 prose-blockquote:px-6 prose-blockquote:not-italic prose-blockquote:text-ink prose-blockquote:font-medium prose-blockquote:my-6
+              prose-img:rounded-2xl prose-img:shadow-glass-lg prose-img:my-8 prose-img:w-full
+              prose-ul:text-ink-soft prose-ol:text-ink-soft
+              prose-li:my-1
+            "
+            dangerouslySetInnerHTML={{ __html: previewHtml }}
+          />
+          {!isCreate && (
+            <div className="mt-6 pt-4 border-t border-charcoal/10 text-center">
+              <a
+                href={`/${locale}/admin/articles/${id}/preview`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-sm text-pink font-semibold hover:underline"
+              >
+                <Eye size={14} />
+                {locale === 'zh' ? '新分頁開完整版預覽(同客人見到一樣)' : 'Open full-size preview in new tab'}
+                <ExternalLink size={12} />
+              </a>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
