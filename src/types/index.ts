@@ -642,3 +642,35 @@ export interface SeoDefaults extends SeoEntry {
   orgUrl?: string;
   orgPhone?: string;
 }
+
+// ============ ARTICLES (Blog / Content Sharing) ============
+
+/** A content article shown under /articles. Authored by admin, optionally
+ *  smart-formatted + translated via Claude. Content is Markdown; inline
+ *  images live in the markdown as standard `![alt](url)` references. */
+export interface Article {
+  id: string;
+  /** URL slug (kebab-case). Unique. Used for /articles/[slug]. */
+  slug: string;
+  /** Display title. zh required; en optional (LLM auto-translate fills it). */
+  title: { zh: string; en?: string };
+  /** Optional one-line summary shown on the list card + meta description. */
+  excerpt?: { zh?: string; en?: string };
+  /** Hero image URL (Firebase Storage). Used on the list card + article header. */
+  heroImage?: string;
+  /** Optional alt text for hero image, per locale. */
+  heroAlt?: { zh?: string; en?: string };
+  /** Article body — Markdown. zh required; en optional. */
+  content: { zh: string; en?: string };
+  /** Optional tags for filtering / future related-posts feature. */
+  tags?: string[];
+  /** draft = hidden from public; published = visible on /articles. */
+  status: 'draft' | 'published';
+  /** Auto-set on first publish; useful for sorting. */
+  publishedAt?: unknown;
+  createdAt: unknown;
+  updatedAt: unknown;
+  /** UID of the staff member who last edited. */
+  authorUid?: string;
+  authorName?: string;
+}
