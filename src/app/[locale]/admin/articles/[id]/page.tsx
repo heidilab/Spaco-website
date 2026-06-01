@@ -54,6 +54,9 @@ export default function AdminArticleEditPage() {
   // Pending-image placeholder generation state — keyed by the literal
   // placeholder text so we can show per-row spinners + collisions.
   const [genBusy, setGenBusy] = useState<Record<string, boolean>>({});
+  // Per-row URL input (Cloudinary / own image hosting link) — admin can
+  // skip DALL-E and paste a URL they already have. Keyed same as genBusy.
+  const [urlInput, setUrlInput] = useState<Record<string, string>>({});
 
   // Load existing article (edit mode)
   useEffect(() => {
@@ -120,6 +123,27 @@ export default function AdminArticleEditPage() {
     } finally {
       setGenBusy((b) => { const n = { ...b }; delete n[literal]; return n; });
     }
+  }
+
+  /** Insert an admin-supplied image URL (Cloudinary, S3, etc.) into the
+   *  placeholder slot. No upload, no API cost — just swaps the markdown. */
+  function handleInsertUrl(literal: string, description: string) {
+    const raw = (urlInput[literal] || '').trim();
+    if (!raw) {
+      setError(locale === 'zh' ? '請貼上圖片連結' : 'Paste an image URL first');
+      return;
+    }
+    // Light validation — accept http(s) URLs of common image hosts.
+    if (!/^https?:\/\//i.test(raw)) {
+      setError(locale === 'zh' ? '連結需要 http:// 或 https:// 開頭' : 'URL must start with http(s)://');
+      return;
+    }
+    setError(null);
+    const replacement = `![${description}](${raw})`;
+    setContentZh((c) => c.split(literal).join(replacement));
+    setUrlInput((m) => { const n = { ...m }; delete n[literal]; return n; });
+    setSavedMsg(locale === 'zh' ? '🖼️ 圖片連結已插入' : '🖼️ Image URL inserted');
+    setTimeout(() => setSavedMsg(null), 3000);
   }
 
   async function handleHeroUpload(file: File) {
@@ -465,10 +489,12 @@ export default function AdminArticleEditPage() {
                   ? 'AI 排版插入嘅圖片建議。撳「生成」叫 DALL-E 即場生圖 + 自動插入文章相應位置(每張 ~HK$0.30)。'
                   : "AI-suggested image slots. Click Generate to call DALL-E and auto-insert into the article (~HK$0.30 each)."}
               </p>
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {pendingImages.map((img) => (
-                  <div key={img.literal} className="rounded-xl bg-white/60 border border-charcoal/10 p-3 space-y-2">
+                  <div key={img.literal} className="rounded-xl bg-white/60 border border-charcoal/10 p-3 space-y-2.5">
                     <p className="text-xs text-ink leading-relaxed">{img.description}</p>
+
+                    {/* Option A — AI generate (costs ~HK$0.30-0.62) */}
                     <button
                       onClick={() => handleGenerateImage(img.literal, img.description)}
                       disabled={!!genBusy[img.literal]}
@@ -486,6 +512,33 @@ export default function AdminArticleEditPage() {
                         </>
                       )}
                     </button>
+
+                    {/* Divider */}
+                    <div className="flex items-center gap-2 text-[10px] text-ink-soft/60 uppercase tracking-wider">
+                      <span className="flex-1 h-px bg-charcoal/10" />
+                      {locale === 'zh' ? '或' : 'or'}
+                      <span className="flex-1 h-px bg-charcoal/10" />
+                    </div>
+
+                    {/* Option B — Paste own URL (Cloudinary / Imgur / any host) */}
+                    <div className="space-y-1.5">
+                      <input
+                        type="url"
+                        value={urlInput[img.literal] || ''}
+                        onChange={(e) => setUrlInput((m) => ({ ...m, [img.literal]: e.target.value }))}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleInsertUrl(img.literal, img.description); } }}
+                        placeholder={locale === 'zh' ? '貼 Cloudinary / 其他圖片 URL' : 'Paste Cloudinary / image URL'}
+                        className="w-full text-xs px-3 py-1.5 rounded-pill bg-white border border-charcoal/15 focus:outline-none focus:border-pink/50 font-mono"
+                      />
+                      <button
+                        onClick={() => handleInsertUrl(img.literal, img.description)}
+                        disabled={!urlInput[img.literal]?.trim()}
+                        className="w-full text-xs px-3 py-1.5 rounded-pill bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 disabled:opacity-40 flex items-center justify-center gap-1.5 font-semibold"
+                      >
+                        <ImageIcon size={12} />
+                        {locale === 'zh' ? '插入自選圖' : 'Insert Custom Image'}
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
