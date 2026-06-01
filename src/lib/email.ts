@@ -341,6 +341,11 @@ export function buildBookingConfirmationEmail(params: {
   addOnsLine?: string;
   paymentMethod: string;
   whatsappLink: string;
+  /** Optional list of human-readable change descriptions (e.g.
+   *  ["日期:2026-07-15 → 2026-07-20", "人數:10 → 15"]). When provided,
+   *  shows a yellow "預訂已更新" banner at the top so the customer
+   *  immediately knows what changed. */
+  changes?: string[];
 }) {
   const peopleLine = (params.childCount ?? 0) > 0
     ? `${params.guestCount} 人 (${params.adultCount ?? params.guestCount} 成人 + ${params.childCount} 小童)`
@@ -356,8 +361,23 @@ export function buildBookingConfirmationEmail(params: {
          </p>
        </div>`
     : '';
+  // Update notice — shown when admin edits the booking and the followup
+  // route detects diffs (date/time/venue/people/add-ons changed).
+  const changesNotice = (params.changes && params.changes.length > 0)
+    ? `<div style="background: #EFF6FF; border-left: 4px solid #3B82F6; border-radius: 12px; padding: 14px 18px; margin: 0 0 18px;">
+         <p style="margin: 0 0 8px; font-weight: 700; color: #1E40AF; font-size: 13px;">🔄 你嘅預訂已更新</p>
+         <p style="margin: 0 0 6px; font-size: 12px; color: #1E3A8A; line-height: 1.5;">以下項目已修改:</p>
+         <ul style="margin: 0; padding-left: 18px; color: #1E3A8A; font-size: 12px; line-height: 1.7;">
+           ${params.changes.map((c) => `<li>${c}</li>`).join('')}
+         </ul>
+       </div>`
+    : '';
+  // Subject reflects whether this is an update vs first-time confirmation.
+  const isUpdate = !!(params.changes && params.changes.length > 0);
   return {
-    subject: `🎉 SPACO 預約已確認 — ${params.venueName} (${params.date})`,
+    subject: isUpdate
+      ? `🔄 SPACO 預訂已更新 — ${params.venueName} (${params.date})`
+      : `🎉 SPACO 預約已確認 — ${params.venueName} (${params.date})`,
     html: `
       <div style="font-family: ${EMAIL_FONT}; max-width: 600px; margin: 0 auto; background: ${EMAIL_BG}; padding: 40px 20px;">
         ${emailHeader('預約已確認 · BOOKING CONFIRMED')}
@@ -377,6 +397,7 @@ export function buildBookingConfirmationEmail(params: {
             <p style="margin: 0; font-size: 13px; opacity: 0.92;">${peopleLine}</p>
           </div>
 
+          ${changesNotice}
           ${balanceNotice}
 
           <h3 style="margin: 0 0 12px; font-size: 14px; color: ${EMAIL_INK}; letter-spacing: 0.04em; text-transform: uppercase;">📋 預訂明細</h3>

@@ -146,6 +146,8 @@ export default function AdminBookingDetailPage() {
   // Google was disconnected, or that were created via admin without auto-sync).
   const [pushing, setPushing] = useState(false);
   const [pushMsg, setPushMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [resendingEmail, setResendingEmail] = useState(false);
+  const [resendMsg, setResendMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   // Deposit settlement state — admin inputs deductions after the event,
   // saves once, system marks booking completed + credits loyalty points.
@@ -445,6 +447,21 @@ export default function AdminBookingDetailPage() {
               })),
           ]
         : undefined;
+      // Snapshot pre-edit values so the followup endpoint can diff and
+      // include a "已更改項目" banner in the confirmation email.
+      // (Captured BEFORE updateBookingDateTime overwrites Firestore.)
+      const previousSnapshot = {
+        date: booking.date,
+        startTime: booking.startTime,
+        endTime: booking.endTime,
+        endDate: booking.endDate || null,
+        venueId: booking.venueId,
+        guestCount: booking.guestCount,
+        adultCount: booking.adultCount,
+        childCount: booking.childCount,
+        addOnsLine: formatAddOnsForStaff(booking.addOns, 'zh'),
+      };
+
       await updateBookingDateTime(booking.id, {
         date,
         startTime,
@@ -455,29 +472,27 @@ export default function AdminBookingDetailPage() {
           ? { venueId, branchSlug: targetVenue?.slug || booking.branchSlug }
           : {}),
         ...(newAddOns ? { addOns: newAddOns } : {}),
-        // Pass the deposit override only when admin actually changed
-        // the input — otherwise sticky-preserve handles things.
         ...(depositDirty ? { securityDepositOverride: depositOverrideNum } : {}),
-        // Pass the subtotal override only when admin changed it —
-        // otherwise calculatePricing's formula stays in charge.
         ...(subtotalDirty ? { subtotalOverride: subtotalOverrideNum } : {}),
       });
 
-      // Push the change to Google Calendar immediately — admin should
-      // never have to click anything for the calendar to mirror the
-      // booking. The blocked_slots side of the master calendar is
-      // already updated inside updateBookingDateTime above.
-      // syncOnly=true skips the customer email + payment-recording
-      // branches; admin can still trigger those via the payment modal
-      // below if they want to record a top-up. Failures are non-fatal.
+      // Followup: send customer the "預訂已更新" email (with diff banner
+      // listing every changed field) + sync Google Calendar. Heidi 2026-06:
+      // previously this was syncOnly=true so customer NEVER got an email
+      // after admin edits — only the auto-cancellation noise from gcal
+      // attendee removal. Now we always email so the customer has a
+      // concrete record of the new schedule.
       try {
         await fetch('/api/admin/booking-edit-followup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bookingId: booking.id, syncOnly: true }),
+          body: JSON.stringify({
+            bookingId: booking.id,
+            previousSnapshot,
+          }),
         });
       } catch (err) {
-        console.warn('[handleSave] gcal auto-sync failed:', err);
+        console.warn('[handleSave] followup (email + gcal) failed:', err);
       }
 
       setSaved(true);
@@ -725,6 +740,41 @@ export default function AdminBookingDetailPage() {
     }
   }
 
+  /** Re-send the booking confirmation email to the customer — used when
+   *  the customer reports they didn't receive the original. Reuses the
+   *  same booking-edit-followup endpoint with resendEmail=true; no diff
+   *  banner is included (resend is the same content the customer would
+   *  have got at first confirmation). */
+  async function handleResendEmail() {
+    if (!booking) return;
+    setResendingEmail(true);
+    setResendMsg(null);
+    try {
+      const res = await fetch('/api/admin/booking-edit-followup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookingId: booking.id,
+          resendEmail: true,
+          syncOnly: true,   // skip gcal re-sync (not needed for a resend)
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      setResendMsg({
+        kind: 'ok',
+        text: locale === 'zh' ? '✓ 已重新發送確認 email 俾客人' : '✓ Confirmation email re-sent',
+      });
+    } catch (err) {
+      setResendMsg({
+        kind: 'err',
+        text: (locale === 'zh' ? '失敗:' : 'Failed: ') + (err instanceof Error ? err.message : 'unknown'),
+      });
+    } finally {
+      setResendingEmail(false);
+    }
+  }
+
   async function handlePushToGcal() {
     if (!booking || pushing) return;
     setPushing(true);
@@ -861,6 +911,45 @@ export default function AdminBookingDetailPage() {
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Resend confirmation email — always available so CS can fire
+              it when customer says they didn't receive the original. */}
+          <div className="glass-card p-6">
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div>
+                <h2 className="font-bold flex items-center gap-2">
+                  <Mail size={16} />
+                  {locale === 'zh' ? '重新發送確認 email' : 'Resend Confirmation Email'}
+                </h2>
+                <p className="text-xs text-ink-soft mt-1 leading-relaxed">
+                  {locale === 'zh'
+                    ? '客人話收唔到原本嘅確認 email?撳呢度即時重新發送一封,內容同首次確認一樣(會 send 去客人 profile 嗰個 email)。'
+                    : "Customer didn't receive the original confirmation? Click to resend (same content as first confirmation, to the customer's profile email)."}
+                </p>
+              </div>
+              <button
+                onClick={handleResendEmail}
+                disabled={resendingEmail}
+                className="btn-primary disabled:opacity-40 flex items-center gap-2 flex-shrink-0"
+              >
+                <Mail size={14} />
+                {resendingEmail
+                  ? (locale === 'zh' ? '發送中…' : 'Sending…')
+                  : (locale === 'zh' ? '重新發送' : 'Resend')}
+              </button>
+            </div>
+            {resendMsg && (
+              <div
+                className={`mt-3 text-sm rounded-lg px-3 py-2 ${
+                  resendMsg.kind === 'ok'
+                    ? 'text-emerald-700 bg-emerald-50'
+                    : 'text-rose-700 bg-rose-50'
+                }`}
+              >
+                {resendMsg.text}
+              </div>
+            )}
           </div>
 
           {/* Google Calendar push — only shown when not yet synced */}
