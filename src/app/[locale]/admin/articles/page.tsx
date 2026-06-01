@@ -5,7 +5,7 @@ import { useLocale } from 'next-intl';
 import { Link } from '@/i18n/routing';
 import { listAllArticles, deleteArticle } from '@/lib/articles';
 import { Article } from '@/types';
-import { Newspaper, Plus, Pencil, Trash2, Eye, EyeOff, ExternalLink } from 'lucide-react';
+import { Newspaper, Plus, Pencil, Trash2, Eye, EyeOff, ExternalLink, AlertCircle } from 'lucide-react';
 
 function fmtTime(v: unknown): string {
   if (!v) return '—';
@@ -19,13 +19,29 @@ export default function AdminArticlesPage() {
   const locale = useLocale() as 'zh' | 'en';
   const [items, setItems] = useState<Article[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'draft' | 'published'>('all');
 
   async function load() {
     setLoading(true);
-    setItems(await listAllArticles());
-    setLoading(false);
+    setError(null);
+    try {
+      setItems(await listAllArticles());
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'unknown';
+      // Most common cause: Firestore rule not deployed for `articles`
+      // collection. Surface that explicitly so admin knows the fix.
+      const friendly = msg.includes('permission')
+        ? (locale === 'zh'
+          ? `Firestore 拒絕存取 articles collection。\n要 deploy 最新 firestore.rules 落 Firebase Console(Rules tab 貼上更新版本)。\n\n原始錯誤:${msg}`
+          : `Firestore denied access to articles collection.\nDeploy the latest firestore.rules to Firebase Console (Rules tab).\n\nRaw: ${msg}`)
+        : msg;
+      setError(friendly);
+    } finally {
+      setLoading(false);
+    }
   }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, []);
 
   const filtered = items.filter((a) => filter === 'all' || a.status === filter);
@@ -78,6 +94,19 @@ export default function AdminArticlesPage() {
 
       {loading ? (
         <div className="text-center py-12 text-ink-soft">{locale === 'zh' ? '載入中…' : 'Loading…'}</div>
+      ) : error ? (
+        <div className="glass-card p-6 border-2 border-rose-200 bg-rose-50/50">
+          <div className="flex items-start gap-3">
+            <AlertCircle size={20} className="text-rose-600 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-bold text-rose-700 mb-2">{locale === 'zh' ? '載入失敗' : 'Failed to load'}</p>
+              <pre className="text-xs text-rose-700 whitespace-pre-wrap font-mono leading-relaxed">{error}</pre>
+              <button onClick={load} className="mt-3 px-4 py-1.5 rounded-pill bg-rose-600 text-white text-sm hover:bg-rose-700">
+                {locale === 'zh' ? '重試' : 'Retry'}
+              </button>
+            </div>
+          </div>
+        </div>
       ) : filtered.length === 0 ? (
         <div className="glass-card p-12 text-center">
           <Newspaper size={40} className="text-ink-soft/40 mx-auto mb-4" />
