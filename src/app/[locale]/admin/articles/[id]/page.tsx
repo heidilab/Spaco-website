@@ -16,6 +16,22 @@ import {
   Image as ImageIcon, Loader2, AlertCircle, CheckCircle2, ExternalLink, Wand2,
 } from 'lucide-react';
 import { marked } from 'marked';
+import RichEditor from '@/components/article/RichEditor';
+
+// Heuristic: content is markdown when there's no HTML tag at all but
+// classic markdown markers exist. Used to upgrade legacy markdown drafts
+// to HTML on first load into the new WYSIWYG editor.
+function looksLikeMarkdown(s: string): boolean {
+  if (!s) return false;
+  if (/<\w+[^>]*>/.test(s)) return false;           // any HTML tag → already HTML
+  return /(^|\n)#{1,3}\s|^\s*[-*]\s|>\s|\*\*[^*]+\*\*|!\[[^\]]*\]\(/m.test(s);
+}
+
+function ensureHtml(input: string): string {
+  if (!input) return '';
+  if (looksLikeMarkdown(input)) return marked.parse(input) as string;
+  return input;
+}
 
 // id === '_new' or 'new' triggers create mode.
 function isCreateMode(id: string) { return id === '_new' || id === 'new'; }
@@ -75,8 +91,10 @@ export default function AdminArticleEditPage() {
       setExcerptZh(a.excerpt?.zh || '');
       setExcerptEn(a.excerpt?.en || '');
       setHeroImage(a.heroImage || '');
-      setContentZh(a.content.zh || '');
-      setContentEn(a.content.en || '');
+      // Upgrade any legacy markdown content to HTML so the WYSIWYG
+      // editor can edit it visually instead of showing raw # / **.
+      setContentZh(ensureHtml(a.content.zh || ''));
+      setContentEn(ensureHtml(a.content.en || ''));
       setStatus(a.status);
       setTagsRaw((a.tags || []).join(', '));
       setLoading(false);
@@ -88,18 +106,29 @@ export default function AdminArticleEditPage() {
     if (!slugTouched && titleZh) setSlug(makeSlug(titleZh));
   }, [titleZh, slugTouched]);
 
-  // Parse contentZh for image-suggestion placeholders inserted by
-  // smart-format. Pattern: ![圖片建議: <description>](TODO_UPLOAD)
-  // Returns the unique list with the literal markdown for replacement.
+  // Parse contentZh (HTML) for image-suggestion placeholders inserted by
+  // smart-format. After MD→HTML conversion, the markdown
+  //   ![圖片建議: xxx](TODO_UPLOAD)
+  // becomes an <img> tag with alt="圖片建議: xxx" + src="TODO_UPLOAD".
+  // We swap the src on Generate / Insert URL while preserving alt for SEO.
   const pendingImages: Array<{ literal: string; description: string }> = (() => {
-    const re = /!\[圖片建議:\s*([^\]]+?)\]\(TODO_UPLOAD\)/g;
+    // Match both attribute orders (alt-first or src-first).
+    const re = /<img\b[^>]*?(?:alt="圖片建議:\s*([^"]+?)"[^>]*?src="TODO_UPLOAD"|src="TODO_UPLOAD"[^>]*?alt="圖片建議:\s*([^"]+?)")[^>]*?>/g;
     const seen = new Map<string, { literal: string; description: string }>();
     let m: RegExpExecArray | null;
     while ((m = re.exec(contentZh)) !== null) {
-      if (!seen.has(m[0])) seen.set(m[0], { literal: m[0], description: m[1].trim() });
+      const desc = (m[1] || m[2] || '').trim();
+      if (!seen.has(m[0])) seen.set(m[0], { literal: m[0], description: desc });
     }
     return Array.from(seen.values());
   })();
+
+  function buildImgTag(url: string, alt: string): string {
+    // Match marked's typical output so TipTap's parser treats it as an
+    // <Image> node without needing to re-parse the whole document.
+    const safeAlt = alt.replace(/"/g, '&quot;');
+    return `<img src="${url}" alt="${safeAlt}">`;
+  }
 
   async function handleGenerateImage(literal: string, description: string) {
     setGenBusy((b) => ({ ...b, [literal]: true }));
@@ -112,10 +141,7 @@ export default function AdminArticleEditPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Generate failed');
-      // Replace ALL occurrences of this literal placeholder with the
-      // real image markdown. Alt = original description (without "圖片建議:").
-      const replacement = `![${description}](${data.url})`;
-      setContentZh((c) => c.split(literal).join(replacement));
+      setContentZh((c) => c.split(literal).join(buildImgTag(data.url, description)));
       setSavedMsg(locale === 'zh' ? '🎨 AI 圖已生成並插入' : '🎨 AI image generated + inserted');
       setTimeout(() => setSavedMsg(null), 3000);
     } catch (e) {
@@ -126,21 +152,19 @@ export default function AdminArticleEditPage() {
   }
 
   /** Insert an admin-supplied image URL (Cloudinary, S3, etc.) into the
-   *  placeholder slot. No upload, no API cost — just swaps the markdown. */
+   *  placeholder slot. No upload, no API cost — just swaps the src. */
   function handleInsertUrl(literal: string, description: string) {
     const raw = (urlInput[literal] || '').trim();
     if (!raw) {
       setError(locale === 'zh' ? '請貼上圖片連結' : 'Paste an image URL first');
       return;
     }
-    // Light validation — accept http(s) URLs of common image hosts.
     if (!/^https?:\/\//i.test(raw)) {
       setError(locale === 'zh' ? '連結需要 http:// 或 https:// 開頭' : 'URL must start with http(s)://');
       return;
     }
     setError(null);
-    const replacement = `![${description}](${raw})`;
-    setContentZh((c) => c.split(literal).join(replacement));
+    setContentZh((c) => c.split(literal).join(buildImgTag(raw, description)));
     setUrlInput((m) => { const n = { ...m }; delete n[literal]; return n; });
     setSavedMsg(locale === 'zh' ? '🖼️ 圖片連結已插入' : '🖼️ Image URL inserted');
     setTimeout(() => setSavedMsg(null), 3000);
@@ -177,7 +201,9 @@ export default function AdminArticleEditPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Smart format failed');
-      setContentZh(data.formatted);
+      // LLM still outputs Markdown (more reliable). Convert to HTML for
+      // the TipTap editor; admin can further edit visually after.
+      setContentZh(marked.parse(data.formatted as string) as string);
       setSavedMsg(locale === 'zh' ? '✨ 智能排版完成' : '✨ Smart formatting done');
       setTimeout(() => setSavedMsg(null), 3000);
     } catch (e) {
@@ -208,7 +234,8 @@ export default function AdminArticleEditPage() {
       if (!res.ok) throw new Error(data.error || 'Translate failed');
       setTitleEn(data.title || '');
       setExcerptEn(data.excerpt || '');
-      setContentEn(data.content || '');
+      // LLM translates the markdown body; convert to HTML for the editor.
+      setContentEn(data.content ? marked.parse(data.content as string) as string : '');
       setSavedMsg(locale === 'zh' ? '🌐 自動翻譯完成' : '🌐 Auto-translate done');
       setTimeout(() => setSavedMsg(null), 3000);
     } catch (e) {
@@ -272,7 +299,10 @@ export default function AdminArticleEditPage() {
 
   const previewContent = previewLocale === 'zh' ? contentZh : (contentEn || contentZh);
   const previewTitle = previewLocale === 'zh' ? titleZh : (titleEn || titleZh);
-  const previewHtml = previewContent ? marked.parse(previewContent) as string : '';
+  // Content is HTML now (TipTap output); render directly. Markdown fallback
+  // via ensureHtml is already applied on load so any legacy markdown got
+  // upgraded before reaching this state.
+  const previewHtml = previewContent || '';
 
   return (
     <div className="max-content mx-auto px-6 md:px-12 py-8">
@@ -360,8 +390,8 @@ export default function AdminArticleEditPage() {
               />
             </div>
             <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-sm font-medium text-ink-soft">{locale === 'zh' ? '內容(支援 Markdown)' : 'Content (Markdown supported)'} *</label>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm font-medium text-ink-soft">{locale === 'zh' ? '內容' : 'Content'} *</label>
                 <button
                   type="button"
                   onClick={handleSmartFormat}
@@ -373,15 +403,16 @@ export default function AdminArticleEditPage() {
                   {locale === 'zh' ? '智能排版' : 'Smart Format'}
                 </button>
               </div>
-              <textarea
+              <RichEditor
                 value={contentZh}
-                onChange={(e) => setContentZh(e.target.value)}
-                rows={18}
-                className="w-full px-4 py-3 rounded-xl bg-white border border-charcoal/15 focus:outline-none focus:border-pink/50 font-mono text-sm leading-relaxed"
-                placeholder={locale === 'zh' ? '直接寫文字。撳「智能排版」會幫你自動加標題、分段、引用、圖片建議。\n\n圖片格式:\n![描述](https://image-url)' : 'Write freely. Click "Smart Format" to auto-add headings, lists, quotes, and image hints.\n\nImage syntax: ![alt](url)'}
+                onChange={setContentZh}
+                placeholder={locale === 'zh' ? '直接喺度寫文章。揀字、標題、顏色、清單、圖片… 全部 toolbar 嘅掣按下即用。' : 'Write directly here. Toolbar above for font size, colour, headings, lists, images.'}
+                minHeight={420}
               />
-              <p className="text-xs text-ink-soft mt-1">
-                {locale === 'zh' ? '提示:`# 大標題` `## 小標題` `- 項目` `> 引用` `**粗體**` `![圖片描述](URL)`' : 'Markdown: # H1, ## H2, - list, > quote, **bold**, ![alt](url)'}
+              <p className="text-xs text-ink-soft mt-2">
+                {locale === 'zh'
+                  ? '提示:可以撳「智能排版」叫 AI 幫你重新組織內容 + 加圖片建議位;之後再用工具列微調顏色 / 字型 / 大小。'
+                  : 'Tip: Click Smart Format to let AI restructure + suggest image slots, then fine-tune with the toolbar.'}
               </p>
             </div>
           </div>
@@ -416,12 +447,11 @@ export default function AdminArticleEditPage() {
               className="w-full px-4 py-2.5 rounded-xl bg-white border border-charcoal/15 focus:outline-none focus:border-pink/50 text-sm"
               placeholder="English excerpt"
             />
-            <textarea
+            <RichEditor
               value={contentEn}
-              onChange={(e) => setContentEn(e.target.value)}
-              rows={12}
-              className="w-full px-4 py-3 rounded-xl bg-white border border-charcoal/15 focus:outline-none focus:border-pink/50 font-mono text-sm"
-              placeholder="English content (Markdown). Click Auto-translate above to populate from Chinese."
+              onChange={setContentEn}
+              placeholder="English content. Click Auto-translate above to populate from Chinese."
+              minHeight={320}
             />
           </div>
         </div>

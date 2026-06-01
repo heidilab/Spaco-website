@@ -23,6 +23,14 @@ function fmtDate(v: unknown, locale: 'zh' | 'en'): string {
     : d.toLocaleDateString('en', { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
+// Detect legacy markdown content so we still render those right after
+// the TipTap migration. New content from the editor is HTML.
+function looksLikeMarkdown(s: string): boolean {
+  if (!s) return false;
+  if (/<\w+[^>]*>/.test(s)) return false;
+  return /(^|\n)#{1,3}\s|^\s*[-*]\s|>\s|\*\*[^*]+\*\*|!\[[^\]]*\]\(/m.test(s);
+}
+
 export default function ArticleView({
   article,
   locale,
@@ -34,7 +42,9 @@ export default function ArticleView({
 }) {
   const title = article.title[locale] || article.title.zh;
   const content = article.content[locale] || article.content.zh;
-  const html = content ? marked.parse(content) as string : '';
+  const html = content
+    ? (looksLikeMarkdown(content) ? marked.parse(content) as string : content)
+    : '';
 
   return (
     <div className="pt-28 pb-20 relative overflow-hidden min-h-screen">
