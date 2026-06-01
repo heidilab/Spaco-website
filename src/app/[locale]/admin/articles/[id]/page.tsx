@@ -13,7 +13,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Article } from '@/types';
 import {
   ChevronLeft, Save, Sparkles, Languages, Upload, Eye, EyeOff,
-  Image as ImageIcon, Loader2, AlertCircle, CheckCircle2, ExternalLink,
+  Image as ImageIcon, Loader2, AlertCircle, CheckCircle2, ExternalLink, Wand2,
 } from 'lucide-react';
 import { marked } from 'marked';
 
@@ -51,6 +51,9 @@ export default function AdminArticleEditPage() {
   const [translating, setTranslating] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [previewLocale, setPreviewLocale] = useState<'zh' | 'en'>('zh');
+  // Pending-image placeholder generation state — keyed by the literal
+  // placeholder text so we can show per-row spinners + collisions.
+  const [genBusy, setGenBusy] = useState<Record<string, boolean>>({});
 
   // Load existing article (edit mode)
   useEffect(() => {
@@ -81,6 +84,43 @@ export default function AdminArticleEditPage() {
   useEffect(() => {
     if (!slugTouched && titleZh) setSlug(makeSlug(titleZh));
   }, [titleZh, slugTouched]);
+
+  // Parse contentZh for image-suggestion placeholders inserted by
+  // smart-format. Pattern: ![圖片建議: <description>](TODO_UPLOAD)
+  // Returns the unique list with the literal markdown for replacement.
+  const pendingImages: Array<{ literal: string; description: string }> = (() => {
+    const re = /!\[圖片建議:\s*([^\]]+?)\]\(TODO_UPLOAD\)/g;
+    const seen = new Map<string, { literal: string; description: string }>();
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(contentZh)) !== null) {
+      if (!seen.has(m[0])) seen.set(m[0], { literal: m[0], description: m[1].trim() });
+    }
+    return Array.from(seen.values());
+  })();
+
+  async function handleGenerateImage(literal: string, description: string) {
+    setGenBusy((b) => ({ ...b, [literal]: true }));
+    setError(null);
+    try {
+      const res = await fetch('/api/admin/article-generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: description, size: '1792x1024' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Generate failed');
+      // Replace ALL occurrences of this literal placeholder with the
+      // real image markdown. Alt = original description (without "圖片建議:").
+      const replacement = `![${description}](${data.url})`;
+      setContentZh((c) => c.split(literal).join(replacement));
+      setSavedMsg(locale === 'zh' ? '🎨 AI 圖已生成並插入' : '🎨 AI image generated + inserted');
+      setTimeout(() => setSavedMsg(null), 3000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'unknown');
+    } finally {
+      setGenBusy((b) => { const n = { ...b }; delete n[literal]; return n; });
+    }
+  }
 
   async function handleHeroUpload(file: File) {
     setUploading(true);
@@ -410,6 +450,47 @@ export default function AdminArticleEditPage() {
               placeholder={locale === 'zh' ? '生日, BBQ, 親子(逗號分隔)' : 'tips, party, bbq (comma-separated)'}
             />
           </div>
+
+          {/* AI image generation panel — surfaces ![圖片建議: ...](TODO_UPLOAD)
+              placeholders smart-format inserted. Each row has a Generate
+              button that calls DALL-E + inserts the real image inline. */}
+          {pendingImages.length > 0 && (
+            <div className="glass-card p-5 space-y-3">
+              <h3 className="font-bold text-sm uppercase tracking-wider text-ink-soft flex items-center gap-1.5">
+                <Wand2 size={14} className="text-pink" />
+                {locale === 'zh' ? `待生成圖 (${pendingImages.length})` : `Pending Images (${pendingImages.length})`}
+              </h3>
+              <p className="text-[11px] text-ink-soft leading-relaxed">
+                {locale === 'zh'
+                  ? 'AI 排版插入嘅圖片建議。撳「生成」叫 DALL-E 即場生圖 + 自動插入文章相應位置(每張 ~HK$0.30)。'
+                  : "AI-suggested image slots. Click Generate to call DALL-E and auto-insert into the article (~HK$0.30 each)."}
+              </p>
+              <div className="space-y-2">
+                {pendingImages.map((img) => (
+                  <div key={img.literal} className="rounded-xl bg-white/60 border border-charcoal/10 p-3 space-y-2">
+                    <p className="text-xs text-ink leading-relaxed">{img.description}</p>
+                    <button
+                      onClick={() => handleGenerateImage(img.literal, img.description)}
+                      disabled={!!genBusy[img.literal]}
+                      className="w-full text-xs px-3 py-1.5 rounded-pill bg-pink/10 text-pink hover:bg-pink/20 disabled:opacity-40 flex items-center justify-center gap-1.5 font-semibold"
+                    >
+                      {genBusy[img.literal] ? (
+                        <>
+                          <Loader2 size={12} className="animate-spin" />
+                          {locale === 'zh' ? '生成中(約 20 秒)…' : 'Generating (~20s)…'}
+                        </>
+                      ) : (
+                        <>
+                          <Wand2 size={12} />
+                          {locale === 'zh' ? '生成 AI 圖' : 'Generate AI Image'}
+                        </>
+                      )}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="glass-card p-5 space-y-3">
             <h3 className="font-bold text-sm uppercase tracking-wider text-ink-soft">{locale === 'zh' ? '狀態' : 'Status'}</h3>
