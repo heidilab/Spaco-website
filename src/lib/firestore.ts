@@ -195,6 +195,11 @@ async function assertNoSlotConflict(opts: {
   startTime: string;
   endTime: string;
   excludeBookingId: string;
+  /** Also skip blocked_slots whose googleEventId matches — when SPACO
+   *  pushes a booking to gcal, the SW calendar sync writes 3 phantom
+   *  slots back (sw-a + sw-b + sw-ab) with bookingId=null, so we can't
+   *  exclude them via bookingId alone. */
+  excludeGoogleEventId?: string;
 }): Promise<void> {
   const startMin = (h: string) => {
     const [hh, mm] = h.split(':').map(Number);
@@ -216,8 +221,14 @@ async function assertNoSlotConflict(opts: {
         where('date', '==', w.date),
       ));
       for (const docSnap of snap.docs) {
-        const data = docSnap.data() as { bookingId?: string; startTime: string; endTime: string };
+        const data = docSnap.data() as {
+          bookingId?: string;
+          startTime: string;
+          endTime: string;
+          googleEventId?: string;
+        };
         if (data.bookingId === opts.excludeBookingId) continue;
+        if (opts.excludeGoogleEventId && data.googleEventId === opts.excludeGoogleEventId) continue;
         const bStart = startMin(data.startTime);
         const bEnd = startMin(data.endTime);
         if (w.start < bEnd && bStart < w.end) {
@@ -289,6 +300,9 @@ export async function updateBookingDateTime(
   // Conflict check on the TARGET venue (and its shared-space siblings)
   // before touching anything. We do this BEFORE deleting the old slots
   // so a failed conflict check leaves the booking exactly as it was.
+  // Pass googleEventId so the booking's own gcal-mirror slots (which
+  // gcal-sync writes WITHOUT a bookingId, often for all 3 SW sub-rooms)
+  // don't self-conflict against the very booking we're editing.
   await assertNoSlotConflict({
     venueId: targetVenueId,
     date: next.date,
@@ -296,6 +310,7 @@ export async function updateBookingDateTime(
     startTime: next.startTime,
     endTime: next.endTime,
     excludeBookingId: bookingId,
+    excludeGoogleEventId: (booking as { googleEventId?: string }).googleEventId,
   });
 
   const [endH, endM] = next.endTime.split(':').map(Number);
