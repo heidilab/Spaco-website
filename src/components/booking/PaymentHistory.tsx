@@ -56,18 +56,12 @@ export default function PaymentHistory({
   const [freezingSynth, setFreezingSynth] = useState(false);
   const [freezeMsg, setFreezeMsg] = useState<string | null>(null);
 
-  // Legacy detection: any entry that has a positive amount but no split
-  // is from the pre-split endpoint. When at least one exists, pricing.*
-  // fields may not yet reflect the legacy money so any synthesis math
-  // would be off; we hide the initial row + show a banner asking admin
-  // to split before drawing the full audit.
-  const hasUnsplit = payments.some(
-    (p) =>
-      (p.amount || 0) > 0
-      && (p.rentalAmount || 0) === 0
-      && (p.addOnAmount || 0) === 0
-      && (p.depositAmount || 0) === 0,
-  );
+  // Heidi 2026-05-23 spec dropped per-bucket payment tracking — new
+  // entries only carry `amount`, no rental/addon/deposit split. The
+  // old "未拆分嘅付款" warning + 🪄 split modal were tied to that legacy
+  // model and just confused CS now. Keep `hasUnsplit = false` so the
+  // warning never renders (and the split modal stays inert).
+  const hasUnsplit = false;
 
   // Three-bucket sums across all logged payments (場租 / 附加項目 / 按金).
   // Legacy entries pre-dating the addOnAmount split lump everything into

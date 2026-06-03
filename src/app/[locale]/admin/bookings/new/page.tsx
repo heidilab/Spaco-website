@@ -365,7 +365,15 @@ export default function AdminNewBookingPage() {
         pricing: {
           baseCharge: pricing.baseCharge,
           addOnTotal: pricing.addOnTotal,
-          subtotal: subtotalAfterPackage,
+          // Store the POST-promo subtotal so the booking record has the
+          // SAME semantic as bookings created via the customer flow +
+          // updateBookingDateTime (which both store effectiveSubtotal).
+          // Storing pre-promo here caused the long-standing display bug
+          // on #DgmfwXjX where 小計 showed $8,802 instead of $8,352 after
+          // a -$450 promo. securityDeposit still uses subtotalAfterPackage
+          // intentionally (the deposit tier follows the underlying rental
+          // cost, not the post-discount amount — see commit 8ceab09).
+          subtotal: effectiveSubtotal,
           securityDeposit,
           deposit,
         },
