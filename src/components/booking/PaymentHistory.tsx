@@ -234,7 +234,10 @@ export default function PaymentHistory({
           {locale === 'zh' ? '已收總額' : 'Total received'}
         </p>
         <p className="font-bold text-lg">
-          HK${(totalRental + totalAddOn + totalDeposit).toLocaleString()}
+          HK${(
+            payments.reduce((s, p) => s + (p.amount || 0), 0)
+            + initialPaid
+          ).toLocaleString()}
         </p>
       </div>
 
