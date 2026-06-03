@@ -16,8 +16,18 @@ export async function GET(req: NextRequest) {
     const id = req.nextUrl.searchParams.get('id');
     if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
-    const snap = await adminDb.collection('bookings').doc(id).get();
-    if (!snap.exists) return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
+    // Try direct lookup first; fall back to prefix-scan so the admin UI
+    // can paste the 8-char display id (e.g. "#DgmfwXjX") without having
+    // to find the full 20-char Firestore doc id.
+    let snap = await adminDb.collection('bookings').doc(id).get();
+    let resolvedId = id;
+    if (!snap.exists) {
+      const all = await adminDb.collection('bookings').get();
+      const hit = all.docs.find((d) => d.id.startsWith(id));
+      if (!hit) return NextResponse.json({ error: 'Booking not found (tried direct + prefix)' }, { status: 404 });
+      snap = hit;
+      resolvedId = hit.id;
+    }
 
     const b = snap.data() as Record<string, unknown> & {
       pricing?: {
@@ -63,7 +73,7 @@ export async function GET(req: NextRequest) {
     const expectedBalance = Math.max(0, expectedGrandTotal - paymentsSum);
 
     return NextResponse.json({
-      id,
+      id: resolvedId,
       status: b.status,
       pricing: {
         baseCharge: base,
