@@ -113,22 +113,43 @@ export default function AdminReceiptsPage() {
       // matches paidAmount exactly.
       addOnAmount += remaining;
 
+      // Dedupe guard — when admin already recorded this payment manually
+      // via「已於線下付款」on /admin/bookings/[id], the same FPS amount
+      // would land in payments[] twice. Skip the append if we find any
+      // existing entry within ±5 min with the same method + amount.
+      // (Heidi 2026-06: #DgmfwXjX got dupe $5,176 × 2 because admin
+      // entered the FPS manually, then approved the receipt 2 min later.)
+      const method = (booking.paymentMethod || 'fps') as 'fps' | 'bank' | 'stripe' | 'cash' | 'other';
+      const nowMs = Date.now();
+      const FIVE_MIN = 5 * 60 * 1000;
+      const existing = (booking.payments || []).find((p) => {
+        if (p.method !== method) return false;
+        if (Math.abs((p.amount || 0) - paidAmount) > 1) return false;   // exact-ish match
+        const ts = p.recordedAt;
+        let pMs = 0;
+        if (typeof ts === 'string') pMs = new Date(ts).getTime();
+        else if ((ts as { toMillis?: () => number })?.toMillis) pMs = (ts as { toMillis: () => number }).toMillis();
+        else if ((ts as { seconds?: number })?.seconds) pMs = ((ts as { seconds: number }).seconds) * 1000;
+        return Math.abs(nowMs - pMs) < FIVE_MIN;
+      });
       const update: Record<string, unknown> = {
         status: 'confirmed',
         paymentVerifiedAt: serverTimestamp(),
-        payments: arrayUnion({
+        updatedAt: serverTimestamp(),
+      };
+      if (!existing) {
+        update.payments = arrayUnion({
           rentalAmount,
           addOnAmount,
           depositAmount,
           amount: paidAmount,
-          method: (booking.paymentMethod || 'fps') as 'fps' | 'bank' | 'stripe' | 'cash' | 'other',
+          method,
           kind: isBalanceReceipt ? 'balance' : 'initial',
           note: null,
           recordedBy: 'admin-receipt-approve',
           recordedAt: new Date().toISOString(),
-        }),
-        updatedAt: serverTimestamp(),
-      };
+        });
+      }
       if (isBalanceReceipt) {
         update.balanceDue = 0;
         update.balancePaidAt = serverTimestamp();
