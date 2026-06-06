@@ -365,15 +365,18 @@ export default function AdminNewBookingPage() {
         pricing: {
           baseCharge: pricing.baseCharge,
           addOnTotal: pricing.addOnTotal,
-          // Store the POST-promo subtotal so the booking record has the
-          // SAME semantic as bookings created via the customer flow +
-          // updateBookingDateTime (which both store effectiveSubtotal).
-          // Storing pre-promo here caused the long-standing display bug
-          // on #DgmfwXjX where 小計 showed $8,802 instead of $8,352 after
-          // a -$450 promo. securityDeposit still uses subtotalAfterPackage
-          // intentionally (the deposit tier follows the underlying rental
-          // cost, not the post-discount amount — see commit 8ceab09).
-          subtotal: effectiveSubtotal,
+          // PRE-promo subtotal (baseCharge + addOnTotal + package extras).
+          // This is the convention every other flow uses: venue page
+          // (customer self-booking), updateBookingDateTime, claim page,
+          // confirm page all subtract `promoDiscount` from the stored
+          // subtotal at display / deposit-calc time. Storing POST-promo
+          // here (commit c2e617a) caused #QotleDvT to undercharge by the
+          // promo amount: claim+confirm pages subtracted promo a SECOND
+          // time, so pricing.deposit was computed as $7,550 instead of
+          // $7,800 and Stripe charged $250 short. Display formatting for
+          // 小計 happens in admin/bookings/[id] which now subtracts promo
+          // at render time — same as the customer-facing breakdown.
+          subtotal: subtotalAfterPackage,
           securityDeposit,
           deposit,
         },
