@@ -50,9 +50,12 @@ export async function GET(req: NextRequest) {
       }>;
       promoDiscount?: number;
       promoCode?: string;
+      promoCodeId?: string;
+      promoFreeDrinksCost?: number;
       pointsDiscount?: number;
       balanceDue?: number;
       status?: string;
+      addOns?: Array<{ id?: string; quantity?: number }>;
     };
 
     const p = b.pricing || {};
@@ -72,9 +75,17 @@ export async function GET(req: NextRequest) {
     const paymentsSum = payments.reduce((s, x) => s + (x.amount ?? 0), 0);
     const expectedBalance = Math.max(0, expectedGrandTotal - paymentsSum);
 
+    // Fetch promo doc if linked so we can see if it was free_drinks etc.
+    let promoDoc: Record<string, unknown> | null = null;
+    if (b.promoCodeId) {
+      const promoSnap = await adminDb.collection('promo_codes').doc(b.promoCodeId).get();
+      if (promoSnap.exists) promoDoc = promoSnap.data() ?? null;
+    }
+
     return NextResponse.json({
       id: resolvedId,
       status: b.status,
+      addOns: b.addOns ?? [],
       pricing: {
         baseCharge: base,
         addOnTotal: addOn,
@@ -84,6 +95,9 @@ export async function GET(req: NextRequest) {
         storedBalanceDue,
       },
       promoCode: b.promoCode,
+      promoCodeId: b.promoCodeId,
+      promoDoc,
+      promoFreeDrinksCost: b.promoFreeDrinksCost,
       promoDiscount,
       pointsDiscount: b.pointsDiscount ?? 0,
       expected: {
