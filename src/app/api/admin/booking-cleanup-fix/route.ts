@@ -29,11 +29,21 @@ export async function POST(req: NextRequest) {
       id?: string;
       dryRun?: boolean;
       dropPaymentIndexes?: number[];
+      /** Drop custom add-ons whose id starts with these prefixes (e.g. "custom-"). */
+      dropAddOnIdPrefixes?: string[];
+      /** Drop custom add-ons by exact id match. */
+      dropAddOnIds?: string[];
+      /** Override promoDiscount (HK$). */
+      setPromoDiscount?: number;
+      /** Override addOnTotal (HK$). */
+      setAddOnTotal?: number;
     };
     const id = body.id;
     if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
     const dryRun = body.dryRun !== false;            // default TRUE for safety
     const drops = (body.dropPaymentIndexes || []).filter((n) => Number.isInteger(n) && n >= 0);
+    const dropAddOnIdPrefixes = body.dropAddOnIdPrefixes || [];
+    const dropAddOnIds = body.dropAddOnIds || [];
 
     // Resolve full id (allow 8-char prefix).
     let snap = await adminDb.collection('bookings').doc(id).get();
@@ -50,12 +60,30 @@ export async function POST(req: NextRequest) {
       promoDiscount?: number;
       balanceDue?: number;
       payments?: Array<{ amount?: number }>;
+      addOns?: Array<{ id?: string; quantity?: number; options?: { customName?: string; customPrice?: number } }>;
     };
 
     const baseCharge = b.pricing?.baseCharge ?? 0;
-    const addOnTotal = b.pricing?.addOnTotal ?? 0;
-    const promoDiscount = b.promoDiscount ?? 0;
+    const storedAddOnTotal = b.pricing?.addOnTotal ?? 0;
+    const storedPromoDiscount = b.promoDiscount ?? 0;
     const securityDeposit = b.pricing?.securityDeposit ?? 0;
+
+    // Filter add-ons.
+    const allAddOns = b.addOns || [];
+    const droppedAddOns = allAddOns.filter((a) =>
+      (a.id ? dropAddOnIds.includes(a.id) : false)
+      || (a.id ? dropAddOnIdPrefixes.some((pfx) => a.id!.startsWith(pfx)) : false)
+    );
+    const remainingAddOns = allAddOns.filter((a) => !droppedAddOns.includes(a));
+
+    // Apply overrides if supplied; otherwise keep stored.
+    const addOnTotal = typeof body.setAddOnTotal === 'number'
+      ? Math.max(0, body.setAddOnTotal)
+      : storedAddOnTotal;
+    const promoDiscount = typeof body.setPromoDiscount === 'number'
+      ? Math.max(0, body.setPromoDiscount)
+      : storedPromoDiscount;
+
     const newSubtotal = Math.max(0, baseCharge + addOnTotal - promoDiscount);
 
     // Filter remaining payments after dropping the requested indexes.
@@ -77,6 +105,9 @@ export async function POST(req: NextRequest) {
         balanceDue: b.balanceDue,
         paymentsCount: allPayments.length,
         paymentsSum: allPayments.reduce((s, p) => s + (p.amount ?? 0), 0),
+        addOnsCount: allAddOns.length,
+        promoDiscount: storedPromoDiscount,
+        addOnTotal: storedAddOnTotal,
       },
       after: {
         subtotal: newSubtotal,
@@ -84,19 +115,29 @@ export async function POST(req: NextRequest) {
         balanceDue: newBalanceDue,
         paymentsCount: remaining.length,
         paymentsSum: remainingSum,
+        addOnsCount: remainingAddOns.length,
+        promoDiscount,
+        addOnTotal,
       },
       dropped,
+      droppedAddOns,
       formula: `subtotal = max(0, baseCharge ${baseCharge} + addOnTotal ${addOnTotal} − promo ${promoDiscount}) = ${newSubtotal}`,
     };
 
     if (!dryRun) {
-      await adminDb.collection('bookings').doc(resolvedId).update({
+      const update: Record<string, unknown> = {
         'pricing.subtotal': newSubtotal,
         'pricing.deposit': newDeposit,
+        'pricing.addOnTotal': addOnTotal,
         balanceDue: newBalanceDue,
         payments: remaining,                              // overwrite array
+        addOns: remainingAddOns,                          // overwrite array
         updatedAt: FieldValue.serverTimestamp(),
-      });
+      };
+      if (typeof body.setPromoDiscount === 'number') {
+        update.promoDiscount = promoDiscount;
+      }
+      await adminDb.collection('bookings').doc(resolvedId).update(update);
     }
 
     return NextResponse.json({ ok: true, ...proposal });
