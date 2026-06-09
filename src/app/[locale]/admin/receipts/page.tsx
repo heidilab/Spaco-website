@@ -75,6 +75,22 @@ export default function AdminReceiptsPage() {
       ? (booking.balanceDue ?? 0)
       : (booking.pricing.deposit || 0);
 
+    // Hard guard — refuse re-approving a confirmed booking when there's
+    // nothing left to settle. #jMW2skDl: admin clicked Approve twice 14
+    // min apart on the SAME receipt, the prior ±5-min dedupe window
+    // missed it, and a phantom \$2,400 payment got logged. After this
+    // guard the second click no-ops with a clear message instead.
+    if (
+      booking.status === 'confirmed'
+      && !!booking.paymentVerifiedAt
+      && (booking.balanceDue ?? 0) <= 0
+    ) {
+      alert(locale === 'zh'
+        ? '⚠️ 此預訂已完成付款（無待收尾數），唔需要再 approve 同一張入數紙。\n\n如客人交咗額外款項（例如加人、加附加服務）,請喺後台「預訂詳情」用「已於線下付款」 / 「記錄額外付款」入賬,而唔好喺呢度重新 approve。'
+        : '⚠️ Booking already fully paid — nothing left to approve. If the customer transferred extra (pax upgrade etc), record it via 「已於線下付款」 on the booking detail page.');
+      return;
+    }
+
     if (paidAmount > 0) {
       // Per-bucket capacity = bucket total − already-logged amount.
       // Synth (in PaymentHistory) fills whatever neither this nor a
@@ -113,15 +129,18 @@ export default function AdminReceiptsPage() {
       // matches paidAmount exactly.
       addOnAmount += remaining;
 
-      // Dedupe guard — when admin already recorded this payment manually
-      // via「已於線下付款」on /admin/bookings/[id], the same FPS amount
-      // would land in payments[] twice. Skip the append if we find any
-      // existing entry within ±5 min with the same method + amount.
-      // (Heidi 2026-06: #DgmfwXjX got dupe $5,176 × 2 because admin
-      // entered the FPS manually, then approved the receipt 2 min later.)
+      // Dedupe guard — extended to ±24h after #jMW2skDl logged a
+      // duplicate \$2,400 from admin clicking Approve twice 14 min apart
+      // (prior 5-min window missed it). Same calendar-day dedupe is the
+      // right granularity for human-driven approve clicks: a customer
+      // realistically doesn't transfer the IDENTICAL amount via the
+      // SAME method twice within 24h for two separate things.
+      // Also added a hard guard above that refuses re-approve on fully-
+      // paid bookings — this dedupe is the secondary line of defence
+      // for balance-receipt double-clicks.
       const method = (booking.paymentMethod || 'fps') as 'fps' | 'bank' | 'stripe' | 'cash' | 'other';
       const nowMs = Date.now();
-      const FIVE_MIN = 5 * 60 * 1000;
+      const ONE_DAY = 24 * 60 * 60 * 1000;
       const existing = (booking.payments || []).find((p) => {
         if (p.method !== method) return false;
         if (Math.abs((p.amount || 0) - paidAmount) > 1) return false;   // exact-ish match
@@ -130,7 +149,7 @@ export default function AdminReceiptsPage() {
         if (typeof ts === 'string') pMs = new Date(ts).getTime();
         else if ((ts as { toMillis?: () => number })?.toMillis) pMs = (ts as { toMillis: () => number }).toMillis();
         else if ((ts as { seconds?: number })?.seconds) pMs = ((ts as { seconds: number }).seconds) * 1000;
-        return Math.abs(nowMs - pMs) < FIVE_MIN;
+        return Math.abs(nowMs - pMs) < ONE_DAY;
       });
       const update: Record<string, unknown> = {
         status: 'confirmed',

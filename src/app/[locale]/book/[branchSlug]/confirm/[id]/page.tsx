@@ -279,8 +279,19 @@ export default function ConfirmBookingPage() {
       // Compute the drinks portion as if it were already in the cart —
       // for `free_drinks` codes we'll auto-add the drinks add-on below
       // even if the customer hadn't picked it themselves.
-      const adultEquiv = (booking?.adultCount ?? booking?.guestCount ?? 0)
-        + 0.5 * (booking?.childCount ?? 0);
+      //
+      // MUST match pricing.ts's adultEquivalent formula exactly
+      // (adults = guestCount − childCount; equiv = adults + 0.5·children)
+      // so the promo amount equals the drinks line item. Previously this
+      // read `adultCount ?? guestCount` which diverged when admin edited
+      // a booking's guestCount without touching adultCount:
+      // #jMW2skDl was bumped from 7 → 12 pax, drinks recalc'd to
+      // 12 × \$25 = \$300, but promo stuck at adultCount=7 × \$25 = \$175.
+      // Net result: customer charged \$125 for "free" drinks.
+      const guestCount = booking?.guestCount ?? 0;
+      const childCount = booking?.childCount ?? 0;
+      const adults = Math.max(0, guestCount - childCount);
+      const adultEquiv = adults + 0.5 * childCount;
       const venueIncludesDrinksFree = booking
         ? freeDrinksVenues.includes(booking.venueId)
         : false;

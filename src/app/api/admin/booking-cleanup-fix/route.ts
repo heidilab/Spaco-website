@@ -37,6 +37,8 @@ export async function POST(req: NextRequest) {
       setPromoDiscount?: number;
       /** Override addOnTotal (HK$). */
       setAddOnTotal?: number;
+      /** Override adultCount (resync after admin guestCount edit drift). */
+      setAdultCount?: number;
     };
     const id = body.id;
     if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
@@ -136,6 +138,9 @@ export async function POST(req: NextRequest) {
       };
       if (typeof body.setPromoDiscount === 'number') {
         update.promoDiscount = promoDiscount;
+      }
+      if (typeof body.setAdultCount === 'number') {
+        update.adultCount = Math.max(0, body.setAdultCount);
       }
       await adminDb.collection('bookings').doc(resolvedId).update(update);
     }

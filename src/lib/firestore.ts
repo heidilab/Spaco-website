@@ -16,7 +16,7 @@ import {
 import { db } from './firebase';
 import { BookingRecord, BlockedSlot, BusinessDocument, DocumentType, DocumentRevision, CalendarEvent, AddOnOptions } from '@/types';
 import { venuesSharingSpace, getVenueById } from './venues';
-import { calculatePricing, calculateDeposit } from './pricing';
+import { calculatePricing, calculateDeposit, freeDrinksVenues } from './pricing';
 import { getHoliday } from './hkHolidays';
 
 // ============ BOOKINGS ============
@@ -383,6 +383,18 @@ export async function updateBookingDateTime(
   if (typeof next.guestCount === 'number') patch.guestCount = next.guestCount;
   if (typeof next.adultCount === 'number') patch.adultCount = next.adultCount;
   if (typeof next.childCount === 'number') patch.childCount = next.childCount;
+  // Keep adultCount in sync with guestCount when caller only updates
+  // guestCount. Otherwise admin bumping pax from 7 → 12 leaves
+  // adultCount=7 stale (#jMW2skDl), which downstream
+  // breakdown-displayers like "7 adults + 0 kids" render incoherently
+  // and the confirm-page promo formula picks the stale adultCount as
+  // the basis for free_drinks promo (charging the customer the diff).
+  if (typeof next.guestCount === 'number' && typeof next.adultCount !== 'number') {
+    const childrenForSync = typeof next.childCount === 'number'
+      ? next.childCount
+      : (booking.childCount ?? 0);
+    patch.adultCount = Math.max(0, next.guestCount - childrenForSync);
+  }
   if (typeof next.hasBYOFood === 'boolean') patch.hasBYOFood = next.hasBYOFood;
   if (next.addOns) patch.addOns = next.addOns;
   if (venueChanged) {
@@ -463,7 +475,29 @@ export async function updateBookingDateTime(
       // legacy bookings whose stored subtotal got corrupted, or
       // off-system price agreements that the venue × pax × hours
       // formula can't replicate.
-      const promoDiscount = booking.promoDiscount || 0;
+      //
+      // EXCEPTION — free_drinks promos. These cover the drinks line
+      // item exactly ($25 × adultEquiv), so when pax changes the
+      // discount amount MUST scale with it. #jMW2skDl: admin bumped 7
+      // → 12 pax, drinks recalc'd to $300, but promoDiscount stuck at
+      // the original $175 (7-pax worth) → customer charged $125 for
+      // what should be "free" drinks. Recompute when free_drinks is in
+      // play AND the booking still has drinks in addOns. Other promo
+      // types (cash / per_pax / percent) keep the stored value since
+      // their amount was already locked when the customer applied.
+      let promoDiscount = booking.promoDiscount || 0;
+      const isFreeDrinksPromo =
+        typeof booking.promoFreeDrinksCost === 'number' && booking.promoFreeDrinksCost > 0;
+      const hasDrinksAddOn = (addOns || []).some((a) => a.id === 'drinks');
+      if (isFreeDrinksPromo && hasDrinksAddOn) {
+        const adultEquiv = adults + 0.5 * children;
+        const newDrinksCost = freeDrinksVenues.includes(targetVenueId)
+          ? 0
+          : Math.round(25 * adultEquiv);
+        promoDiscount = newDrinksCost;
+        patch.promoDiscount = newDrinksCost;
+        patch.promoFreeDrinksCost = newDrinksCost;
+      }
       const baseSubtotal = typeof next.subtotalOverride === 'number'
         ? Math.max(0, next.subtotalOverride)
         : computed.subtotal;
