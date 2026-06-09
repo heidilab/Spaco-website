@@ -138,6 +138,16 @@ export async function POST(req: NextRequest) {
       };
       if (typeof body.setPromoDiscount === 'number') {
         update.promoDiscount = promoDiscount;
+        // Keep promoFreeDrinksCost in lockstep when this booking has a
+        // free_drinks promo — otherwise updateBookingDateTime's later
+        // recompute treats the old promoFreeDrinksCost as the
+        // free_drinks marker but the actual promo amount drifts.
+        if (
+          typeof b.promoFreeDrinksCost === 'number'
+          && b.promoFreeDrinksCost > 0
+        ) {
+          update.promoFreeDrinksCost = promoDiscount;
+        }
       }
       if (typeof body.setAdultCount === 'number') {
         update.adultCount = Math.max(0, body.setAdultCount);

@@ -490,7 +490,15 @@ export async function updateBookingDateTime(
         typeof booking.promoFreeDrinksCost === 'number' && booking.promoFreeDrinksCost > 0;
       const hasDrinksAddOn = (addOns || []).some((a) => a.id === 'drinks');
       if (isFreeDrinksPromo && hasDrinksAddOn) {
-        const adultEquiv = adults + 0.5 * children;
+        // adultEquiv MUST match pricing.ts adultEquivalent exactly,
+        // which derives adults from (guests − childCount) not from the
+        // stored booking.adultCount field. Otherwise admin's
+        // guestCount-only edit (e.g. #jMW2skDl 12 → 13 pax) computes
+        // promo against the STALE adultCount snapshot, giving 12 ×
+        // $25 = \$300 promo while drinks line shows 13 × \$25 = \$325
+        // — back to the same convention-drift bug.
+        const promoAdults = Math.max(0, guests - children);
+        const adultEquiv = promoAdults + 0.5 * children;
         const newDrinksCost = freeDrinksVenues.includes(targetVenueId)
           ? 0
           : Math.round(25 * adultEquiv);
