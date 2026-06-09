@@ -1644,9 +1644,15 @@ export default function AdminBookingDetailPage() {
              * the math reads as: 場租 + add-ons − 優惠碼 = 小計
              * (post-promo). 總額 = 小計 + 按金. 尚欠 = 總額 − 已收.
              *
-             * pricing.subtotal is already stored post-promo, so 小計
-             * displays it directly and 總額 = subtotal + securityDeposit
-             * without further discount subtraction. */}
+             * grandTotal is derived from primitives
+             * (baseCharge + addOnTotal − promo + securityDeposit) so
+             * the math is correct regardless of whether
+             * `pricing.subtotal` was stored PRE- or POST-promo —
+             * convention drift between admin/bookings/new (PRE-promo
+             * post-e1900f0) and updateBookingPricing (POST-promo).
+             * Previously this used `subtotal + securityDeposit`, which
+             * inflated 尚欠 by the promo amount for every PRE-promo
+             * booking (#asQzC4PU showed phantom HK\$500 outstanding). */}
             {(booking.promoCode && (booking.promoDiscount ?? 0) > 0) && (
               <Row
                 label={locale === 'zh' ? '優惠碼' : 'Promo'}
@@ -1666,7 +1672,13 @@ export default function AdminBookingDetailPage() {
             <Row label={locale === 'zh' ? '可退按金' : 'Refundable deposit'} value={`HK$${(booking.pricing.securityDeposit ?? 0).toLocaleString()}`} />
             {(() => {
               const grandTotal =
-                (booking.pricing.subtotal || 0) + (booking.pricing.securityDeposit || 0);
+                Math.max(
+                  0,
+                  (booking.pricing.baseCharge || 0)
+                    + (booking.pricing.addOnTotal || 0)
+                    - (booking.promoDiscount || 0)
+                    - (booking.pointsDiscount || 0),
+                ) + (booking.pricing.securityDeposit || 0);
               const actualPaid =
                 (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
               const outstanding = Math.max(0, grandTotal - actualPaid);

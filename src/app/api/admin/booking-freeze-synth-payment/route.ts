@@ -60,10 +60,19 @@ export async function POST(req: NextRequest) {
     // Replicate the synth math exactly (PaymentHistory.tsx). Keep this
     // in sync if the synth bucket-fill rules change there.
     //
-    // pricing.subtotal is already stored post-promo by
-    // updateBookingDateTime, so no further promo subtraction here.
-    const grandTotal =
-      (booking.pricing.subtotal || 0) + (booking.pricing.securityDeposit || 0);
+    // Derive grandTotal from primitives
+    // (baseCharge + addOnTotal − promo − pointsDiscount + securityDeposit)
+    // so it's correct regardless of whether pricing.subtotal was
+    // stored PRE- or POST-promo (convention drift between
+    // admin/bookings/new (PRE post-e1900f0) and updateBookingPricing
+    // (POST)). See PaymentHistory.tsx commit 295b68b for the rationale.
+    const grandTotal = Math.max(
+      0,
+      (booking.pricing.baseCharge || 0)
+        + (booking.pricing.addOnTotal || 0)
+        - (booking.promoDiscount || 0)
+        - (booking.pointsDiscount || 0),
+    ) + (booking.pricing.securityDeposit || 0);
     const actualPaidTotal = Math.max(0, grandTotal - (booking.balanceDue || 0));
     const loggedTotalAmount =
       (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);

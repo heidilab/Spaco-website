@@ -93,7 +93,16 @@ export default function MyBookingDetailPage() {
   const venue = getVenueById(booking.venueId);
   const venueName = venue?.name[locale] || booking.branchSlug;
   const securityDeposit = booking.pricing.securityDeposit ?? 0;
-  const grandTotal = booking.pricing.subtotal + securityDeposit;
+  // grandTotal derived from primitives so it's correct regardless of
+  // whether `pricing.subtotal` is stored PRE- or POST-promo.
+  // See commit 295b68b + PaymentHistory.tsx for the rationale.
+  const grandTotal = Math.max(
+    0,
+    (booking.pricing.baseCharge || 0)
+      + (booking.pricing.addOnTotal || 0)
+      - (booking.promoDiscount || 0)
+      - (booking.pointsDiscount || 0),
+  ) + securityDeposit;
   const balanceDue = booking.balanceDue ?? 0;
   const peopleLine = (booking.childCount ?? 0) > 0
     ? (locale === 'zh'
