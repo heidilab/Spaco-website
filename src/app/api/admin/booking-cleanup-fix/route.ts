@@ -60,6 +60,7 @@ export async function POST(req: NextRequest) {
     const b = snap.data() as {
       pricing?: { baseCharge?: number; addOnTotal?: number; subtotal?: number; securityDeposit?: number; deposit?: number };
       promoDiscount?: number;
+      promoFreeDrinksCost?: number;
       balanceDue?: number;
       payments?: Array<{ amount?: number }>;
       addOns?: Array<{ id?: string; quantity?: number; options?: { customName?: string; customPrice?: number } }>;

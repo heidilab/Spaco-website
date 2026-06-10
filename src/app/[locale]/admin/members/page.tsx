@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllUsers, getUserBookings, updateMemberPhoneEverywhere } from '@/lib/firestore';
 import { BookingRecord } from '@/types';
-import { Search, CalendarDays, Award, ChevronRight, ArrowLeft, Clock } from 'lucide-react';
+import { Search, CalendarDays, Award, ChevronRight, ArrowLeft, Clock, Download, Users } from 'lucide-react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
@@ -136,6 +136,115 @@ export default function AdminMembersPage() {
   const formatDate = (ts: { seconds: number } | undefined) => {
     if (!ts) return '-';
     return new Date(ts.seconds * 1000).toLocaleDateString();
+  };
+
+  // ───── Export ─────
+  // Export uses the FILTERED list (so searched results can be exported
+  // standalone). Lazy-imports xlsx / jspdf to keep the page bundle
+  // small — these libs are ~300KB each and only needed when admin
+  // clicks Export. Filename includes today's date so multiple exports
+  // don't overwrite. CSV uses UTF-8 BOM so Excel opens Chinese chars
+  // correctly without manual encoding selection.
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!exportOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setExportOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [exportOpen]);
+
+  const buildExportRows = () => {
+    const headers = locale === 'zh'
+      ? ['姓名', 'Email', '電話', '註冊日期', '積分']
+      : ['Name', 'Email', 'Phone', 'Joined', 'Points'];
+    const rows = filtered.map((m) => [
+      m.displayName || '-',
+      m.email || '-',
+      m.phone || '-',
+      formatDate(m.createdAt),
+      String(m.loyaltyPoints || 0),
+    ]);
+    return { headers, rows };
+  };
+
+  const todayStamp = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
+  const exportCSV = () => {
+    const { headers, rows } = buildExportRows();
+    const escape = (s: string) => {
+      const needs = /[",\n]/.test(s);
+      return needs ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [headers.map(escape).join(','), ...rows.map((r) => r.map(escape).join(','))];
+    // UTF-8 BOM — without it Excel mis-decodes Traditional Chinese.
+    const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    triggerDownload(blob, `spaco-members-${todayStamp()}.csv`);
+    setExportOpen(false);
+  };
+
+  const exportXLSX = async () => {
+    const XLSX = await import('xlsx');
+    const { headers, rows } = buildExportRows();
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    // Auto-width approximation — pick widest cell per column.
+    ws['!cols'] = headers.map((_, colIdx) => {
+      const widest = Math.max(
+        headers[colIdx].length,
+        ...rows.map((r) => (r[colIdx] || '').length),
+      );
+      return { wch: Math.min(40, Math.max(10, widest + 2)) };
+    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, locale === 'zh' ? '會員列表' : 'Members');
+    XLSX.writeFile(wb, `spaco-members-${todayStamp()}.xlsx`);
+    setExportOpen(false);
+  };
+
+  const exportPDF = async () => {
+    const [{ default: jsPDF }, autoTableMod] = await Promise.all([
+      import('jspdf'),
+      import('jspdf-autotable'),
+    ]);
+    const autoTable = (autoTableMod as unknown as { default: (doc: InstanceType<typeof jsPDF>, opts: Record<string, unknown>) => void }).default;
+    const { headers, rows } = buildExportRows();
+    const docPdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+    docPdf.setFontSize(16);
+    docPdf.text(
+      locale === 'zh' ? `SPACO 會員列表 (${filtered.length} 個會員)` : `SPACO Members (${filtered.length} total)`,
+      40,
+      40,
+    );
+    docPdf.setFontSize(10);
+    docPdf.text(`Exported: ${todayStamp()}`, 40, 60);
+    autoTable(docPdf, {
+      head: [headers],
+      body: rows,
+      startY: 80,
+      styles: { fontSize: 9, cellPadding: 6 },
+      headStyles: { fillColor: [236, 72, 153], textColor: [255, 255, 255], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [250, 245, 250] },
+    });
+    docPdf.save(`spaco-members-${todayStamp()}.pdf`);
+    setExportOpen(false);
+  };
+
+  const triggerDownload = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   if (!canAccess) {
@@ -355,7 +464,56 @@ export default function AdminMembersPage() {
   // List View
   return (
     <div>
-      <h1 className="text-heading mb-8">{locale === 'zh' ? '會員管理' : 'Member Management'}</h1>
+      {/* Header — title + member count + export menu.
+       *  Count shows "X / total" when search is filtering, else just X.
+       *  Export uses the FILTERED list so admin can search-then-export.
+       *  The pink "X 個會員" chip beside the title is glanceable at a
+       *  distance — main metric for member-management at-a-glance. */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+        <div className="flex items-center gap-3">
+          <h1 className="text-heading">{locale === 'zh' ? '會員管理' : 'Member Management'}</h1>
+          {!loading && (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-pill bg-pink/10 text-pink text-sm font-semibold">
+              <Users size={14} />
+              {search
+                ? `${filtered.length} / ${members.length}`
+                : `${members.length}`}
+              <span className="font-normal opacity-75">
+                {locale === 'zh' ? '個會員' : ' members'}
+              </span>
+            </span>
+          )}
+        </div>
+        <div className="relative" ref={exportMenuRef}>
+          <button
+            type="button"
+            onClick={() => setExportOpen((o) => !o)}
+            disabled={loading || filtered.length === 0}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-pill bg-charcoal text-white text-sm font-semibold hover:bg-charcoal/85 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Download size={16} />
+            {locale === 'zh' ? '匯出列表' : 'Export'}
+          </button>
+          {exportOpen && (
+            <div className="absolute right-0 mt-2 w-44 rounded-xl bg-white shadow-xl border border-charcoal/10 overflow-hidden z-20">
+              {[
+                { key: 'csv', label: 'CSV (.csv)', fn: exportCSV },
+                { key: 'xlsx', label: 'Excel (.xlsx)', fn: exportXLSX },
+                { key: 'pdf', label: 'PDF (.pdf)', fn: exportPDF },
+              ].map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={opt.fn}
+                  className="w-full text-left px-4 py-2.5 text-sm hover:bg-cream transition-colors"
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
 
       <div className="relative mb-6">
         <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" />
