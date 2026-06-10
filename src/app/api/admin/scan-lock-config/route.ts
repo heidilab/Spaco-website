@@ -53,5 +53,8 @@ export async function GET() {
     lockGuides,
     settingsDocExists: settingsSnap.exists,
     otherSettingsKeys: otherKeys.slice(0, 40),
+    // Full sections dump for diagnostic — large but the customer-
+    // facing /api routes are admin-only behind Firestore rules so OK.
+    sectionsRaw: docData?.sections ?? null,
   });
 }
