@@ -18,7 +18,12 @@ export const runtime = 'nodejs';
  */
 export async function GET() {
   const settingsSnap = await adminDb.collection('site_content').doc('settings').get();
-  const raw = settingsSnap.exists ? (settingsSnap.data() as Record<string, { zh?: string; en?: string } | undefined>) : {};
+  // site_content uses a nested `sections` map (see lib/content.ts
+  // getSiteContent). Top-level only carries updatedAt / updatedBy /
+  // sections itself — the actual `lock_<venueId>` entries live inside
+  // sections.
+  const docData = settingsSnap.exists ? settingsSnap.data() : null;
+  const raw = (docData?.sections || {}) as Record<string, { zh?: string; en?: string } | undefined>;
 
   const lockIds: Record<string, { rawValue: string; parsed: number | null; ok: boolean }> = {};
   const lockGuides: Record<string, string> = {};
