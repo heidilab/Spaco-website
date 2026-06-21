@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
       userId: string;
       venueId: string;
       date: string;
-      pricing: { subtotal: number; deposit: number };
+      pricing: { subtotal: number; deposit: number; baseCharge?: number; addOnTotal?: number };
       postEventEmailSentAt?: unknown;
     };
 
