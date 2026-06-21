@@ -50,7 +50,7 @@ function hkDateTimeToMs(dateYmd: string, timeHm: string): number {
 }
 
 /** Read the venueId → ttlockId map from Firestore (admin sets these). */
-async function getVenueLockMap(): Promise<Record<string, number>> {
+export async function getVenueLockMap(): Promise<Record<string, number>> {
   const cms = await getSiteContent('settings');
   const map: Record<string, number> = {};
   if (!cms) return map;
