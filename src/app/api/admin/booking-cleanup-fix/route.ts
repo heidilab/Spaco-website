@@ -39,6 +39,10 @@ export async function POST(req: NextRequest) {
       setAddOnTotal?: number;
       /** Override adultCount (resync after admin guestCount edit drift). */
       setAdultCount?: number;
+      /** Override securityDeposit (HK$). Useful when manual edits
+       *  bumped it above the formula-tier value (#jMW2skDl saw
+       *  \$1,200 vs the correct \$1,000 weekday-low-tier value). */
+      setSecurityDeposit?: number;
       /** Rewrite the depositRefund block. Used to fix bookings whose
        *  refund amount was inflated by a sign-flip bug in the custom
        *  deduction input (#HtMEinHx). */
@@ -76,7 +80,10 @@ export async function POST(req: NextRequest) {
     const baseCharge = b.pricing?.baseCharge ?? 0;
     const storedAddOnTotal = b.pricing?.addOnTotal ?? 0;
     const storedPromoDiscount = b.promoDiscount ?? 0;
-    const securityDeposit = b.pricing?.securityDeposit ?? 0;
+    const storedSecurityDeposit = b.pricing?.securityDeposit ?? 0;
+    const securityDeposit = typeof body.setSecurityDeposit === 'number'
+      ? Math.max(0, body.setSecurityDeposit)
+      : storedSecurityDeposit;
 
     // Filter add-ons.
     const allAddOns = b.addOns || [];
@@ -139,6 +146,7 @@ export async function POST(req: NextRequest) {
         'pricing.subtotal': newSubtotal,
         'pricing.deposit': newDeposit,
         'pricing.addOnTotal': addOnTotal,
+        'pricing.securityDeposit': securityDeposit,
         balanceDue: newBalanceDue,
         payments: remaining,                              // overwrite array
         addOns: remainingAddOns,                          // overwrite array
