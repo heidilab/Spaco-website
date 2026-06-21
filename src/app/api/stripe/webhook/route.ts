@@ -33,6 +33,31 @@ export async function POST(request: NextRequest) {
       const bookingId = session.metadata?.bookingId;
       const isBalancePayment = session.metadata?.isBalancePayment === 'true';
 
+      // Idempotency guard — Stripe retries this webhook when it
+      // doesn't see a 200 OK within ~30s. #WIiQYL2I: customer paid
+      // \$15,960 once but webhook fired twice 33s apart, leaving
+      // duplicate payments[] entries totalling \$31,920 charged in
+      // our records vs \$15,960 actually collected. Reserve the
+      // event.id atomically with a Firestore create() — second
+      // concurrent retry fails the create() and bails. This makes
+      // processing at-most-once: if downstream code throws AFTER we
+      // reserved, the retry sees the marker and skips, so we may
+      // miss a transient processing error. Trade-off favours
+      // never-duplicate-charges over guaranteed-recovery.
+      const markerRef = adminDb.collection('_stripe_webhook_events').doc(event.id);
+      try {
+        await markerRef.create({
+          eventId: event.id,
+          eventType: event.type,
+          bookingId: bookingId || null,
+          isBalancePayment,
+          processedAt: FieldValue.serverTimestamp(),
+        });
+      } catch {
+        // ALREADY_EXISTS — another retry beat us. Skip.
+        return NextResponse.json({ received: true, deduped: true, eventId: event.id });
+      }
+
       if (bookingId) {
         // 1. Update booking — confirm + (if balance payment) clear balanceDue.
         const bookingRef = adminDb.collection('bookings').doc(bookingId);
