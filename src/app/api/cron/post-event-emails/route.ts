@@ -73,12 +73,24 @@ export async function GET(request: NextRequest) {
 
       // Points earned forecast: rental + add-ons (excluding security
       // deposit), MINUS promo + points discounts (free items aren't
-      // "消費"). Admin's deposit settlement may credit a higher amount
-      // later if part of the security deposit was kept; the customer
-      // will see the actual balance when they next check.
+      // "消費"). Derived from primitives so it's right regardless of
+      // whether pricing.subtotal happens to be stored PRE- or
+      // POST-promo (#CS27eAN4 class — was double-subtracting promo
+      // on POST-promo bookings). Admin's deposit settlement may
+      // credit a higher amount later if part of the security deposit
+      // was kept; the customer will see the actual balance when they
+      // next check.
       const promoDiscount = (booking as { promoDiscount?: number }).promoDiscount || 0;
       const pointsDiscount = (booking as { pointsDiscount?: number }).pointsDiscount || 0;
-      const pointsEarned = Math.max(0, Math.floor(booking.pricing.subtotal - promoDiscount - pointsDiscount));
+      const pointsEarned = Math.max(
+        0,
+        Math.floor(
+          (booking.pricing.baseCharge || 0)
+            + (booking.pricing.addOnTotal || 0)
+            - promoDiscount
+            - pointsDiscount,
+        ),
+      );
       const venue = getVenueById(booking.venueId);
 
       const tpl = buildPostEventEmail({

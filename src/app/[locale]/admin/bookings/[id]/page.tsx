@@ -646,7 +646,20 @@ export default function AdminBookingDetailPage() {
         const promoDiscount = booking.promoDiscount || 0;
         const pointsDiscount = booking.pointsDiscount || 0;
         const consumedDeposit = Math.min(total, securityDeposit);
-        const points = Math.max(0, booking.pricing.subtotal - promoDiscount - pointsDiscount) + consumedDeposit;
+        // Derive earnable spend from primitives so the math is right
+        // regardless of whether pricing.subtotal happens to be stored
+        // PRE- or POST-promo (convention drift between admin/bookings/new
+        // and updateBookingPricing). Previously this read subtotal then
+        // subtracted promo a SECOND time on POST-promo bookings
+        // (#CS27eAN4: \$9,860 spend earned 9,010 pts — 850 short).
+        const effectiveSpend = Math.max(
+          0,
+          (booking.pricing.baseCharge || 0)
+            + (booking.pricing.addOnTotal || 0)
+            - promoDiscount
+            - pointsDiscount,
+        );
+        const points = effectiveSpend + consumedDeposit;
         creditedPoints = await creditLoyaltyPoints(booking.userId, points);
         if (creditedPoints > 0) {
           await updateDoc(doc(db, 'bookings', booking.id), {
@@ -694,11 +707,21 @@ export default function AdminBookingDetailPage() {
       const settledDeductions =
         (booking.depositRefund as { deductions?: { amount: number }[] } | null)?.deductions
           ?.reduce((s, d) => s + (d.amount || 0), 0) || 0;
-      // Match the settle-deposit formula: subtotal minus promo/points
-      // discounts (free items aren't "消費") plus deposit deductions.
+      // Match the settle-deposit formula. Derive earnable spend from
+      // primitives so the math is correct regardless of whether
+      // pricing.subtotal is stored PRE- or POST-promo
+      // (#CS27eAN4 class — was double-subtracting promo on POST-promo
+      // bookings).
       const promoDiscount = booking.promoDiscount || 0;
       const pointsDiscount = booking.pointsDiscount || 0;
-      const points = Math.max(0, (booking.pricing.subtotal || 0) - promoDiscount - pointsDiscount) + settledDeductions;
+      const effectiveSpend = Math.max(
+        0,
+        (booking.pricing.baseCharge || 0)
+          + (booking.pricing.addOnTotal || 0)
+          - promoDiscount
+          - pointsDiscount,
+      );
+      const points = effectiveSpend + settledDeductions;
       const credited = await creditLoyaltyPoints(booking.userId, points);
       if (credited > 0) {
         await updateDoc(doc(db, 'bookings', booking.id), {
