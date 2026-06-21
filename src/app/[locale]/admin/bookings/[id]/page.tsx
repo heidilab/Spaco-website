@@ -18,6 +18,8 @@ import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { BookingRecord, UserProfile, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
 import { venues } from '@/lib/venues';
+import { getPackageBySlug } from '@/lib/packages';
+import { getDecorationById } from '@/lib/decorations';
 import {
   formatAddOnsForStaff,
   addOns as ADDON_CATALOG,
@@ -1572,6 +1574,39 @@ export default function AdminBookingDetailPage() {
                   : `${booking.guestCount}`
               }
             />
+            {/* Package booking — show which package the customer
+             *  picked + which decoration colour (birthday packages
+             *  include a free 3-colour decoration choice). Without
+             *  this admin had no way to see decoration selections
+             *  except by opening the raw Firestore doc (#mjtp9UKB:
+             *  pink decoration was invisible in the UI). Only renders
+             *  for package bookings since the fields are scoped to
+             *  packages. */}
+            {booking.packageSlug && (() => {
+              const pkg = getPackageBySlug(booking.packageSlug);
+              return (
+                <Row
+                  icon={<Package size={14} />}
+                  label={locale === 'zh' ? '套餐' : 'Package'}
+                  value={pkg ? `${pkg.name[locale]} (${booking.packageSlug})` : booking.packageSlug}
+                  highlight="violet"
+                />
+              );
+            })()}
+            {booking.decorationStyle && (() => {
+              const decor = getDecorationById(booking.decorationStyle);
+              return (
+                <Row
+                  label={locale === 'zh' ? '佈置款式' : 'Decoration'}
+                  value={
+                    decor
+                      ? `${decor.label[locale]} — ${decor.description[locale]}`
+                      : booking.decorationStyle
+                  }
+                  highlight="pink"
+                />
+              );
+            })()}
             {/* 場租 — venue rental line. Pulled from pricing.baseCharge
              *  (storage) so it survives off-formula edits. Heidi's spec
              *  places this between 人數 and 附加服務. */}
@@ -2332,12 +2367,13 @@ function Row({
   icon?: React.ReactNode;
   label: string;
   value: string;
-  highlight?: 'amber' | 'emerald' | 'violet';
+  highlight?: 'amber' | 'emerald' | 'violet' | 'pink';
 }) {
   const color =
     highlight === 'amber' ? 'text-amber-700'
     : highlight === 'emerald' ? 'text-emerald-700 font-mono'
     : highlight === 'violet' ? 'text-violet-700'
+    : highlight === 'pink' ? 'text-pink-700'
     : 'text-ink';
   return (
     <div className="flex items-start justify-between gap-3 border-b border-white/30 pb-2 last:border-0">
