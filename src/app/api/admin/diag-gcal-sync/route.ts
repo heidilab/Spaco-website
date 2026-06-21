@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { syncCalendars } from '@/lib/googleCalendar';
+import { syncCalendars, getCalendarIds } from '@/lib/googleCalendar';
 import { adminDb } from '@/lib/firebaseAdmin';
 
 export const runtime = 'nodejs';
@@ -55,12 +55,50 @@ export async function GET(req: NextRequest) {
     syncErr = err instanceof Error ? err.message : String(err);
   }
 
+  // Surface which calendar IDs the cron is reading, so we can tell
+  // whether a missing event is actually missing or just on a
+  // calendar the cron doesn't know about.
+  const calendarIds = getCalendarIds();
+  const calendarsConfigured = Object.entries(calendarIds).map(([k, id]) => ({
+    venueKey: k,
+    configured: !!id,
+    // Show last 10 chars of the id (calendar ids end in something
+    // distinctive but we don't need to leak the whole thing in logs).
+    idTail: id ? `…${id.slice(-12)}` : null,
+  }));
+
+  // Sample latest 5 gcal-mirrored slots so admin can spot whether
+  // what's mirrored matches what they marked in Google.
+  let sampleSlots: Array<Record<string, unknown>> = [];
+  try {
+    const snap = await adminDb
+      .collection('blocked_slots')
+      .where('reason', '==', 'gcal')
+      .get();
+    sampleSlots = snap.docs
+      .map((d) => {
+        const data = d.data() as { eventTitle?: string; date?: string; startTime?: string; endTime?: string; venueId?: string; googleEventId?: string };
+        return {
+          date: data.date,
+          startTime: data.startTime,
+          endTime: data.endTime,
+          venueId: data.venueId,
+          eventTitle: data.eventTitle,
+          googleEventId: data.googleEventId,
+        };
+      })
+      .sort((a, b) => `${a.date}T${a.startTime}`.localeCompare(`${b.date}T${b.startTime}`))
+      .slice(0, 8);
+  } catch { /* non-fatal */ }
+
   return NextResponse.json({
     ok: !syncErr,
     syncErr,
     existingMirroredSlots: existingCount,
     mostRecentSyncedAt,
     mostRecentEventTitle,
+    calendarsConfigured,
     syncResult,
+    sampleSlots,
   });
 }
