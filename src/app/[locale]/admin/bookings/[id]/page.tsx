@@ -25,7 +25,42 @@ import {
   addOns as ADDON_CATALOG,
   calculatePricing,
   calcShishaPrice,
+  freeDrinksVenues,
 } from '@/lib/pricing';
+
+/**
+ * Live-preview recompute of free_drinks promo amount when admin
+ * changes pax / child count / addOns / venue on the edit form.
+ * MUST mirror the exact same logic in updateBookingDateTime
+ * (lib/firestore.ts) so what admin sees in the preview matches what
+ * gets saved on click. Without this, changing 7 → 12 pax shows the
+ * old 7-pax-worth promo until save, then jumps to the right number
+ * after save — confusing.
+ *
+ * Returns the effective promo discount in HK$.
+ *  - Non-free_drinks promos → returns stored promoDiscount unchanged
+ *    (their amount was locked at apply time and doesn't depend on
+ *    pax).
+ *  - Free_drinks promo + drinks add-on present → recompute as
+ *    round(25 × adultEquiv) using the LIVE pax count.
+ *  - Free_drinks promo but drinks removed → 0 (no discount).
+ */
+function livePromoForBooking(opts: {
+  storedPromoDiscount: number;
+  promoFreeDrinksCost: number | undefined;
+  liveGuestCount: number;
+  liveChildCount: number;
+  liveAddOns: Array<{ id?: string }>;
+  liveVenueId: string;
+}): number {
+  const isFreeDrinks = (opts.promoFreeDrinksCost ?? 0) > 0;
+  if (!isFreeDrinks) return opts.storedPromoDiscount;
+  const hasDrinks = opts.liveAddOns.some((a) => a.id === 'drinks');
+  if (!hasDrinks) return 0;
+  const adults = Math.max(0, opts.liveGuestCount - opts.liveChildCount);
+  const adultEquiv = adults + 0.5 * opts.liveChildCount;
+  return freeDrinksVenues.includes(opts.liveVenueId) ? 0 : Math.round(25 * adultEquiv);
+}
 import PaymentHistory from '@/components/booking/PaymentHistory';
 import { buildWhatsAppLink, formatHkPhone } from '@/lib/whatsapp';
 import {
@@ -295,8 +330,18 @@ export default function AdminBookingDetailPage() {
         bookingForFormula.childCount ?? 0,
       );
       // Display the effective (post-promo) subtotal — see hydrate
-      // comment above. Storage stays pre-promo.
-      const effective = Math.max(0, live.subtotal - (bookingForFormula.promoDiscount || 0));
+      // comment above. Storage stays pre-promo. Promo recomputes for
+      // free_drinks so the preview matches what updateBookingDateTime
+      // will save.
+      const livePromo = livePromoForBooking({
+        storedPromoDiscount: bookingForFormula.promoDiscount || 0,
+        promoFreeDrinksCost: bookingForFormula.promoFreeDrinksCost,
+        liveGuestCount: guestCount,
+        liveChildCount: bookingForFormula.childCount ?? 0,
+        liveAddOns,
+        liveVenueId: venueId,
+      });
+      const effective = Math.max(0, live.subtotal - livePromo);
       setSubtotalOverride(String(effective));
     } catch { /* venue mismatch — keep current value */ }
     // We intentionally omit setSubtotalOverride from deps — it's a
@@ -1410,7 +1455,20 @@ export default function AdminBookingDetailPage() {
                   let suggestedTier: number | null = null;
                   let suggestedSubtotalGross = 0;
                   let suggestedSubtotal = 0;
-                  const livePromoDiscount = booking.promoDiscount || 0;
+                  // Recompute promo for free_drinks (matches save-time
+                  // logic in updateBookingDateTime). Without this the
+                  // hint text shows the old pax-count's promo amount
+                  // until save — e.g. 13 → 12 pax kept showing
+                  // 「優惠碼 DRINK2026 HK$325」 (= 13-pax worth) on
+                  // the 12-pax preview.
+                  const livePromoDiscount = livePromoForBooking({
+                    storedPromoDiscount: booking.promoDiscount || 0,
+                    promoFreeDrinksCost: booking.promoFreeDrinksCost,
+                    liveGuestCount: guestCount,
+                    liveChildCount: booking.childCount ?? 0,
+                    liveAddOns,
+                    liveVenueId: venueId,
+                  });
                   if (liveVenue) {
                     try {
                       const live = calculatePricing(
