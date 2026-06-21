@@ -2716,7 +2716,22 @@ function DepositSettlement(props: DepositSettlementProps) {
             </div>
             <div className="flex justify-between text-xs text-ink-soft">
               <span>{locale === 'zh' ? '會員 credit 積分' : 'Loyalty points credit'}</span>
-              <span>+{(booking.pricing.subtotal + total).toLocaleString()} {locale === 'zh' ? '分' : 'pts'}</span>
+              <span>+{(
+                // Derive from primitives so the preview matches what
+                // handleSettleDeposit will actually credit. Previously
+                // showed `subtotal + total` which inflated by the
+                // promo amount on PRE-promo bookings (#EFReRnoG saw
+                // preview "+4,125" while actual credit was correct
+                // 3,750). Math here MUST mirror handleSettleDeposit's
+                // effectiveSpend formula exactly.
+                Math.max(
+                  0,
+                  (booking.pricing.baseCharge || 0)
+                    + (booking.pricing.addOnTotal || 0)
+                    - (booking.promoDiscount || 0)
+                    - (booking.pointsDiscount || 0),
+                ) + Math.min(total, booking.pricing.securityDeposit || 0)
+              ).toLocaleString()} {locale === 'zh' ? '分' : 'pts'}</span>
             </div>
           </div>
 
