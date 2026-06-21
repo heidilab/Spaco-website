@@ -583,13 +583,18 @@ export default function AdminBookingDetailPage() {
     }
   }
 
-  /** Sum of fixed + custom deductions (HK$). */
+  /** Sum of fixed + custom deductions (HK$). Defensive: ignore any
+   *  negative amounts so a stale input value can never push the
+   *  refund ABOVE the security deposit (#HtMEinHx). */
   function totalDeductions(): number {
     const fixed = selectedFixed.reduce((sum, id) => {
       const item = FIXED_DEDUCTIONS.find((d) => d.id === id);
-      return sum + (item?.amount || 0);
+      return sum + Math.max(0, item?.amount || 0);
     }, 0);
-    const custom = customDeductions.reduce((sum, d) => sum + (d.amount || 0), 0);
+    const custom = customDeductions.reduce(
+      (sum, d) => sum + Math.max(0, d.amount || 0),
+      0,
+    );
     return fixed + custom;
   }
 
@@ -600,7 +605,11 @@ export default function AdminBookingDetailPage() {
     try {
       const securityDeposit = booking.pricing.securityDeposit ?? 0;
       const total = totalDeductions();
-      const refundAmount = Math.max(0, securityDeposit - total);
+      // Refund clamped to [0, securityDeposit] — SPACO can never
+      // refund more than was originally collected as deposit, even
+      // if deductions math went sideways. Without this clamp,
+      // #HtMEinHx silently set refund to \$1,450 on a \$1,000 deposit.
+      const refundAmount = Math.max(0, Math.min(securityDeposit, securityDeposit - total));
       // Overflow = the part of deductions that EXCEEDED the deposit.
       // Heidi's case (#B7PlO6qv): deductions 加時 HK$2,250 vs deposit
       // HK$2,000 → overflow HK$250. Booking goes back to 'confirmed'
@@ -2492,8 +2501,17 @@ function DepositSettlement(props: DepositSettlementProps) {
   }
   function updateCustom(i: number, field: 'label' | 'amount', val: string | number) {
     const updated = [...customDeductions];
-    if (field === 'amount') updated[i].amount = Number(val);
-    else updated[i].label = val as string;
+    if (field === 'amount') {
+      // Clamp to non-negative — admin previously typed "-450" thinking
+      // it meant "deduct $450", which made totalDeductions negative
+      // and inflated the refund to deposit + 450 (#HtMEinHx: refund
+      // shown as \$1,450 instead of correct \$550). The UI hint
+      // 「總扣費 −HK\$X」 has the minus sign already in markup; admin
+      // only ever types the magnitude.
+      updated[i].amount = Math.max(0, Number(val) || 0);
+    } else {
+      updated[i].label = val as string;
+    }
     setCustomDeductions(updated);
   }
   function removeCustom(i: number) {

@@ -39,6 +39,13 @@ export async function POST(req: NextRequest) {
       setAddOnTotal?: number;
       /** Override adultCount (resync after admin guestCount edit drift). */
       setAdultCount?: number;
+      /** Rewrite the depositRefund block. Used to fix bookings whose
+       *  refund amount was inflated by a sign-flip bug in the custom
+       *  deduction input (#HtMEinHx). */
+      setDepositRefund?: {
+        amount: number;
+        deductions?: Array<{ label: string; amount: number }>;
+      };
     };
     const id = body.id;
     if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
@@ -152,6 +159,15 @@ export async function POST(req: NextRequest) {
       }
       if (typeof body.setAdultCount === 'number') {
         update.adultCount = Math.max(0, body.setAdultCount);
+      }
+      if (body.setDepositRefund) {
+        update.depositRefund = {
+          amount: Math.max(0, body.setDepositRefund.amount),
+          deductions: (body.setDepositRefund.deductions || []).filter(
+            (d) => d && d.label && d.amount > 0,
+          ),
+          refundedAt: FieldValue.serverTimestamp(),
+        };
       }
       await adminDb.collection('bookings').doc(resolvedId).update(update);
     }
