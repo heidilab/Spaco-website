@@ -467,18 +467,28 @@ export default function AdminBookingsPage() {
                       <td className="px-6 py-4 text-sm text-ink">{booking.guestCount}</td>
                       <td className="px-6 py-4 text-sm font-bold font-display text-gradient-pink">
                         {(() => {
-                          // 「金額」 = the money SPACO actually receives.
-                          //   • pre-settlement bookings: subtotal − promo
-                          //     − points (the customer's bill before deposit
-                          //     — the deposit is refundable so it doesn't
-                          //     count as revenue yet)
-                          //   • post-settlement bookings (status=completed
-                          //     or balanceDue from overflow): add the
-                          //     PORTION of the deposit that SPACO kept
-                          //     (= sum of deductions). For a full-forfeit
-                          //     like Yan Lui's, this lands at
-                          //     subtotal + securityDeposit = $13,500
-                          //     instead of just $11,250.
+                          // 「金額」 logic varies by booking lifecycle:
+                          //   • completed (deposit settled) → 結算訂單總額
+                          //       = sum(payments) − depositRefund.amount
+                          //     i.e. what customer actually paid NET of the
+                          //     deposit refunded back. Reflects the final
+                          //     real total per Heidi's 2026-06-22 spec.
+                          //   • pre-settlement (confirmed / awaiting…)
+                          //       = subtotal − promo − points + consumed
+                          //         deposit (forfeited portion that SPACO
+                          //         keeps; deductions ≤ securityDeposit).
+                          //     Until the deposit is settled the
+                          //     refundable portion isn't SPACO's revenue
+                          //     yet, so we don't include it.
+                          if (booking.status === 'completed' && booking.depositRefund) {
+                            const paymentsSum = (booking.payments || []).reduce(
+                              (s, p) => s + (p.amount || 0),
+                              0,
+                            );
+                            const refunded = (booking.depositRefund as { amount?: number })?.amount || 0;
+                            const finalTotal = Math.max(0, paymentsSum - refunded);
+                            return `HK$${finalTotal.toLocaleString()}`;
+                          }
                           const subtotal = booking.pricing?.subtotal || 0;
                           const promo = booking.promoDiscount || 0;
                           const pts = booking.pointsDiscount || 0;
@@ -486,15 +496,8 @@ export default function AdminBookingsPage() {
                             (booking.depositRefund as { deductions?: { amount: number }[] } | null)?.deductions
                             || []
                           ).reduce((s, d) => s + (d.amount || 0), 0);
-                          // Cap forfeited deposit at securityDeposit while
-                          // the overflow hasn't been collected (status =
-                          // 'confirmed' with balanceDue). For 'completed'
-                          // bookings the overflow has been paid, so the
-                          // full deductions amount counts as revenue.
                           const securityDeposit = booking.pricing?.securityDeposit || 0;
-                          const forfeitedDeposit = booking.status === 'completed'
-                            ? consumed
-                            : Math.min(consumed, securityDeposit);
+                          const forfeitedDeposit = Math.min(consumed, securityDeposit);
                           const total = Math.max(0, subtotal - promo - pts) + forfeitedDeposit;
                           return `HK$${total.toLocaleString()}`;
                         })()}
