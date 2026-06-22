@@ -646,12 +646,16 @@ export default function AdminBookingDetailPage() {
         const promoDiscount = booking.promoDiscount || 0;
         const pointsDiscount = booking.pointsDiscount || 0;
         const consumedDeposit = Math.min(total, securityDeposit);
+        // When deductions exceed the security deposit, the overflow
+        // amount is what the customer pays out-of-pocket on top
+        // (#udz81KFK: 加時 \$1,392 vs \$1,000 deposit → \$392 overflow
+        // paid by customer). That money is real consumption + must
+        // count for loyalty points too.
+        const overflowPaid = Math.max(0, total - securityDeposit);
         // Derive earnable spend from primitives so the math is right
         // regardless of whether pricing.subtotal happens to be stored
         // PRE- or POST-promo (convention drift between admin/bookings/new
-        // and updateBookingPricing). Previously this read subtotal then
-        // subtracted promo a SECOND time on POST-promo bookings
-        // (#CS27eAN4: \$9,860 spend earned 9,010 pts — 850 short).
+        // and updateBookingPricing).
         const effectiveSpend = Math.max(
           0,
           (booking.pricing.baseCharge || 0)
@@ -659,7 +663,7 @@ export default function AdminBookingDetailPage() {
             - promoDiscount
             - pointsDiscount,
         );
-        const points = effectiveSpend + consumedDeposit;
+        const points = effectiveSpend + consumedDeposit + overflowPaid;
         creditedPoints = await creditLoyaltyPoints(booking.userId, points);
         if (creditedPoints > 0) {
           await updateDoc(doc(db, 'bookings', booking.id), {
@@ -708,12 +712,15 @@ export default function AdminBookingDetailPage() {
         (booking.depositRefund as { deductions?: { amount: number }[] } | null)?.deductions
           ?.reduce((s, d) => s + (d.amount || 0), 0) || 0;
       // Match the settle-deposit formula. Derive earnable spend from
-      // primitives so the math is correct regardless of whether
-      // pricing.subtotal is stored PRE- or POST-promo
-      // (#CS27eAN4 class — was double-subtracting promo on POST-promo
-      // bookings).
+      // primitives + split deductions into consumed-deposit and
+      // overflow-paid (#udz81KFK class — \$1,392 deductions on
+      // \$1,000 deposit leaves \$392 customer paid in cash, which
+      // counts as spend too).
       const promoDiscount = booking.promoDiscount || 0;
       const pointsDiscount = booking.pointsDiscount || 0;
+      const securityDepositAtSettle = booking.pricing.securityDeposit ?? 0;
+      const consumedDeposit = Math.min(settledDeductions, securityDepositAtSettle);
+      const overflowPaid = Math.max(0, settledDeductions - securityDepositAtSettle);
       const effectiveSpend = Math.max(
         0,
         (booking.pricing.baseCharge || 0)
@@ -721,7 +728,7 @@ export default function AdminBookingDetailPage() {
           - promoDiscount
           - pointsDiscount,
       );
-      const points = effectiveSpend + settledDeductions;
+      const points = effectiveSpend + consumedDeposit + overflowPaid;
       const credited = await creditLoyaltyPoints(booking.userId, points);
       if (credited > 0) {
         await updateDoc(doc(db, 'bookings', booking.id), {
@@ -1836,6 +1843,59 @@ export default function AdminBookingDetailPage() {
                 </>
               );
             })()}
+            {/* Deposit settlement summary — only renders once admin has
+             *  closed out the booking via 「按金結算」. Shows the three
+             *  cases from Heidi's 2026-06-21 spec:
+             *   A. Full refund (no deductions)         → 已退還按金 + 最後結算
+             *   B. Partial deduction + refund          → 按金扣費 + 已退還按金 + 最後結算
+             *   C. Overflow (deductions > 按金)        → 按金扣費 + 已退還按金 \$0 + 最後結算
+             *  Last total = sum(payments) − depositRefund.amount  (what
+             *  customer net spent, after the refund went back to them). */}
+            {booking.depositRefund && (() => {
+              const dr = booking.depositRefund as {
+                amount: number;
+                deductions?: Array<{ label: string; amount: number }>;
+              };
+              const deductions = (dr.deductions || []).filter((d) => d && d.amount > 0);
+              const deductionsTotal = deductions.reduce((s, d) => s + (d.amount || 0), 0);
+              const paymentsSum = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+              const finalNet = Math.max(0, paymentsSum - (dr.amount || 0));
+              return (
+                <>
+                  <div className="pt-2 mt-2 border-t border-white/40 text-xs font-semibold text-ink-soft uppercase tracking-wide">
+                    {locale === 'zh' ? '結算摘要' : 'Settlement Summary'}
+                  </div>
+                  {deductions.length > 0 && (
+                    <div className="flex items-start gap-2 py-1 border-b border-white/30">
+                      <span className="flex items-center gap-1.5 text-ink-soft shrink-0">
+                        {locale === 'zh' ? '按金扣費' : 'Deposit deductions'}
+                      </span>
+                      <div className="flex-1 text-right">
+                        <span className="font-medium text-rose-700">−HK${deductionsTotal.toLocaleString()}</span>
+                        <ul className="text-[11px] text-ink-soft mt-0.5 space-y-0.5">
+                          {deductions.map((d, idx) => (
+                            <li key={idx} className="flex justify-between gap-3">
+                              <span className="truncate">{d.label}</span>
+                              <span className="whitespace-nowrap">HK${d.amount.toLocaleString()}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+                  <Row
+                    label={locale === 'zh' ? '已退還按金' : 'Deposit refunded'}
+                    value={`HK$${(dr.amount || 0).toLocaleString()}`}
+                    highlight={dr.amount > 0 ? 'emerald' : 'amber'}
+                  />
+                  <Row
+                    label={locale === 'zh' ? '訂單最後結算總額' : 'Final settled total'}
+                    value={`HK$${finalNet.toLocaleString()}`}
+                    highlight="violet"
+                  />
+                </>
+              );
+            })()}
             {booking.marketingChannel && (
               <Row
                 label={locale === 'zh' ? '推廣渠道' : 'Channel'}
@@ -2717,20 +2777,20 @@ function DepositSettlement(props: DepositSettlementProps) {
             <div className="flex justify-between text-xs text-ink-soft">
               <span>{locale === 'zh' ? '會員 credit 積分' : 'Loyalty points credit'}</span>
               <span>+{(
-                // Derive from primitives so the preview matches what
-                // handleSettleDeposit will actually credit. Previously
-                // showed `subtotal + total` which inflated by the
-                // promo amount on PRE-promo bookings (#EFReRnoG saw
-                // preview "+4,125" while actual credit was correct
-                // 3,750). Math here MUST mirror handleSettleDeposit's
-                // effectiveSpend formula exactly.
+                // Mirror handleSettleDeposit's points formula EXACTLY:
+                // effectiveSpend (rental+addOns net of promo/points)
+                // + consumedDeposit (deductions ≤ security deposit)
+                // + overflowPaid (deductions − security deposit, what
+                //                  customer pays out of pocket).
                 Math.max(
                   0,
                   (booking.pricing.baseCharge || 0)
                     + (booking.pricing.addOnTotal || 0)
                     - (booking.promoDiscount || 0)
                     - (booking.pointsDiscount || 0),
-                ) + Math.min(total, booking.pricing.securityDeposit || 0)
+                )
+                + Math.min(total, booking.pricing.securityDeposit || 0)
+                + Math.max(0, total - (booking.pricing.securityDeposit || 0))
               ).toLocaleString()} {locale === 'zh' ? '分' : 'pts'}</span>
             </div>
           </div>

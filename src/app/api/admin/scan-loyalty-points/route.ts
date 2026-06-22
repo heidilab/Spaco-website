@@ -45,11 +45,10 @@ export async function GET() {
     const securityDeposit = b.pricing?.securityDeposit ?? 0;
     const promoDiscount = b.promoDiscount ?? 0;
     const pointsDiscount = b.pointsDiscount ?? 0;
-    const consumedDeposit = Math.min(
-      securityDeposit,
-      (b.depositRefund?.deductions || []).reduce((s, d) => s + (d.amount ?? 0), 0),
-    );
-    const expected = Math.max(0, baseCharge + addOnTotal - promoDiscount - pointsDiscount) + consumedDeposit;
+    const deductionsTotal = (b.depositRefund?.deductions || []).reduce((s, d) => s + (d.amount ?? 0), 0);
+    const consumedDeposit = Math.min(securityDeposit, deductionsTotal);
+    const overflowPaid = Math.max(0, deductionsTotal - securityDeposit);
+    const expected = Math.max(0, baseCharge + addOnTotal - promoDiscount - pointsDiscount) + consumedDeposit + overflowPaid;
     const delta = expected - stored;
     if (Math.abs(delta) < 1) continue;
     affected.push({
