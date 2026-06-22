@@ -3,6 +3,10 @@ import { adminDb } from '@/lib/firebaseAdmin';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
+// Force dynamic — without this Vercel was caching the GET response
+// for ~10 min, leaving the sweep showing OLD stored values even
+// after backfill-loyalty-points had written fresh pointsActuallyCredited.
+export const dynamic = 'force-dynamic';
 
 /**
  * GET /api/admin/scan-loyalty-points
