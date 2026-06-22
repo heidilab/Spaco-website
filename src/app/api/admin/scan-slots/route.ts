@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
     .where('date', '==', date);
   if (venueId) q = q.where('venueId', '==', venueId);
   const snap = await q.get();
-  const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }));
-  rows.sort((a, b) => String(a.startTime).localeCompare(String(b.startTime)));
+  const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) })) as Array<{ id: string; startTime?: string }>;
+  rows.sort((a, b) => String(a.startTime ?? '').localeCompare(String(b.startTime ?? '')));
   return NextResponse.json({ count: rows.length, slots: rows });
 }

@@ -17,7 +17,9 @@ import SplitHeading from '@/components/ui/SplitHeading';
 import { getHoliday } from '@/lib/hkHolidays';
 import HolidayDatePicker from '@/components/booking/HolidayDatePicker';
 import { useAuth } from '@/contexts/AuthContext';
-import { getUserProfile, updateUserWhatsapp } from '@/lib/firestore';
+import { getUserProfile, updateUserWhatsapp, getBlockedSlots } from '@/lib/firestore';
+import { venuesSharingSpace } from '@/lib/venues';
+import type { BlockedSlot } from '@/types';
 import { saveBookingCheckoutDraft } from '@/lib/bookingCheckoutDraft';
 import { isValidHkPhone, formatHkPhone, normalizeHkPhone } from '@/lib/whatsapp';
 import AuthModal from '@/components/auth/AuthModal';
@@ -349,25 +351,87 @@ export default function BookingPage() {
     writeShisha({ pipes: shishaPipes, heads: shishaHeads, flavors: shishaFlavors, staffSetup: !shishaStaffSetup });
   }
 
+  // Load blocked slots for the selected date so the time-picker can
+  // hide already-booked windows + the 1hr cleaning buffer after them.
+  // Pulls every venue sharing this physical space (sw-a/-b/-ab) so a
+  // sw-a booking also blocks sw-ab and vice versa. Without this the
+  // dropdown showed every quarter-hour as available — #IXSLT0Aw was
+  // able to book 16:00-21:00 on 7/4 even though #mjtp9UKB's cleaning
+  // buffer 16:00-17:00 was already in Firestore.
+  const [blockedSlotsForDate, setBlockedSlotsForDate] = useState<BlockedSlot[]>([]);
+  useEffect(() => {
+    if (!selectedDate || !venue) {
+      setBlockedSlotsForDate([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const lists = await Promise.all(
+          venuesSharingSpace(venue.id).map((vid) => getBlockedSlots(vid, selectedDate)),
+        );
+        if (!cancelled) setBlockedSlotsForDate(lists.flat());
+      } catch {
+        if (!cancelled) setBlockedSlotsForDate([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedDate, venue]);
+
   // Start-time options: 08:00 → 23:45 in 15-minute increments. Operations
   // open daily at 08:00; customers can pick any quarter-hour after.
+  // Filtered to exclude times that would overlap any existing booking
+  // OR cleaning-buffer slot at this venue (or its shared-space
+  // siblings) — uses min-duration + 1hr cleaning buffer of OWN
+  // booking as the minimum free window required.
   const startTimeOptions = useMemo(() => {
+    const toMin = (s: string) => {
+      const [h, m] = s.split(':').map(Number);
+      return h * 60 + (m || 0);
+    };
     const out: string[] = [];
     for (let m = 8 * 60; m <= 23 * 60 + 45; m += 15) {
       const h = Math.floor(m / 60);
       const mm = m % 60;
-      out.push(`${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`);
+      const tStr = `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+      // Only the start time is filtered here; downstream hourOptions
+      // narrows duration. Min available window for this start =
+      // minHours×60 + 60min cleaning buffer this booking will create.
+      const minWindowEnd = m + minHours * 60 + 60;
+      const conflict = blockedSlotsForDate.some((s) => {
+        if (s.date !== selectedDate) return false;
+        const bStart = toMin(s.startTime);
+        const bEnd = toMin(s.endTime);
+        return m < bEnd && bStart < minWindowEnd;
+      });
+      if (!conflict) out.push(tStr);
     }
     return out;
-  }, []);
+  }, [blockedSlotsForDate, selectedDate, minHours]);
 
-  // Duration options: whole hours from minHours up to 14h. Whole-hour
-  // policy means a 19:15 start can only book 5h → 00:15, never 5h15m.
+  // Duration options: whole hours from minHours up to 14h, filtered
+  // to those that fit inside the next free window from startTime.
+  // Each candidate hour h includes a 60-min cleaning buffer at the
+  // end so a 4hr from 16:00 needs 16:00-21:00 free.
   const hourOptions = useMemo(() => {
+    const toMin = (s: string) => {
+      const [h, m] = s.split(':').map(Number);
+      return h * 60 + (m || 0);
+    };
+    const startMin = toMin(startTime);
     const out: number[] = [];
-    for (let h = Math.max(1, minHours); h <= 14; h++) out.push(h);
+    for (let h = Math.max(1, minHours); h <= 14; h++) {
+      const windowEnd = startMin + h * 60 + 60;
+      const conflict = blockedSlotsForDate.some((s) => {
+        if (s.date !== selectedDate) return false;
+        const bStart = toMin(s.startTime);
+        const bEnd = toMin(s.endTime);
+        return startMin < bEnd && bStart < windowEnd;
+      });
+      if (!conflict) out.push(h);
+    }
     return out;
-  }, [minHours]);
+  }, [minHours, startTime, blockedSlotsForDate, selectedDate]);
 
   // Keep `hours` ≥ minHours whenever the day-of-week / venue floor changes.
   useEffect(() => {

@@ -22,6 +22,22 @@ import { getHoliday } from './hkHolidays';
 // ============ BOOKINGS ============
 
 export async function createBooking(data: Omit<BookingRecord, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
+  // Server-side conflict check — without this two bookings can stack
+  // with no cleaning gap. UI dropdown shows the static 8AM-11:45PM
+  // list with no filtering, so the only enforcement is here.
+  // (#mjtp9UKB 13:00-16:00 + #IXSLT0Aw 16:00-21:00 both went through
+  // because this check was missing; assertNoSlotConflict catches the
+  // cleaning-buffer overlap correctly when called.)
+  // Pass a synthetic excludeBookingId so nothing matches as "own".
+  await assertNoSlotConflict({
+    venueId: data.venueId,
+    date: data.date,
+    endDate: data.endDate,
+    startTime: data.startTime,
+    endTime: data.endTime,
+    excludeBookingId: '__new_booking__',
+  });
+
   const ref = await addDoc(collection(db, 'bookings'), {
     ...data,
     createdAt: serverTimestamp(),
