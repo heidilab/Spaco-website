@@ -22,7 +22,7 @@ import { getHoliday } from '@/lib/hkHolidays';
 import { normalizeHkPhone, isValidHkPhone, formatHkPhone } from '@/lib/whatsapp';
 import {
   Calendar, Clock, Users, Plus, Minus, Link as LinkIcon, Copy, Check, ArrowLeft, MessageCircle,
-  Loader2, AlertCircle, Tag, Package as PackageIcon, X as XIcon,
+  Loader2, AlertCircle, Tag, Package as PackageIcon, X as XIcon, Calculator,
 } from 'lucide-react';
 
 function toMinutes(hhmm: string): number {
@@ -68,6 +68,11 @@ export default function AdminNewBookingPage() {
   // these — staff use them for ad-hoc charges like 「4位代燒員」.
   const [customAddOns, setCustomAddOns] = useState<Array<{ id: string; name: string; price: number }>>([]);
   const [hasBYOFood, setHasBYOFood] = useState<boolean>(false);
+  // Optional admin override for security deposit — when CS evaluates a
+  // customer as higher-risk and wants to lift the deposit above the
+  // tiered formula. Empty string = use auto-tier; non-empty number
+  // overrides. Heidi 2026-06-22.
+  const [securityDepositOverrideInput, setSecurityDepositOverrideInput] = useState<string>('');
 
   // Shisha-specific options — flavors are picked per head; pipes are
   // capped by SHISHA_MAX_PIPES (currently 2). Admin can leave this
@@ -252,7 +257,19 @@ export default function AdminNewBookingPage() {
   // into the lower $1k tier per the "> 4000" threshold — even though the
   // actual venue/add-on cost still warrants the $2k tier. The promo is a
   // discount on what the customer PAYS, not on the rental risk we hold.
-  const securityDeposit = selectedPackage?.deposit ?? calculateSecurityDeposit(subtotalAfterPackage);
+  // Security deposit resolution order:
+  //   1. Admin override (typed in the input below) — wins when
+  //      Heidi/CS bumps the deposit for a higher-risk customer.
+  //   2. Package's fixed deposit (e.g. corporate-tst = \$2k).
+  //   3. Auto-tier formula keyed off pre-promo subtotal.
+  const securityDepositOverrideNum = (() => {
+    const t = securityDepositOverrideInput.trim();
+    if (t === '') return null;
+    const n = parseInt(t, 10);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  })();
+  const securityDepositAuto = selectedPackage?.deposit ?? calculateSecurityDeposit(subtotalAfterPackage);
+  const securityDeposit = securityDepositOverrideNum ?? securityDepositAuto;
   const grandTotal = effectiveSubtotal + securityDeposit;
   const deposit = calculateDeposit(grandTotal);
   const balanceDue = Math.max(0, grandTotal - deposit);
@@ -1005,6 +1022,61 @@ export default function AdminNewBookingPage() {
               <input type="checkbox" checked={hasBYOFood} onChange={(e) => setHasBYOFood(e.target.checked)} className="w-4 h-4" />
               <span className="text-ink-soft">{locale === 'zh' ? '客人會自攜食物（BYO）' : 'Customer is bringing their own food (BYO)'}</span>
             </label>
+          </div>
+
+          {/* Refundable deposit override — CS may bump the deposit
+           *  above the tiered formula for higher-risk customers
+           *  (Heidi 2026-06-22: "有時 admin 會評估客人比較麻煩而
+           *  決定增加按金銀碼"). Leave empty to use the auto
+           *  calculation; type a number to override. */}
+          <div className="glass-card p-6 space-y-3">
+            <h3 className="text-base font-bold text-ink flex items-center gap-2">
+              <Calculator size={16} className="text-pink" />
+              {locale === 'zh' ? '可退按金（可手動覆寫）' : 'Refundable deposit (override optional)'}
+            </h3>
+            <div className="grid grid-cols-[1fr,auto] gap-2 items-center">
+              <div className="text-xs text-ink-soft">
+                {locale === 'zh' ? '自動計算' : 'Auto-calculated'}: <span className="font-mono">HK${securityDepositAuto.toLocaleString()}</span>
+                {securityDepositOverrideNum != null && (
+                  <span className={securityDepositOverrideNum >= securityDepositAuto ? 'ml-2 text-amber-700' : 'ml-2 text-rose-700'}>
+                    {securityDepositOverrideNum > securityDepositAuto
+                      ? (locale === 'zh' ? `→ 已覆寫至 HK$${securityDepositOverrideNum.toLocaleString()}（高於自動值 +HK$${(securityDepositOverrideNum - securityDepositAuto).toLocaleString()}）` : `→ overridden to HK$${securityDepositOverrideNum.toLocaleString()} (+HK$${(securityDepositOverrideNum - securityDepositAuto).toLocaleString()})`)
+                      : securityDepositOverrideNum < securityDepositAuto
+                        ? (locale === 'zh' ? `→ 已覆寫至 HK$${securityDepositOverrideNum.toLocaleString()}（低於自動值 −HK$${(securityDepositAuto - securityDepositOverrideNum).toLocaleString()}，請確認）` : `→ overridden to HK$${securityDepositOverrideNum.toLocaleString()} (lower than auto; verify)`)
+                        : (locale === 'zh' ? '→ 與自動值相同' : '→ matches auto')}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  value={securityDepositOverrideInput}
+                  onChange={(e) => setSecurityDepositOverrideInput(e.target.value)}
+                  placeholder={locale === 'zh' ? '留空 = 自動' : 'blank = auto'}
+                  className={`w-32 px-3 py-1.5 rounded-lg border text-sm text-right ${
+                    securityDepositOverrideNum != null
+                      ? 'border-amber-300 bg-amber-50 text-amber-800 font-semibold'
+                      : 'border-charcoal/15 bg-white'
+                  }`}
+                />
+                {securityDepositOverrideInput !== '' && (
+                  <button
+                    type="button"
+                    onClick={() => setSecurityDepositOverrideInput('')}
+                    className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-charcoal/5 text-ink-soft hover:bg-charcoal/10"
+                    title={locale === 'zh' ? '清除覆寫' : 'Clear override'}
+                  >
+                    {locale === 'zh' ? '重設' : 'Reset'}
+                  </button>
+                )}
+              </div>
+            </div>
+            <p className="text-[11px] text-ink-soft">
+              {locale === 'zh'
+                ? '可用喺評估客人風險較高時加碼按金（例如：高人數派對 / 過往有爭議客戶）。'
+                : 'Use to bump the deposit for higher-risk customers (large groups, prior disputes, etc.).'}
+            </p>
           </div>
 
           {/* Promo code — validated against /api/promo/validate just like
