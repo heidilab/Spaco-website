@@ -204,7 +204,7 @@ export default function AdminNewBookingPage() {
         return { id, quantity };
       }),
     ...customAddOns
-      .filter((c) => c.price > 0 && c.name.trim() !== '')
+      .filter((c) => c.name.trim() !== '' && c.price >= 0)
       .map((c) => ({
         id: c.id,
         quantity: 1,
@@ -939,7 +939,7 @@ export default function AdminNewBookingPage() {
               ) : (
                 <div className="space-y-2">
                   {customAddOns.map((c, idx) => (
-                    <div key={c.id} className="grid grid-cols-[1fr,110px,32px] gap-2 items-center">
+                    <div key={c.id} className="grid grid-cols-[1fr,110px,48px,32px] gap-2 items-center">
                       <input
                         type="text"
                         value={c.name}
@@ -954,15 +954,39 @@ export default function AdminNewBookingPage() {
                       <input
                         type="number"
                         min={0}
-                        value={c.price === 0 ? '' : c.price}
+                        value={c.price === 0 && c.name.trim() === '' ? '' : c.price}
                         onChange={(e) => {
                           const next = [...customAddOns];
                           next[idx] = { ...next[idx], price: Math.max(0, parseInt(e.target.value, 10) || 0) };
                           setCustomAddOns(next);
                         }}
                         placeholder="HK$"
-                        className="px-2 py-1.5 rounded-lg border border-charcoal/15 text-xs bg-white text-right"
+                        className={`px-2 py-1.5 rounded-lg border text-xs text-right ${
+                          c.price === 0 && c.name.trim() !== ''
+                            ? 'border-emerald-300 bg-emerald-50 text-emerald-700 font-semibold'
+                            : 'border-charcoal/15 bg-white'
+                        }`}
                       />
+                      {/* 「免費」 toggle — sets price to 0 in one click,
+                       *  so CS can mark a comp without typing 0 manually
+                       *  (Heidi 2026-06-22: CS promised customer some
+                       *  freebies and needed an explicit "免費" option). */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = [...customAddOns];
+                          next[idx] = { ...next[idx], price: 0 };
+                          setCustomAddOns(next);
+                        }}
+                        className={`px-2 py-1 rounded-lg text-[10px] font-semibold transition-colors ${
+                          c.price === 0 && c.name.trim() !== ''
+                            ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-300'
+                            : 'bg-pink/10 text-pink hover:bg-pink/20'
+                        }`}
+                        title={locale === 'zh' ? '設為免費' : 'Mark as free'}
+                      >
+                        {locale === 'zh' ? '免費' : 'FREE'}
+                      </button>
                       <button
                         type="button"
                         onClick={() => setCustomAddOns(customAddOns.filter((_, i) => i !== idx))}

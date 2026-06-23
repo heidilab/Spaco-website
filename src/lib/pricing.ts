@@ -165,7 +165,8 @@ export function formatAddOnsForStaff(
     if (a.id.startsWith('custom-')) {
       const name = a.options?.customName?.trim() || (locale === 'zh' ? '自訂項目' : 'Custom item');
       const price = a.options?.customPrice ?? 0;
-      return price > 0 ? `${name} ($${price.toLocaleString()})` : name;
+      if (price > 0) return `${name} ($${price.toLocaleString()})`;
+      return locale === 'zh' ? `${name}（免費）` : `${name} (FREE)`;
     }
     if (a.id !== 'shisha') {
       // Per-head packages (BBQ / hotpot / drinks) charge against the
@@ -523,13 +524,17 @@ export function calculatePricing(
     if (selected.id.startsWith('custom-')) {
       const customName = selected.options?.customName?.trim() || '自訂項目';
       const customPrice = Math.max(0, Math.floor(selected.options?.customPrice ?? 0));
-      if (customPrice > 0) {
-        addOnTotal += customPrice;
-        breakdown.push({
-          label: { zh: customName, en: customName },
-          amount: customPrice,
-        });
-      }
+      addOnTotal += customPrice;
+      // Render the breakdown line even for free items so admin/customer
+      // see CS-promised freebies on the receipt + emails. Label gets a
+      // 「(免費)」 / 「(FREE)」 suffix so it reads correctly when the
+      // amount is 0.
+      breakdown.push({
+        label: customPrice > 0
+          ? { zh: customName, en: customName }
+          : { zh: `${customName}（免費）`, en: `${customName} (FREE)` },
+        amount: customPrice,
+      });
       continue;
     }
 
