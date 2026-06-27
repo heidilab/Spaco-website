@@ -688,4 +688,15 @@ export interface Article {
   /** UID of the staff member who last edited. */
   authorUid?: string;
   authorName?: string;
+  // ── Per-article SEO overrides (admin-editable) ──
+  /** Custom <title> for the article page. Falls back to article.title. */
+  seoTitle?: { zh?: string; en?: string };
+  /** Custom <meta description>. Falls back to excerpt. */
+  seoDescription?: { zh?: string; en?: string };
+  /** Comma-separated keywords for <meta keywords>. */
+  seoKeywords?: { zh?: string; en?: string };
+  /** Override Open Graph image URL (defaults to heroImage). */
+  ogImage?: string;
+  /** Block search engines from indexing this article. */
+  noindex?: boolean;
 }

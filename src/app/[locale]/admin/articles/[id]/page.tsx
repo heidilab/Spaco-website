@@ -61,6 +61,18 @@ export default function AdminArticleEditPage() {
   const [contentEn, setContentEn] = useState('');
   const [status, setStatus] = useState<'draft' | 'published'>('draft');
   const [tagsRaw, setTagsRaw] = useState('');
+  // ── SEO meta overrides (per-article) ──
+  // All empty by default → article falls back to title / excerpt /
+  // heroImage for search engines + social cards.
+  const [seoTitleZh, setSeoTitleZh] = useState('');
+  const [seoTitleEn, setSeoTitleEn] = useState('');
+  const [seoDescriptionZh, setSeoDescriptionZh] = useState('');
+  const [seoDescriptionEn, setSeoDescriptionEn] = useState('');
+  const [seoKeywordsZh, setSeoKeywordsZh] = useState('');
+  const [seoKeywordsEn, setSeoKeywordsEn] = useState('');
+  const [ogImage, setOgImage] = useState('');
+  const [noindex, setNoindex] = useState(false);
+  const [seoOpen, setSeoOpen] = useState(false);
 
   // UX flags for the LLM actions
   const [formatting, setFormatting] = useState(false);
@@ -97,6 +109,20 @@ export default function AdminArticleEditPage() {
       setContentEn(ensureHtml(a.content.en || ''));
       setStatus(a.status);
       setTagsRaw((a.tags || []).join(', '));
+      // Hydrate SEO overrides — only opens the section when something
+      // is set so admin notices it has saved values.
+      setSeoTitleZh(a.seoTitle?.zh || '');
+      setSeoTitleEn(a.seoTitle?.en || '');
+      setSeoDescriptionZh(a.seoDescription?.zh || '');
+      setSeoDescriptionEn(a.seoDescription?.en || '');
+      setSeoKeywordsZh(a.seoKeywords?.zh || '');
+      setSeoKeywordsEn(a.seoKeywords?.en || '');
+      setOgImage(a.ogImage || '');
+      setNoindex(!!a.noindex);
+      const anySeoSet = !!(a.seoTitle?.zh || a.seoTitle?.en || a.seoDescription?.zh
+        || a.seoDescription?.en || a.seoKeywords?.zh || a.seoKeywords?.en
+        || a.ogImage || a.noindex);
+      if (anySeoSet) setSeoOpen(true);
       setLoading(false);
     })();
   }, [id, isCreate, locale]);
@@ -263,6 +289,20 @@ export default function AdminArticleEditPage() {
       // Firestore rejects `undefined` field values. Spread-include only
       // the fields that actually have a value so optional ones stay absent.
       const authorName = user?.displayName || user?.email || '';
+      // Build the SEO sub-objects only when admin actually filled
+      // something — keeps the booking record clean of empty {} blobs.
+      const seoTitleObj = {
+        ...(seoTitleZh.trim() ? { zh: seoTitleZh.trim() } : {}),
+        ...(seoTitleEn.trim() ? { en: seoTitleEn.trim() } : {}),
+      };
+      const seoDescObj = {
+        ...(seoDescriptionZh.trim() ? { zh: seoDescriptionZh.trim() } : {}),
+        ...(seoDescriptionEn.trim() ? { en: seoDescriptionEn.trim() } : {}),
+      };
+      const seoKwObj = {
+        ...(seoKeywordsZh.trim() ? { zh: seoKeywordsZh.trim() } : {}),
+        ...(seoKeywordsEn.trim() ? { en: seoKeywordsEn.trim() } : {}),
+      };
       const payload = {
         slug: slug.trim(),
         title: { zh: titleZh.trim(), ...(titleEn.trim() ? { en: titleEn.trim() } : {}) },
@@ -276,6 +316,11 @@ export default function AdminArticleEditPage() {
         status: finalStatus,
         ...(user?.uid ? { authorUid: user.uid } : {}),
         ...(authorName ? { authorName } : {}),
+        ...(Object.keys(seoTitleObj).length > 0 ? { seoTitle: seoTitleObj } : {}),
+        ...(Object.keys(seoDescObj).length > 0 ? { seoDescription: seoDescObj } : {}),
+        ...(Object.keys(seoKwObj).length > 0 ? { seoKeywords: seoKwObj } : {}),
+        ...(ogImage.trim() ? { ogImage: ogImage.trim() } : {}),
+        ...(noindex ? { noindex: true } : {}),
       } as Omit<Article, 'id' | 'createdAt' | 'updatedAt'>;
       if (isCreate) {
         const newId = await createArticle(payload);
@@ -503,6 +548,134 @@ export default function AdminArticleEditPage() {
               className="w-full px-3 py-2 rounded-xl bg-white border border-charcoal/15 focus:outline-none focus:border-pink/50 text-sm"
               placeholder={locale === 'zh' ? '生日, BBQ, 親子(逗號分隔)' : 'tips, party, bbq (comma-separated)'}
             />
+          </div>
+
+          {/* ── SEO meta overrides ── Per-Heidi 2026-06-22.
+           *  Each field is OPTIONAL — leaving blank uses the same
+           *  fallback the public article page already had:
+           *    seoTitle      → article.title
+           *    seoDescription → article.excerpt
+           *    ogImage       → article.heroImage
+           *    seoKeywords   → (none)
+           *    noindex       → false
+           *  Collapsed by default unless any value is set. */}
+          <div className="glass-card p-5 space-y-3">
+            <button
+              type="button"
+              onClick={() => setSeoOpen((o) => !o)}
+              className="w-full flex items-center justify-between text-left"
+            >
+              <h3 className="font-bold text-sm uppercase tracking-wider text-ink-soft">
+                🔍 {locale === 'zh' ? 'SEO 設定（可選）' : 'SEO Settings (optional)'}
+              </h3>
+              <span className="text-xs text-ink-soft">{seoOpen ? '▾' : '▸'}</span>
+            </button>
+            {seoOpen && (
+              <div className="space-y-3 pt-2 border-t border-charcoal/5">
+                <p className="text-[11px] text-ink-soft leading-relaxed">
+                  {locale === 'zh'
+                    ? '空白 = 用文章標題 / 摘要 / 封面作 fallback。建議標題 ≤ 60 字、描述 ≤ 160 字、關鍵字 5-10 個。'
+                    : 'Blank = falls back to title / excerpt / hero. Recommended ≤ 60 chars for title, ≤ 160 for description, 5-10 keywords.'}
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11px] font-semibold text-ink-soft block mb-1">{locale === 'zh' ? 'Meta 標題（中文）' : 'Meta title (Chinese)'}</label>
+                    <input
+                      value={seoTitleZh}
+                      onChange={(e) => setSeoTitleZh(e.target.value)}
+                      maxLength={80}
+                      className="w-full px-3 py-2 rounded-lg bg-white border border-charcoal/15 text-sm"
+                      placeholder={locale === 'zh' ? '< 60 字最佳' : '≤ 60 chars best'}
+                    />
+                    <p className={`text-[10px] mt-0.5 text-right ${seoTitleZh.length > 60 ? 'text-amber-700' : 'text-ink-soft'}`}>{seoTitleZh.length}/60</p>
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-ink-soft block mb-1">{locale === 'zh' ? 'Meta 標題（英文）' : 'Meta title (English)'}</label>
+                    <input
+                      value={seoTitleEn}
+                      onChange={(e) => setSeoTitleEn(e.target.value)}
+                      maxLength={80}
+                      className="w-full px-3 py-2 rounded-lg bg-white border border-charcoal/15 text-sm"
+                      placeholder="≤ 60 chars best"
+                    />
+                    <p className={`text-[10px] mt-0.5 text-right ${seoTitleEn.length > 60 ? 'text-amber-700' : 'text-ink-soft'}`}>{seoTitleEn.length}/60</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11px] font-semibold text-ink-soft block mb-1">{locale === 'zh' ? 'Meta 描述（中文）' : 'Meta description (Chinese)'}</label>
+                    <textarea
+                      value={seoDescriptionZh}
+                      onChange={(e) => setSeoDescriptionZh(e.target.value)}
+                      rows={3}
+                      maxLength={200}
+                      className="w-full px-3 py-2 rounded-lg bg-white border border-charcoal/15 text-sm resize-y"
+                      placeholder={locale === 'zh' ? '描述會喺 Google 搜尋結果顯示' : ''}
+                    />
+                    <p className={`text-[10px] mt-0.5 text-right ${seoDescriptionZh.length > 160 ? 'text-amber-700' : 'text-ink-soft'}`}>{seoDescriptionZh.length}/160</p>
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-ink-soft block mb-1">{locale === 'zh' ? 'Meta 描述（英文）' : 'Meta description (English)'}</label>
+                    <textarea
+                      value={seoDescriptionEn}
+                      onChange={(e) => setSeoDescriptionEn(e.target.value)}
+                      rows={3}
+                      maxLength={200}
+                      className="w-full px-3 py-2 rounded-lg bg-white border border-charcoal/15 text-sm resize-y"
+                      placeholder="Shown under Google search result"
+                    />
+                    <p className={`text-[10px] mt-0.5 text-right ${seoDescriptionEn.length > 160 ? 'text-amber-700' : 'text-ink-soft'}`}>{seoDescriptionEn.length}/160</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11px] font-semibold text-ink-soft block mb-1">{locale === 'zh' ? '關鍵字（中文，逗號分隔）' : 'Keywords (Chinese, comma-separated)'}</label>
+                    <input
+                      value={seoKeywordsZh}
+                      onChange={(e) => setSeoKeywordsZh(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg bg-white border border-charcoal/15 text-sm"
+                      placeholder={locale === 'zh' ? 'Party Room, 生日派對, 包場' : ''}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-ink-soft block mb-1">{locale === 'zh' ? '關鍵字（英文）' : 'Keywords (English)'}</label>
+                    <input
+                      value={seoKeywordsEn}
+                      onChange={(e) => setSeoKeywordsEn(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg bg-white border border-charcoal/15 text-sm"
+                      placeholder="party room, birthday party, private venue"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-semibold text-ink-soft block mb-1">
+                    {locale === 'zh' ? 'Open Graph 圖片 URL（社交分享）' : 'Open Graph image URL (social sharing)'}
+                  </label>
+                  <input
+                    value={ogImage}
+                    onChange={(e) => setOgImage(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-white border border-charcoal/15 text-sm"
+                    placeholder={locale === 'zh' ? '留空 = 用封面圖；建議 1200×630 px' : 'Blank = use hero image; recommended 1200×630 px'}
+                  />
+                </div>
+
+                <label className="flex items-center gap-2 cursor-pointer text-xs">
+                  <input
+                    type="checkbox"
+                    checked={noindex}
+                    onChange={(e) => setNoindex(e.target.checked)}
+                    className="w-4 h-4 accent-rose-500"
+                  />
+                  <span className={noindex ? 'text-rose-700 font-semibold' : 'text-ink'}>
+                    {locale === 'zh' ? '阻止 Google 收錄此文章（noindex）' : 'Block search engines (noindex)'}
+                  </span>
+                </label>
+              </div>
+            )}
           </div>
 
           {/* AI image generation panel — surfaces ![圖片建議: ...](TODO_UPLOAD)

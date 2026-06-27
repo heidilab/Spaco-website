@@ -1,28 +1,76 @@
-'use client';
-
-import { useEffect, useState } from 'react';
-import { useLocale } from 'next-intl';
-import { useParams } from 'next/navigation';
+import type { Metadata } from 'next';
 import { Link } from '@/i18n/routing';
-import { getArticleBySlug } from '@/lib/articles';
+import { Newspaper, ChevronLeft } from 'lucide-react';
+import { adminDb } from '@/lib/firebaseAdmin';
 import { Article } from '@/types';
-import { ChevronLeft, Newspaper } from 'lucide-react';
 import ArticleView from '@/components/article/ArticleView';
 
-export default function ArticleDetailPage() {
-  const locale = useLocale() as 'zh' | 'en';
-  const params = useParams();
-  const slug = params.slug as string;
-  const [article, setArticle] = useState<Article | null>(null);
-  const [loading, setLoading] = useState(true);
+const COLLECTION = 'articles';
+const SITE_URL = 'https://spacohk.com';
 
-  useEffect(() => {
-    getArticleBySlug(slug).then((a) => { setArticle(a); setLoading(false); });
-  }, [slug]);
+/** Server-side fetch — used by both generateMetadata and the page
+ *  itself. Uses Firebase Admin SDK so it works in the RSC context
+ *  without needing client-side auth. */
+async function getArticleBySlugServer(slug: string): Promise<Article | null> {
+  const snap = await adminDb
+    .collection(COLLECTION)
+    .where('slug', '==', slug)
+    .limit(1)
+    .get();
+  if (snap.empty) return null;
+  const d = snap.docs[0];
+  return { id: d.id, ...(d.data() as Omit<Article, 'id'>) };
+}
 
-  if (loading) {
-    return <div className="pt-32 min-h-screen text-center text-ink-soft">{locale === 'zh' ? '載入中…' : 'Loading…'}</div>;
+export async function generateMetadata({ params }: { params: Promise<{ locale: 'zh' | 'en'; slug: string }> }): Promise<Metadata> {
+  const { locale, slug } = await params;
+  const article = await getArticleBySlugServer(slug);
+  if (!article || article.status !== 'published') {
+    return { title: locale === 'zh' ? '找唔到呢篇文章 — SPACO' : 'Article not found — SPACO' };
   }
+  // SEO override → falls back to article title / excerpt / hero.
+  const title = article.seoTitle?.[locale] || article.title[locale] || article.title.zh;
+  const description = article.seoDescription?.[locale]
+    || article.excerpt?.[locale]
+    || article.excerpt?.zh
+    || '';
+  const keywords = article.seoKeywords?.[locale] || article.seoKeywords?.zh || '';
+  const ogImg = article.ogImage || article.heroImage;
+  const canonical = `${SITE_URL}/${locale}/articles/${article.slug}`;
+
+  return {
+    title,
+    description,
+    keywords: keywords || undefined,
+    robots: article.noindex ? { index: false, follow: false } : undefined,
+    alternates: {
+      canonical,
+      languages: {
+        'zh-HK': `${SITE_URL}/zh/articles/${article.slug}`,
+        'en':    `${SITE_URL}/en/articles/${article.slug}`,
+      },
+    },
+    openGraph: {
+      title,
+      description,
+      url: canonical,
+      siteName: 'SPACO',
+      type: 'article',
+      images: ogImg ? [{ url: ogImg }] : undefined,
+      locale: locale === 'zh' ? 'zh_HK' : 'en_US',
+    },
+    twitter: {
+      card: ogImg ? 'summary_large_image' : 'summary',
+      title,
+      description,
+      images: ogImg ? [ogImg] : undefined,
+    },
+  };
+}
+
+export default async function ArticleDetailPage({ params }: { params: Promise<{ locale: 'zh' | 'en'; slug: string }> }) {
+  const { locale, slug } = await params;
+  const article = await getArticleBySlugServer(slug);
 
   if (!article || article.status !== 'published') {
     return (
@@ -40,11 +88,20 @@ export default function ArticleDetailPage() {
     );
   }
 
+  // Firestore Timestamps don't serialize across the RSC boundary —
+  // strip them to ISO strings before handing to the client view.
+  const safeArticle: Article = {
+    ...article,
+    createdAt: serializeTs(article.createdAt),
+    updatedAt: serializeTs(article.updatedAt),
+    publishedAt: serializeTs(article.publishedAt),
+  };
+
   const title = article.title[locale] || article.title.zh;
 
   return (
     <>
-      <ArticleView article={article} locale={locale} />
+      <ArticleView article={safeArticle} locale={locale} />
 
       {/* Article JSON-LD for SEO */}
       <script
@@ -55,27 +112,26 @@ export default function ArticleDetailPage() {
             '@type': 'Article',
             headline: title,
             image: article.heroImage ? [article.heroImage] : undefined,
-            datePublished: ((): string | undefined => {
-              const v = article.publishedAt as { toDate?: () => Date; seconds?: number } | undefined;
-              const d = v?.toDate?.() ?? (v?.seconds ? new Date(v.seconds * 1000) : undefined);
-              return d?.toISOString();
-            })(),
-            dateModified: ((): string | undefined => {
-              const v = article.updatedAt as { toDate?: () => Date; seconds?: number } | undefined;
-              const d = v?.toDate?.() ?? (v?.seconds ? new Date(v.seconds * 1000) : undefined);
-              return d?.toISOString();
-            })(),
+            datePublished: serializeTs(article.publishedAt),
+            dateModified: serializeTs(article.updatedAt),
             author: article.authorName ? { '@type': 'Person', name: article.authorName } : undefined,
             publisher: {
               '@type': 'Organization',
               name: 'SPACO',
-              logo: { '@type': 'ImageObject', url: 'https://spacohk.com/spaco-logo.png' },
+              logo: { '@type': 'ImageObject', url: `${SITE_URL}/spaco-logo.png` },
             },
-            description: article.excerpt?.[locale] || article.excerpt?.zh,
-            mainEntityOfPage: `https://spacohk.com/${locale}/articles/${article.slug}`,
+            description: article.seoDescription?.[locale] || article.excerpt?.[locale] || article.excerpt?.zh,
+            mainEntityOfPage: `${SITE_URL}/${locale}/articles/${article.slug}`,
           }),
         }}
       />
     </>
   );
+}
+
+function serializeTs(v: unknown): string | undefined {
+  if (!v) return undefined;
+  const t = v as { toDate?: () => Date; seconds?: number };
+  const d = t.toDate?.() ?? (typeof t.seconds === 'number' ? new Date(t.seconds * 1000) : undefined);
+  return d?.toISOString();
 }
