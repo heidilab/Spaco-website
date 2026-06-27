@@ -88,9 +88,9 @@ export default function ArticleView({
             </h1>
             <div className="flex items-center gap-4 text-sm text-ink-soft">
               <span className="flex items-center gap-1.5"><Calendar size={14} />{fmtDate(article.publishedAt || article.updatedAt, locale)}</span>
-              {article.authorName && (
-                <span>· {locale === 'zh' ? '作者' : 'By'} {article.authorName}</span>
-              )}
+              {/* Author byline removed per Heidi 2026-06-22 — articles
+               *  are house content, no public author credit needed.
+               *  Schema.org Article still emits authorName for SEO. */}
             </div>
           </div>
 
