@@ -20,11 +20,13 @@ import { BookingRecord, UserProfile, MarketingChannel, MARKETING_CHANNEL_LABELS 
 import { venues } from '@/lib/venues';
 import { getPackageBySlug } from '@/lib/packages';
 import { getDecorationById } from '@/lib/decorations';
+import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
 import {
   formatAddOnsForStaff,
   addOns as ADDON_CATALOG,
   calculatePricing,
   calcShishaPrice,
+  calcCateringTotal,
   freeDrinksVenues,
 } from '@/lib/pricing';
 
@@ -136,6 +138,10 @@ export default function AdminBookingDetailPage() {
     flavors: string[];
     staffSetup: boolean;
   }>({ pipes: 1, flavors: [], staffSetup: false });
+  // Catering modal state. Selection hydrates from the stored
+  // catering add-on's options on load; save merges back into addOns.
+  const [cateringModalOpen, setCateringModalOpen] = useState(false);
+  const [cateringSelection, setCateringSelection] = useState<CateringSelection | null>(null);
   // Editable refundable deposit (HK$). Pre-fills from the booking's
   // stored securityDeposit. Saving with a different value passes it as
   // `securityDepositOverride` to updateBookingDateTime — bypasses
@@ -257,6 +263,22 @@ export default function AdminBookingDetailPage() {
             staffSetup: !!shishaEntry.options?.staffSetup,
           });
         }
+        // Hydrate catering selection — admin opens the modal to see/edit.
+        const cateringEntry = b.addOns?.find((a) => a.id === 'catering');
+        if (cateringEntry?.options) {
+          const o = cateringEntry.options as Partial<CateringSelection>;
+          if (o.tierId) {
+            setCateringSelection({
+              tierId: o.tierId,
+              dishCodes: o.dishCodes || [],
+              deliveryZoneId: o.deliveryZoneId || '',
+              doorstepDelivery: !!o.doorstepDelivery,
+              noCutlery: !!o.noCutlery,
+              extraCutlerySets: o.extraCutlerySets || 0,
+              extraFoodTongs: o.extraFoodTongs || 0,
+            });
+          }
+        }
         if (b.userId) {
           const p = await getUserProfile(b.userId).catch(() => null);
           if (p) setProfile(p as unknown as UserProfile);
@@ -309,6 +331,9 @@ export default function AdminBookingDetailPage() {
                 staffSetup: shishaOptions.staffSetup,
               },
             };
+          }
+          if (id === 'catering' && cateringSelection) {
+            return { id, quantity: 1, options: cateringSelection };
           }
           return { id, quantity };
         }),
@@ -475,6 +500,9 @@ export default function AdminBookingDetailPage() {
                       staffSetup: shishaOptions.staffSetup,
                     },
                   };
+                }
+                if (id === 'catering' && cateringSelection) {
+                  return { id, quantity: 1, options: cateringSelection };
                 }
                 return { id, quantity };
               }),
@@ -1185,6 +1213,38 @@ export default function AdminBookingDetailPage() {
                     // charge against the full guest count. Stored qty
                     // is just a presence flag — no qty selector here.
                     const isPerHead = cfg.unit === 'person';
+                    // Catering: open modal instead of toggling a
+                    // checkbox; selection populates the booking on save.
+                    if (cfg.id === 'catering') {
+                      return (
+                        <button
+                          type="button"
+                          key={cfg.id}
+                          onClick={() => setCateringModalOpen(true)}
+                          className={`text-left rounded-lg border px-3 py-2 text-xs transition-all ${
+                            cateringSelection
+                              ? 'border-pink bg-pink/5'
+                              : 'border-charcoal/10 bg-white hover:bg-cream/30'
+                          }`}
+                        >
+                          <div className="flex items-baseline justify-between gap-1">
+                            <span className="font-medium truncate">{cfg.name[locale]}</span>
+                            <span className="text-pink text-[11px] font-bold whitespace-nowrap">
+                              {cateringSelection
+                                ? (locale === 'zh' ? '編輯' : 'Edit')
+                                : (locale === 'zh' ? '揀餐單' : 'Pick menu')}
+                            </span>
+                          </div>
+                          {cateringSelection && (
+                            <p className="text-[11px] text-pink mt-1">
+                              {locale === 'zh'
+                                ? `已揀 ${(cateringSelection.dishCodes || []).length} 款 · ${cateringSelection.tierId} · HK$${calcCateringTotal(cateringSelection).toLocaleString()}`
+                                : `${(cateringSelection.dishCodes || []).length} dishes · ${cateringSelection.tierId} · HK$${calcCateringTotal(cateringSelection).toLocaleString()}`}
+                            </p>
+                          )}
+                        </button>
+                      );
+                    }
                     return (
                       <label
                         key={cfg.id}
@@ -1499,6 +1559,9 @@ export default function AdminBookingDetailPage() {
                               staffSetup: shishaOptions.staffSetup,
                             },
                           };
+                        }
+                        if (id === 'catering' && cateringSelection) {
+                          return { id, quantity: 1, options: cateringSelection };
                         }
                         return { id, quantity };
                       }),
@@ -2212,6 +2275,24 @@ export default function AdminBookingDetailPage() {
           </div>
         </div>
       )}
+
+      <CateringPickerModal
+        open={cateringModalOpen}
+        initial={cateringSelection || undefined}
+        locale={locale}
+        bookingDate={date}
+        onClose={() => setCateringModalOpen(false)}
+        onSave={(sel) => {
+          setCateringSelection(sel);
+          setAddOnQty((prev) => ({ ...prev, catering: 1 }));
+          setCateringModalOpen(false);
+        }}
+        onRemove={() => {
+          setCateringSelection(null);
+          setAddOnQty((prev) => ({ ...prev, catering: 0 }));
+          setCateringModalOpen(false);
+        }}
+      />
     </div>
   );
 }

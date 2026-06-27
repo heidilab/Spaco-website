@@ -16,6 +16,8 @@ import { notFound } from 'next/navigation';
 import SplitHeading from '@/components/ui/SplitHeading';
 import { getHoliday } from '@/lib/hkHolidays';
 import HolidayDatePicker from '@/components/booking/HolidayDatePicker';
+import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
+import { calcCateringTotal } from '@/lib/pricing';
 import { useAuth } from '@/contexts/AuthContext';
 import { getUserProfile, updateUserWhatsapp, getBlockedSlots } from '@/lib/firestore';
 import { venuesSharingSpace } from '@/lib/venues';
@@ -441,6 +443,10 @@ export default function BookingPage() {
   // Filter add-ons based on venue
   const visibleAddOns = addOns.filter((a) => {
     if (a.id === 'shisha') return false;
+    // Catering renders its own card via CateringPickerModal — skip
+    // it in the generic add-on grid so we don't get a useless
+    // checkbox row alongside.
+    if (a.id === 'catering') return false;
     // Hide BBQ packages for venues without BBQ (incl. the new BBQ
     // helper chef — chef is only useful where BBQ is allowed).
     if ((a.id === 'bbq-standard' || a.id === 'bbq-premium' || a.id === 'bbq-grill' || a.id === 'bbq-helper') && noBBQVenues.includes(venue.id)) return false;
@@ -448,6 +454,12 @@ export default function BookingPage() {
     if (a.id === 'drinks' && freeDrinksVenues.includes(venue.id)) return false;
     return true;
   });
+
+  // ── 美食到會 state ──
+  const [cateringModalOpen, setCateringModalOpen] = useState(false);
+  const cateringAddOn = selectedAddOns.find((a) => a.id === 'catering');
+  const cateringSelection = cateringAddOn?.options as Partial<CateringSelection> | undefined;
+  const cateringTotal = cateringSelection ? calcCateringTotal(cateringSelection) : 0;
 
   // BBQ helper validation — Heidi 2026-06-22 rules:
   //   - Minimum booking length 5 hours
@@ -1135,6 +1147,41 @@ export default function BookingPage() {
                   </div>
                 )}
 
+                {/* 美食到會 — opens CateringPickerModal. Available at
+                 *  every venue. Shows summary when selection exists. */}
+                <div className={`p-5 rounded-2xl border transition-all ${
+                  cateringAddOn ? 'border-pink bg-pink/5' : 'border-charcoal/5'
+                }`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1">
+                      <p className="font-semibold">{locale === 'zh' ? '美食到會服務' : 'Catering Service'}</p>
+                      <p className="text-sm text-muted mt-1">
+                        {locale === 'zh'
+                          ? '60+ 款菜式自選；按人數套餐計價；需提前最少 2 日預訂'
+                          : '60+ dishes, tier-priced by group size; reserve ≥ 2 days ahead'}
+                      </p>
+                      {cateringAddOn && cateringSelection?.tierId && (
+                        <p className="text-xs text-pink font-semibold mt-2">
+                          {locale === 'zh'
+                            ? `已揀 ${(cateringSelection.dishCodes || []).length} 款 · 套餐 ${cateringSelection.tierId} · 小計 HK$${cateringTotal.toLocaleString()}`
+                            : `${(cateringSelection.dishCodes || []).length} dishes · ${cateringSelection.tierId} · HK$${cateringTotal.toLocaleString()}`}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setCateringModalOpen(true)}
+                      className={`shrink-0 px-3 py-2 rounded-pill text-xs font-bold transition-colors ${
+                        cateringAddOn ? 'bg-pink text-white' : 'bg-pink/10 text-pink hover:bg-pink/20'
+                      }`}
+                    >
+                      {cateringAddOn
+                        ? (locale === 'zh' ? '編輯選擇' : 'Edit')
+                        : (locale === 'zh' ? '揀餐單' : 'Pick menu')}
+                    </button>
+                  </div>
+                </div>
+
                 {/* Drinks */}
                 {visibleAddOns
                   .filter((a) => a.id === 'drinks')
@@ -1583,6 +1630,25 @@ export default function BookingPage() {
       </div>
 
       <AuthModal isOpen={authModalOpen} onClose={() => setAuthModalOpen(false)} />
+
+      <CateringPickerModal
+        open={cateringModalOpen}
+        initial={cateringSelection}
+        locale={locale}
+        bookingDate={selectedDate}
+        onClose={() => setCateringModalOpen(false)}
+        onSave={(sel) => {
+          setSelectedAddOns((prev) => {
+            const others = prev.filter((a) => a.id !== 'catering');
+            return [...others, { id: 'catering', quantity: 1, options: sel }];
+          });
+          setCateringModalOpen(false);
+        }}
+        onRemove={() => {
+          setSelectedAddOns((prev) => prev.filter((a) => a.id !== 'catering'));
+          setCateringModalOpen(false);
+        }}
+      />
     </div>
   );
 }

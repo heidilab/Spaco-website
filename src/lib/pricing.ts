@@ -1,4 +1,45 @@
 import { Venue, AddOn, AddOnOptions } from '@/types';
+import {
+  CATERING_ITEMS,
+  CATERING_TIERS,
+  CATERING_DELIVERY_ZONES,
+  CATERING_EXTRA_DISH_FEE,
+  CATERING_DOORSTEP_DELIVERY_FEE,
+  CATERING_NO_CUTLERY_DISCOUNT,
+  CATERING_EXTRA_CUTLERY_SET_FEE,
+  CATERING_EXTRA_FOOD_TONG_FEE,
+} from './cateringMenu';
+
+/** Catering total = tier base + extras (non-addon dishes beyond tier
+ *  count × \$155) + addon dishes (A1-A10 own prices) + delivery
+ *  (zone fee + optional \$150 doorstep) + cutlery (−\$10 no cutlery,
+ *  +\$3/set extras, +\$9/tong extras). Used by both calculatePricing
+ *  and the CateringPickerModal live preview. */
+export function calcCateringTotal(opts: {
+  tierId?: string;
+  dishCodes?: string[];
+  deliveryZoneId?: string;
+  doorstepDelivery?: boolean;
+  noCutlery?: boolean;
+  extraCutlerySets?: number;
+  extraFoodTongs?: number;
+}): number {
+  const tier = CATERING_TIERS.find((t) => t.id === opts.tierId);
+  if (!tier) return 0;
+  const codes = opts.dishCodes || [];
+  const selected = CATERING_ITEMS.filter((d) => codes.includes(d.code));
+  const nonAddon = selected.filter((d) => d.category !== 'addon');
+  const addonDishes = selected.filter((d) => d.category === 'addon');
+  const extras = Math.max(0, nonAddon.length - tier.pickCount);
+  const extrasFee = extras * CATERING_EXTRA_DISH_FEE;
+  const addonDishesFee = addonDishes.reduce((s, d) => s + (d.price || 0), 0);
+  const zone = CATERING_DELIVERY_ZONES.find((z) => z.id === opts.deliveryZoneId);
+  const deliveryFee = (zone?.fee || 0) + (opts.doorstepDelivery ? CATERING_DOORSTEP_DELIVERY_FEE : 0);
+  const cutleryFee = (opts.noCutlery ? -CATERING_NO_CUTLERY_DISCOUNT : 0)
+    + (opts.extraCutlerySets || 0) * CATERING_EXTRA_CUTLERY_SET_FEE
+    + (opts.extraFoodTongs || 0) * CATERING_EXTRA_FOOD_TONG_FEE;
+  return Math.max(0, tier.price + extrasFee + addonDishesFee + deliveryFee + cutleryFee);
+}
 
 // Add-on definitions for the booking UI
 export const addOns: AddOn[] = [
@@ -41,11 +82,31 @@ export const addOns: AddOn[] = [
     id: 'bbq-helper',
     name: { zh: '代燒員', en: 'BBQ Helper Chef' },
     pricePerUnit: 300,
-    unit: 'person',
+    // unit:'item' (not 'person') because the quantity = number of
+    // chefs, not pax. Admin pages render 'person' add-ons as a
+    // simple checkbox (charged against guest count); we need the
+    // 1-6 stepper for chef count.
+    unit: 'item',
     maxQuantity: 6,
     description: {
       zh: '每位代燒員每小時 $300；最少訂 5 小時；需提前最少 7 日預訂（灣仔店不適用）',
       en: '$300/hr per chef; min 5-hour booking; reserve ≥ 7 days ahead (not available at Wan Chai)',
+    },
+  },
+  {
+    // Self-pick catering — customer fills its own modal-driven picker
+    // (CateringPickerModal). pricePerUnit is a token; the real total
+    // is derived from options.tierId + options.dishCodes
+    // + options.deliveryZoneId + cutlery flags by the calc branch
+    // below. Needs ≥ 2 days advance per the menu image footer.
+    id: 'catering',
+    name: { zh: '美食到會服務', en: 'Catering Service' },
+    pricePerUnit: 0,
+    unit: 'item',
+    maxQuantity: 1,
+    description: {
+      zh: '60+ 款菜式自選；按人數 tier 計價；需提前最少 2 日預訂',
+      en: '60+ dishes to pick; tier-based pricing by group size; reserve ≥ 2 days ahead',
     },
   },
   {
@@ -472,6 +533,34 @@ export function calculatePricing(
         },
         amount: cost,
       });
+      continue;
+    }
+
+    if (selected.id === 'catering') {
+      // Catering total derives from options (tier + dishes + delivery
+      // + cutlery). Imported lazily to keep the data file
+      // dependency-direction clean.
+      const opts = selected.options as {
+        tierId?: string;
+        dishCodes?: string[];
+        deliveryZoneId?: string;
+        doorstepDelivery?: boolean;
+        noCutlery?: boolean;
+        extraCutlerySets?: number;
+        extraFoodTongs?: number;
+      } | undefined;
+      const cost = calcCateringTotal(opts || {});
+      if (cost > 0) {
+        addOnTotal += cost;
+        const tierLbl = opts?.tierId ? ` (${opts.tierId})` : '';
+        breakdown.push({
+          label: {
+            zh: `美食到會服務${tierLbl}`,
+            en: `Catering Service${tierLbl}`,
+          },
+          amount: cost,
+        });
+      }
       continue;
     }
 

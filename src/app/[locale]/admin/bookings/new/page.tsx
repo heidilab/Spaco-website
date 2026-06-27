@@ -18,6 +18,8 @@ import {
 } from '@/lib/pricing';
 import { ALL_PACKAGES, getPackageBySlug, CATEGORY_LABEL } from '@/lib/packages';
 import { createBookingDraft, buildClaimUrl } from '@/lib/bookingDrafts';
+import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
+import { calcCateringTotal } from '@/lib/pricing';
 import { getHoliday } from '@/lib/hkHolidays';
 import { normalizeHkPhone, isValidHkPhone, formatHkPhone } from '@/lib/whatsapp';
 import {
@@ -73,6 +75,11 @@ export default function AdminNewBookingPage() {
   // tiered formula. Empty string = use auto-tier; non-empty number
   // overrides. Heidi 2026-06-22.
   const [securityDepositOverrideInput, setSecurityDepositOverrideInput] = useState<string>('');
+
+  // Catering picker state — modal-driven; selection becomes the
+  // catering add-on's options blob at submit time.
+  const [cateringModalOpen, setCateringModalOpen] = useState(false);
+  const [cateringSelection, setCateringSelection] = useState<CateringSelection | null>(null);
 
   // Shisha-specific options — flavors are picked per head; pipes are
   // capped by SHISHA_MAX_PIPES (currently 2). Admin can leave this
@@ -205,6 +212,9 @@ export default function AdminNewBookingPage() {
               staffSetup: shishaOptions.staffSetup,
             },
           };
+        }
+        if (id === 'catering' && cateringSelection) {
+          return { id, quantity: 1, options: cateringSelection };
         }
         return { id, quantity };
       }),
@@ -766,6 +776,7 @@ export default function AdminNewBookingPage() {
                 const qty = addOnQty[a.id] || 0;
                 const max = a.maxQuantity ?? (a.unit === 'person' ? 1 : 5);
                 const isShisha = a.id === 'shisha';
+                const isCatering = a.id === 'catering';
                 // Per-head add-ons (BBQ packages / hotpot packages /
                 // drinks) MUST charge against the full guest count —
                 // calculatePricing already multiplies by adultEquiv, so
@@ -781,8 +792,27 @@ export default function AdminNewBookingPage() {
                       <div className="flex-1">
                         <p className="font-semibold text-sm text-ink">{a.name[locale]}</p>
                         <p className="text-xs text-ink-soft">{a.description?.[locale] || ''}</p>
+                        {isCatering && cateringSelection && (
+                          <p className="text-xs text-pink font-semibold mt-1">
+                            {locale === 'zh'
+                              ? `已揀 ${(cateringSelection.dishCodes || []).length} 款 · ${cateringSelection.tierId} · 小計 HK$${calcCateringTotal(cateringSelection).toLocaleString()}`
+                              : `${(cateringSelection.dishCodes || []).length} dishes · ${cateringSelection.tierId} · HK$${calcCateringTotal(cateringSelection).toLocaleString()}`}
+                          </p>
+                        )}
                       </div>
-                      {isPerHead ? (
+                      {isCatering ? (
+                        <button
+                          type="button"
+                          onClick={() => setCateringModalOpen(true)}
+                          className={`shrink-0 px-3 py-1.5 rounded-pill text-xs font-bold transition-colors ${
+                            cateringSelection ? 'bg-pink text-white' : 'bg-pink/10 text-pink hover:bg-pink/20'
+                          }`}
+                        >
+                          {cateringSelection
+                            ? (locale === 'zh' ? '編輯選擇' : 'Edit')
+                            : (locale === 'zh' ? '揀餐單' : 'Pick menu')}
+                        </button>
+                      ) : isPerHead ? (
                         <label className="flex items-center gap-2 cursor-pointer">
                           <input
                             type="checkbox"
@@ -1237,6 +1267,24 @@ export default function AdminNewBookingPage() {
           </div>
         </div>
       </div>
+
+      <CateringPickerModal
+        open={cateringModalOpen}
+        initial={cateringSelection || undefined}
+        locale={locale}
+        bookingDate={date}
+        onClose={() => setCateringModalOpen(false)}
+        onSave={(sel) => {
+          setCateringSelection(sel);
+          setAddOnQty((prev) => ({ ...prev, catering: 1 }));
+          setCateringModalOpen(false);
+        }}
+        onRemove={() => {
+          setCateringSelection(null);
+          setAddOnQty((prev) => ({ ...prev, catering: 0 }));
+          setCateringModalOpen(false);
+        }}
+      />
     </div>
   );
 }

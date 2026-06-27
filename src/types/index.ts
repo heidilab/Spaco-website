@@ -66,6 +66,21 @@ export interface AddOnOptions {
   customName?: string;
   /** Admin-defined flat price in HK$ for custom add-on entries. */
   customPrice?: number;
+  // ── Catering add-on (id === 'catering') ──
+  /** Pricing tier id from CATERING_TIERS (e.g. 'tier-10'). */
+  tierId?: string;
+  /** Catering item codes selected (e.g. ['101', '142', 'A1']). */
+  dishCodes?: string[];
+  /** Delivery zone id from CATERING_DELIVERY_ZONES. */
+  deliveryZoneId?: string;
+  /** Door-to-door delivery (+$150). Defaults to lobby pickup (free). */
+  doorstepDelivery?: boolean;
+  /** Skip cutlery for −$10/order. */
+  noCutlery?: boolean;
+  /** Additional cutlery sets beyond the included one (+$3 each). */
+  extraCutlerySets?: number;
+  /** Additional food tongs beyond the included one (+$9 each). */
+  extraFoodTongs?: number;
 }
 
 export interface BookingState {
