@@ -34,6 +34,21 @@ export const addOns: AddOn[] = [
     },
   },
   {
+    // Helper chef — staff sent to operate the BBQ. Custom pricing:
+    // $300/hour × num_chefs × booking_hours. Min booking 5 hours
+    // (enforced in venue page UI) and 7 days advance notice.
+    // Hidden at venues in noBBQVenues (灣仔店 / wanchai).
+    id: 'bbq-helper',
+    name: { zh: '代燒員', en: 'BBQ Helper Chef' },
+    pricePerUnit: 300,
+    unit: 'person',
+    maxQuantity: 6,
+    description: {
+      zh: '每位代燒員每小時 $300；最少訂 5 小時；需提前最少 7 日預訂（灣仔店不適用）',
+      en: '$300/hr per chef; min 5-hour booking; reserve ≥ 7 days ahead (not available at Wan Chai)',
+    },
+  },
+  {
     id: 'hotpot-standard',
     name: { zh: '火鍋標準套餐', en: 'Hotpot Standard Package' },
     pricePerUnit: 168,
@@ -454,6 +469,25 @@ export function calculatePricing(
         label: {
           zh: `BBQ 爐租用 (${selected.quantity}個 x $500)`,
           en: `BBQ Grill Rental (${selected.quantity} x $500)`,
+        },
+        amount: cost,
+      });
+      continue;
+    }
+
+    if (selected.id === 'bbq-helper') {
+      // Helper chef = \$300/hr × num_chefs × booked_hours.
+      // Min-5-hour + 7-day-advance constraints are enforced at the
+      // venue-page UI layer (block submit + tell customer); pricing
+      // just multiplies what came in, so an admin-issued booking
+      // with shorter hours still prices correctly.
+      const numChefs = selected.quantity;
+      const cost = 300 * numChefs * hours;
+      addOnTotal += cost;
+      breakdown.push({
+        label: {
+          zh: `代燒員 (${numChefs} 位 × ${hours} 小時 × $300)`,
+          en: `BBQ Helper Chef (${numChefs} × ${hours} hr × $300)`,
         },
         amount: cost,
       });

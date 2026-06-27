@@ -441,15 +441,30 @@ export default function BookingPage() {
   // Filter add-ons based on venue
   const visibleAddOns = addOns.filter((a) => {
     if (a.id === 'shisha') return false;
-    // Hide BBQ packages for venues without BBQ
-    if ((a.id === 'bbq-standard' || a.id === 'bbq-premium' || a.id === 'bbq-grill') && noBBQVenues.includes(venue.id)) return false;
+    // Hide BBQ packages for venues without BBQ (incl. the new BBQ
+    // helper chef — chef is only useful where BBQ is allowed).
+    if ((a.id === 'bbq-standard' || a.id === 'bbq-premium' || a.id === 'bbq-grill' || a.id === 'bbq-helper') && noBBQVenues.includes(venue.id)) return false;
     // Hide drinks for venues with free drinks
     if (a.id === 'drinks' && freeDrinksVenues.includes(venue.id)) return false;
     return true;
   });
 
+  // BBQ helper validation — Heidi 2026-06-22 rules:
+  //   - Minimum booking length 5 hours
+  //   - Minimum 7 days advance notice
+  // When violated the customer can't proceed and sees the relevant
+  // hint below the add-on toggle.
+  const bbqHelperQty = selectedAddOns.find((a) => a.id === 'bbq-helper')?.quantity || 0;
+  const bbqHelperHoursOK = bbqHelperQty === 0 || hours >= 5;
+  const bbqHelperLeadTimeOK = (() => {
+    if (bbqHelperQty === 0 || !selectedDate) return true;
+    const bookingMs = new Date(`${selectedDate}T00:00:00+08:00`).getTime();
+    const sevenDaysFromNow = Date.now() + 7 * 24 * 60 * 60 * 1000;
+    return bookingMs >= sevenDaysFromNow;
+  })();
+
   // Can proceed check
-  const canProceed = selectedDate && hours >= minHours && adultEquiv >= minGuests && agreedToTerms && whatsappReady && !lastMinuteBlocker;
+  const canProceed = selectedDate && hours >= minHours && adultEquiv >= minGuests && agreedToTerms && whatsappReady && !lastMinuteBlocker && bbqHelperHoursOK && bbqHelperLeadTimeOK;
 
   return (
     <div className="pt-28 pb-20 relative overflow-hidden">
@@ -1036,6 +1051,86 @@ export default function BookingPage() {
                           </div>
                         </div>
                       </motion.div>
+                    )}
+                  </div>
+                )}
+
+                {/* BBQ Helper Chef — 代燒員. \$300/hr × N × booking
+                 *  hours. Hidden at noBBQ venues (灣仔). Quantity 0-6.
+                 *  Min 5hr + ≥ 7 days advance enforced; violations show
+                 *  a red hint that blocks Proceed via canProceed. */}
+                {!noBBQVenues.includes(venue.id) && (
+                  <div className={`p-5 rounded-2xl border transition-all ${
+                    bbqHelperQty > 0 ? 'border-pink bg-pink/5' : 'border-charcoal/5'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <p className="font-semibold">{locale === 'zh' ? '代燒員' : 'BBQ Helper Chef'}</p>
+                        <p className="text-sm text-muted mt-1">
+                          {locale === 'zh'
+                            ? '每位 $300/小時 × 訂場時數；最少訂 5 小時、需提前最少 7 日'
+                            : '$300/hr per chef × booked hours; min 5-hr booking, ≥ 7 days advance'}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = Math.max(0, bbqHelperQty - 1);
+                            if (next === 0) {
+                              setSelectedAddOns(selectedAddOns.filter((a) => a.id !== 'bbq-helper'));
+                            } else {
+                              setSelectedAddOns(selectedAddOns.map((a) => a.id === 'bbq-helper' ? { ...a, quantity: next } : a));
+                            }
+                          }}
+                          disabled={bbqHelperQty <= 0}
+                          className="w-8 h-8 rounded-lg border border-charcoal/10 flex items-center justify-center disabled:opacity-30"
+                        >
+                          <Minus size={14} />
+                        </button>
+                        <span className="font-bold w-6 text-center">{bbqHelperQty}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = Math.min(6, bbqHelperQty + 1);
+                            if (bbqHelperQty === 0) {
+                              setSelectedAddOns([...selectedAddOns, { id: 'bbq-helper', quantity: next }]);
+                            } else {
+                              setSelectedAddOns(selectedAddOns.map((a) => a.id === 'bbq-helper' ? { ...a, quantity: next } : a));
+                            }
+                          }}
+                          disabled={bbqHelperQty >= 6}
+                          className="w-8 h-8 rounded-lg border border-charcoal/10 flex items-center justify-center disabled:opacity-30"
+                        >
+                          <Plus size={14} />
+                        </button>
+                      </div>
+                    </div>
+                    {bbqHelperQty > 0 && (
+                      <div className="mt-3 pt-3 border-t border-charcoal/5 space-y-2">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-ink-soft">
+                            {locale === 'zh' ? '小計' : 'Subtotal'}
+                          </span>
+                          <span className="font-bold text-ink">
+                            HK${(300 * bbqHelperQty * Math.max(1, hours)).toLocaleString()}
+                          </span>
+                        </div>
+                        {!bbqHelperHoursOK && (
+                          <p className="text-xs text-rose-600 leading-relaxed">
+                            ⚠️ {locale === 'zh'
+                              ? `代燒員最少訂 5 小時（你而家揀咗 ${hours} 小時）。請延長訂場時數或取消代燒員。`
+                              : `BBQ helper chef requires ≥ 5 hours (currently ${hours}). Extend duration or remove the chef.`}
+                          </p>
+                        )}
+                        {!bbqHelperLeadTimeOK && (
+                          <p className="text-xs text-rose-600 leading-relaxed">
+                            ⚠️ {locale === 'zh'
+                              ? '代燒員需提前最少 7 日預訂。請揀更遲嘅日子，或 WhatsApp 聯絡 CS 安排。'
+                              : 'BBQ helper chef needs ≥ 7 days advance. Pick a later date or contact CS via WhatsApp.'}
+                          </p>
+                        )}
+                      </div>
                     )}
                   </div>
                 )}
