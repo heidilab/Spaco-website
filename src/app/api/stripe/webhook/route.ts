@@ -3,7 +3,7 @@ import { stripe } from '@/lib/stripe';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { buildBookingConfirmationEmail, generateWhatsAppLink } from '@/lib/email';
-import { sendAutomatedEmail, sendStaffBookingNotification } from '@/lib/emailAutomations';
+import { sendAutomatedEmail, sendStaffBookingNotification, sendStaffSupplierOrderNotification } from '@/lib/emailAutomations';
 import { getVenueById } from '@/lib/venues';
 import { processBookingForLockAccess } from '@/lib/lockPasscode';
 import { pushBookingToCalendar, updateBookingOnCalendar } from '@/lib/googleCalendar';
@@ -274,6 +274,15 @@ export async function POST(request: NextRequest) {
               addOnsLine: formatAddOnsForStaff(bookingForNotify.addOns, 'zh'),
               hasBYOFood: !!bookingForNotify.hasBYOFood,
               paymentMethod: 'Stripe',
+              adminUrl: `${origin}/zh/admin/bookings/${bookingForNotify.id}`,
+            });
+            // Supplier-order email (only fires when booking has
+            // hotpot / shisha / decoration / chef / catering).
+            await sendStaffSupplierOrderNotification({
+              booking: bookingForNotify,
+              venueName: venue?.name.zh || bookingForNotify.branchSlug,
+              customerName: profileForNotify?.displayName || '—',
+              customerEmail: profileForNotify?.email,
               adminUrl: `${origin}/zh/admin/bookings/${bookingForNotify.id}`,
             });
           }

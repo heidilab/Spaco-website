@@ -9,12 +9,14 @@
 // `sendAutomatedEmail()` which checks the toggle first.
 
 import { adminDb } from './firebaseAdmin';
-import { sendEmail, buildStaffBookingNotificationEmail, buildStaffReceiptPendingEmail } from './email';
+import { sendEmail, buildStaffBookingNotificationEmail, buildStaffReceiptPendingEmail, buildStaffSupplierOrderEmail, bookingNeedsSupplierOrder } from './email';
+import type { BookingRecord } from '@/types';
 
 export type EmailAutomationKey =
   | 'booking_confirmation'
   | 'booking_cancelled'
   | 'staff_booking_notification'
+  | 'staff_supplier_order'
   | 'staff_receipt_pending'
   | 'offline_payment_pending'
   | 'fps_reminder'
@@ -73,6 +75,19 @@ export const EMAIL_AUTOMATIONS: EmailAutomationDef[] = [
     trigger: {
       zh: 'Stripe 付款成功 / Admin 手動 confirm booking',
       en: 'Stripe payment success / Admin confirms booking',
+    },
+    audience: 'staff',
+  },
+  {
+    key: 'staff_supplier_order',
+    name: { zh: '內部 Supplier 訂購通知', en: 'Staff Supplier-Order Notice' },
+    description: {
+      zh: '當預訂含火鍋 / Shisha / 免費佈置 / 代燒員 / 美食到會,額外寄一封詳細通知 admin 即時聯絡供應商落單。',
+      en: 'Extra email sent when the booking has hotpot / shisha / free decoration / BBQ chef / catering — itemised so admin can order from suppliers right away.',
+    },
+    trigger: {
+      zh: '同 staff_booking_notification 同步觸發(只在含 supplier 項目時)',
+      en: 'Fired alongside staff_booking_notification (only when supplier items present)',
     },
     audience: 'staff',
   },
@@ -255,6 +270,34 @@ export async function sendStaffBookingNotification(
   await Promise.all(list.map((to) =>
     sendEmail({ to, subject: tpl.subject, html: tpl.html })
       .catch((err) => console.warn(`[staff-notify] send to ${to} failed:`, err)),
+  ));
+}
+
+/** Send the supplier-order email — only when the booking actually
+ *  contains supplier-trigger items (火鍋 / Shisha / 免費佈置 /
+ *  代燒員 / 美食到會). No-op otherwise so callers can fire-and-
+ *  forget without first checking the booking shape. */
+export async function sendStaffSupplierOrderNotification(params: {
+  booking: BookingRecord;
+  venueName: string;
+  customerName: string;
+  customerEmail?: string;
+  adminUrl: string;
+}): Promise<void> {
+  if (!bookingNeedsSupplierOrder(params.booking)) return;
+  if (!(await isEmailAutomationEnabled('staff_supplier_order'))) {
+    console.log('[staff-supplier] skipped (automation disabled)');
+    return;
+  }
+  const list = (process.env.STAFF_NOTIFICATION_EMAILS || 'spacohk@gmail.com')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (list.length === 0) return;
+  const tpl = buildStaffSupplierOrderEmail(params);
+  await Promise.all(list.map((to) =>
+    sendEmail({ to, subject: tpl.subject, html: tpl.html })
+      .catch((err) => console.warn(`[staff-supplier] send to ${to} failed:`, err)),
   ));
 }
 

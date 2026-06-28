@@ -8,8 +8,10 @@ import {
   buildFPSReminderEmail, buildBalanceDueReminderEmail,
   buildLockPasscodeEmail, buildPostEventEmail, buildBirthdayEmail,
   buildWelcomeEmail, buildStaffBookingNotificationEmail,
-  buildStaffReceiptPendingEmail, buildBookingCancelledEmail, sendEmail,
+  buildStaffReceiptPendingEmail, buildStaffSupplierOrderEmail,
+  buildBookingCancelledEmail, sendEmail,
 } from '@/lib/email';
+import type { BookingRecord } from '@/types';
 
 export const runtime = 'nodejs';
 
@@ -129,6 +131,59 @@ function buildPreview(key: EmailAutomationKey): { subject: string; html: string 
       return buildBirthdayEmail({ customerName: SAMPLE.customerName });
     case 'welcome':
       return buildWelcomeEmail({ customerName: SAMPLE.customerName });
+    case 'staff_supplier_order': {
+      // Synthetic booking with every supplier-trigger item present so
+      // the preview shows the full layout.
+      const sample = {
+        id: SAMPLE.bookingId,
+        userId: 'preview',
+        whatsappPhone: '+852 9123 4966',
+        venueId: 'cwb',
+        branchSlug: 'causeway-bay',
+        date: SAMPLE.date,
+        startTime: SAMPLE.startTime,
+        endTime: SAMPLE.endTime,
+        hours: 5,
+        guestCount: 18,
+        adultCount: 14,
+        childCount: 4,
+        isWeekend: false,
+        hasBYOFood: false,
+        addOns: [
+          { id: 'hotpot-standard', quantity: 1 },
+          { id: 'hotpot-extra-soup', quantity: 1 },
+          { id: 'shisha', quantity: 2, options: { pipes: 2, flavors: ['A', 'D'], staffSetup: true } },
+          { id: 'bbq-helper', quantity: 2 },
+          { id: 'catering', quantity: 1, options: {
+            tierId: 'tier-17',
+            dishCodes: ['101', '122', '143', '170', 'A1'],
+            deliveryZoneId: 'kowloon-hkisland',
+            doorstepDelivery: true,
+            noCutlery: false,
+            extraCutlerySets: 2,
+            extraFoodTongs: 1,
+          } },
+        ],
+        decorationStyle: 'pink',
+        packageSlug: 'birthday-cwb',
+        pricing: { baseCharge: 6800, addOnTotal: 5500, subtotal: 12300, securityDeposit: 2000, deposit: 14300 },
+        status: 'confirmed',
+        paymentMethod: 'stripe',
+        receiptUrl: null,
+        depositRefund: null,
+        refundDetails: { method: 'fps', fpsIdentifier: '+852 9123 4966' },
+        balanceDue: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as unknown as BookingRecord;
+      return buildStaffSupplierOrderEmail({
+        booking: sample,
+        venueName: SAMPLE.venueName,
+        customerName: SAMPLE.customerName,
+        customerEmail: 'sample@example.com',
+        adminUrl: 'https://spacohk.com/zh/admin/bookings/SAMPLE',
+      });
+    }
   }
 }
 
