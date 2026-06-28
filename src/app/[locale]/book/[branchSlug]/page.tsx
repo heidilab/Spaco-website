@@ -1636,6 +1636,8 @@ export default function BookingPage() {
         initial={cateringSelection}
         locale={locale}
         bookingDate={selectedDate}
+        bookingStartTime={startTime}
+        bookingEndTime={endTime}
         onClose={() => setCateringModalOpen(false)}
         onSave={(sel) => {
           setSelectedAddOns((prev) => {

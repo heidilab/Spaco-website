@@ -276,6 +276,7 @@ export default function AdminBookingDetailPage() {
               noCutlery: !!o.noCutlery,
               extraCutlerySets: o.extraCutlerySets || 0,
               extraFoodTongs: o.extraFoodTongs || 0,
+              deliveryTime: o.deliveryTime,
             });
           }
         }
@@ -2281,6 +2282,8 @@ export default function AdminBookingDetailPage() {
         initial={cateringSelection || undefined}
         locale={locale}
         bookingDate={date}
+        bookingStartTime={startTime}
+        bookingEndTime={endTime}
         onClose={() => setCateringModalOpen(false)}
         onSave={(sel) => {
           setCateringSelection(sel);

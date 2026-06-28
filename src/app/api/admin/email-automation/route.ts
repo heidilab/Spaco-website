@@ -162,6 +162,7 @@ function buildPreview(key: EmailAutomationKey): { subject: string; html: string 
             noCutlery: false,
             extraCutlerySets: 2,
             extraFoodTongs: 1,
+            deliveryTime: '15:30',
           } },
         ],
         decorationStyle: 'pink',

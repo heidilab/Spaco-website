@@ -81,6 +81,10 @@ export interface AddOnOptions {
   extraCutlerySets?: number;
   /** Additional food tongs beyond the included one (+$9 each). */
   extraFoodTongs?: number;
+  /** Customer-chosen delivery time slot HH:mm. Must fall within the
+   *  booking's [startTime, endTime] so the customer is on-site to
+   *  accept the supplier's delivery directly. */
+  deliveryTime?: string;
 }
 
 export interface BookingState {

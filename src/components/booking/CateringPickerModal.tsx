@@ -36,6 +36,10 @@ export interface CateringSelection {
   noCutlery: boolean;
   extraCutlerySets: number;
   extraFoodTongs: number;
+  /** HH:mm slot picked by the customer for supplier delivery — must
+   *  fall within the booking's session so customer is on-site to
+   *  accept it directly. Heidi 2026-06-22. */
+  deliveryTime?: string;
 }
 
 interface Props {
@@ -44,6 +48,11 @@ interface Props {
   locale: 'zh' | 'en';
   /** Booking date YYYY-MM-DD — used to enforce the ≥2-day lead time. */
   bookingDate?: string;
+  /** Booking session start HH:mm — delivery time must be on/after this. */
+  bookingStartTime?: string;
+  /** Booking session end HH:mm — delivery time must be ≤ this. Overnight
+   *  bookings: pass the day-1 end clamped to "23:59". */
+  bookingEndTime?: string;
   onClose: () => void;
   onSave: (selection: CateringSelection) => void;
   onRemove?: () => void;
@@ -57,7 +66,8 @@ const TAG_META: Record<CateringTag, { zh: string; en: string; cls: string; Icon:
 };
 
 export default function CateringPickerModal({
-  open, initial, locale, bookingDate, onClose, onSave, onRemove,
+  open, initial, locale, bookingDate, bookingStartTime, bookingEndTime,
+  onClose, onSave, onRemove,
 }: Props) {
   const [tierId, setTierId] = useState(initial?.tierId || CATERING_TIERS[0].id);
   const [dishCodes, setDishCodes] = useState<string[]>(initial?.dishCodes || []);
@@ -66,6 +76,7 @@ export default function CateringPickerModal({
   const [noCutlery, setNoCutlery] = useState(!!initial?.noCutlery);
   const [extraCutlerySets, setExtraCutlerySets] = useState(initial?.extraCutlerySets || 0);
   const [extraFoodTongs, setExtraFoodTongs] = useState(initial?.extraFoodTongs || 0);
+  const [deliveryTime, setDeliveryTime] = useState<string>(initial?.deliveryTime || '');
   const [activeCategory, setActiveCategory] = useState<string>('main');
   const [activeTagFilter, setActiveTagFilter] = useState<CateringTag | null>(null);
 
@@ -79,6 +90,7 @@ export default function CateringPickerModal({
       setNoCutlery(!!initial?.noCutlery);
       setExtraCutlerySets(initial?.extraCutlerySets || 0);
       setExtraFoodTongs(initial?.extraFoodTongs || 0);
+      setDeliveryTime(initial?.deliveryTime || '');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -107,9 +119,29 @@ export default function CateringPickerModal({
     setDishCodes((prev) => prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]);
   };
 
+  // Delivery time options — 15-min increments within the booking
+  // session [startTime, endTime]. Customer MUST be on-site to accept
+  // supplier delivery directly, so we don't allow outside the
+  // session. Falls back to a full-day list when booking times aren't
+  // provided (legacy / admin contexts).
+  const deliveryTimeOptions = useMemo(() => {
+    const toMin = (s: string) => {
+      const [h, m] = s.split(':').map(Number);
+      return h * 60 + (m || 0);
+    };
+    const fmt = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    const startMin = bookingStartTime ? toMin(bookingStartTime) : 8 * 60;
+    const endMin   = bookingEndTime   ? toMin(bookingEndTime)   : 23 * 60 + 45;
+    const out: string[] = [];
+    for (let m = startMin; m <= endMin; m += 15) out.push(fmt(m));
+    return out;
+  }, [bookingStartTime, bookingEndTime]);
+  const deliveryTimeOK = !!deliveryTime && deliveryTimeOptions.includes(deliveryTime);
+
   const handleSave = () => {
     onSave({
       tierId, dishCodes, deliveryZoneId, doorstepDelivery, noCutlery, extraCutlerySets, extraFoodTongs,
+      deliveryTime,
     });
   };
 
@@ -281,10 +313,41 @@ export default function CateringPickerModal({
                     </option>
                   ))}
                 </select>
-                <label className="flex items-center gap-2 text-xs text-ink cursor-pointer">
+                <label className="flex items-center gap-2 text-xs text-ink cursor-pointer mb-3">
                   <input type="checkbox" checked={doorstepDelivery} onChange={(e) => setDoorstepDelivery(e.target.checked)} className="w-4 h-4" />
                   <span>{locale === 'zh' ? `上門交收 (+HK$${CATERING_DOORSTEP_DELIVERY_FEE})` : `Door-to-door (+HK$${CATERING_DOORSTEP_DELIVERY_FEE})`}</span>
                 </label>
+
+                {/* Delivery time — must be inside booking session so
+                 *  customer can accept directly from supplier. */}
+                <label className="block text-xs font-semibold text-ink mb-1">
+                  {locale === 'zh' ? '送貨時間 *' : 'Delivery time *'}
+                </label>
+                <select
+                  value={deliveryTime}
+                  onChange={(e) => setDeliveryTime(e.target.value)}
+                  className={`w-full px-3 py-2 rounded-lg border text-sm ${
+                    deliveryTime
+                      ? 'border-charcoal/15 bg-white'
+                      : 'border-rose-300 bg-rose-50 text-rose-700'
+                  }`}
+                >
+                  <option value="">
+                    {locale === 'zh'
+                      ? bookingStartTime && bookingEndTime
+                        ? `請揀（${bookingStartTime} – ${bookingEndTime} 內）`
+                        : '請揀'
+                      : 'Pick a time'}
+                  </option>
+                  {deliveryTimeOptions.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-amber-700 mt-1.5 leading-snug">
+                  ⚠️ {locale === 'zh'
+                    ? '食物需要客人自行收貨，請揀已喺場地內嘅時間。供應商當日會直接聯絡客人交收。'
+                    : 'You must be on-site to receive the delivery. Pick a time within your booking session — the supplier will contact you directly on the day.'}
+                </p>
               </div>
               <div className="p-4 rounded-xl bg-charcoal/5">
                 <h4 className="text-sm font-bold mb-2 text-ink">{locale === 'zh' ? '餐具選項' : 'Cutlery'}</h4>
@@ -327,8 +390,15 @@ export default function CateringPickerModal({
               <button
                 type="button"
                 onClick={handleSave}
-                disabled={!leadDaysOK || nonAddonSelectedCount === 0}
+                disabled={!leadDaysOK || nonAddonSelectedCount === 0 || !deliveryTimeOK}
                 className="px-5 py-2 rounded-pill bg-gradient-pink text-white text-sm font-bold shadow-glow disabled:opacity-40 disabled:cursor-not-allowed"
+                title={
+                  !deliveryTimeOK
+                    ? (locale === 'zh' ? '請揀送貨時間' : 'Pick a delivery time')
+                    : nonAddonSelectedCount === 0
+                      ? (locale === 'zh' ? '請揀至少 1 款菜' : 'Pick at least 1 dish')
+                      : ''
+                }
               >
                 {locale === 'zh' ? '儲存' : 'Save'}
               </button>

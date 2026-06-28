@@ -788,11 +788,15 @@ export function buildStaffSupplierOrderEmail(params: {
     const addonLines = addonDishes.length > 0
       ? `<ul style="margin: 4px 0 0; padding-left: 18px;">${addonDishes.map((d) => `<li>[${d.code}] ${d.name.zh} ${d.price ? `(+HK$${d.price})` : ''}</li>`).join('')}</ul>`
       : '';
+    const deliveryTimeLine = opts.deliveryTime
+      ? `<strong style="color:#B45309;">⏰ 送貨時間：${opts.deliveryTime}</strong>（客人會喺場地內接收,請供應商當日聯絡客人 ${booking.whatsappPhone || ''}）`
+      : '<strong style="color:#991B1B;">⚠️ 客人未揀送貨時間,須跟進</strong>';
     const lines = [
       `• 套餐：${tier?.paxRange.min}-${tier?.paxRange.max} 人 / 任選 ${tier?.pickCount} 盤 / HK$${tier?.price.toLocaleString()}`,
       `• 已揀 ${nonAddon.length} 款主菜${nonAddon.length > (tier?.pickCount ?? 0) ? `（額外 ${nonAddon.length - (tier?.pickCount ?? 0)} × HK$155）` : ''}：${dishLinesByCategory}`,
       addonDishes.length > 0 ? `• 追加款式：${addonLines}` : '',
-      `• 送貨：${zone?.label.zh || '—'}${zone?.fee ? ` (+HK$${zone.fee})` : ''}${opts.doorstepDelivery ? ' / 上門交收 (+$150)' : ' / 樓下交收'}`,
+      `• 送貨區：${zone?.label.zh || '—'}${zone?.fee ? ` (+HK$${zone.fee})` : ''}${opts.doorstepDelivery ? ' / 上門交收 (+$150)' : ' / 樓下交收'}`,
+      `• ${deliveryTimeLine}`,
       `• 餐具：${opts.noCutlery ? '走餐具 (−$10)' : '包餐具 + 1 食物夾'}${(opts.extraCutlerySets ?? 0) > 0 ? ` / 額外 ${opts.extraCutlerySets} set` : ''}${(opts.extraFoodTongs ?? 0) > 0 ? ` / 額外 ${opts.extraFoodTongs} 食物夾` : ''}`,
     ].filter(Boolean);
     sections.push(supplierSection('🍱', '美食到會', '須最少 2 日前向供應商落單', lines));
