@@ -152,7 +152,7 @@ function buildPreview(key: EmailAutomationKey): { subject: string; html: string 
         addOns: [
           { id: 'hotpot-standard', quantity: 1 },
           { id: 'hotpot-extra-soup', quantity: 1 },
-          { id: 'shisha', quantity: 2, options: { pipes: 2, flavors: ['A', 'D'], staffSetup: true } },
+          { id: 'shisha', quantity: 2, options: { pipes: 2, flavors: ['A', 'D'], staffSetup: true, staffSetupTime: '16:00' } },
           { id: 'bbq-helper', quantity: 2 },
           { id: 'catering', quantity: 1, options: {
             tierId: 'tier-17',

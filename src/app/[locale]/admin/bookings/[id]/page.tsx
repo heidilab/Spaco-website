@@ -137,6 +137,7 @@ export default function AdminBookingDetailPage() {
     pipes: number;
     flavors: string[];
     staffSetup: boolean;
+    staffSetupTime?: string;
   }>({ pipes: 1, flavors: [], staffSetup: false });
   // Catering modal state. Selection hydrates from the stored
   // catering add-on's options on load; save merges back into addOns.
@@ -261,6 +262,7 @@ export default function AdminBookingDetailPage() {
             pipes,
             flavors,
             staffSetup: !!shishaEntry.options?.staffSetup,
+            staffSetupTime: shishaEntry.options?.staffSetupTime,
           });
         }
         // Hydrate catering selection — admin opens the modal to see/edit.
@@ -330,6 +332,9 @@ export default function AdminBookingDetailPage() {
                 pipes: shishaOptions.pipes,
                 flavors,
                 staffSetup: shishaOptions.staffSetup,
+                ...(shishaOptions.staffSetup && shishaOptions.staffSetupTime
+                  ? { staffSetupTime: shishaOptions.staffSetupTime }
+                  : {}),
               },
             };
           }
@@ -1513,7 +1518,11 @@ export default function AdminBookingDetailPage() {
                           type="checkbox"
                           checked={shishaOptions.staffSetup}
                           onChange={(e) =>
-                            setShishaOptions((prev) => ({ ...prev, staffSetup: e.target.checked }))
+                            setShishaOptions((prev) => ({
+                              ...prev,
+                              staffSetup: e.target.checked,
+                              ...(e.target.checked ? {} : { staffSetupTime: undefined }),
+                            }))
                           }
                           className="w-3.5 h-3.5 accent-accent"
                         />
@@ -1523,6 +1532,40 @@ export default function AdminBookingDetailPage() {
                             : 'Staff setup +HK$180'}
                         </span>
                       </label>
+                      {shishaOptions.staffSetup && (
+                        <div className="ml-5 mt-1 p-2 rounded-lg bg-white/60 border border-charcoal/10">
+                          <label className="text-[11px] font-semibold text-ink-soft block mb-1">
+                            {locale === 'zh' ? 'Setup 時間 *' : 'Setup time *'}
+                          </label>
+                          <select
+                            value={shishaOptions.staffSetupTime || ''}
+                            onChange={(e) =>
+                              setShishaOptions((prev) => ({ ...prev, staffSetupTime: e.target.value || undefined }))
+                            }
+                            className={`w-full px-2 py-1 rounded border text-xs ${
+                              shishaOptions.staffSetupTime
+                                ? 'border-charcoal/15 bg-white'
+                                : 'border-rose-300 bg-rose-50 text-rose-700'
+                            }`}
+                          >
+                            <option value="">
+                              {startTime && endTime ? `${startTime} – ${endTime}` : '請揀'}
+                            </option>
+                            {(() => {
+                              const toMin = (s: string) => {
+                                const [h, m] = s.split(':').map(Number);
+                                return h * 60 + (m || 0);
+                              };
+                              const fmt = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+                              const sm = startTime ? toMin(startTime) : 8 * 60;
+                              const em = endTime ? toMin(endTime) : 23 * 60 + 45;
+                              const out: string[] = [];
+                              for (let m = sm; m <= em; m += 15) out.push(fmt(m));
+                              return out.map((t) => <option key={t} value={t}>{t}</option>);
+                            })()}
+                          </select>
+                        </div>
+                      )}
                     </div>
                   );
                 })()}

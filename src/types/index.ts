@@ -59,6 +59,10 @@ export interface AddOnOptions {
   flavors?: string[];
   /** Whether the customer wants staff setup (+$180 flat). */
   staffSetup?: boolean;
+  /** HH:mm slot customer wants the shisha setup done. Required when
+   *  staffSetup is true so the supplier can dispatch a staffer on
+   *  time. Must fall within the booking session. Heidi 2026-06-22. */
+  staffSetupTime?: string;
   /** Admin-defined name for custom add-on entries (id starts with
    *  `custom-`). Customers can't add these; admin enters their own
    *  description here. Shown on the booking detail page + Google

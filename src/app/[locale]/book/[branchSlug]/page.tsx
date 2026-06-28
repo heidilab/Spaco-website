@@ -296,8 +296,9 @@ export default function BookingPage() {
   const shishaPipes = shishaEntry?.options?.pipes || (shishaHeads > 0 ? Math.min(SHISHA_MAX_PIPES, shishaHeads) : 0);
   const shishaFlavors = shishaEntry?.options?.flavors || [];
   const shishaStaffSetup = !!shishaEntry?.options?.staffSetup;
+  const shishaStaffSetupTime = shishaEntry?.options?.staffSetupTime || '';
 
-  function writeShisha(next: { pipes: number; heads: number; flavors: string[]; staffSetup: boolean }) {
+  function writeShisha(next: { pipes: number; heads: number; flavors: string[]; staffSetup: boolean; staffSetupTime?: string }) {
     if (next.heads === 0) {
       setSelectedAddOns(selectedAddOns.filter((a) => a.id !== 'shisha'));
       return;
@@ -309,6 +310,9 @@ export default function BookingPage() {
         pipes: next.pipes,
         flavors: next.flavors,
         staffSetup: next.staffSetup,
+        // Drop the time when staff-setup is unchecked so we don't
+        // keep stale data on the booking.
+        ...(next.staffSetup && next.staffSetupTime ? { staffSetupTime: next.staffSetupTime } : {}),
       },
     };
     if (shishaEntry) {
@@ -325,7 +329,7 @@ export default function BookingPage() {
     const heads = Math.max(pipes, shishaHeads);
     const prevFlavors = shishaFlavors;
     const flavors = Array.from({ length: heads }, (_, i) => prevFlavors[i] || 'A');
-    writeShisha({ pipes, heads, flavors, staffSetup: shishaStaffSetup });
+    writeShisha({ pipes, heads, flavors, staffSetup: shishaStaffSetup, staffSetupTime: shishaStaffSetupTime });
   }
 
   function setShishaHeads(nextHeads: number) {
@@ -338,19 +342,24 @@ export default function BookingPage() {
     // when heads is being lowered below current pipes count.
     const pipes = Math.max(1, Math.min(heads, shishaPipes || 1));
     const flavors = Array.from({ length: heads }, (_, i) => shishaFlavors[i] || 'A');
-    writeShisha({ pipes, heads, flavors, staffSetup: shishaStaffSetup });
+    writeShisha({ pipes, heads, flavors, staffSetup: shishaStaffSetup, staffSetupTime: shishaStaffSetupTime });
   }
 
   function setShishaFlavor(idx: number, flavorId: string) {
     if (!shishaEntry) return;
     const flavors = [...shishaFlavors];
     flavors[idx] = flavorId;
-    writeShisha({ pipes: shishaPipes, heads: shishaHeads, flavors, staffSetup: shishaStaffSetup });
+    writeShisha({ pipes: shishaPipes, heads: shishaHeads, flavors, staffSetup: shishaStaffSetup, staffSetupTime: shishaStaffSetupTime });
   }
 
   function toggleShishaStaffSetup() {
     if (!shishaEntry) return;
-    writeShisha({ pipes: shishaPipes, heads: shishaHeads, flavors: shishaFlavors, staffSetup: !shishaStaffSetup });
+    writeShisha({ pipes: shishaPipes, heads: shishaHeads, flavors: shishaFlavors, staffSetup: !shishaStaffSetup, staffSetupTime: shishaStaffSetupTime });
+  }
+
+  function setShishaStaffSetupTime(time: string) {
+    if (!shishaEntry) return;
+    writeShisha({ pipes: shishaPipes, heads: shishaHeads, flavors: shishaFlavors, staffSetup: shishaStaffSetup, staffSetupTime: time });
   }
 
   // Load blocked slots for the selected date so the time-picker can
@@ -475,8 +484,11 @@ export default function BookingPage() {
     return bookingMs >= sevenDaysFromNow;
   })();
 
+  // Shisha staff-setup time is required when the setup checkbox is on.
+  const shishaSetupTimeOK = !shishaStaffSetup || !!shishaStaffSetupTime;
+
   // Can proceed check
-  const canProceed = selectedDate && hours >= minHours && adultEquiv >= minGuests && agreedToTerms && whatsappReady && !lastMinuteBlocker && bbqHelperHoursOK && bbqHelperLeadTimeOK;
+  const canProceed = selectedDate && hours >= minHours && adultEquiv >= minGuests && agreedToTerms && whatsappReady && !lastMinuteBlocker && bbqHelperHoursOK && bbqHelperLeadTimeOK && shishaSetupTimeOK;
 
   return (
     <div className="pt-28 pb-20 relative overflow-hidden">
@@ -1344,6 +1356,50 @@ export default function BookingPage() {
                               : `Staff setup help (+HK$${SHISHA_STAFF_SETUP_FEE})`}
                           </span>
                         </label>
+
+                        {/* Staff-setup time — required when staffSetup
+                         *  is checked. Time must be inside the booking
+                         *  session so the supplier's staffer arrives
+                         *  while the customer is on-site. */}
+                        {shishaStaffSetup && (
+                          <div className="ml-7 mt-1 p-3 rounded-xl bg-white/60 border border-charcoal/10 space-y-1.5">
+                            <label className="block text-xs font-semibold text-ink">
+                              {locale === 'zh' ? 'Setup 時間 *' : 'Setup time *'}
+                            </label>
+                            <select
+                              value={shishaStaffSetupTime}
+                              onChange={(e) => setShishaStaffSetupTime(e.target.value)}
+                              className={`w-full px-3 py-1.5 rounded-lg border text-sm ${
+                                shishaStaffSetupTime
+                                  ? 'border-charcoal/15 bg-white'
+                                  : 'border-rose-300 bg-rose-50 text-rose-700'
+                              }`}
+                            >
+                              <option value="">
+                                {startTime && endTime
+                                  ? (locale === 'zh' ? `請揀（${startTime} – ${endTime} 內）` : `Pick a time (${startTime} – ${endTime})`)
+                                  : (locale === 'zh' ? '請揀' : 'Pick a time')}
+                              </option>
+                              {(() => {
+                                const toMin = (s: string) => {
+                                  const [h, m] = s.split(':').map(Number);
+                                  return h * 60 + (m || 0);
+                                };
+                                const fmt = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+                                const sm = startTime ? toMin(startTime) : 8 * 60;
+                                const em = endTime ? toMin(endTime) : 23 * 60 + 45;
+                                const out: string[] = [];
+                                for (let m = sm; m <= em; m += 15) out.push(fmt(m));
+                                return out.map((t) => <option key={t} value={t}>{t}</option>);
+                              })()}
+                            </select>
+                            <p className="text-[11px] text-amber-700 leading-snug">
+                              ⚠️ {locale === 'zh'
+                                ? '請揀已喺場地內嘅時間。供應商會喺呢個時間派員上門幫手 setup。'
+                                : 'Pick a time you\'ll already be on-site. The supplier will dispatch staff at this time to set up.'}
+                            </p>
+                          </div>
+                        )}
 
                         {/* Live price preview */}
                         <div className="flex items-center justify-between pt-2 border-t border-white/40">

@@ -742,9 +742,14 @@ export function buildStaffSupplierOrderEmail(params: {
     const flavorLines = flavorList.length > 0
       ? flavorList.map((f, i) => `  • Head ${i + 1}: ${SHISHA_FLAVOR_NAMES[f] || f}`).join('<br>')
       : '<i style="color:#991B1B;">⚠️ 客人未揀煙頭口味,須跟進</i>';
+    const staffSetupLine = staffSetup
+      ? (opts.staffSetupTime
+          ? `是 (+$180) · <strong style="color:#B45309;">⏰ Setup 時間：${opts.staffSetupTime}</strong>（客人會喺場地內接收,請供應商當日聯絡客人 ${booking.whatsappPhone || ''}）`
+          : `是 (+$180) · <strong style="color:#991B1B;">⚠️ 客人未揀 setup 時間,須跟進</strong>`)
+      : '否';
     const lines = [
       `• ${pipes} 支水煙 × ${heads} 個煙頭（HK$${cost.toLocaleString()}）`,
-      `• 人手 setup：${staffSetup ? '是 (+$180)' : '否'}`,
+      `• 人手 setup：${staffSetupLine}`,
       `• 口味：<br>${flavorLines}`,
     ];
     sections.push(supplierSection('💨', 'Shisha 水煙', '須最少 2 日前向供應商落單', lines));
