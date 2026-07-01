@@ -114,6 +114,47 @@ export async function POST(request: NextRequest) {
 
         await bookingRef.update(updates);
 
+        // 1a. If the expire-pending-bookings cron swept this booking
+        //     before the Stripe webhook arrived (race: customer paid at
+        //     the last second, cron deleted blocked_slots, webhook then
+        //     re-confirms), the time slot is now unprotected. Recreate
+        //     the blocked_slots so no one else can book the same window.
+        //     We query by bookingId — if count > 0 the cron didn't delete
+        //     them and we skip; if count = 0 we rebuild from the booking.
+        if (!isBalancePayment && preStripe) {
+          try {
+            const existingBlocks = await adminDb
+              .collection('blocked_slots')
+              .where('bookingId', '==', bookingId)
+              .get();
+            if (existingBlocks.empty) {
+              const b = preStripe;
+              const overnight = !!b.endDate && b.endDate !== b.date;
+              const endDate = overnight ? (b.endDate as string) : b.date;
+              const [endH, endM] = b.endTime.split(':').map(Number);
+              const bufferEndH = endH + 1;
+              const bufferEnd = bufferEndH >= 24
+                ? '23:59'
+                : `${String(bufferEndH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+              const batch = adminDb.batch();
+              const newSlot = (data: object) =>
+                batch.create(adminDb.collection('blocked_slots').doc(), data);
+              if (overnight) {
+                newSlot({ venueId: b.venueId, date: b.date, startTime: b.startTime, endTime: '23:59', reason: 'booking', bookingId });
+                newSlot({ venueId: b.venueId, date: endDate, startTime: '00:00', endTime: b.endTime, reason: 'booking', bookingId });
+                newSlot({ venueId: b.venueId, date: endDate, startTime: b.endTime, endTime: bufferEnd, reason: 'cleaning', bookingId });
+              } else {
+                newSlot({ venueId: b.venueId, date: b.date, startTime: b.startTime, endTime: b.endTime, reason: 'booking', bookingId });
+                newSlot({ venueId: b.venueId, date: b.date, startTime: b.endTime, endTime: bufferEnd, reason: 'cleaning', bookingId });
+              }
+              await batch.commit();
+              console.warn('[stripe webhook] restored deleted blocked_slots for booking', bookingId);
+            }
+          } catch (err) {
+            console.error('[stripe webhook] blocked_slots restore failed for', bookingId, err);
+          }
+        }
+
         // 1b. If the customer redeemed loyalty points / applied a promo
         //     code, persist the deductions now (deposit payments only —
         //     balance payments don't touch points/promos again).
