@@ -126,7 +126,17 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // ── 3. Conflict check ──────────────────────────────────────────────
+      // ── 3. Optionally read booking draft (must come before any writes) ─
+      let draftRef: FirebaseFirestore.DocumentReference | null = null;
+      if (draftId) {
+        draftRef = adminDb.collection('booking_drafts').doc(draftId as string);
+        const draftSnap = await t.get(draftRef);
+        if (!draftSnap.exists) throw new Error('DRAFT_NOT_FOUND');
+        const draft = draftSnap.data() as { status: string; claimedBy: string | null };
+        if (draft.status !== 'pending' || draft.claimedBy) throw new Error('DRAFT_CLAIMED');
+      }
+
+      // ── 4. Conflict check ──────────────────────────────────────────────
       for (const w of checkWindows) {
         for (const docSnap of blockedDocs) {
           const bData = docSnap.data() as { date: string; startTime: string; endTime: string };
@@ -139,7 +149,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // ── 4. Create booking document ────────────────────────────────────
+      // ── 5. Create booking document ────────────────────────────────────
       const bookingRef = adminDb.collection('bookings').doc();
       bookingId = bookingRef.id;
       t.create(bookingRef, {
@@ -156,7 +166,7 @@ export async function POST(req: NextRequest) {
         updatedAt: FieldValue.serverTimestamp(),
       });
 
-      // ── 5. Create blocked_slots ────────────────────────────────────────
+      // ── 6. Create blocked_slots ────────────────────────────────────────
       const addSlot = (data: Record<string, unknown>) =>
         t.create(adminDb.collection('blocked_slots').doc(), data);
 
@@ -169,13 +179,8 @@ export async function POST(req: NextRequest) {
         addSlot({ venueId, date, startTime: endTime, endTime: bufferEnd, reason: 'cleaning', bookingId });
       }
 
-      // ── 6. Optionally claim a booking draft atomically ─────────────────
-      if (draftId) {
-        const draftRef = adminDb.collection('booking_drafts').doc(draftId as string);
-        const draftSnap = await t.get(draftRef);
-        if (!draftSnap.exists) throw new Error('DRAFT_NOT_FOUND');
-        const draft = draftSnap.data() as { status: string; claimedBy: string | null };
-        if (draft.status !== 'pending' || draft.claimedBy) throw new Error('DRAFT_CLAIMED');
+      // ── 7. Mark booking draft as claimed ──────────────────────────────
+      if (draftRef) {
         t.update(draftRef, {
           claimedBy: rest.userId ?? null,
           claimedAt: FieldValue.serverTimestamp(),
@@ -184,7 +189,7 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // ── 7. Touch lock documents ────────────────────────────────────────
+      // ── 8. Touch lock documents ────────────────────────────────────────
       // Writing to the lock documents after reads ensures any concurrent
       // transaction that read the same lock will be forced to retry.
       for (const r of lockRefs) {

@@ -213,7 +213,7 @@ export default function PackageBookingPage() {
   const subtotal = baseCharge + addOnTotal;
   const securityDeposit = pkg.deposit;
   const grandTotal = subtotal + securityDeposit;
-  const upfrontDeposit = calculateDeposit(grandTotal);
+  const upfrontDeposit = calculateDeposit(grandTotal, selectedDate || undefined);
   // "Total upfront" shown in the sidebar = the amount the customer pays now.
   const total = upfrontDeposit;
 

@@ -12,7 +12,7 @@ import {
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { getVenueById } from '@/lib/venues';
-import { addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE, calculatePricing, freeDrinksVenues } from '@/lib/pricing';
+import { addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE, calculatePricing, freeDrinksVenues, isWithin2Days } from '@/lib/pricing';
 import { BookingRecord, RefundDetails, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
 import {
   loadBookingCheckoutDraft, saveBookingCheckoutDraft,
@@ -245,7 +245,7 @@ export default function ConfirmBookingPage() {
   const promoDiscount = applied?.amount || 0;
   const effectiveSubtotal = Math.max(0, booking.pricing.subtotal - promoDiscount);
   const effectiveGrandTotal = effectiveSubtotal + securityDeposit;
-  const isFullPayment = effectiveGrandTotal <= 10000;
+  const isFullPayment = effectiveGrandTotal <= 10000 || isWithin2Days(booking.date);
   const effectiveDeposit = isFullPayment
     ? effectiveGrandTotal
     : Math.round(effectiveGrandTotal * 0.5);

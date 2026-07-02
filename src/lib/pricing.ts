@@ -732,8 +732,29 @@ export function calculateSecurityDeposit(rentalSubtotal: number): number {
  * against the GRAND TOTAL (subtotal + security deposit):
  *   grandTotal ≤ HK$10,000 → full payment (deposit = grandTotal, no balance)
  *   grandTotal >  HK$10,000 → 50% deposit; remaining 50% due 2 days before event.
+ *   grandTotal >  HK$10,000 AND event is within 2 calendar days → full payment
+ *     (balance due date has already passed, so installment is not offered).
  */
-export function calculateDeposit(grandTotal: number): number {
+export function calculateDeposit(grandTotal: number, bookingDateStr?: string): number {
   if (grandTotal <= 10000) return grandTotal;
+  if (bookingDateStr) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const eventDate = new Date(bookingDateStr);
+    eventDate.setHours(0, 0, 0, 0);
+    const daysUntil = Math.round((eventDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    if (daysUntil <= 2) return grandTotal;
+  }
   return Math.round(grandTotal * 0.5);
+}
+
+/** Returns true when a booking date is within 2 calendar days of today,
+ *  meaning the installment window has passed and full payment is required. */
+export function isWithin2Days(bookingDateStr: string): boolean {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const eventDate = new Date(bookingDateStr);
+  eventDate.setHours(0, 0, 0, 0);
+  const daysUntil = Math.round((eventDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  return daysUntil <= 2;
 }

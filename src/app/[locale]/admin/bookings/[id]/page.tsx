@@ -114,6 +114,8 @@ export default function AdminBookingDetailPage() {
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [guestCount, setGuestCount] = useState(0);
+  const [adultCount, setAdultCount] = useState(0);
+  const [childCount, setChildCount] = useState(0);
   // Venue is editable so admin can relocate a booking (e.g. leak / clash).
   // The conflict check on save will block the move if the target venue
   // is already booked at the same time.
@@ -219,6 +221,8 @@ export default function AdminBookingDetailPage() {
         setStartTime(b.startTime);
         setEndTime(b.endTime);
         setGuestCount(b.guestCount);
+        setAdultCount(b.adultCount ?? b.guestCount);
+        setChildCount(b.childCount ?? 0);
         setVenueId(b.venueId);
         setStatusValue(b.status);
         // Hydrate add-on quantities from the booking so the edit panel
@@ -358,7 +362,7 @@ export default function AdminBookingDetailPage() {
         bookingForFormula.hours,
         guestCount,
         liveAddOns,
-        bookingForFormula.childCount ?? 0,
+        childCount,
       );
       // Display the effective (post-promo) subtotal — see hydrate
       // comment above. Storage stays pre-promo. Promo recomputes for
@@ -368,7 +372,7 @@ export default function AdminBookingDetailPage() {
         storedPromoDiscount: bookingForFormula.promoDiscount || 0,
         promoFreeDrinksCost: bookingForFormula.promoFreeDrinksCost,
         liveGuestCount: guestCount,
-        liveChildCount: bookingForFormula.childCount ?? 0,
+        liveChildCount: childCount,
         liveAddOns,
         liveVenueId: venueId,
       });
@@ -380,7 +384,7 @@ export default function AdminBookingDetailPage() {
     // capture is safe because it's the most recent booking from state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    addOnQty, customAddOns, shishaOptions, guestCount, venueId,
+    addOnQty, customAddOns, shishaOptions, guestCount, childCount, venueId,
     bookingForFormula,
   ]);
 
@@ -464,6 +468,8 @@ export default function AdminBookingDetailPage() {
     startTime !== booking.startTime ||
     endTime !== booking.endTime ||
     guestCount !== booking.guestCount ||
+    adultCount !== (booking.adultCount ?? booking.guestCount) ||
+    childCount !== (booking.childCount ?? 0) ||
     venueId !== booking.venueId ||
     addOnsDirty ||
     depositDirty ||
@@ -549,6 +555,8 @@ export default function AdminBookingDetailPage() {
         endTime,
         endDate,
         guestCount,
+        adultCount,
+        childCount,
         ...(venueChanged
           ? { venueId, branchSlug: targetVenue?.slug || booking.branchSlug }
           : {}),
@@ -1174,12 +1182,43 @@ export default function AdminBookingDetailPage() {
                   className="w-full px-3 py-2 rounded-lg border border-charcoal/10 bg-white text-sm focus:outline-none focus:border-accent"
                 />
               </Field>
-              <Field label={locale === 'zh' ? '人數' : 'Guests'}>
+              <Field label={locale === 'zh' ? '人數（總）' : 'Guests (total)'}>
                 <input
                   type="number"
                   min={1}
                   value={guestCount}
-                  onChange={(e) => setGuestCount(Number(e.target.value))}
+                  onChange={(e) => {
+                    const total = Number(e.target.value);
+                    setGuestCount(total);
+                    // Keep adults in sync: adults = total − children
+                    setAdultCount(Math.max(0, total - childCount));
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-charcoal/10 bg-white text-sm focus:outline-none focus:border-accent"
+                />
+              </Field>
+              <Field label={locale === 'zh' ? '成人' : 'Adults'}>
+                <input
+                  type="number"
+                  min={0}
+                  value={adultCount}
+                  onChange={(e) => {
+                    const adults = Number(e.target.value);
+                    setAdultCount(adults);
+                    setGuestCount(adults + childCount);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-charcoal/10 bg-white text-sm focus:outline-none focus:border-accent"
+                />
+              </Field>
+              <Field label={locale === 'zh' ? '小童（0.5 計）' : 'Children (×0.5)'}>
+                <input
+                  type="number"
+                  min={0}
+                  value={childCount}
+                  onChange={(e) => {
+                    const kids = Number(e.target.value);
+                    setChildCount(kids);
+                    setGuestCount(adultCount + kids);
+                  }}
                   className="w-full px-3 py-2 rounded-lg border border-charcoal/10 bg-white text-sm focus:outline-none focus:border-accent"
                 />
               </Field>
@@ -1631,7 +1670,7 @@ export default function AdminBookingDetailPage() {
                     storedPromoDiscount: booking.promoDiscount || 0,
                     promoFreeDrinksCost: booking.promoFreeDrinksCost,
                     liveGuestCount: guestCount,
-                    liveChildCount: booking.childCount ?? 0,
+                    liveChildCount: childCount,
                     liveAddOns,
                     liveVenueId: venueId,
                   });
@@ -1643,7 +1682,7 @@ export default function AdminBookingDetailPage() {
                         booking.hours,
                         guestCount,
                         liveAddOns,
-                        booking.childCount ?? 0,
+                        childCount,
                       );
                       suggestedSubtotalGross = live.subtotal;
                       // Effective subtotal = formula − promo. The
@@ -1912,13 +1951,61 @@ export default function AdminBookingDetailPage() {
              * Previously this used `subtotal + securityDeposit`, which
              * inflated 尚欠 by the promo amount for every PRE-promo
              * booking (#asQzC4PU showed phantom HK\$500 outstanding). */}
-            {(booking.promoCode && (booking.promoDiscount ?? 0) > 0) && (
-              <Row
-                label={locale === 'zh' ? '優惠碼' : 'Promo'}
-                value={`${booking.promoCode} (−HK$${(booking.promoDiscount || 0).toLocaleString()})`}
-                highlight="emerald"
-              />
-            )}
+            {(booking.promoCode && (booking.promoDiscount ?? 0) > 0) && (() => {
+              // For free_drinks promos, detect if promoDiscount is out of
+              // sync with the current pax (e.g. after customer modified).
+              const isFreeDrinksPromo = (booking.promoFreeDrinksCost ?? 0) > 0;
+              const hasDrinks = (booking.addOns || []).some((a) => a.id === 'drinks');
+              let expectedPromo = booking.promoDiscount || 0;
+              if (isFreeDrinksPromo && hasDrinks) {
+                const pa = Math.max(0, booking.guestCount - (booking.childCount ?? 0));
+                const ae = pa + 0.5 * (booking.childCount ?? 0);
+                expectedPromo = Math.round(25 * ae);
+              }
+              const promoDrift = isFreeDrinksPromo && expectedPromo !== (booking.promoDiscount || 0);
+              return (
+                <div>
+                  <Row
+                    label={locale === 'zh' ? '優惠碼' : 'Promo'}
+                    value={`${booking.promoCode} (−HK$${(booking.promoDiscount || 0).toLocaleString()})`}
+                    highlight="emerald"
+                  />
+                  {promoDrift && (
+                    <div className="flex items-center gap-2 mt-1 ml-1">
+                      <span className="text-xs text-amber-700">
+                        {locale === 'zh'
+                          ? `⚠️ 飲品優惠應為 −HK$${expectedPromo} (人數已更改)`
+                          : `⚠️ Promo should be −HK$${expectedPromo} (pax changed)`}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!booking) return;
+                          setSaving(true);
+                          try {
+                            const res = await fetch('/api/admin/fix-free-drinks-promo', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ bookingId: booking.id }),
+                            });
+                            if (!res.ok) throw new Error(await res.text());
+                            const fresh = await getBooking(booking.id);
+                            if (fresh) setBooking(fresh);
+                          } catch (e) {
+                            setError(String(e));
+                          } finally {
+                            setSaving(false);
+                          }
+                        }}
+                        className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800 hover:bg-amber-200 border border-amber-300"
+                      >
+                        {locale === 'zh' ? '立即修正' : 'Fix now'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             {(booking.pointsUsed ?? 0) > 0 && (
               <Row
                 icon={<Sparkles size={14} />}

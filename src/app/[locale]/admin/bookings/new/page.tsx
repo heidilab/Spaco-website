@@ -285,7 +285,7 @@ export default function AdminNewBookingPage() {
   const securityDepositAuto = selectedPackage?.deposit ?? calculateSecurityDeposit(subtotalAfterPackage);
   const securityDeposit = securityDepositOverrideNum ?? securityDepositAuto;
   const grandTotal = effectiveSubtotal + securityDeposit;
-  const deposit = calculateDeposit(grandTotal);
+  const deposit = calculateDeposit(grandTotal, date || undefined);
   const balanceDue = Math.max(0, grandTotal - deposit);
 
   const endTime = useMemo(() => {

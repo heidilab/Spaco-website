@@ -758,7 +758,7 @@ function DraftsTable({ drafts, loading, locale, staffUid, onChange }: DraftsTabl
                   const expired = isDraftExpired(d);
                   const isPending = d.status === 'pending' && !expired;
                   const isClaimed = d.status === 'claimed';
-                  const total = d.pricing.subtotal + d.pricing.deposit;
+                  const total = d.pricing.subtotal + (d.pricing.securityDeposit ?? 0);
                   return (
                     <tr key={d.id} className="border-b border-white/40 last:border-0 hover:bg-white/40 transition-colors align-top">
                       <td className="px-5 py-4">
