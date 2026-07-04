@@ -5,6 +5,7 @@ import {
   buildCashierRedirectUrl,
   refundOrder,
   isKpayConfigured,
+  getPublicOrigin,
 } from '@/lib/kpay';
 
 export const runtime = 'nodejs';
@@ -59,7 +60,7 @@ export async function POST(req: NextRequest) {
       // the webhook's B<prefix> booking lookup never matches, so it
       // ACKs with notFound and touches nothing.
       const outTradeNo = `UAT${Date.now()}${Math.floor(Math.random() * 90 + 10)}`.slice(0, 32);
-      const origin = process.env.NEXT_PUBLIC_APP_URL || req.nextUrl.origin;
+      const origin = getPublicOrigin(req.nextUrl.origin);
 
       const create = await createManagedOrder({
         managedOutTradeNo: outTradeNo,
@@ -100,7 +101,7 @@ export async function POST(req: NextRequest) {
       if (!body.oriOrderNo || !amount || amount <= 0) {
         return NextResponse.json({ error: 'oriOrderNo + 正確金額必填' }, { status: 400 });
       }
-      const origin = process.env.NEXT_PUBLIC_APP_URL || req.nextUrl.origin;
+      const origin = getPublicOrigin(req.nextUrl.origin);
       const refundOutTradeNo = `UATR${Date.now()}`.slice(0, 32);
       const result = await refundOrder({
         outTradeNo: refundOutTradeNo,

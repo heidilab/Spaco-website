@@ -475,6 +475,24 @@ export function isTransactionSuccess(state: number): boolean {
   return state === 2;
 }
 
+/**
+ * Public origin for returnUrl / notifyUrl.
+ *
+ * On Vercel PREVIEW deployments (the kpay-integration test site),
+ * NEXT_PUBLIC_APP_URL is set to https://spacohk.com — following it
+ * would send KPay's payment callbacks to PRODUCTION, which has no
+ * KPay webhook, silently losing them (and bouncing the customer to
+ * the wrong site after payment). Prefer the deployment's own URL
+ * there; production keeps NEXT_PUBLIC_APP_URL.
+ */
+export function getPublicOrigin(requestOrigin: string): string {
+  if (process.env.VERCEL_ENV === 'preview') {
+    const host = process.env.VERCEL_BRANCH_URL || process.env.VERCEL_URL;
+    if (host) return `https://${host}`;
+  }
+  return process.env.NEXT_PUBLIC_APP_URL || requestOrigin;
+}
+
 /** Connection check — returns true when all 4 required env vars are present. */
 export function isKpayConfigured(): boolean {
   return !!(

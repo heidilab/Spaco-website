@@ -3,6 +3,7 @@ import {
   createManagedOrder,
   buildCashierRedirectUrl,
   isKpayConfigured,
+  getPublicOrigin,
 } from '@/lib/kpay';
 
 export const runtime = 'nodejs';
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest) {
     const ts = Math.floor(Date.now() / 1000);
     const managedOutTradeNo = `B${bookingId.slice(0, 12)}_${flag}${ts}`.slice(0, 32);
 
-    const origin = process.env.NEXT_PUBLIC_APP_URL || req.nextUrl.origin;
+    const origin = getPublicOrigin(req.nextUrl.origin);
     const notifyUrl = `${origin}/api/kpay/webhook`;
     const returnUrl = `${origin}/zh/book/success?booking_id=${bookingId}`;
 
