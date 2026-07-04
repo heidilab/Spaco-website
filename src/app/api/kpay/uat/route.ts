@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from '@/lib/firebaseAdmin';
 import {
   createManagedOrder,
@@ -49,6 +50,7 @@ export async function POST(req: NextRequest) {
       amount?: number;
       note?: string;
       oriOrderNo?: string;
+      origOutTradeNo?: string;
     };
 
     if (body.action === 'create') {
@@ -109,6 +111,21 @@ export async function POST(req: NextRequest) {
         refundAmount: amount,
         notifyUrl: `${origin}/api/kpay/webhook`,
       });
+      // Link the refund to its original UAT order so the list view can
+      // show the refund's own trade number (what the Excel's G column
+      // wants for refund cases) and match its REFUND callback.
+      if (body.origOutTradeNo) {
+        await adminDb.collection('_kpay_uat_orders').doc(body.origOutTradeNo).set({
+          refunds: FieldValue.arrayUnion({
+            refundOutTradeNo,
+            amount,
+            at: new Date().toISOString(),
+            ok: result.ok,
+            code: result.code ?? null,
+            reason: result.reason ?? result.message ?? null,
+          }),
+        }, { merge: true });
+      }
       return NextResponse.json({ refundOutTradeNo, ...result });
     }
 
@@ -161,16 +178,39 @@ export async function GET() {
     });
 
     const orders = ordersSnap.docs.map((d) => {
-      const o = d.data() as UatOrderDoc;
-      const mine = callbacks.filter(
-        (c) => c.tradeNo === o.outTradeNo || c.rawBody.includes(o.outTradeNo),
-      );
+      const o = d.data() as UatOrderDoc & {
+        refunds?: Array<{
+          refundOutTradeNo: string;
+          amount: number;
+          at: string;
+          ok: boolean;
+          code: number | null;
+          reason: string | null;
+        }>;
+      };
+      const refundTradeNos = (o.refunds || []).map((r) => r.refundOutTradeNo);
+      // A callback belongs to this order if it references the order's own
+      // trade number, one of its refunds' trade numbers, or (for REFUND
+      // notifies that only carry the original transaction) its orderNo.
+      const mine = callbacks.filter((c) => {
+        if (c.tradeNo === o.outTradeNo || c.rawBody.includes(o.outTradeNo)) return true;
+        return refundTradeNos.some((rn) => c.tradeNo === rn || c.rawBody.includes(rn));
+      });
       // Original transaction orderNo — needed as oriOrderNo for refunds.
       const sales = mine.find((c) => c.eventType === 'SALES' && c.orderNo);
+      const orderNo = sales?.orderNo || null;
+      const refundCallbacks = orderNo
+        ? callbacks.filter(
+            (c) => c.eventType === 'REFUND'
+              && !mine.includes(c)
+              && c.rawBody.includes(orderNo),
+          )
+        : [];
       return {
         ...o,
-        orderNo: sales?.orderNo || null,
-        callbacks: mine.map(({ rawBody: _raw, ...rest }) => rest),
+        refunds: o.refunds || [],
+        orderNo,
+        callbacks: [...mine, ...refundCallbacks].map(({ rawBody: _raw, ...rest }) => rest),
       };
     });
 

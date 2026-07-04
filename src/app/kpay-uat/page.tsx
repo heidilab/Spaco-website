@@ -21,6 +21,15 @@ interface Callback {
   tradeNo?: string;
 }
 
+interface UatRefund {
+  refundOutTradeNo: string;
+  amount: number;
+  at: string;
+  ok: boolean;
+  code: number | null;
+  reason: string | null;
+}
+
 interface UatOrder {
   outTradeNo: string;
   managedOrderNo: string;
@@ -29,6 +38,7 @@ interface UatOrder {
   cashierUrl: string;
   createdAt: string;
   orderNo: string | null;
+  refunds: UatRefund[];
   callbacks: Callback[];
 }
 
@@ -107,13 +117,18 @@ export default function KpayUatPage() {
       const res = await fetch('/api/kpay/uat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'refund', oriOrderNo: o.orderNo, amount: Number(amt) }),
+        body: JSON.stringify({
+          action: 'refund',
+          oriOrderNo: o.orderNo,
+          origOutTradeNo: o.outTradeNo,
+          amount: Number(amt),
+        }),
       });
       const data = await res.json();
       setRefundResult(
         data.ok
-          ? `✅ 退款請求成功（${o.outTradeNo}）— 記住去下面撳「重新整理」等 REFUND 回調`
-          : `❌ 退款失敗：code=${data.code} ${data.reason || data.message || ''}（呢個可能正正就係「退款失敗」測試案例想要嘅結果）`,
+          ? `✅ 退款請求成功 — 退款單號：${data.refundOutTradeNo}（退款案例 G 欄用呢個號）。記住去下面撳「重新整理」等 REFUND 回調`
+          : `❌ 退款失敗：code=${data.code} ${data.reason || data.message || ''}（退款單號 ${data.refundOutTradeNo || '—'}；呢個可能正正就係「退款失敗」測試案例想要嘅結果）`,
       );
       refresh();
     } catch (e) {
@@ -228,6 +243,13 @@ export default function KpayUatPage() {
                     <td className="py-2 pr-3">
                       <code className="text-xs">{o.outTradeNo}</code>
                       <button onClick={() => copy(o.outTradeNo)} className="ml-1 text-pink-600 underline text-xs">複製</button>
+                      {o.refunds.map((r) => (
+                        <div key={r.refundOutTradeNo} className="mt-1 whitespace-nowrap">
+                          <span className="text-xs text-gray-500">↩️ 退款{r.ok ? '' : '(失敗)'}:</span>{' '}
+                          <code className="text-xs">{r.refundOutTradeNo}</code>
+                          <button onClick={() => copy(r.refundOutTradeNo)} className="ml-1 text-pink-600 underline text-xs">複製</button>
+                        </div>
+                      ))}
                     </td>
                     <td className="py-2 pr-3">
                       {o.callbacks.length === 0 && <span className="text-gray-400">未收到</span>}
