@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 
 export const runtime = 'nodejs';
+// Firestore read must run per-request — without this Vercel snapshots
+// the response at build time and serves stale entries forever.
+export const dynamic = 'force-dynamic';
 
 /**
  * GET /api/admin/kpay-webhook-debug
