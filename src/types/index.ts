@@ -59,6 +59,10 @@ export interface AddOnOptions {
   flavors?: string[];
   /** Whether the customer wants staff setup (+$180 flat). */
   staffSetup?: boolean;
+  /** HH:mm slot customer wants the shisha setup done. Required when
+   *  staffSetup is true so the supplier can dispatch a staffer on
+   *  time. Must fall within the booking session. Heidi 2026-06-22. */
+  staffSetupTime?: string;
   /** Admin-defined name for custom add-on entries (id starts with
    *  `custom-`). Customers can't add these; admin enters their own
    *  description here. Shown on the booking detail page + Google
@@ -66,6 +70,25 @@ export interface AddOnOptions {
   customName?: string;
   /** Admin-defined flat price in HK$ for custom add-on entries. */
   customPrice?: number;
+  // ── Catering add-on (id === 'catering') ──
+  /** Pricing tier id from CATERING_TIERS (e.g. 'tier-10'). */
+  tierId?: string;
+  /** Catering item codes selected (e.g. ['101', '142', 'A1']). */
+  dishCodes?: string[];
+  /** Delivery zone id from CATERING_DELIVERY_ZONES. */
+  deliveryZoneId?: string;
+  /** Door-to-door delivery (+$150). Defaults to lobby pickup (free). */
+  doorstepDelivery?: boolean;
+  /** Skip cutlery for −$10/order. */
+  noCutlery?: boolean;
+  /** Additional cutlery sets beyond the included one (+$3 each). */
+  extraCutlerySets?: number;
+  /** Additional food tongs beyond the included one (+$9 each). */
+  extraFoodTongs?: number;
+  /** Customer-chosen delivery time slot HH:mm. Must fall within the
+   *  booking's [startTime, endTime] so the customer is on-site to
+   *  accept the supplier's delivery directly. */
+  deliveryTime?: string;
 }
 
 export interface BookingState {
@@ -658,4 +681,47 @@ export interface SeoDefaults extends SeoEntry {
   // Optional: org JSON-LD bits
   orgUrl?: string;
   orgPhone?: string;
+}
+
+// ============ ARTICLES (Blog / Content Sharing) ============
+
+/** A content article shown under /articles. Authored by admin, optionally
+ *  smart-formatted + translated via Claude. Content is Markdown; inline
+ *  images live in the markdown as standard `![alt](url)` references. */
+export interface Article {
+  id: string;
+  /** URL slug (kebab-case). Unique. Used for /articles/[slug]. */
+  slug: string;
+  /** Display title. zh required; en optional (LLM auto-translate fills it). */
+  title: { zh: string; en?: string };
+  /** Optional one-line summary shown on the list card + meta description. */
+  excerpt?: { zh?: string; en?: string };
+  /** Hero image URL (Firebase Storage). Used on the list card + article header. */
+  heroImage?: string;
+  /** Optional alt text for hero image, per locale. */
+  heroAlt?: { zh?: string; en?: string };
+  /** Article body — Markdown. zh required; en optional. */
+  content: { zh: string; en?: string };
+  /** Optional tags for filtering / future related-posts feature. */
+  tags?: string[];
+  /** draft = hidden from public; published = visible on /articles. */
+  status: 'draft' | 'published';
+  /** Auto-set on first publish; useful for sorting. */
+  publishedAt?: unknown;
+  createdAt: unknown;
+  updatedAt: unknown;
+  /** UID of the staff member who last edited. */
+  authorUid?: string;
+  authorName?: string;
+  // ── Per-article SEO overrides (admin-editable) ──
+  /** Custom <title> for the article page. Falls back to article.title. */
+  seoTitle?: { zh?: string; en?: string };
+  /** Custom <meta description>. Falls back to excerpt. */
+  seoDescription?: { zh?: string; en?: string };
+  /** Comma-separated keywords for <meta keywords>. */
+  seoKeywords?: { zh?: string; en?: string };
+  /** Override Open Graph image URL (defaults to heroImage). */
+  ogImage?: string;
+  /** Block search engines from indexing this article. */
+  noindex?: boolean;
 }

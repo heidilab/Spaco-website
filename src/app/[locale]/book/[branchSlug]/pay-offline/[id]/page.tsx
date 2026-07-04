@@ -65,10 +65,32 @@ export default function PayOfflinePage() {
   const minsLeft = Math.floor(msLeft / 60000);
   const secsLeft = Math.floor((msLeft % 60000) / 1000);
 
+  // Detect whether this is a BALANCE payment (50% deposit case where
+  // the customer already paid the upfront via Stripe/FPS and now owes
+  // the remainder) vs an INITIAL deposit payment.
+  //
+  // Mirrors the receipt-approve flow in admin/receipts so the customer
+  // sees the SAME number the admin will clear when the screenshot is
+  // approved — previously this page always showed `pricing.deposit`
+  // (upfront amount), which meant a customer paying balance saw the
+  // wrong figure (e.g. balance $8,300 but page showed deposit $7,300)
+  // and risked transferring too little. The receipt-approve path then
+  // cleared balanceDue=0 silently regardless of the amount actually
+  // received, hiding the shortfall.
+  const isBalancePayment =
+    booking.status === 'confirmed' && (booking.balanceDue ?? 0) > 0;
+  const amountDue = isBalancePayment
+    ? (booking.balanceDue ?? 0)
+    : (booking.pricing.deposit || 0);
+  const amountLabelZh = isBalancePayment ? '尾數' : '應付金額';
+  const amountLabelEn = isBalancePayment ? 'Balance' : 'Amount due';
+  const paymentNounZh = isBalancePayment ? '尾數' : '線下付款';
+  const paymentNounEn = isBalancePayment ? 'balance' : 'offline payment';
+
   const whatsappMsg =
     locale === 'zh'
-      ? `你好，我已完成線下付款。\n預訂編號：${bookingId}\n金額：HK$${booking.pricing.deposit.toLocaleString()}\n（已附上付款截圖）`
-      : `Hi, I've completed the offline payment.\nBooking ID: ${bookingId}\nAmount: HK$${booking.pricing.deposit.toLocaleString()}\n(Receipt attached)`;
+      ? `你好，我已完成${paymentNounZh}付款。\n預訂編號：${bookingId}\n金額：HK$${amountDue.toLocaleString()}\n（已附上付款截圖）`
+      : `Hi, I've completed the ${paymentNounEn}.\nBooking ID: ${bookingId}\nAmount: HK$${amountDue.toLocaleString()}\n(Receipt attached)`;
   const whatsappLink = generateWhatsAppLink(PAYMENT_DETAILS.fps.digitsOnly, whatsappMsg);
 
   function copy(label: string, value: string) {
@@ -116,8 +138,8 @@ export default function PayOfflinePage() {
               <span className="text-gradient-pink">{locale === 'zh' ? '線下付款' : 'Offline Payment'}</span>
             </h1>
             <p className="text-ink-soft mt-2 text-sm">
-              {locale === 'zh' ? '應付金額' : 'Amount due'}：
-              <span className="font-bold text-ink ml-1">HK${booking.pricing.deposit.toLocaleString()}</span>
+              {locale === 'zh' ? amountLabelZh : amountLabelEn}：
+              <span className="font-bold text-ink ml-1">HK${amountDue.toLocaleString()}</span>
             </p>
           </div>
 

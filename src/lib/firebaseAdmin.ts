@@ -1,6 +1,7 @@
 import { writeFileSync } from 'fs';
 import { getApps, initializeApp, applicationDefault, cert } from 'firebase-admin/app';
 import { getFirestore, Firestore } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
 
 // Server-only Firebase Admin SDK. Bypasses Firestore security rules — used by
 // API routes that need to read/write admin-only collections (secrets/, system/)
@@ -73,3 +74,13 @@ function initAdmin() {
 initAdmin();
 
 export const adminDb: Firestore = getFirestore();
+
+/** Default storage bucket — used by server routes that need to persist
+ *  files (e.g. DALL-E generated images for articles). Uses
+ *  NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET if set (same bucket the client SDK
+ *  uses), otherwise falls back to the project's default. */
+const STORAGE_BUCKET =
+  process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+  || `${projectId}.appspot.com`;
+
+export const adminStorage = getStorage().bucket(STORAGE_BUCKET);

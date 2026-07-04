@@ -75,9 +75,19 @@ export async function POST(req: NextRequest) {
       'awaiting_review',
       'payment_not_completed',
     ]);
-    const nextStatus = upstreamStates.has(booking.status)
-      ? (newBalanceDue === 0 ? 'confirmed' : 'awaiting_payment')
-      : booking.status;
+    // Special case: deposit-settlement overflow.
+    // If the booking is already 'confirmed' AND has a depositRefund
+    // (post-event settlement was done) AND balance now hits 0, the
+    // remaining payment was the deductions-exceed-deposit overflow.
+    // Flip to 'completed' since the event is over and we're square.
+    const settledWithOverflow =
+      booking.status === 'confirmed' && !!booking.depositRefund;
+    let nextStatus = booking.status;
+    if (settledWithOverflow && newBalanceDue === 0) {
+      nextStatus = 'completed';
+    } else if (upstreamStates.has(booking.status)) {
+      nextStatus = newBalanceDue === 0 ? 'confirmed' : 'awaiting_payment';
+    }
 
     const entryKind: 'initial' | 'balance' | 'topup' =
       loggedSum === 0

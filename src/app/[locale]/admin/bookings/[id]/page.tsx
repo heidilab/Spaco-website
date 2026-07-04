@@ -18,12 +18,51 @@ import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { BookingRecord, UserProfile, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
 import { venues } from '@/lib/venues';
+import { getPackageBySlug } from '@/lib/packages';
+import { getDecorationById } from '@/lib/decorations';
+import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
 import {
   formatAddOnsForStaff,
   addOns as ADDON_CATALOG,
   calculatePricing,
   calcShishaPrice,
+  calcCateringTotal,
+  freeDrinksVenues,
 } from '@/lib/pricing';
+
+/**
+ * Live-preview recompute of free_drinks promo amount when admin
+ * changes pax / child count / addOns / venue on the edit form.
+ * MUST mirror the exact same logic in updateBookingDateTime
+ * (lib/firestore.ts) so what admin sees in the preview matches what
+ * gets saved on click. Without this, changing 7 → 12 pax shows the
+ * old 7-pax-worth promo until save, then jumps to the right number
+ * after save — confusing.
+ *
+ * Returns the effective promo discount in HK$.
+ *  - Non-free_drinks promos → returns stored promoDiscount unchanged
+ *    (their amount was locked at apply time and doesn't depend on
+ *    pax).
+ *  - Free_drinks promo + drinks add-on present → recompute as
+ *    round(25 × adultEquiv) using the LIVE pax count.
+ *  - Free_drinks promo but drinks removed → 0 (no discount).
+ */
+function livePromoForBooking(opts: {
+  storedPromoDiscount: number;
+  promoFreeDrinksCost: number | undefined;
+  liveGuestCount: number;
+  liveChildCount: number;
+  liveAddOns: Array<{ id?: string }>;
+  liveVenueId: string;
+}): number {
+  const isFreeDrinks = (opts.promoFreeDrinksCost ?? 0) > 0;
+  if (!isFreeDrinks) return opts.storedPromoDiscount;
+  const hasDrinks = opts.liveAddOns.some((a) => a.id === 'drinks');
+  if (!hasDrinks) return 0;
+  const adults = Math.max(0, opts.liveGuestCount - opts.liveChildCount);
+  const adultEquiv = adults + 0.5 * opts.liveChildCount;
+  return freeDrinksVenues.includes(opts.liveVenueId) ? 0 : Math.round(25 * adultEquiv);
+}
 import PaymentHistory from '@/components/booking/PaymentHistory';
 import { buildWhatsAppLink, formatHkPhone } from '@/lib/whatsapp';
 import {
@@ -75,6 +114,8 @@ export default function AdminBookingDetailPage() {
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [guestCount, setGuestCount] = useState(0);
+  const [adultCount, setAdultCount] = useState(0);
+  const [childCount, setChildCount] = useState(0);
   // Venue is editable so admin can relocate a booking (e.g. leak / clash).
   // The conflict check on save will block the move if the target venue
   // is already booked at the same time.
@@ -98,7 +139,12 @@ export default function AdminBookingDetailPage() {
     pipes: number;
     flavors: string[];
     staffSetup: boolean;
+    staffSetupTime?: string;
   }>({ pipes: 1, flavors: [], staffSetup: false });
+  // Catering modal state. Selection hydrates from the stored
+  // catering add-on's options on load; save merges back into addOns.
+  const [cateringModalOpen, setCateringModalOpen] = useState(false);
+  const [cateringSelection, setCateringSelection] = useState<CateringSelection | null>(null);
   // Editable refundable deposit (HK$). Pre-fills from the booking's
   // stored securityDeposit. Saving with a different value passes it as
   // `securityDepositOverride` to updateBookingDateTime — bypasses
@@ -146,6 +192,8 @@ export default function AdminBookingDetailPage() {
   // Google was disconnected, or that were created via admin without auto-sync).
   const [pushing, setPushing] = useState(false);
   const [pushMsg, setPushMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [resendingEmail, setResendingEmail] = useState(false);
+  const [resendMsg, setResendMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   // Deposit settlement state — admin inputs deductions after the event,
   // saves once, system marks booking completed + credits loyalty points.
@@ -173,6 +221,8 @@ export default function AdminBookingDetailPage() {
         setStartTime(b.startTime);
         setEndTime(b.endTime);
         setGuestCount(b.guestCount);
+        setAdultCount(b.adultCount ?? b.guestCount);
+        setChildCount(b.childCount ?? 0);
         setVenueId(b.venueId);
         setStatusValue(b.status);
         // Hydrate add-on quantities from the booking so the edit panel
@@ -216,7 +266,25 @@ export default function AdminBookingDetailPage() {
             pipes,
             flavors,
             staffSetup: !!shishaEntry.options?.staffSetup,
+            staffSetupTime: shishaEntry.options?.staffSetupTime,
           });
+        }
+        // Hydrate catering selection — admin opens the modal to see/edit.
+        const cateringEntry = b.addOns?.find((a) => a.id === 'catering');
+        if (cateringEntry?.options) {
+          const o = cateringEntry.options as Partial<CateringSelection>;
+          if (o.tierId) {
+            setCateringSelection({
+              tierId: o.tierId,
+              dishCodes: o.dishCodes || [],
+              deliveryZoneId: o.deliveryZoneId || '',
+              doorstepDelivery: !!o.doorstepDelivery,
+              noCutlery: !!o.noCutlery,
+              extraCutlerySets: o.extraCutlerySets || 0,
+              extraFoodTongs: o.extraFoodTongs || 0,
+              deliveryTime: o.deliveryTime,
+            });
+          }
         }
         if (b.userId) {
           const p = await getUserProfile(b.userId).catch(() => null);
@@ -268,13 +336,19 @@ export default function AdminBookingDetailPage() {
                 pipes: shishaOptions.pipes,
                 flavors,
                 staffSetup: shishaOptions.staffSetup,
+                ...(shishaOptions.staffSetup && shishaOptions.staffSetupTime
+                  ? { staffSetupTime: shishaOptions.staffSetupTime }
+                  : {}),
               },
             };
+          }
+          if (id === 'catering' && cateringSelection) {
+            return { id, quantity: 1, options: cateringSelection };
           }
           return { id, quantity };
         }),
       ...customAddOns
-        .filter((c) => c.price > 0 && c.name.trim() !== '')
+        .filter((c) => c.name.trim() !== '' && c.price >= 0)
         .map((c) => ({
           id: c.id,
           quantity: 1,
@@ -288,11 +362,21 @@ export default function AdminBookingDetailPage() {
         bookingForFormula.hours,
         guestCount,
         liveAddOns,
-        bookingForFormula.childCount ?? 0,
+        childCount,
       );
       // Display the effective (post-promo) subtotal — see hydrate
-      // comment above. Storage stays pre-promo.
-      const effective = Math.max(0, live.subtotal - (bookingForFormula.promoDiscount || 0));
+      // comment above. Storage stays pre-promo. Promo recomputes for
+      // free_drinks so the preview matches what updateBookingDateTime
+      // will save.
+      const livePromo = livePromoForBooking({
+        storedPromoDiscount: bookingForFormula.promoDiscount || 0,
+        promoFreeDrinksCost: bookingForFormula.promoFreeDrinksCost,
+        liveGuestCount: guestCount,
+        liveChildCount: childCount,
+        liveAddOns,
+        liveVenueId: venueId,
+      });
+      const effective = Math.max(0, live.subtotal - livePromo);
       setSubtotalOverride(String(effective));
     } catch { /* venue mismatch — keep current value */ }
     // We intentionally omit setSubtotalOverride from deps — it's a
@@ -300,7 +384,7 @@ export default function AdminBookingDetailPage() {
     // capture is safe because it's the most recent booking from state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    addOnQty, customAddOns, shishaOptions, guestCount, venueId,
+    addOnQty, customAddOns, shishaOptions, guestCount, childCount, venueId,
     bookingForFormula,
   ]);
 
@@ -384,6 +468,8 @@ export default function AdminBookingDetailPage() {
     startTime !== booking.startTime ||
     endTime !== booking.endTime ||
     guestCount !== booking.guestCount ||
+    adultCount !== (booking.adultCount ?? booking.guestCount) ||
+    childCount !== (booking.childCount ?? 0) ||
     venueId !== booking.venueId ||
     addOnsDirty ||
     depositDirty ||
@@ -427,6 +513,9 @@ export default function AdminBookingDetailPage() {
                     },
                   };
                 }
+                if (id === 'catering' && cateringSelection) {
+                  return { id, quantity: 1, options: cateringSelection };
+                }
                 return { id, quantity };
               }),
             // Admin-defined custom add-ons get appended with their
@@ -434,7 +523,7 @@ export default function AdminBookingDetailPage() {
             // price ≤ 0 OR name is blank (admin-added rows that were
             // never filled out) to keep the booking clean.
             ...customAddOns
-              .filter((c) => c.price > 0 && c.name.trim() !== '')
+              .filter((c) => c.name.trim() !== '' && c.price >= 0)
               .map((c) => ({
                 id: c.id,
                 quantity: 1,
@@ -445,39 +534,54 @@ export default function AdminBookingDetailPage() {
               })),
           ]
         : undefined;
+      // Snapshot pre-edit values so the followup endpoint can diff and
+      // include a "已更改項目" banner in the confirmation email.
+      // (Captured BEFORE updateBookingDateTime overwrites Firestore.)
+      const previousSnapshot = {
+        date: booking.date,
+        startTime: booking.startTime,
+        endTime: booking.endTime,
+        endDate: booking.endDate || null,
+        venueId: booking.venueId,
+        guestCount: booking.guestCount,
+        adultCount: booking.adultCount,
+        childCount: booking.childCount,
+        addOnsLine: formatAddOnsForStaff(booking.addOns, 'zh'),
+      };
+
       await updateBookingDateTime(booking.id, {
         date,
         startTime,
         endTime,
         endDate,
         guestCount,
+        adultCount,
+        childCount,
         ...(venueChanged
           ? { venueId, branchSlug: targetVenue?.slug || booking.branchSlug }
           : {}),
         ...(newAddOns ? { addOns: newAddOns } : {}),
-        // Pass the deposit override only when admin actually changed
-        // the input — otherwise sticky-preserve handles things.
         ...(depositDirty ? { securityDepositOverride: depositOverrideNum } : {}),
-        // Pass the subtotal override only when admin changed it —
-        // otherwise calculatePricing's formula stays in charge.
         ...(subtotalDirty ? { subtotalOverride: subtotalOverrideNum } : {}),
       });
 
-      // Push the change to Google Calendar immediately — admin should
-      // never have to click anything for the calendar to mirror the
-      // booking. The blocked_slots side of the master calendar is
-      // already updated inside updateBookingDateTime above.
-      // syncOnly=true skips the customer email + payment-recording
-      // branches; admin can still trigger those via the payment modal
-      // below if they want to record a top-up. Failures are non-fatal.
+      // Followup: send customer the "預訂已更新" email (with diff banner
+      // listing every changed field) + sync Google Calendar. Heidi 2026-06:
+      // previously this was syncOnly=true so customer NEVER got an email
+      // after admin edits — only the auto-cancellation noise from gcal
+      // attendee removal. Now we always email so the customer has a
+      // concrete record of the new schedule.
       try {
         await fetch('/api/admin/booking-edit-followup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bookingId: booking.id, syncOnly: true }),
+          body: JSON.stringify({
+            bookingId: booking.id,
+            previousSnapshot,
+          }),
         });
       } catch (err) {
-        console.warn('[handleSave] gcal auto-sync failed:', err);
+        console.warn('[handleSave] followup (email + gcal) failed:', err);
       }
 
       setSaved(true);
@@ -521,13 +625,18 @@ export default function AdminBookingDetailPage() {
     }
   }
 
-  /** Sum of fixed + custom deductions (HK$). */
+  /** Sum of fixed + custom deductions (HK$). Defensive: ignore any
+   *  negative amounts so a stale input value can never push the
+   *  refund ABOVE the security deposit (#HtMEinHx). */
   function totalDeductions(): number {
     const fixed = selectedFixed.reduce((sum, id) => {
       const item = FIXED_DEDUCTIONS.find((d) => d.id === id);
-      return sum + (item?.amount || 0);
+      return sum + Math.max(0, item?.amount || 0);
     }, 0);
-    const custom = customDeductions.reduce((sum, d) => sum + (d.amount || 0), 0);
+    const custom = customDeductions.reduce(
+      (sum, d) => sum + Math.max(0, d.amount || 0),
+      0,
+    );
     return fixed + custom;
   }
 
@@ -538,7 +647,16 @@ export default function AdminBookingDetailPage() {
     try {
       const securityDeposit = booking.pricing.securityDeposit ?? 0;
       const total = totalDeductions();
-      const refundAmount = Math.max(0, securityDeposit - total);
+      // Refund clamped to [0, securityDeposit] — SPACO can never
+      // refund more than was originally collected as deposit, even
+      // if deductions math went sideways. Without this clamp,
+      // #HtMEinHx silently set refund to \$1,450 on a \$1,000 deposit.
+      const refundAmount = Math.max(0, Math.min(securityDeposit, securityDeposit - total));
+      // Overflow = the part of deductions that EXCEEDED the deposit.
+      // Heidi's case (#B7PlO6qv): deductions 加時 HK$2,250 vs deposit
+      // HK$2,000 → overflow HK$250. Booking goes back to 'confirmed'
+      // with balanceDue = 250 so admin can chase + record payment.
+      const overflowAmount = Math.max(0, total - securityDeposit);
 
       const deductions = [
         ...selectedFixed.map((id) => {
@@ -548,27 +666,46 @@ export default function AdminBookingDetailPage() {
         ...customDeductions.filter((d) => d.label && d.amount > 0),
       ];
 
-      await updateBookingDepositRefund(booking.id, { amount: refundAmount, deductions });
+      await updateBookingDepositRefund(booking.id, {
+        amount: refundAmount,
+        deductions,
+        overflowAmount,
+      });
 
-      // Credit loyalty points: subtotal (rental + add-ons) + forfeited
-      // security deposit (the part SPACO actually kept), MINUS the
-      // promo / points discounts (free items aren't "消費" per Heidi's
-      // spec — a customer who used DRINK2026 to get free drinks didn't
-      // pay for those drinks, so the drinks add-on doesn't earn points).
-      // Refundable amount that went BACK to the customer doesn't count
-      // either — only money the company actually pocketed earns points.
-      // 1 HK$ = 1 point.
+      // Credit loyalty points: subtotal (rental + add-ons) + the
+      // PORTION of deductions the deposit actually covered. The
+      // overflow ($250 in #B7PlO6qv's case) isn't credited yet —
+      // customer hasn't paid it. Admin can credit it manually after
+      // the offline payment via /admin/members → adjust points.
       //
-      // Idempotency: skip if booking.pointsCreditedAt is already set
-      // (admin re-clicked settle or used the 補加積分 recovery action).
-      // Returned `creditedPoints` is 0 in that case — the message
-      // below reads as "已 credit 0 積分" but the settled state
-      // panel renders the original pointsActuallyCredited value.
+      // MINUS the promo / points discounts (free items aren't "消費").
+      // Refunded portion doesn't count either — only money SPACO
+      // actually pocketed earns points. 1 HK$ = 1 point.
+      //
+      // Idempotency: skip if booking.pointsCreditedAt is already set.
       let creditedPoints = 0;
       if (booking.userId && !booking.pointsCreditedAt) {
         const promoDiscount = booking.promoDiscount || 0;
         const pointsDiscount = booking.pointsDiscount || 0;
-        const points = Math.max(0, booking.pricing.subtotal - promoDiscount - pointsDiscount) + total;
+        const consumedDeposit = Math.min(total, securityDeposit);
+        // When deductions exceed the security deposit, the overflow
+        // amount is what the customer pays out-of-pocket on top
+        // (#udz81KFK: 加時 \$1,392 vs \$1,000 deposit → \$392 overflow
+        // paid by customer). That money is real consumption + must
+        // count for loyalty points too.
+        const overflowPaid = Math.max(0, total - securityDeposit);
+        // Derive earnable spend from primitives so the math is right
+        // regardless of whether pricing.subtotal happens to be stored
+        // PRE- or POST-promo (convention drift between admin/bookings/new
+        // and updateBookingPricing).
+        const effectiveSpend = Math.max(
+          0,
+          (booking.pricing.baseCharge || 0)
+            + (booking.pricing.addOnTotal || 0)
+            - promoDiscount
+            - pointsDiscount,
+        );
+        const points = effectiveSpend + consumedDeposit + overflowPaid;
         creditedPoints = await creditLoyaltyPoints(booking.userId, points);
         if (creditedPoints > 0) {
           await updateDoc(doc(db, 'bookings', booking.id), {
@@ -581,9 +718,13 @@ export default function AdminBookingDetailPage() {
 
       setSettleMsg({
         kind: 'ok',
-        text: locale === 'zh'
-          ? `✓ 結算完成。退款 HK$${refundAmount.toLocaleString()}，已 credit ${creditedPoints.toLocaleString()} 積分。`
-          : `✓ Settled. Refund HK$${refundAmount.toLocaleString()}; credited ${creditedPoints.toLocaleString()} pts.`,
+        text: overflowAmount > 0
+          ? (locale === 'zh'
+              ? `✓ 結算完成。扣減超出按金 HK$${overflowAmount.toLocaleString()} — 客人需補付，請喺結算後用「已於線下付款」記錄收到嘅金額。已 credit ${creditedPoints.toLocaleString()} 積分。`
+              : `✓ Settled. Deductions exceed deposit by HK$${overflowAmount.toLocaleString()} — customer owes this amount; use 已於線下付款 to record receipt. Credited ${creditedPoints.toLocaleString()} pts.`)
+          : (locale === 'zh'
+              ? `✓ 結算完成。退款 HK$${refundAmount.toLocaleString()}，已 credit ${creditedPoints.toLocaleString()} 積分。`
+              : `✓ Settled. Refund HK$${refundAmount.toLocaleString()}; credited ${creditedPoints.toLocaleString()} pts.`),
       });
       const fresh = await getBooking(booking.id);
       if (fresh) setBooking(fresh);
@@ -612,11 +753,24 @@ export default function AdminBookingDetailPage() {
       const settledDeductions =
         (booking.depositRefund as { deductions?: { amount: number }[] } | null)?.deductions
           ?.reduce((s, d) => s + (d.amount || 0), 0) || 0;
-      // Match the settle-deposit formula: subtotal minus promo/points
-      // discounts (free items aren't "消費") plus deposit deductions.
+      // Match the settle-deposit formula. Derive earnable spend from
+      // primitives + split deductions into consumed-deposit and
+      // overflow-paid (#udz81KFK class — \$1,392 deductions on
+      // \$1,000 deposit leaves \$392 customer paid in cash, which
+      // counts as spend too).
       const promoDiscount = booking.promoDiscount || 0;
       const pointsDiscount = booking.pointsDiscount || 0;
-      const points = Math.max(0, (booking.pricing.subtotal || 0) - promoDiscount - pointsDiscount) + settledDeductions;
+      const securityDepositAtSettle = booking.pricing.securityDeposit ?? 0;
+      const consumedDeposit = Math.min(settledDeductions, securityDepositAtSettle);
+      const overflowPaid = Math.max(0, settledDeductions - securityDepositAtSettle);
+      const effectiveSpend = Math.max(
+        0,
+        (booking.pricing.baseCharge || 0)
+          + (booking.pricing.addOnTotal || 0)
+          - promoDiscount
+          - pointsDiscount,
+      );
+      const points = effectiveSpend + consumedDeposit + overflowPaid;
       const credited = await creditLoyaltyPoints(booking.userId, points);
       if (credited > 0) {
         await updateDoc(doc(db, 'bookings', booking.id), {
@@ -711,6 +865,41 @@ export default function AdminBookingDetailPage() {
       });
     } finally {
       setFollowupBusy(false);
+    }
+  }
+
+  /** Re-send the booking confirmation email to the customer — used when
+   *  the customer reports they didn't receive the original. Reuses the
+   *  same booking-edit-followup endpoint with resendEmail=true; no diff
+   *  banner is included (resend is the same content the customer would
+   *  have got at first confirmation). */
+  async function handleResendEmail() {
+    if (!booking) return;
+    setResendingEmail(true);
+    setResendMsg(null);
+    try {
+      const res = await fetch('/api/admin/booking-edit-followup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookingId: booking.id,
+          resendEmail: true,
+          syncOnly: true,   // skip gcal re-sync (not needed for a resend)
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      setResendMsg({
+        kind: 'ok',
+        text: locale === 'zh' ? '✓ 已重新發送確認 email 俾客人' : '✓ Confirmation email re-sent',
+      });
+    } catch (err) {
+      setResendMsg({
+        kind: 'err',
+        text: (locale === 'zh' ? '失敗:' : 'Failed: ') + (err instanceof Error ? err.message : 'unknown'),
+      });
+    } finally {
+      setResendingEmail(false);
     }
   }
 
@@ -852,6 +1041,45 @@ export default function AdminBookingDetailPage() {
             </div>
           </div>
 
+          {/* Resend confirmation email — always available so CS can fire
+              it when customer says they didn't receive the original. */}
+          <div className="glass-card p-6">
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div>
+                <h2 className="font-bold flex items-center gap-2">
+                  <Mail size={16} />
+                  {locale === 'zh' ? '重新發送確認 email' : 'Resend Confirmation Email'}
+                </h2>
+                <p className="text-xs text-ink-soft mt-1 leading-relaxed">
+                  {locale === 'zh'
+                    ? '客人話收唔到原本嘅確認 email?撳呢度即時重新發送一封,內容同首次確認一樣(會 send 去客人 profile 嗰個 email)。'
+                    : "Customer didn't receive the original confirmation? Click to resend (same content as first confirmation, to the customer's profile email)."}
+                </p>
+              </div>
+              <button
+                onClick={handleResendEmail}
+                disabled={resendingEmail}
+                className="btn-primary disabled:opacity-40 flex items-center gap-2 flex-shrink-0"
+              >
+                <Mail size={14} />
+                {resendingEmail
+                  ? (locale === 'zh' ? '發送中…' : 'Sending…')
+                  : (locale === 'zh' ? '重新發送' : 'Resend')}
+              </button>
+            </div>
+            {resendMsg && (
+              <div
+                className={`mt-3 text-sm rounded-lg px-3 py-2 ${
+                  resendMsg.kind === 'ok'
+                    ? 'text-emerald-700 bg-emerald-50'
+                    : 'text-rose-700 bg-rose-50'
+                }`}
+              >
+                {resendMsg.text}
+              </div>
+            )}
+          </div>
+
           {/* Google Calendar push — only shown when not yet synced */}
           {!booking.googleEventId && (
             <div className="glass-card p-6">
@@ -954,12 +1182,43 @@ export default function AdminBookingDetailPage() {
                   className="w-full px-3 py-2 rounded-lg border border-charcoal/10 bg-white text-sm focus:outline-none focus:border-accent"
                 />
               </Field>
-              <Field label={locale === 'zh' ? '人數' : 'Guests'}>
+              <Field label={locale === 'zh' ? '人數（總）' : 'Guests (total)'}>
                 <input
                   type="number"
                   min={1}
                   value={guestCount}
-                  onChange={(e) => setGuestCount(Number(e.target.value))}
+                  onChange={(e) => {
+                    const total = Number(e.target.value);
+                    setGuestCount(total);
+                    // Keep adults in sync: adults = total − children
+                    setAdultCount(Math.max(0, total - childCount));
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-charcoal/10 bg-white text-sm focus:outline-none focus:border-accent"
+                />
+              </Field>
+              <Field label={locale === 'zh' ? '成人' : 'Adults'}>
+                <input
+                  type="number"
+                  min={0}
+                  value={adultCount}
+                  onChange={(e) => {
+                    const adults = Number(e.target.value);
+                    setAdultCount(adults);
+                    setGuestCount(adults + childCount);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-charcoal/10 bg-white text-sm focus:outline-none focus:border-accent"
+                />
+              </Field>
+              <Field label={locale === 'zh' ? '小童（0.5 計）' : 'Children (×0.5)'}>
+                <input
+                  type="number"
+                  min={0}
+                  value={childCount}
+                  onChange={(e) => {
+                    const kids = Number(e.target.value);
+                    setChildCount(kids);
+                    setGuestCount(adultCount + kids);
+                  }}
                   className="w-full px-3 py-2 rounded-lg border border-charcoal/10 bg-white text-sm focus:outline-none focus:border-accent"
                 />
               </Field>
@@ -999,6 +1258,38 @@ export default function AdminBookingDetailPage() {
                     // charge against the full guest count. Stored qty
                     // is just a presence flag — no qty selector here.
                     const isPerHead = cfg.unit === 'person';
+                    // Catering: open modal instead of toggling a
+                    // checkbox; selection populates the booking on save.
+                    if (cfg.id === 'catering') {
+                      return (
+                        <button
+                          type="button"
+                          key={cfg.id}
+                          onClick={() => setCateringModalOpen(true)}
+                          className={`text-left rounded-lg border px-3 py-2 text-xs transition-all ${
+                            cateringSelection
+                              ? 'border-pink bg-pink/5'
+                              : 'border-charcoal/10 bg-white hover:bg-cream/30'
+                          }`}
+                        >
+                          <div className="flex items-baseline justify-between gap-1">
+                            <span className="font-medium truncate">{cfg.name[locale]}</span>
+                            <span className="text-pink text-[11px] font-bold whitespace-nowrap">
+                              {cateringSelection
+                                ? (locale === 'zh' ? '編輯' : 'Edit')
+                                : (locale === 'zh' ? '揀餐單' : 'Pick menu')}
+                            </span>
+                          </div>
+                          {cateringSelection && (
+                            <p className="text-[11px] text-pink mt-1">
+                              {locale === 'zh'
+                                ? `已揀 ${(cateringSelection.dishCodes || []).length} 款 · ${cateringSelection.tierId} · HK$${calcCateringTotal(cateringSelection).toLocaleString()}`
+                                : `${(cateringSelection.dishCodes || []).length} dishes · ${cateringSelection.tierId} · HK$${calcCateringTotal(cateringSelection).toLocaleString()}`}
+                            </p>
+                          )}
+                        </button>
+                      );
+                    }
                     return (
                       <label
                         key={cfg.id}
@@ -1115,7 +1406,7 @@ export default function AdminBookingDetailPage() {
                   ) : (
                     <div className="space-y-2">
                       {customAddOns.map((c, idx) => (
-                        <div key={c.id} className="grid grid-cols-[1fr,110px,32px] gap-2 items-center">
+                        <div key={c.id} className="grid grid-cols-[1fr,110px,48px,32px] gap-2 items-center">
                           <input
                             type="text"
                             value={c.name}
@@ -1130,15 +1421,35 @@ export default function AdminBookingDetailPage() {
                           <input
                             type="number"
                             min={0}
-                            value={c.price === 0 ? '' : c.price}
+                            value={c.price === 0 && c.name.trim() === '' ? '' : c.price}
                             onChange={(e) => {
                               const next = [...customAddOns];
                               next[idx] = { ...next[idx], price: Math.max(0, parseInt(e.target.value, 10) || 0) };
                               setCustomAddOns(next);
                             }}
                             placeholder="HK$"
-                            className="px-2 py-1.5 rounded-lg border border-charcoal/15 text-xs bg-white text-right"
+                            className={`px-2 py-1.5 rounded-lg border text-xs text-right ${
+                              c.price === 0 && c.name.trim() !== ''
+                                ? 'border-emerald-300 bg-emerald-50 text-emerald-700 font-semibold'
+                                : 'border-charcoal/15 bg-white'
+                            }`}
                           />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = [...customAddOns];
+                              next[idx] = { ...next[idx], price: 0 };
+                              setCustomAddOns(next);
+                            }}
+                            className={`px-2 py-1 rounded-lg text-[10px] font-semibold transition-colors ${
+                              c.price === 0 && c.name.trim() !== ''
+                                ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-300'
+                                : 'bg-pink/10 text-pink hover:bg-pink/20'
+                            }`}
+                            title={locale === 'zh' ? '設為免費' : 'Mark as free'}
+                          >
+                            {locale === 'zh' ? '免費' : 'FREE'}
+                          </button>
                           <button
                             type="button"
                             onClick={() => setCustomAddOns(customAddOns.filter((_, i) => i !== idx))}
@@ -1246,7 +1557,11 @@ export default function AdminBookingDetailPage() {
                           type="checkbox"
                           checked={shishaOptions.staffSetup}
                           onChange={(e) =>
-                            setShishaOptions((prev) => ({ ...prev, staffSetup: e.target.checked }))
+                            setShishaOptions((prev) => ({
+                              ...prev,
+                              staffSetup: e.target.checked,
+                              ...(e.target.checked ? {} : { staffSetupTime: undefined }),
+                            }))
                           }
                           className="w-3.5 h-3.5 accent-accent"
                         />
@@ -1256,6 +1571,40 @@ export default function AdminBookingDetailPage() {
                             : 'Staff setup +HK$180'}
                         </span>
                       </label>
+                      {shishaOptions.staffSetup && (
+                        <div className="ml-5 mt-1 p-2 rounded-lg bg-white/60 border border-charcoal/10">
+                          <label className="text-[11px] font-semibold text-ink-soft block mb-1">
+                            {locale === 'zh' ? 'Setup 時間 *' : 'Setup time *'}
+                          </label>
+                          <select
+                            value={shishaOptions.staffSetupTime || ''}
+                            onChange={(e) =>
+                              setShishaOptions((prev) => ({ ...prev, staffSetupTime: e.target.value || undefined }))
+                            }
+                            className={`w-full px-2 py-1 rounded border text-xs ${
+                              shishaOptions.staffSetupTime
+                                ? 'border-charcoal/15 bg-white'
+                                : 'border-rose-300 bg-rose-50 text-rose-700'
+                            }`}
+                          >
+                            <option value="">
+                              {startTime && endTime ? `${startTime} – ${endTime}` : '請揀'}
+                            </option>
+                            {(() => {
+                              const toMin = (s: string) => {
+                                const [h, m] = s.split(':').map(Number);
+                                return h * 60 + (m || 0);
+                              };
+                              const fmt = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+                              const sm = startTime ? toMin(startTime) : 8 * 60;
+                              const em = endTime ? toMin(endTime) : 23 * 60 + 45;
+                              const out: string[] = [];
+                              for (let m = sm; m <= em; m += 15) out.push(fmt(m));
+                              return out.map((t) => <option key={t} value={t}>{t}</option>);
+                            })()}
+                          </select>
+                        </div>
+                      )}
                     </div>
                   );
                 })()}
@@ -1294,10 +1643,13 @@ export default function AdminBookingDetailPage() {
                             },
                           };
                         }
+                        if (id === 'catering' && cateringSelection) {
+                          return { id, quantity: 1, options: cateringSelection };
+                        }
                         return { id, quantity };
                       }),
                     ...customAddOns
-                      .filter((c) => c.price > 0 && c.name.trim() !== '')
+                      .filter((c) => c.name.trim() !== '' && c.price >= 0)
                       .map((c) => ({
                         id: c.id,
                         quantity: 1,
@@ -1308,7 +1660,20 @@ export default function AdminBookingDetailPage() {
                   let suggestedTier: number | null = null;
                   let suggestedSubtotalGross = 0;
                   let suggestedSubtotal = 0;
-                  const livePromoDiscount = booking.promoDiscount || 0;
+                  // Recompute promo for free_drinks (matches save-time
+                  // logic in updateBookingDateTime). Without this the
+                  // hint text shows the old pax-count's promo amount
+                  // until save — e.g. 13 → 12 pax kept showing
+                  // 「優惠碼 DRINK2026 HK$325」 (= 13-pax worth) on
+                  // the 12-pax preview.
+                  const livePromoDiscount = livePromoForBooking({
+                    storedPromoDiscount: booking.promoDiscount || 0,
+                    promoFreeDrinksCost: booking.promoFreeDrinksCost,
+                    liveGuestCount: guestCount,
+                    liveChildCount: childCount,
+                    liveAddOns,
+                    liveVenueId: venueId,
+                  });
                   if (liveVenue) {
                     try {
                       const live = calculatePricing(
@@ -1317,7 +1682,7 @@ export default function AdminBookingDetailPage() {
                         booking.hours,
                         guestCount,
                         liveAddOns,
-                        booking.childCount ?? 0,
+                        childCount,
                       );
                       suggestedSubtotalGross = live.subtotal;
                       // Effective subtotal = formula − promo. The
@@ -1472,6 +1837,39 @@ export default function AdminBookingDetailPage() {
                   : `${booking.guestCount}`
               }
             />
+            {/* Package booking — show which package the customer
+             *  picked + which decoration colour (birthday packages
+             *  include a free 3-colour decoration choice). Without
+             *  this admin had no way to see decoration selections
+             *  except by opening the raw Firestore doc (#mjtp9UKB:
+             *  pink decoration was invisible in the UI). Only renders
+             *  for package bookings since the fields are scoped to
+             *  packages. */}
+            {booking.packageSlug && (() => {
+              const pkg = getPackageBySlug(booking.packageSlug);
+              return (
+                <Row
+                  icon={<Package size={14} />}
+                  label={locale === 'zh' ? '套餐' : 'Package'}
+                  value={pkg ? `${pkg.name[locale]} (${booking.packageSlug})` : booking.packageSlug}
+                  highlight="violet"
+                />
+              );
+            })()}
+            {booking.decorationStyle && (() => {
+              const decor = getDecorationById(booking.decorationStyle);
+              return (
+                <Row
+                  label={locale === 'zh' ? '佈置款式' : 'Decoration'}
+                  value={
+                    decor
+                      ? `${decor.label[locale]} — ${decor.description[locale]}`
+                      : booking.decorationStyle
+                  }
+                  highlight="pink"
+                />
+              );
+            })()}
             {/* 場租 — venue rental line. Pulled from pricing.baseCharge
              *  (storage) so it survives off-formula edits. Heidi's spec
              *  places this between 人數 and 附加服務. */}
@@ -1544,16 +1942,70 @@ export default function AdminBookingDetailPage() {
              * the math reads as: 場租 + add-ons − 優惠碼 = 小計
              * (post-promo). 總額 = 小計 + 按金. 尚欠 = 總額 − 已收.
              *
-             * pricing.subtotal is already stored post-promo, so 小計
-             * displays it directly and 總額 = subtotal + securityDeposit
-             * without further discount subtraction. */}
-            {(booking.promoCode && (booking.promoDiscount ?? 0) > 0) && (
-              <Row
-                label={locale === 'zh' ? '優惠碼' : 'Promo'}
-                value={`${booking.promoCode} (−HK$${(booking.promoDiscount || 0).toLocaleString()})`}
-                highlight="emerald"
-              />
-            )}
+             * grandTotal is derived from primitives
+             * (baseCharge + addOnTotal − promo + securityDeposit) so
+             * the math is correct regardless of whether
+             * `pricing.subtotal` was stored PRE- or POST-promo —
+             * convention drift between admin/bookings/new (PRE-promo
+             * post-e1900f0) and updateBookingPricing (POST-promo).
+             * Previously this used `subtotal + securityDeposit`, which
+             * inflated 尚欠 by the promo amount for every PRE-promo
+             * booking (#asQzC4PU showed phantom HK\$500 outstanding). */}
+            {(booking.promoCode && (booking.promoDiscount ?? 0) > 0) && (() => {
+              // For free_drinks promos, detect if promoDiscount is out of
+              // sync with the current pax (e.g. after customer modified).
+              const isFreeDrinksPromo = (booking.promoFreeDrinksCost ?? 0) > 0;
+              const hasDrinks = (booking.addOns || []).some((a) => a.id === 'drinks');
+              let expectedPromo = booking.promoDiscount || 0;
+              if (isFreeDrinksPromo && hasDrinks) {
+                const pa = Math.max(0, booking.guestCount - (booking.childCount ?? 0));
+                const ae = pa + 0.5 * (booking.childCount ?? 0);
+                expectedPromo = Math.round(25 * ae);
+              }
+              const promoDrift = isFreeDrinksPromo && expectedPromo !== (booking.promoDiscount || 0);
+              return (
+                <div>
+                  <Row
+                    label={locale === 'zh' ? '優惠碼' : 'Promo'}
+                    value={`${booking.promoCode} (−HK$${(booking.promoDiscount || 0).toLocaleString()})`}
+                    highlight="emerald"
+                  />
+                  {promoDrift && (
+                    <div className="flex items-center gap-2 mt-1 ml-1">
+                      <span className="text-xs text-amber-700">
+                        {locale === 'zh'
+                          ? `⚠️ 飲品優惠應為 −HK$${expectedPromo} (人數已更改)`
+                          : `⚠️ Promo should be −HK$${expectedPromo} (pax changed)`}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!booking) return;
+                          setSaving(true);
+                          try {
+                            const res = await fetch('/api/admin/fix-free-drinks-promo', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ bookingId: booking.id }),
+                            });
+                            if (!res.ok) throw new Error(await res.text());
+                            const fresh = await getBooking(booking.id);
+                            if (fresh) setBooking(fresh);
+                          } catch (e) {
+                            setError(String(e));
+                          } finally {
+                            setSaving(false);
+                          }
+                        }}
+                        className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800 hover:bg-amber-200 border border-amber-300"
+                      >
+                        {locale === 'zh' ? '立即修正' : 'Fix now'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             {(booking.pointsUsed ?? 0) > 0 && (
               <Row
                 icon={<Sparkles size={14} />}
@@ -1566,7 +2018,13 @@ export default function AdminBookingDetailPage() {
             <Row label={locale === 'zh' ? '可退按金' : 'Refundable deposit'} value={`HK$${(booking.pricing.securityDeposit ?? 0).toLocaleString()}`} />
             {(() => {
               const grandTotal =
-                (booking.pricing.subtotal || 0) + (booking.pricing.securityDeposit || 0);
+                Math.max(
+                  0,
+                  (booking.pricing.baseCharge || 0)
+                    + (booking.pricing.addOnTotal || 0)
+                    - (booking.promoDiscount || 0)
+                    - (booking.pointsDiscount || 0),
+                ) + (booking.pricing.securityDeposit || 0);
               const actualPaid =
                 (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
               const outstanding = Math.max(0, grandTotal - actualPaid);
@@ -1596,6 +2054,59 @@ export default function AdminBookingDetailPage() {
                       highlight="amber"
                     />
                   )}
+                </>
+              );
+            })()}
+            {/* Deposit settlement summary — only renders once admin has
+             *  closed out the booking via 「按金結算」. Shows the three
+             *  cases from Heidi's 2026-06-21 spec:
+             *   A. Full refund (no deductions)         → 已退還按金 + 最後結算
+             *   B. Partial deduction + refund          → 按金扣費 + 已退還按金 + 最後結算
+             *   C. Overflow (deductions > 按金)        → 按金扣費 + 已退還按金 \$0 + 最後結算
+             *  Last total = sum(payments) − depositRefund.amount  (what
+             *  customer net spent, after the refund went back to them). */}
+            {booking.depositRefund && (() => {
+              const dr = booking.depositRefund as {
+                amount: number;
+                deductions?: Array<{ label: string; amount: number }>;
+              };
+              const deductions = (dr.deductions || []).filter((d) => d && d.amount > 0);
+              const deductionsTotal = deductions.reduce((s, d) => s + (d.amount || 0), 0);
+              const paymentsSum = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+              const finalNet = Math.max(0, paymentsSum - (dr.amount || 0));
+              return (
+                <>
+                  <div className="pt-2 mt-2 border-t border-white/40 text-xs font-semibold text-ink-soft uppercase tracking-wide">
+                    {locale === 'zh' ? '結算摘要' : 'Settlement Summary'}
+                  </div>
+                  {deductions.length > 0 && (
+                    <div className="flex items-start gap-2 py-1 border-b border-white/30">
+                      <span className="flex items-center gap-1.5 text-ink-soft shrink-0">
+                        {locale === 'zh' ? '按金扣費' : 'Deposit deductions'}
+                      </span>
+                      <div className="flex-1 text-right">
+                        <span className="font-medium text-rose-700">−HK${deductionsTotal.toLocaleString()}</span>
+                        <ul className="text-[11px] text-ink-soft mt-0.5 space-y-0.5">
+                          {deductions.map((d, idx) => (
+                            <li key={idx} className="flex justify-between gap-3">
+                              <span className="truncate">{d.label}</span>
+                              <span className="whitespace-nowrap">HK${d.amount.toLocaleString()}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+                  <Row
+                    label={locale === 'zh' ? '已退還按金' : 'Deposit refunded'}
+                    value={`HK$${(dr.amount || 0).toLocaleString()}`}
+                    highlight={dr.amount > 0 ? 'emerald' : 'amber'}
+                  />
+                  <Row
+                    label={locale === 'zh' ? '訂單最後結算總額' : 'Final settled total'}
+                    value={`HK$${finalNet.toLocaleString()}`}
+                    highlight="violet"
+                  />
                 </>
               );
             })()}
@@ -1895,6 +2406,26 @@ export default function AdminBookingDetailPage() {
           </div>
         </div>
       )}
+
+      <CateringPickerModal
+        open={cateringModalOpen}
+        initial={cateringSelection || undefined}
+        locale={locale}
+        bookingDate={date}
+        bookingStartTime={startTime}
+        bookingEndTime={endTime}
+        onClose={() => setCateringModalOpen(false)}
+        onSave={(sel) => {
+          setCateringSelection(sel);
+          setAddOnQty((prev) => ({ ...prev, catering: 1 }));
+          setCateringModalOpen(false);
+        }}
+        onRemove={() => {
+          setCateringSelection(null);
+          setAddOnQty((prev) => ({ ...prev, catering: 0 }));
+          setCateringModalOpen(false);
+        }}
+      />
     </div>
   );
 }
@@ -2220,12 +2751,13 @@ function Row({
   icon?: React.ReactNode;
   label: string;
   value: string;
-  highlight?: 'amber' | 'emerald' | 'violet';
+  highlight?: 'amber' | 'emerald' | 'violet' | 'pink';
 }) {
   const color =
     highlight === 'amber' ? 'text-amber-700'
     : highlight === 'emerald' ? 'text-emerald-700 font-mono'
     : highlight === 'violet' ? 'text-violet-700'
+    : highlight === 'pink' ? 'text-pink-700'
     : 'text-ink';
   return (
     <div className="flex items-start justify-between gap-3 border-b border-white/30 pb-2 last:border-0">
@@ -2286,8 +2818,17 @@ function DepositSettlement(props: DepositSettlementProps) {
   }
   function updateCustom(i: number, field: 'label' | 'amount', val: string | number) {
     const updated = [...customDeductions];
-    if (field === 'amount') updated[i].amount = Number(val);
-    else updated[i].label = val as string;
+    if (field === 'amount') {
+      // Clamp to non-negative — admin previously typed "-450" thinking
+      // it meant "deduct $450", which made totalDeductions negative
+      // and inflated the refund to deposit + 450 (#HtMEinHx: refund
+      // shown as \$1,450 instead of correct \$550). The UI hint
+      // 「總扣費 −HK\$X」 has the minus sign already in markup; admin
+      // only ever types the magnitude.
+      updated[i].amount = Math.max(0, Number(val) || 0);
+    } else {
+      updated[i].label = val as string;
+    }
     setCustomDeductions(updated);
   }
   function removeCustom(i: number) {
@@ -2303,14 +2844,32 @@ function DepositSettlement(props: DepositSettlementProps) {
 
       {alreadySettled ? (
         <div className="space-y-2 text-sm">
-          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
-            <p className="font-semibold text-emerald-700 mb-1">
-              {locale === 'zh' ? '✓ 已結算' : '✓ Settled'}
-            </p>
-            <p className="text-xs text-emerald-700">
-              {locale === 'zh' ? '退款金額：' : 'Refund: '}HK${(booking.depositRefund as { amount?: number })?.amount?.toLocaleString() || 0}
-            </p>
-          </div>
+          {/* Detect "deductions exceed deposit" — overflow lives on
+           *  booking.balanceDue when status is still 'confirmed' after
+           *  settlement. Render an amber warning so admin remembers to
+           *  chase the customer for the difference + record receipt
+           *  via 已於線下付款 in the Outstanding Balance card above. */}
+          {(booking.balanceDue ?? 0) > 0 && booking.status === 'confirmed' ? (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+              <p className="font-semibold text-amber-800 mb-1">
+                ⚠️ {locale === 'zh' ? '結算完成 — 客人尚欠' : 'Settled — customer owes'} HK${(booking.balanceDue || 0).toLocaleString()}
+              </p>
+              <p className="text-xs text-amber-700">
+                {locale === 'zh'
+                  ? '扣減超出按金，請喺上面「預訂未付尾數」卡片用「已於線下付款」記錄收到嘅補款。'
+                  : 'Deductions exceeded the deposit. Use 已於線下付款 on the Outstanding Balance card above once the customer pays.'}
+              </p>
+            </div>
+          ) : (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+              <p className="font-semibold text-emerald-700 mb-1">
+                {locale === 'zh' ? '✓ 已結算' : '✓ Settled'}
+              </p>
+              <p className="text-xs text-emerald-700">
+                {locale === 'zh' ? '退款金額：' : 'Refund: '}HK${(booking.depositRefund as { amount?: number })?.amount?.toLocaleString() || 0}
+              </p>
+            </div>
+          )}
           {(booking.depositRefund as { deductions?: { label: string; amount: number }[] })?.deductions?.length ? (
             <ul className="text-xs text-ink-soft space-y-1 pl-4 list-disc">
               {(booking.depositRefund as { deductions?: { label: string; amount: number }[] }).deductions!.map((d, i) => (
@@ -2451,7 +3010,22 @@ function DepositSettlement(props: DepositSettlementProps) {
             </div>
             <div className="flex justify-between text-xs text-ink-soft">
               <span>{locale === 'zh' ? '會員 credit 積分' : 'Loyalty points credit'}</span>
-              <span>+{(booking.pricing.subtotal + total).toLocaleString()} {locale === 'zh' ? '分' : 'pts'}</span>
+              <span>+{(
+                // Mirror handleSettleDeposit's points formula EXACTLY:
+                // effectiveSpend (rental+addOns net of promo/points)
+                // + consumedDeposit (deductions ≤ security deposit)
+                // + overflowPaid (deductions − security deposit, what
+                //                  customer pays out of pocket).
+                Math.max(
+                  0,
+                  (booking.pricing.baseCharge || 0)
+                    + (booking.pricing.addOnTotal || 0)
+                    - (booking.promoDiscount || 0)
+                    - (booking.pointsDiscount || 0),
+                )
+                + Math.min(total, booking.pricing.securityDeposit || 0)
+                + Math.max(0, total - (booking.pricing.securityDeposit || 0))
+              ).toLocaleString()} {locale === 'zh' ? '分' : 'pts'}</span>
             </div>
           </div>
 

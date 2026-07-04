@@ -22,6 +22,17 @@ import { getHolidaysForMonth, Holiday } from '@/lib/hkHolidays';
 
 const timeSlots = Array.from({ length: 14 }, (_, i) => `${String(i + 10).padStart(2, '0')}:00`);
 
+// Sheung Wan group — sw-a / sw-b / sw-ab share one physical floor.
+// Heidi's 2026-06 ask: collapse to a single 上環店 filter so the day view
+// shows all three rooms' bookings together (otherwise picking sw-a hides
+// any sw-b or sw-ab booking on the same day, which is misleading since
+// they all reserve the same physical space).
+const SW_GROUP_ID = 'sw-group';
+const SW_GROUP_IDS = ['sw-a', 'sw-b', 'sw-ab'];
+function isSwGroupVenue(id: string): boolean {
+  return SW_GROUP_IDS.includes(id);
+}
+
 type AddType = 'block' | 'site_visit' | 'delivery';
 
 type DayItem =
@@ -118,6 +129,18 @@ export default function AdminCalendarPage() {
       setBookings(bookingData);
       setBlockedSlots(allSlots.flat());
       setCalendarEvents(eventData);
+      setUserNames(names);
+    } else if (selectedVenue === SW_GROUP_ID) {
+      // 上環店 (group): pull all 3 sub-rooms' slots + filter bookings/events.
+      const [bookingData, swSlots, eventData, names] = await Promise.all([
+        getBookingsForMonth(currentMonth),
+        Promise.all(SW_GROUP_IDS.map((vid) => getBlockedSlotsForMonth(vid, currentMonth))),
+        getCalendarEventsForMonth(currentMonth),
+        namesPromise,
+      ]);
+      setBookings(bookingData.filter((b) => isSwGroupVenue(b.venueId)));
+      setBlockedSlots(swSlots.flat());
+      setCalendarEvents(eventData.filter((e) => isSwGroupVenue(e.venueId)));
       setUserNames(names);
     } else {
       const [bookingData, slotData, eventData, names] = await Promise.all([
@@ -221,7 +244,14 @@ export default function AdminCalendarPage() {
     setAddType('block');
     setAddStart('10:00');
     setAddEnd('14:00');
-    setAddVenue(selectedVenue === 'all' ? 'cwb' : selectedVenue);
+    // For the SW group filter, default the new-block target to sw-ab
+    // (full floor) since blocking the whole space is most common; admin
+    // can pick a sub-room from the venue picker. 'all' falls back to CWB.
+    setAddVenue(
+      selectedVenue === 'all' ? 'cwb'
+        : selectedVenue === SW_GROUP_ID ? 'sw-ab'
+          : selectedVenue,
+    );
     setAddNotes('');
     setSubmitError(null);
     setAddModal({ date: summaryDate });
@@ -232,7 +262,12 @@ export default function AdminCalendarPage() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const targetVenue = selectedVenue === 'all' ? addVenue : selectedVenue;
+      // 'sw-group' isn't a real venue id — admin picks a specific sub-room
+      // via addVenue from the dropdown below (which always shows for SW group).
+      const targetVenue =
+        selectedVenue === 'all' || selectedVenue === SW_GROUP_ID
+          ? addVenue
+          : selectedVenue;
       if (addType === 'block') {
         await createSharedBlockedSlot({
           venueId: targetVenue,
@@ -322,9 +357,14 @@ export default function AdminCalendarPage() {
           className="px-5 py-3 rounded-pill bg-white/70 backdrop-blur-md border border-white/80 text-ink focus:outline-none focus:border-pink/50 focus:bg-white"
         >
           <option value="all">{locale === 'zh' ? '全部分店' : 'All Venues'}</option>
-          {venues.map((v) => (
-            <option key={v.id} value={v.id}>{v.name[locale]}</option>
-          ))}
+          {/* Hide the 3 SW sub-rooms — they're shown as a single 上環店 entry
+              below since they share one physical floor (Heidi 2026-06). */}
+          {venues
+            .filter((v) => !isSwGroupVenue(v.id))
+            .map((v) => (
+              <option key={v.id} value={v.id}>{v.name[locale]}</option>
+            ))}
+          <option value={SW_GROUP_ID}>{locale === 'zh' ? '上環店' : 'Sheung Wan'}</option>
         </select>
 
         <div className="flex items-center gap-4 ml-auto">
@@ -710,13 +750,17 @@ function AddModal(props: {
           <TypeTab active={addType === 'delivery'} onClick={() => setAddType('delivery')} icon={<Truck size={14} />} label="Delivery" />
         </div>
 
-        {selectedVenue === 'all' && (
+        {(selectedVenue === 'all' || selectedVenue === SW_GROUP_ID) && (
           <div className="mb-4">
             <label className="text-sm text-ink-soft mb-1 block">{locale === 'zh' ? '分店' : 'Venue'}</label>
             <select value={addVenue} onChange={(e) => setAddVenue(e.target.value)} className="w-full px-4 py-2.5 rounded-pill bg-white/70 backdrop-blur-md border border-white/80 text-ink">
-              {venues.map((v) => (
-                <option key={v.id} value={v.id}>{v.name[locale]}</option>
-              ))}
+              {/* When 上環店 filter is active, narrow the picker to the 3 SW
+                  sub-rooms so admin chooses A / B / A+B for the manual block. */}
+              {venues
+                .filter((v) => selectedVenue === SW_GROUP_ID ? isSwGroupVenue(v.id) : true)
+                .map((v) => (
+                  <option key={v.id} value={v.id}>{v.name[locale]}</option>
+                ))}
             </select>
           </div>
         )}

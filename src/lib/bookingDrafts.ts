@@ -4,9 +4,7 @@ import {
   serverTimestamp, Timestamp, updateDoc,
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { BookingDraft, BookingRecord, BlockedSlot } from '@/types';
-import { createBooking, getBlockedSlots } from './firestore';
-import { venuesSharingSpace } from './venues';
+import { BookingDraft, BookingRecord } from '@/types';
 
 // Booking links must be acted on quickly — 8 hours mirrors the "first to pay"
 // policy ("不設留位，先到先得"). After 8h the link auto-expires; CS can
@@ -91,37 +89,6 @@ export function isDraftActionable(draft: BookingDraft): boolean {
   return draft.status === 'pending' && !draft.claimedBy && !isDraftExpired(draft);
 }
 
-/** Returns true if any blocked_slot overlaps the draft's time on the same
- *  venue (or any venue sharing physical space). Cross-midnight drafts are
- *  split into Day 1 (start → 23:59) and Day 2 (00:00 → end) and each side
- *  is checked against blocks on its own date. */
-async function hasSlotConflict(draft: BookingDraft): Promise<boolean> {
-  const startMin = (h: string) => {
-    const [hh, mm] = h.split(':').map(Number);
-    return hh * 60 + (mm || 0);
-  };
-  const venueIds = venuesSharingSpace(draft.venueId);
-  const overnight = !!draft.endDate && draft.endDate !== draft.date;
-  const windows: { date: string; start: number; end: number }[] = overnight
-    ? [
-        { date: draft.date, start: startMin(draft.startTime), end: 24 * 60 },
-        { date: draft.endDate as string, start: 0, end: startMin(draft.endTime) },
-      ]
-    : [{ date: draft.date, start: startMin(draft.startTime), end: startMin(draft.endTime) }];
-
-  for (const vid of venueIds) {
-    for (const w of windows) {
-      const blocks: BlockedSlot[] = await getBlockedSlots(vid, w.date);
-      for (const b of blocks) {
-        const bStart = startMin(b.startTime);
-        const bEnd = startMin(b.endTime);
-        if (w.start < bEnd && bStart < w.end) return true;
-      }
-    }
-  }
-  return false;
-}
-
 // ────────────────────────────────────────────────────────────
 // Customer: claim → creates a real booking
 // ────────────────────────────────────────────────────────────
@@ -138,60 +105,60 @@ export async function claimBookingDraft(
   if (draft.status !== 'pending') throw new Error('This booking link is no longer valid.');
   if (isDraftExpired(draft)) throw new Error('This booking link has expired.');
 
-  // First-to-pay policy: if the slot was booked by someone else in the
-  // meantime, the link auto-fails.
-  if (await hasSlotConflict(draft)) {
-    // Mark the draft cancelled so the URL won't keep trying.
-    try { await updateDoc(doc(db, 'booking_drafts', draft.id), { status: 'cancelled' }); }
-    catch { /* non-blocking */ }
-    throw new Error('SLOT_TAKEN');
-  }
-
-  // Build the booking record from the draft. Status starts at
-  // 'awaiting_payment' so the customer can immediately upload an FPS receipt.
-  // EVERY optional field is spread conditionally — Firestore's client SDK
-  // rejects explicit `undefined` values with "Unsupported field value:
-  // undefined", which is what surfaced as "確認預訂失敗" on the claim
-  // page for same-day (non-overnight) admin-issued links.
-  const bookingPayload: Omit<BookingRecord, 'id' | 'createdAt' | 'updatedAt'> = {
-    userId: customerUid,
-    whatsappPhone: customerWhatsapp || draft.customerWhatsapp,
-    venueId: draft.venueId,
-    branchSlug: draft.branchSlug,
-    date: draft.date,
-    startTime: draft.startTime,
-    endTime: draft.endTime,
-    hours: draft.hours,
-    guestCount: draft.guestCount,
-    adultCount: draft.adultCount,
-    childCount: draft.childCount,
-    isWeekend: draft.isWeekend,
-    addOns: draft.addOns,
-    hasBYOFood: draft.hasBYOFood,
-    pricing: draft.pricing,
-    status: 'awaiting_payment',
-    paymentMethod: null,
-    receiptUrl: null,
-    depositRefund: null,
-    draftId: draft.id,
-    // Overnight bookings only — never pass `endDate: undefined` to addDoc.
-    ...(draft.endDate ? { endDate: draft.endDate } : {}),
-    ...(draft.promoCode ? { promoCode: draft.promoCode } : {}),
-    ...(draft.promoCodeId ? { promoCodeId: draft.promoCodeId } : {}),
-    ...(typeof draft.promoDiscount === 'number' ? { promoDiscount: draft.promoDiscount } : {}),
-    ...(typeof draft.promoFreeDrinksCost === 'number' ? { promoFreeDrinksCost: draft.promoFreeDrinksCost } : {}),
-    ...(draft.packageSlug ? { packageSlug: draft.packageSlug } : {}),
-  };
-  const bookingId = await createBooking(bookingPayload);
-
-  // Mark draft claimed.
-  await updateDoc(doc(db, 'booking_drafts', draft.id), {
-    claimedBy: customerUid,
-    claimedAt: serverTimestamp(),
-    bookingId,
-    status: 'claimed',
+  // Delegate to the server-side atomic route which:
+  //   • checks for slot conflicts inside a Firestore transaction
+  //   • creates the booking + blocked_slots atomically
+  //   • marks the draft as claimed — all in one transaction
+  // This replaces the previous hasSlotConflict() + createBooking() two-step
+  // which had a race window between the read and the write.
+  const res = await fetch('/api/bookings/create', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      draftId: draft.id,
+      userId: customerUid,
+      whatsappPhone: customerWhatsapp || draft.customerWhatsapp,
+      venueId: draft.venueId,
+      branchSlug: draft.branchSlug,
+      date: draft.date,
+      startTime: draft.startTime,
+      endTime: draft.endTime,
+      hours: draft.hours,
+      guestCount: draft.guestCount,
+      adultCount: draft.adultCount,
+      childCount: draft.childCount,
+      isWeekend: draft.isWeekend,
+      addOns: draft.addOns,
+      hasBYOFood: draft.hasBYOFood,
+      pricing: draft.pricing,
+      status: 'awaiting_payment',
+      paymentMethod: null,
+      receiptUrl: null,
+      depositRefund: null,
+      // draftId stored on the booking record (link back to the draft).
+      // Named differently from the top-level `draftId` param (which tells
+      // the route to claim the draft) to avoid collision in destructuring.
+      draftIdField: draft.id,
+      ...(draft.endDate ? { endDate: draft.endDate } : {}),
+      ...(draft.promoCode ? { promoCode: draft.promoCode } : {}),
+      ...(draft.promoCodeId ? { promoCodeId: draft.promoCodeId } : {}),
+      ...(typeof draft.promoDiscount === 'number' ? { promoDiscount: draft.promoDiscount } : {}),
+      ...(typeof draft.promoFreeDrinksCost === 'number' ? { promoFreeDrinksCost: draft.promoFreeDrinksCost } : {}),
+      ...(draft.packageSlug ? { packageSlug: draft.packageSlug } : {}),
+    }),
   });
 
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({})) as { error?: string };
+    if (errData.error === 'SLOT_CONFLICT' || errData.error === 'DRAFT_CLAIMED') {
+      try { await updateDoc(doc(db, 'booking_drafts', draft.id), { status: 'cancelled' }); }
+      catch { /* non-blocking */ }
+      throw new Error('SLOT_TAKEN');
+    }
+    throw new Error(errData.error || 'CREATE_FAILED');
+  }
+
+  const { bookingId } = await res.json() as { bookingId: string };
   return bookingId;
 }
 

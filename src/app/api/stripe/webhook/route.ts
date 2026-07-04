@@ -3,7 +3,7 @@ import { stripe } from '@/lib/stripe';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { buildBookingConfirmationEmail, generateWhatsAppLink } from '@/lib/email';
-import { sendAutomatedEmail, sendStaffBookingNotification } from '@/lib/emailAutomations';
+import { sendAutomatedEmail, sendStaffBookingNotification, sendStaffSupplierOrderNotification } from '@/lib/emailAutomations';
 import { getVenueById } from '@/lib/venues';
 import { processBookingForLockAccess } from '@/lib/lockPasscode';
 import { pushBookingToCalendar, updateBookingOnCalendar } from '@/lib/googleCalendar';
@@ -32,6 +32,31 @@ export async function POST(request: NextRequest) {
       const session = event.data.object;
       const bookingId = session.metadata?.bookingId;
       const isBalancePayment = session.metadata?.isBalancePayment === 'true';
+
+      // Idempotency guard — Stripe retries this webhook when it
+      // doesn't see a 200 OK within ~30s. #WIiQYL2I: customer paid
+      // \$15,960 once but webhook fired twice 33s apart, leaving
+      // duplicate payments[] entries totalling \$31,920 charged in
+      // our records vs \$15,960 actually collected. Reserve the
+      // event.id atomically with a Firestore create() — second
+      // concurrent retry fails the create() and bails. This makes
+      // processing at-most-once: if downstream code throws AFTER we
+      // reserved, the retry sees the marker and skips, so we may
+      // miss a transient processing error. Trade-off favours
+      // never-duplicate-charges over guaranteed-recovery.
+      const markerRef = adminDb.collection('_stripe_webhook_events').doc(event.id);
+      try {
+        await markerRef.create({
+          eventId: event.id,
+          eventType: event.type,
+          bookingId: bookingId || null,
+          isBalancePayment,
+          processedAt: FieldValue.serverTimestamp(),
+        });
+      } catch {
+        // ALREADY_EXISTS — another retry beat us. Skip.
+        return NextResponse.json({ received: true, deduped: true, eventId: event.id });
+      }
 
       if (bookingId) {
         // 1. Update booking — confirm + (if balance payment) clear balanceDue.
@@ -88,6 +113,47 @@ export async function POST(request: NextRequest) {
         }
 
         await bookingRef.update(updates);
+
+        // 1a. If the expire-pending-bookings cron swept this booking
+        //     before the Stripe webhook arrived (race: customer paid at
+        //     the last second, cron deleted blocked_slots, webhook then
+        //     re-confirms), the time slot is now unprotected. Recreate
+        //     the blocked_slots so no one else can book the same window.
+        //     We query by bookingId — if count > 0 the cron didn't delete
+        //     them and we skip; if count = 0 we rebuild from the booking.
+        if (!isBalancePayment && preStripe) {
+          try {
+            const existingBlocks = await adminDb
+              .collection('blocked_slots')
+              .where('bookingId', '==', bookingId)
+              .get();
+            if (existingBlocks.empty) {
+              const b = preStripe;
+              const overnight = !!b.endDate && b.endDate !== b.date;
+              const endDate = overnight ? (b.endDate as string) : b.date;
+              const [endH, endM] = b.endTime.split(':').map(Number);
+              const bufferEndH = endH + 1;
+              const bufferEnd = bufferEndH >= 24
+                ? '23:59'
+                : `${String(bufferEndH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+              const batch = adminDb.batch();
+              const newSlot = (data: object) =>
+                batch.create(adminDb.collection('blocked_slots').doc(), data);
+              if (overnight) {
+                newSlot({ venueId: b.venueId, date: b.date, startTime: b.startTime, endTime: '23:59', reason: 'booking', bookingId });
+                newSlot({ venueId: b.venueId, date: endDate, startTime: '00:00', endTime: b.endTime, reason: 'booking', bookingId });
+                newSlot({ venueId: b.venueId, date: endDate, startTime: b.endTime, endTime: bufferEnd, reason: 'cleaning', bookingId });
+              } else {
+                newSlot({ venueId: b.venueId, date: b.date, startTime: b.startTime, endTime: b.endTime, reason: 'booking', bookingId });
+                newSlot({ venueId: b.venueId, date: b.date, startTime: b.endTime, endTime: bufferEnd, reason: 'cleaning', bookingId });
+              }
+              await batch.commit();
+              console.warn('[stripe webhook] restored deleted blocked_slots for booking', bookingId);
+            }
+          } catch (err) {
+            console.error('[stripe webhook] blocked_slots restore failed for', bookingId, err);
+          }
+        }
 
         // 1b. If the customer redeemed loyalty points / applied a promo
         //     code, persist the deductions now (deposit payments only —
@@ -249,6 +315,15 @@ export async function POST(request: NextRequest) {
               addOnsLine: formatAddOnsForStaff(bookingForNotify.addOns, 'zh'),
               hasBYOFood: !!bookingForNotify.hasBYOFood,
               paymentMethod: 'Stripe',
+              adminUrl: `${origin}/zh/admin/bookings/${bookingForNotify.id}`,
+            });
+            // Supplier-order email (only fires when booking has
+            // hotpot / shisha / decoration / chef / catering).
+            await sendStaffSupplierOrderNotification({
+              booking: bookingForNotify,
+              venueName: venue?.name.zh || bookingForNotify.branchSlug,
+              customerName: profileForNotify?.displayName || '—',
+              customerEmail: profileForNotify?.email,
               adminUrl: `${origin}/zh/admin/bookings/${bookingForNotify.id}`,
             });
           }

@@ -257,7 +257,15 @@ function BookingCard({
         </div>
         <div className="text-right">
           <p className="text-2xl font-bold font-display text-gradient-pink">
-            HK${(booking.pricing.subtotal + (booking.pricing.securityDeposit ?? 0)).toLocaleString()}
+            HK${(
+              Math.max(
+                0,
+                (booking.pricing.baseCharge || 0)
+                  + (booking.pricing.addOnTotal || 0)
+                  - (booking.promoDiscount || 0)
+                  - (booking.pointsDiscount || 0),
+              ) + (booking.pricing.securityDeposit ?? 0)
+            ).toLocaleString()}
           </p>
           <p className="text-xs text-ink-soft">
             {locale === 'zh' ? '應付' : 'Due'}: HK${booking.pricing.deposit.toLocaleString()}

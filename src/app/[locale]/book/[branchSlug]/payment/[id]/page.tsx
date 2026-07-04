@@ -5,7 +5,7 @@ import { useLocale } from 'next-intl';
 import { useParams } from 'next/navigation';
 import { useRouter } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
-import { getBooking, updateBookingPaymentMethod, createBooking } from '@/lib/firestore';
+import { getBooking, updateBookingPaymentMethod } from '@/lib/firestore';
 import { getVenueById } from '@/lib/venues';
 import { BookingRecord } from '@/types';
 import { LogIn } from 'lucide-react';
@@ -221,45 +221,54 @@ export default function PaymentMethodPage() {
         }
         const pendingExpiresAt =
           Date.now() + PAYMENT_DETAILS.pendingHoldMinutes * 60 * 1000;
-        const newId = await createBooking({
-          userId: user.uid,
-          whatsappPhone: draft.whatsappPhone,
-          venueId: draft.venueId,
-          branchSlug: draft.branchSlug,
-          date: draft.date,
-          startTime: draft.startTime,
-          endTime: draft.endTime,
-          ...(draft.endDate ? { endDate: draft.endDate } : {}),
-          hours: draft.hours,
-          guestCount: draft.guestCount,
-          adultCount: draft.adultCount,
-          childCount: draft.childCount,
-          isWeekend: draft.isWeekend,
-          addOns: draft.addOns,
-          hasBYOFood: draft.hasBYOFood,
-          pricing: draft.pricing,
-          status: 'awaiting_payment',
-          paymentMethod: 'stripe',  // generic "online" — KPay's webhook
-                                    // records the actual method (card /
-                                    // FPS / AlipayHK / etc.) on each
-                                    // payments[] entry.
-          receiptUrl: null,
-          refundDetails: draft.refundDetails,
-          balanceDue: draft.effectiveBalanceDue ?? 0,
-          pendingExpiresAt,
-          depositRefund: null,
-          ...(draft.promoCode ? { promoCode: draft.promoCode } : {}),
-          ...(draft.promoCodeId ? { promoCodeId: draft.promoCodeId } : {}),
-          ...(typeof draft.promoDiscount === 'number' ? { promoDiscount: draft.promoDiscount } : {}),
-          ...(typeof draft.promoFreeDrinksCost === 'number'
-            ? { promoFreeDrinksCost: draft.promoFreeDrinksCost } : {}),
-          ...(typeof draft.pointsUsed === 'number' ? { pointsUsed: draft.pointsUsed } : {}),
-          ...(typeof draft.pointsDiscount === 'number' ? { pointsDiscount: draft.pointsDiscount } : {}),
-          ...(draft.marketingChannel ? { marketingChannel: draft.marketingChannel } : {}),
-          ...(draft.marketingChannelOther ? { marketingChannelOther: draft.marketingChannelOther } : {}),
-          ...(draft.packageSlug ? { packageSlug: draft.packageSlug } : {}),
-          ...(draft.decorationStyle ? { decorationStyle: draft.decorationStyle } : {}),
+        const createRes = await fetch('/api/bookings/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: user.uid,
+            whatsappPhone: draft.whatsappPhone,
+            venueId: draft.venueId,
+            branchSlug: draft.branchSlug,
+            date: draft.date,
+            startTime: draft.startTime,
+            endTime: draft.endTime,
+            ...(draft.endDate ? { endDate: draft.endDate } : {}),
+            hours: draft.hours,
+            guestCount: draft.guestCount,
+            adultCount: draft.adultCount,
+            childCount: draft.childCount,
+            isWeekend: draft.isWeekend,
+            addOns: draft.addOns,
+            hasBYOFood: draft.hasBYOFood,
+            pricing: draft.pricing,
+            status: 'awaiting_payment',
+            paymentMethod: 'stripe',  // generic "online" — KPay's webhook
+                                      // records the actual method (card /
+                                      // FPS / AlipayHK / etc.) on each
+                                      // payments[] entry.
+            receiptUrl: null,
+            refundDetails: draft.refundDetails,
+            balanceDue: draft.effectiveBalanceDue ?? 0,
+            pendingExpiresAt,
+            depositRefund: null,
+            ...(draft.promoCode ? { promoCode: draft.promoCode } : {}),
+            ...(draft.promoCodeId ? { promoCodeId: draft.promoCodeId } : {}),
+            ...(typeof draft.promoDiscount === 'number' ? { promoDiscount: draft.promoDiscount } : {}),
+            ...(typeof draft.promoFreeDrinksCost === 'number'
+              ? { promoFreeDrinksCost: draft.promoFreeDrinksCost } : {}),
+            ...(typeof draft.pointsUsed === 'number' ? { pointsUsed: draft.pointsUsed } : {}),
+            ...(typeof draft.pointsDiscount === 'number' ? { pointsDiscount: draft.pointsDiscount } : {}),
+            ...(draft.marketingChannel ? { marketingChannel: draft.marketingChannel } : {}),
+            ...(draft.marketingChannelOther ? { marketingChannelOther: draft.marketingChannelOther } : {}),
+            ...(draft.packageSlug ? { packageSlug: draft.packageSlug } : {}),
+            ...(draft.decorationStyle ? { decorationStyle: draft.decorationStyle } : {}),
+          }),
         });
+        if (!createRes.ok) {
+          const errData = await createRes.json().catch(() => ({}));
+          throw new Error((errData as { error?: string }).error || 'CREATE_FAILED');
+        }
+        const { bookingId: newId } = await createRes.json() as { bookingId: string };
         effectiveBookingId = newId;
         clearBookingCheckoutDraft();
       } else {
@@ -287,7 +296,14 @@ export default function PaymentMethodPage() {
       window.location.href = sessionUrl;
     } catch (err) {
       console.error(err);
-      setError(locale === 'zh' ? '處理失敗，請重試' : 'Processing failed, please retry');
+      const msg = err instanceof Error ? err.message : '';
+      if (msg === 'SLOT_CONFLICT') {
+        setError(locale === 'zh'
+          ? '非常抱歉，此時段剛被其他人預訂。請返回選擇另一時段。'
+          : 'Sorry, this slot was just booked by someone else. Please go back and choose another time.');
+      } else {
+        setError(locale === 'zh' ? '處理失敗，請重試' : 'Processing failed, please retry');
+      }
       setSubmitting(false);
     }
   }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
-import { sendStaffBookingNotification } from '@/lib/emailAutomations';
+import { sendStaffBookingNotification, sendStaffSupplierOrderNotification } from '@/lib/emailAutomations';
 import { getVenueById } from '@/lib/venues';
 import { formatAddOnsForStaff } from '@/lib/pricing';
 import type { BookingRecord, UserProfile } from '@/types';
@@ -57,6 +57,16 @@ export async function POST(req: NextRequest) {
       addOnsLine: formatAddOnsForStaff(booking.addOns, 'zh'),
       hasBYOFood: !!booking.hasBYOFood,
       paymentMethod: booking.paymentMethod || 'Manual',
+      adminUrl: `${origin}/zh/admin/bookings/${booking.id}`,
+    });
+
+    // Supplier-order email — no-op when the booking has no supplier
+    // items, so safe to call unconditionally.
+    await sendStaffSupplierOrderNotification({
+      booking,
+      venueName: venue?.name.zh || booking.branchSlug,
+      customerName: profile?.displayName || '—',
+      customerEmail: profile?.email,
       adminUrl: `${origin}/zh/admin/bookings/${booking.id}`,
     });
 

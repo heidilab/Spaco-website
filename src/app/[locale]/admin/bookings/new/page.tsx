@@ -18,11 +18,13 @@ import {
 } from '@/lib/pricing';
 import { ALL_PACKAGES, getPackageBySlug, CATEGORY_LABEL } from '@/lib/packages';
 import { createBookingDraft, buildClaimUrl } from '@/lib/bookingDrafts';
+import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
+import { calcCateringTotal } from '@/lib/pricing';
 import { getHoliday } from '@/lib/hkHolidays';
 import { normalizeHkPhone, isValidHkPhone, formatHkPhone } from '@/lib/whatsapp';
 import {
   Calendar, Clock, Users, Plus, Minus, Link as LinkIcon, Copy, Check, ArrowLeft, MessageCircle,
-  Loader2, AlertCircle, Tag, Package as PackageIcon, X as XIcon,
+  Loader2, AlertCircle, Tag, Package as PackageIcon, X as XIcon, Calculator,
 } from 'lucide-react';
 
 function toMinutes(hhmm: string): number {
@@ -68,6 +70,16 @@ export default function AdminNewBookingPage() {
   // these — staff use them for ad-hoc charges like 「4位代燒員」.
   const [customAddOns, setCustomAddOns] = useState<Array<{ id: string; name: string; price: number }>>([]);
   const [hasBYOFood, setHasBYOFood] = useState<boolean>(false);
+  // Optional admin override for security deposit — when CS evaluates a
+  // customer as higher-risk and wants to lift the deposit above the
+  // tiered formula. Empty string = use auto-tier; non-empty number
+  // overrides. Heidi 2026-06-22.
+  const [securityDepositOverrideInput, setSecurityDepositOverrideInput] = useState<string>('');
+
+  // Catering picker state — modal-driven; selection becomes the
+  // catering add-on's options blob at submit time.
+  const [cateringModalOpen, setCateringModalOpen] = useState(false);
+  const [cateringSelection, setCateringSelection] = useState<CateringSelection | null>(null);
 
   // Shisha-specific options — flavors are picked per head; pipes are
   // capped by SHISHA_MAX_PIPES (currently 2). Admin can leave this
@@ -78,6 +90,7 @@ export default function AdminNewBookingPage() {
     pipes: number;
     flavors: string[];
     staffSetup: boolean;
+    staffSetupTime?: string;
   }>({ pipes: 1, flavors: [], staffSetup: false });
 
   // ── Package selector ───────────────────────────
@@ -198,13 +211,19 @@ export default function AdminNewBookingPage() {
               pipes: shishaOptions.pipes,
               flavors,
               staffSetup: shishaOptions.staffSetup,
+              ...(shishaOptions.staffSetup && shishaOptions.staffSetupTime
+                ? { staffSetupTime: shishaOptions.staffSetupTime }
+                : {}),
             },
           };
+        }
+        if (id === 'catering' && cateringSelection) {
+          return { id, quantity: 1, options: cateringSelection };
         }
         return { id, quantity };
       }),
     ...customAddOns
-      .filter((c) => c.price > 0 && c.name.trim() !== '')
+      .filter((c) => c.name.trim() !== '' && c.price >= 0)
       .map((c) => ({
         id: c.id,
         quantity: 1,
@@ -246,9 +265,27 @@ export default function AdminNewBookingPage() {
         : pricing.subtotal)
     : 0;
   const effectiveSubtotal = Math.max(0, subtotalAfterPackage - (promo?.amount || 0));
-  const securityDeposit = selectedPackage?.deposit ?? calculateSecurityDeposit(effectiveSubtotal);
+  // Deposit tier is keyed off the PRE-promo rental cost (subtotalAfterPackage),
+  // not the post-promo effective subtotal. Otherwise a $250 promo on a $4,250
+  // booking drops the effective subtotal to exactly $4,000, which falls back
+  // into the lower $1k tier per the "> 4000" threshold — even though the
+  // actual venue/add-on cost still warrants the $2k tier. The promo is a
+  // discount on what the customer PAYS, not on the rental risk we hold.
+  // Security deposit resolution order:
+  //   1. Admin override (typed in the input below) — wins when
+  //      Heidi/CS bumps the deposit for a higher-risk customer.
+  //   2. Package's fixed deposit (e.g. corporate-tst = \$2k).
+  //   3. Auto-tier formula keyed off pre-promo subtotal.
+  const securityDepositOverrideNum = (() => {
+    const t = securityDepositOverrideInput.trim();
+    if (t === '') return null;
+    const n = parseInt(t, 10);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  })();
+  const securityDepositAuto = selectedPackage?.deposit ?? calculateSecurityDeposit(subtotalAfterPackage);
+  const securityDeposit = securityDepositOverrideNum ?? securityDepositAuto;
   const grandTotal = effectiveSubtotal + securityDeposit;
-  const deposit = calculateDeposit(grandTotal);
+  const deposit = calculateDeposit(grandTotal, date || undefined);
   const balanceDue = Math.max(0, grandTotal - deposit);
 
   const endTime = useMemo(() => {
@@ -359,6 +396,17 @@ export default function AdminNewBookingPage() {
         pricing: {
           baseCharge: pricing.baseCharge,
           addOnTotal: pricing.addOnTotal,
+          // PRE-promo subtotal (baseCharge + addOnTotal + package extras).
+          // This is the convention every other flow uses: venue page
+          // (customer self-booking), updateBookingDateTime, claim page,
+          // confirm page all subtract `promoDiscount` from the stored
+          // subtotal at display / deposit-calc time. Storing POST-promo
+          // here (commit c2e617a) caused #QotleDvT to undercharge by the
+          // promo amount: claim+confirm pages subtracted promo a SECOND
+          // time, so pricing.deposit was computed as $7,550 instead of
+          // $7,800 and Stripe charged $250 short. Display formatting for
+          // 小計 happens in admin/bookings/[id] which now subtracts promo
+          // at render time — same as the customer-facing breakdown.
           subtotal: subtotalAfterPackage,
           securityDeposit,
           deposit,
@@ -732,6 +780,7 @@ export default function AdminNewBookingPage() {
                 const qty = addOnQty[a.id] || 0;
                 const max = a.maxQuantity ?? (a.unit === 'person' ? 1 : 5);
                 const isShisha = a.id === 'shisha';
+                const isCatering = a.id === 'catering';
                 // Per-head add-ons (BBQ packages / hotpot packages /
                 // drinks) MUST charge against the full guest count —
                 // calculatePricing already multiplies by adultEquiv, so
@@ -747,8 +796,27 @@ export default function AdminNewBookingPage() {
                       <div className="flex-1">
                         <p className="font-semibold text-sm text-ink">{a.name[locale]}</p>
                         <p className="text-xs text-ink-soft">{a.description?.[locale] || ''}</p>
+                        {isCatering && cateringSelection && (
+                          <p className="text-xs text-pink font-semibold mt-1">
+                            {locale === 'zh'
+                              ? `已揀 ${(cateringSelection.dishCodes || []).length} 款 · ${cateringSelection.tierId} · 小計 HK$${calcCateringTotal(cateringSelection).toLocaleString()}`
+                              : `${(cateringSelection.dishCodes || []).length} dishes · ${cateringSelection.tierId} · HK$${calcCateringTotal(cateringSelection).toLocaleString()}`}
+                          </p>
+                        )}
                       </div>
-                      {isPerHead ? (
+                      {isCatering ? (
+                        <button
+                          type="button"
+                          onClick={() => setCateringModalOpen(true)}
+                          className={`shrink-0 px-3 py-1.5 rounded-pill text-xs font-bold transition-colors ${
+                            cateringSelection ? 'bg-pink text-white' : 'bg-pink/10 text-pink hover:bg-pink/20'
+                          }`}
+                        >
+                          {cateringSelection
+                            ? (locale === 'zh' ? '編輯選擇' : 'Edit')
+                            : (locale === 'zh' ? '揀餐單' : 'Pick menu')}
+                        </button>
+                      ) : isPerHead ? (
                         <label className="flex items-center gap-2 cursor-pointer">
                           <input
                             type="checkbox"
@@ -858,7 +926,12 @@ export default function AdminNewBookingPage() {
                             type="checkbox"
                             checked={shishaOptions.staffSetup}
                             onChange={(e) =>
-                              setShishaOptions((prev) => ({ ...prev, staffSetup: e.target.checked }))
+                              setShishaOptions((prev) => ({
+                                ...prev,
+                                staffSetup: e.target.checked,
+                                // Clear stale time when unchecking.
+                                ...(e.target.checked ? {} : { staffSetupTime: undefined }),
+                              }))
                             }
                             className="w-3.5 h-3.5 accent-accent"
                           />
@@ -868,6 +941,40 @@ export default function AdminNewBookingPage() {
                               : `Staff setup +HK$${SHISHA_STAFF_SETUP_FEE}`}
                           </span>
                         </label>
+                        {shishaOptions.staffSetup && (
+                          <div className="ml-5 mt-1 p-2 rounded-lg bg-white/60 border border-charcoal/10">
+                            <label className="text-[11px] font-semibold text-ink-soft block mb-1">
+                              {locale === 'zh' ? 'Setup 時間 *(booking 時段內)' : 'Setup time * (within session)'}
+                            </label>
+                            <select
+                              value={shishaOptions.staffSetupTime || ''}
+                              onChange={(e) =>
+                                setShishaOptions((prev) => ({ ...prev, staffSetupTime: e.target.value || undefined }))
+                              }
+                              className={`w-full px-2 py-1 rounded border text-xs ${
+                                shishaOptions.staffSetupTime
+                                  ? 'border-charcoal/15 bg-white'
+                                  : 'border-rose-300 bg-rose-50 text-rose-700'
+                              }`}
+                            >
+                              <option value="">
+                                {startTime && endTime ? `${startTime} – ${endTime}` : '請揀'}
+                              </option>
+                              {(() => {
+                                const toMin = (s: string) => {
+                                  const [h, m] = s.split(':').map(Number);
+                                  return h * 60 + (m || 0);
+                                };
+                                const fmt = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+                                const sm = startTime ? toMin(startTime) : 8 * 60;
+                                const em = endTime ? toMin(endTime) : 23 * 60 + 45;
+                                const out: string[] = [];
+                                for (let m = sm; m <= em; m += 15) out.push(fmt(m));
+                                return out.map((t) => <option key={t} value={t}>{t}</option>);
+                              })()}
+                            </select>
+                          </div>
+                        )}
 
                         {/* Live shisha subtotal — same formula as the
                          *  customer booking page so admin sees the exact
@@ -922,7 +1029,7 @@ export default function AdminNewBookingPage() {
               ) : (
                 <div className="space-y-2">
                   {customAddOns.map((c, idx) => (
-                    <div key={c.id} className="grid grid-cols-[1fr,110px,32px] gap-2 items-center">
+                    <div key={c.id} className="grid grid-cols-[1fr,110px,48px,32px] gap-2 items-center">
                       <input
                         type="text"
                         value={c.name}
@@ -937,15 +1044,39 @@ export default function AdminNewBookingPage() {
                       <input
                         type="number"
                         min={0}
-                        value={c.price === 0 ? '' : c.price}
+                        value={c.price === 0 && c.name.trim() === '' ? '' : c.price}
                         onChange={(e) => {
                           const next = [...customAddOns];
                           next[idx] = { ...next[idx], price: Math.max(0, parseInt(e.target.value, 10) || 0) };
                           setCustomAddOns(next);
                         }}
                         placeholder="HK$"
-                        className="px-2 py-1.5 rounded-lg border border-charcoal/15 text-xs bg-white text-right"
+                        className={`px-2 py-1.5 rounded-lg border text-xs text-right ${
+                          c.price === 0 && c.name.trim() !== ''
+                            ? 'border-emerald-300 bg-emerald-50 text-emerald-700 font-semibold'
+                            : 'border-charcoal/15 bg-white'
+                        }`}
                       />
+                      {/* 「免費」 toggle — sets price to 0 in one click,
+                       *  so CS can mark a comp without typing 0 manually
+                       *  (Heidi 2026-06-22: CS promised customer some
+                       *  freebies and needed an explicit "免費" option). */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = [...customAddOns];
+                          next[idx] = { ...next[idx], price: 0 };
+                          setCustomAddOns(next);
+                        }}
+                        className={`px-2 py-1 rounded-lg text-[10px] font-semibold transition-colors ${
+                          c.price === 0 && c.name.trim() !== ''
+                            ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-300'
+                            : 'bg-pink/10 text-pink hover:bg-pink/20'
+                        }`}
+                        title={locale === 'zh' ? '設為免費' : 'Mark as free'}
+                      >
+                        {locale === 'zh' ? '免費' : 'FREE'}
+                      </button>
                       <button
                         type="button"
                         onClick={() => setCustomAddOns(customAddOns.filter((_, i) => i !== idx))}
@@ -964,6 +1095,61 @@ export default function AdminNewBookingPage() {
               <input type="checkbox" checked={hasBYOFood} onChange={(e) => setHasBYOFood(e.target.checked)} className="w-4 h-4" />
               <span className="text-ink-soft">{locale === 'zh' ? '客人會自攜食物（BYO）' : 'Customer is bringing their own food (BYO)'}</span>
             </label>
+          </div>
+
+          {/* Refundable deposit override — CS may bump the deposit
+           *  above the tiered formula for higher-risk customers
+           *  (Heidi 2026-06-22: "有時 admin 會評估客人比較麻煩而
+           *  決定增加按金銀碼"). Leave empty to use the auto
+           *  calculation; type a number to override. */}
+          <div className="glass-card p-6 space-y-3">
+            <h3 className="text-base font-bold text-ink flex items-center gap-2">
+              <Calculator size={16} className="text-pink" />
+              {locale === 'zh' ? '可退按金（可手動覆寫）' : 'Refundable deposit (override optional)'}
+            </h3>
+            <div className="grid grid-cols-[1fr,auto] gap-2 items-center">
+              <div className="text-xs text-ink-soft">
+                {locale === 'zh' ? '自動計算' : 'Auto-calculated'}: <span className="font-mono">HK${securityDepositAuto.toLocaleString()}</span>
+                {securityDepositOverrideNum != null && (
+                  <span className={securityDepositOverrideNum >= securityDepositAuto ? 'ml-2 text-amber-700' : 'ml-2 text-rose-700'}>
+                    {securityDepositOverrideNum > securityDepositAuto
+                      ? (locale === 'zh' ? `→ 已覆寫至 HK$${securityDepositOverrideNum.toLocaleString()}（高於自動值 +HK$${(securityDepositOverrideNum - securityDepositAuto).toLocaleString()}）` : `→ overridden to HK$${securityDepositOverrideNum.toLocaleString()} (+HK$${(securityDepositOverrideNum - securityDepositAuto).toLocaleString()})`)
+                      : securityDepositOverrideNum < securityDepositAuto
+                        ? (locale === 'zh' ? `→ 已覆寫至 HK$${securityDepositOverrideNum.toLocaleString()}（低於自動值 −HK$${(securityDepositAuto - securityDepositOverrideNum).toLocaleString()}，請確認）` : `→ overridden to HK$${securityDepositOverrideNum.toLocaleString()} (lower than auto; verify)`)
+                        : (locale === 'zh' ? '→ 與自動值相同' : '→ matches auto')}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  value={securityDepositOverrideInput}
+                  onChange={(e) => setSecurityDepositOverrideInput(e.target.value)}
+                  placeholder={locale === 'zh' ? '留空 = 自動' : 'blank = auto'}
+                  className={`w-32 px-3 py-1.5 rounded-lg border text-sm text-right ${
+                    securityDepositOverrideNum != null
+                      ? 'border-amber-300 bg-amber-50 text-amber-800 font-semibold'
+                      : 'border-charcoal/15 bg-white'
+                  }`}
+                />
+                {securityDepositOverrideInput !== '' && (
+                  <button
+                    type="button"
+                    onClick={() => setSecurityDepositOverrideInput('')}
+                    className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-charcoal/5 text-ink-soft hover:bg-charcoal/10"
+                    title={locale === 'zh' ? '清除覆寫' : 'Clear override'}
+                  >
+                    {locale === 'zh' ? '重設' : 'Reset'}
+                  </button>
+                )}
+              </div>
+            </div>
+            <p className="text-[11px] text-ink-soft">
+              {locale === 'zh'
+                ? '可用喺評估客人風險較高時加碼按金（例如：高人數派對 / 過往有爭議客戶）。'
+                : 'Use to bump the deposit for higher-risk customers (large groups, prior disputes, etc.).'}
+            </p>
           </div>
 
           {/* Promo code — validated against /api/promo/validate just like
@@ -1124,6 +1310,26 @@ export default function AdminNewBookingPage() {
           </div>
         </div>
       </div>
+
+      <CateringPickerModal
+        open={cateringModalOpen}
+        initial={cateringSelection || undefined}
+        locale={locale}
+        bookingDate={date}
+        bookingStartTime={startTime}
+        bookingEndTime={endTime}
+        onClose={() => setCateringModalOpen(false)}
+        onSave={(sel) => {
+          setCateringSelection(sel);
+          setAddOnQty((prev) => ({ ...prev, catering: 1 }));
+          setCateringModalOpen(false);
+        }}
+        onRemove={() => {
+          setCateringSelection(null);
+          setAddOnQty((prev) => ({ ...prev, catering: 0 }));
+          setCateringModalOpen(false);
+        }}
+      />
     </div>
   );
 }

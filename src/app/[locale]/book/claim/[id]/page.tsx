@@ -211,10 +211,13 @@ export default function ClaimBookingPage() {
   const promoDiscount = draft.promoDiscount || 0;
   const effectiveSubtotal = Math.max(0, draft.pricing.subtotal - promoDiscount);
   // Refundable security deposit (按金) — tiered $1k / $2k / $4k against
-  // the effective (post-promo) subtotal. Legacy drafts predate the
-  // field, fall back to recomputing.
+  // the PRE-promo rental cost (draft.pricing.subtotal). Computing against
+  // the post-promo number wrongly drops on-tier-edge bookings into the
+  // lower tier (e.g. $4,250 − $250 promo = $4,000 → falls to $1k tier
+  // under "> 4000"). Legacy drafts predate the field, fall back to
+  // recomputing.
   const securityDeposit =
-    draft.pricing.securityDeposit ?? calculateSecurityDeposit(effectiveSubtotal);
+    draft.pricing.securityDeposit ?? calculateSecurityDeposit(draft.pricing.subtotal);
   const grandTotal = effectiveSubtotal + securityDeposit;
   const upfrontDue = draft.pricing.deposit;
   const balanceDue = Math.max(0, grandTotal - upfrontDue);

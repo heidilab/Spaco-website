@@ -16,8 +16,12 @@ import { notFound } from 'next/navigation';
 import SplitHeading from '@/components/ui/SplitHeading';
 import { getHoliday } from '@/lib/hkHolidays';
 import HolidayDatePicker from '@/components/booking/HolidayDatePicker';
+import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
+import { calcCateringTotal } from '@/lib/pricing';
 import { useAuth } from '@/contexts/AuthContext';
-import { getUserProfile, updateUserWhatsapp } from '@/lib/firestore';
+import { getUserProfile, updateUserWhatsapp, getBlockedSlots } from '@/lib/firestore';
+import { venuesSharingSpace } from '@/lib/venues';
+import type { BlockedSlot } from '@/types';
 import { saveBookingCheckoutDraft } from '@/lib/bookingCheckoutDraft';
 import { isValidHkPhone, formatHkPhone, normalizeHkPhone } from '@/lib/whatsapp';
 import AuthModal from '@/components/auth/AuthModal';
@@ -292,8 +296,9 @@ export default function BookingPage() {
   const shishaPipes = shishaEntry?.options?.pipes || (shishaHeads > 0 ? Math.min(SHISHA_MAX_PIPES, shishaHeads) : 0);
   const shishaFlavors = shishaEntry?.options?.flavors || [];
   const shishaStaffSetup = !!shishaEntry?.options?.staffSetup;
+  const shishaStaffSetupTime = shishaEntry?.options?.staffSetupTime || '';
 
-  function writeShisha(next: { pipes: number; heads: number; flavors: string[]; staffSetup: boolean }) {
+  function writeShisha(next: { pipes: number; heads: number; flavors: string[]; staffSetup: boolean; staffSetupTime?: string }) {
     if (next.heads === 0) {
       setSelectedAddOns(selectedAddOns.filter((a) => a.id !== 'shisha'));
       return;
@@ -305,6 +310,9 @@ export default function BookingPage() {
         pipes: next.pipes,
         flavors: next.flavors,
         staffSetup: next.staffSetup,
+        // Drop the time when staff-setup is unchecked so we don't
+        // keep stale data on the booking.
+        ...(next.staffSetup && next.staffSetupTime ? { staffSetupTime: next.staffSetupTime } : {}),
       },
     };
     if (shishaEntry) {
@@ -321,7 +329,7 @@ export default function BookingPage() {
     const heads = Math.max(pipes, shishaHeads);
     const prevFlavors = shishaFlavors;
     const flavors = Array.from({ length: heads }, (_, i) => prevFlavors[i] || 'A');
-    writeShisha({ pipes, heads, flavors, staffSetup: shishaStaffSetup });
+    writeShisha({ pipes, heads, flavors, staffSetup: shishaStaffSetup, staffSetupTime: shishaStaffSetupTime });
   }
 
   function setShishaHeads(nextHeads: number) {
@@ -334,40 +342,107 @@ export default function BookingPage() {
     // when heads is being lowered below current pipes count.
     const pipes = Math.max(1, Math.min(heads, shishaPipes || 1));
     const flavors = Array.from({ length: heads }, (_, i) => shishaFlavors[i] || 'A');
-    writeShisha({ pipes, heads, flavors, staffSetup: shishaStaffSetup });
+    writeShisha({ pipes, heads, flavors, staffSetup: shishaStaffSetup, staffSetupTime: shishaStaffSetupTime });
   }
 
   function setShishaFlavor(idx: number, flavorId: string) {
     if (!shishaEntry) return;
     const flavors = [...shishaFlavors];
     flavors[idx] = flavorId;
-    writeShisha({ pipes: shishaPipes, heads: shishaHeads, flavors, staffSetup: shishaStaffSetup });
+    writeShisha({ pipes: shishaPipes, heads: shishaHeads, flavors, staffSetup: shishaStaffSetup, staffSetupTime: shishaStaffSetupTime });
   }
 
   function toggleShishaStaffSetup() {
     if (!shishaEntry) return;
-    writeShisha({ pipes: shishaPipes, heads: shishaHeads, flavors: shishaFlavors, staffSetup: !shishaStaffSetup });
+    writeShisha({ pipes: shishaPipes, heads: shishaHeads, flavors: shishaFlavors, staffSetup: !shishaStaffSetup, staffSetupTime: shishaStaffSetupTime });
   }
+
+  function setShishaStaffSetupTime(time: string) {
+    if (!shishaEntry) return;
+    writeShisha({ pipes: shishaPipes, heads: shishaHeads, flavors: shishaFlavors, staffSetup: shishaStaffSetup, staffSetupTime: time });
+  }
+
+  // Load blocked slots for the selected date so the time-picker can
+  // hide already-booked windows + the 1hr cleaning buffer after them.
+  // Pulls every venue sharing this physical space (sw-a/-b/-ab) so a
+  // sw-a booking also blocks sw-ab and vice versa. Without this the
+  // dropdown showed every quarter-hour as available — #IXSLT0Aw was
+  // able to book 16:00-21:00 on 7/4 even though #mjtp9UKB's cleaning
+  // buffer 16:00-17:00 was already in Firestore.
+  const [blockedSlotsForDate, setBlockedSlotsForDate] = useState<BlockedSlot[]>([]);
+  useEffect(() => {
+    if (!selectedDate || !venue) {
+      setBlockedSlotsForDate([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const lists = await Promise.all(
+          venuesSharingSpace(venue.id).map((vid) => getBlockedSlots(vid, selectedDate)),
+        );
+        if (!cancelled) setBlockedSlotsForDate(lists.flat());
+      } catch {
+        if (!cancelled) setBlockedSlotsForDate([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedDate, venue]);
 
   // Start-time options: 08:00 → 23:45 in 15-minute increments. Operations
   // open daily at 08:00; customers can pick any quarter-hour after.
+  // Filtered to exclude times that would overlap any existing booking
+  // OR cleaning-buffer slot at this venue (or its shared-space
+  // siblings) — uses min-duration + 1hr cleaning buffer of OWN
+  // booking as the minimum free window required.
   const startTimeOptions = useMemo(() => {
+    const toMin = (s: string) => {
+      const [h, m] = s.split(':').map(Number);
+      return h * 60 + (m || 0);
+    };
     const out: string[] = [];
     for (let m = 8 * 60; m <= 23 * 60 + 45; m += 15) {
       const h = Math.floor(m / 60);
       const mm = m % 60;
-      out.push(`${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`);
+      const tStr = `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+      // Only the start time is filtered here; downstream hourOptions
+      // narrows duration. Min available window for this start =
+      // minHours×60 + 60min cleaning buffer this booking will create.
+      const minWindowEnd = m + minHours * 60 + 60;
+      const conflict = blockedSlotsForDate.some((s) => {
+        if (s.date !== selectedDate) return false;
+        const bStart = toMin(s.startTime);
+        const bEnd = toMin(s.endTime);
+        return m < bEnd && bStart < minWindowEnd;
+      });
+      if (!conflict) out.push(tStr);
     }
     return out;
-  }, []);
+  }, [blockedSlotsForDate, selectedDate, minHours]);
 
-  // Duration options: whole hours from minHours up to 14h. Whole-hour
-  // policy means a 19:15 start can only book 5h → 00:15, never 5h15m.
+  // Duration options: whole hours from minHours up to 14h, filtered
+  // to those that fit inside the next free window from startTime.
+  // Each candidate hour h includes a 60-min cleaning buffer at the
+  // end so a 4hr from 16:00 needs 16:00-21:00 free.
   const hourOptions = useMemo(() => {
+    const toMin = (s: string) => {
+      const [h, m] = s.split(':').map(Number);
+      return h * 60 + (m || 0);
+    };
+    const startMin = toMin(startTime);
     const out: number[] = [];
-    for (let h = Math.max(1, minHours); h <= 14; h++) out.push(h);
+    for (let h = Math.max(1, minHours); h <= 14; h++) {
+      const windowEnd = startMin + h * 60 + 60;
+      const conflict = blockedSlotsForDate.some((s) => {
+        if (s.date !== selectedDate) return false;
+        const bStart = toMin(s.startTime);
+        const bEnd = toMin(s.endTime);
+        return startMin < bEnd && bStart < windowEnd;
+      });
+      if (!conflict) out.push(h);
+    }
     return out;
-  }, [minHours]);
+  }, [minHours, startTime, blockedSlotsForDate, selectedDate]);
 
   // Keep `hours` ≥ minHours whenever the day-of-week / venue floor changes.
   useEffect(() => {
@@ -377,15 +452,43 @@ export default function BookingPage() {
   // Filter add-ons based on venue
   const visibleAddOns = addOns.filter((a) => {
     if (a.id === 'shisha') return false;
-    // Hide BBQ packages for venues without BBQ
-    if ((a.id === 'bbq-standard' || a.id === 'bbq-premium' || a.id === 'bbq-grill') && noBBQVenues.includes(venue.id)) return false;
+    // Catering renders its own card via CateringPickerModal — skip
+    // it in the generic add-on grid so we don't get a useless
+    // checkbox row alongside.
+    if (a.id === 'catering') return false;
+    // Hide BBQ packages for venues without BBQ (incl. the new BBQ
+    // helper chef — chef is only useful where BBQ is allowed).
+    if ((a.id === 'bbq-standard' || a.id === 'bbq-premium' || a.id === 'bbq-grill' || a.id === 'bbq-helper') && noBBQVenues.includes(venue.id)) return false;
     // Hide drinks for venues with free drinks
     if (a.id === 'drinks' && freeDrinksVenues.includes(venue.id)) return false;
     return true;
   });
 
+  // ── 美食到會 state ──
+  const [cateringModalOpen, setCateringModalOpen] = useState(false);
+  const cateringAddOn = selectedAddOns.find((a) => a.id === 'catering');
+  const cateringSelection = cateringAddOn?.options as Partial<CateringSelection> | undefined;
+  const cateringTotal = cateringSelection ? calcCateringTotal(cateringSelection) : 0;
+
+  // BBQ helper validation — Heidi 2026-06-22 rules:
+  //   - Minimum booking length 5 hours
+  //   - Minimum 7 days advance notice
+  // When violated the customer can't proceed and sees the relevant
+  // hint below the add-on toggle.
+  const bbqHelperQty = selectedAddOns.find((a) => a.id === 'bbq-helper')?.quantity || 0;
+  const bbqHelperHoursOK = bbqHelperQty === 0 || hours >= 5;
+  const bbqHelperLeadTimeOK = (() => {
+    if (bbqHelperQty === 0 || !selectedDate) return true;
+    const bookingMs = new Date(`${selectedDate}T00:00:00+08:00`).getTime();
+    const sevenDaysFromNow = Date.now() + 7 * 24 * 60 * 60 * 1000;
+    return bookingMs >= sevenDaysFromNow;
+  })();
+
+  // Shisha staff-setup time is required when the setup checkbox is on.
+  const shishaSetupTimeOK = !shishaStaffSetup || !!shishaStaffSetupTime;
+
   // Can proceed check
-  const canProceed = selectedDate && hours >= minHours && adultEquiv >= minGuests && agreedToTerms && whatsappReady && !lastMinuteBlocker;
+  const canProceed = selectedDate && hours >= minHours && adultEquiv >= minGuests && agreedToTerms && whatsappReady && !lastMinuteBlocker && bbqHelperHoursOK && bbqHelperLeadTimeOK && shishaSetupTimeOK;
 
   return (
     <div className="pt-28 pb-20 relative overflow-hidden">
@@ -976,6 +1079,121 @@ export default function BookingPage() {
                   </div>
                 )}
 
+                {/* BBQ Helper Chef — 代燒員. \$300/hr × N × booking
+                 *  hours. Hidden at noBBQ venues (灣仔). Quantity 0-6.
+                 *  Min 5hr + ≥ 7 days advance enforced; violations show
+                 *  a red hint that blocks Proceed via canProceed. */}
+                {!noBBQVenues.includes(venue.id) && (
+                  <div className={`p-5 rounded-2xl border transition-all ${
+                    bbqHelperQty > 0 ? 'border-pink bg-pink/5' : 'border-charcoal/5'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <p className="font-semibold">{locale === 'zh' ? '代燒員' : 'BBQ Helper Chef'}</p>
+                        <p className="text-sm text-muted mt-1">
+                          {locale === 'zh'
+                            ? '每位 $300/小時 × 訂場時數；最少訂 5 小時、需提前最少 7 日'
+                            : '$300/hr per chef × booked hours; min 5-hr booking, ≥ 7 days advance'}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = Math.max(0, bbqHelperQty - 1);
+                            if (next === 0) {
+                              setSelectedAddOns(selectedAddOns.filter((a) => a.id !== 'bbq-helper'));
+                            } else {
+                              setSelectedAddOns(selectedAddOns.map((a) => a.id === 'bbq-helper' ? { ...a, quantity: next } : a));
+                            }
+                          }}
+                          disabled={bbqHelperQty <= 0}
+                          className="w-8 h-8 rounded-lg border border-charcoal/10 flex items-center justify-center disabled:opacity-30"
+                        >
+                          <Minus size={14} />
+                        </button>
+                        <span className="font-bold w-6 text-center">{bbqHelperQty}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = Math.min(6, bbqHelperQty + 1);
+                            if (bbqHelperQty === 0) {
+                              setSelectedAddOns([...selectedAddOns, { id: 'bbq-helper', quantity: next }]);
+                            } else {
+                              setSelectedAddOns(selectedAddOns.map((a) => a.id === 'bbq-helper' ? { ...a, quantity: next } : a));
+                            }
+                          }}
+                          disabled={bbqHelperQty >= 6}
+                          className="w-8 h-8 rounded-lg border border-charcoal/10 flex items-center justify-center disabled:opacity-30"
+                        >
+                          <Plus size={14} />
+                        </button>
+                      </div>
+                    </div>
+                    {bbqHelperQty > 0 && (
+                      <div className="mt-3 pt-3 border-t border-charcoal/5 space-y-2">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-ink-soft">
+                            {locale === 'zh' ? '小計' : 'Subtotal'}
+                          </span>
+                          <span className="font-bold text-ink">
+                            HK${(300 * bbqHelperQty * Math.max(1, hours)).toLocaleString()}
+                          </span>
+                        </div>
+                        {!bbqHelperHoursOK && (
+                          <p className="text-xs text-rose-600 leading-relaxed">
+                            ⚠️ {locale === 'zh'
+                              ? `代燒員最少訂 5 小時（你而家揀咗 ${hours} 小時）。請延長訂場時數或取消代燒員。`
+                              : `BBQ helper chef requires ≥ 5 hours (currently ${hours}). Extend duration or remove the chef.`}
+                          </p>
+                        )}
+                        {!bbqHelperLeadTimeOK && (
+                          <p className="text-xs text-rose-600 leading-relaxed">
+                            ⚠️ {locale === 'zh'
+                              ? '代燒員需提前最少 7 日預訂。請揀更遲嘅日子，或 WhatsApp 聯絡 CS 安排。'
+                              : 'BBQ helper chef needs ≥ 7 days advance. Pick a later date or contact CS via WhatsApp.'}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 美食到會 — opens CateringPickerModal. Available at
+                 *  every venue. Shows summary when selection exists. */}
+                <div className={`p-5 rounded-2xl border transition-all ${
+                  cateringAddOn ? 'border-pink bg-pink/5' : 'border-charcoal/5'
+                }`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1">
+                      <p className="font-semibold">{locale === 'zh' ? '美食到會服務' : 'Catering Service'}</p>
+                      <p className="text-sm text-muted mt-1">
+                        {locale === 'zh'
+                          ? '60+ 款菜式自選；按人數套餐計價；需提前最少 2 日預訂'
+                          : '60+ dishes, tier-priced by group size; reserve ≥ 2 days ahead'}
+                      </p>
+                      {cateringAddOn && cateringSelection?.tierId && (
+                        <p className="text-xs text-pink font-semibold mt-2">
+                          {locale === 'zh'
+                            ? `已揀 ${(cateringSelection.dishCodes || []).length} 款 · 套餐 ${cateringSelection.tierId} · 小計 HK$${cateringTotal.toLocaleString()}`
+                            : `${(cateringSelection.dishCodes || []).length} dishes · ${cateringSelection.tierId} · HK$${cateringTotal.toLocaleString()}`}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setCateringModalOpen(true)}
+                      className={`shrink-0 px-3 py-2 rounded-pill text-xs font-bold transition-colors ${
+                        cateringAddOn ? 'bg-pink text-white' : 'bg-pink/10 text-pink hover:bg-pink/20'
+                      }`}
+                    >
+                      {cateringAddOn
+                        ? (locale === 'zh' ? '編輯選擇' : 'Edit')
+                        : (locale === 'zh' ? '揀餐單' : 'Pick menu')}
+                    </button>
+                  </div>
+                </div>
+
                 {/* Drinks */}
                 {visibleAddOns
                   .filter((a) => a.id === 'drinks')
@@ -1138,6 +1356,50 @@ export default function BookingPage() {
                               : `Staff setup help (+HK$${SHISHA_STAFF_SETUP_FEE})`}
                           </span>
                         </label>
+
+                        {/* Staff-setup time — required when staffSetup
+                         *  is checked. Time must be inside the booking
+                         *  session so the supplier's staffer arrives
+                         *  while the customer is on-site. */}
+                        {shishaStaffSetup && (
+                          <div className="ml-7 mt-1 p-3 rounded-xl bg-white/60 border border-charcoal/10 space-y-1.5">
+                            <label className="block text-xs font-semibold text-ink">
+                              {locale === 'zh' ? 'Setup 時間 *' : 'Setup time *'}
+                            </label>
+                            <select
+                              value={shishaStaffSetupTime}
+                              onChange={(e) => setShishaStaffSetupTime(e.target.value)}
+                              className={`w-full px-3 py-1.5 rounded-lg border text-sm ${
+                                shishaStaffSetupTime
+                                  ? 'border-charcoal/15 bg-white'
+                                  : 'border-rose-300 bg-rose-50 text-rose-700'
+                              }`}
+                            >
+                              <option value="">
+                                {startTime && endTime
+                                  ? (locale === 'zh' ? `請揀（${startTime} – ${endTime} 內）` : `Pick a time (${startTime} – ${endTime})`)
+                                  : (locale === 'zh' ? '請揀' : 'Pick a time')}
+                              </option>
+                              {(() => {
+                                const toMin = (s: string) => {
+                                  const [h, m] = s.split(':').map(Number);
+                                  return h * 60 + (m || 0);
+                                };
+                                const fmt = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+                                const sm = startTime ? toMin(startTime) : 8 * 60;
+                                const em = endTime ? toMin(endTime) : 23 * 60 + 45;
+                                const out: string[] = [];
+                                for (let m = sm; m <= em; m += 15) out.push(fmt(m));
+                                return out.map((t) => <option key={t} value={t}>{t}</option>);
+                              })()}
+                            </select>
+                            <p className="text-[11px] text-amber-700 leading-snug">
+                              ⚠️ {locale === 'zh'
+                                ? '請揀已喺場地內嘅時間。供應商會喺呢個時間派員上門幫手 setup。'
+                                : 'Pick a time you\'ll already be on-site. The supplier will dispatch staff at this time to set up.'}
+                            </p>
+                          </div>
+                        )}
 
                         {/* Live price preview */}
                         <div className="flex items-center justify-between pt-2 border-t border-white/40">
@@ -1424,6 +1686,27 @@ export default function BookingPage() {
       </div>
 
       <AuthModal isOpen={authModalOpen} onClose={() => setAuthModalOpen(false)} />
+
+      <CateringPickerModal
+        open={cateringModalOpen}
+        initial={cateringSelection}
+        locale={locale}
+        bookingDate={selectedDate}
+        bookingStartTime={startTime}
+        bookingEndTime={endTime}
+        onClose={() => setCateringModalOpen(false)}
+        onSave={(sel) => {
+          setSelectedAddOns((prev) => {
+            const others = prev.filter((a) => a.id !== 'catering');
+            return [...others, { id: 'catering', quantity: 1, options: sel }];
+          });
+          setCateringModalOpen(false);
+        }}
+        onRemove={() => {
+          setSelectedAddOns((prev) => prev.filter((a) => a.id !== 'catering'));
+          setCateringModalOpen(false);
+        }}
+      />
     </div>
   );
 }

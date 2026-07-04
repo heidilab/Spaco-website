@@ -137,6 +137,20 @@ service cloud.firestore {
       allow read, write: if isStaff();
     }
 
+    // ───── Articles (blog / content sharing) ─────
+    // Public read for PUBLISHED articles (so /articles + /articles/[slug]
+    // load without auth). Staff can read all (incl. drafts) for the admin
+    // list. Only staff can write.
+    //
+    // Note: queries from unauthenticated users MUST include
+    // `where('status', '==', 'published')` for Firestore to allow the
+    // read — this matches what listPublishedArticles() does. The
+    // get-by-slug helper also passes through this same rule.
+    match /articles/{id} {
+      allow read:  if isStaff() || resource.data.status == 'published';
+      allow write: if isStaff();
+    }
+
     // Default deny — fallthrough.
     match /{document=**} {
       allow read, write: if false;

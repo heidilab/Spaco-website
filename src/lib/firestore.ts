@@ -16,12 +16,28 @@ import {
 import { db } from './firebase';
 import { BookingRecord, BlockedSlot, BusinessDocument, DocumentType, DocumentRevision, CalendarEvent, AddOnOptions } from '@/types';
 import { venuesSharingSpace, getVenueById } from './venues';
-import { calculatePricing, calculateDeposit } from './pricing';
+import { calculatePricing, calculateDeposit, freeDrinksVenues } from './pricing';
 import { getHoliday } from './hkHolidays';
 
 // ============ BOOKINGS ============
 
 export async function createBooking(data: Omit<BookingRecord, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
+  // Server-side conflict check — without this two bookings can stack
+  // with no cleaning gap. UI dropdown shows the static 8AM-11:45PM
+  // list with no filtering, so the only enforcement is here.
+  // (#mjtp9UKB 13:00-16:00 + #IXSLT0Aw 16:00-21:00 both went through
+  // because this check was missing; assertNoSlotConflict catches the
+  // cleaning-buffer overlap correctly when called.)
+  // Pass a synthetic excludeBookingId so nothing matches as "own".
+  await assertNoSlotConflict({
+    venueId: data.venueId,
+    date: data.date,
+    endDate: data.endDate,
+    startTime: data.startTime,
+    endTime: data.endTime,
+    excludeBookingId: '__new_booking__',
+  });
+
   const ref = await addDoc(collection(db, 'bookings'), {
     ...data,
     createdAt: serverTimestamp(),
@@ -49,46 +65,49 @@ export async function createBooking(data: Omit<BookingRecord, 'id' | 'createdAt'
     ? '23:59'
     : `${String(bufferEndH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
 
-  // Block this venue AND every venue sharing the same physical space.
-  // (e.g. booking sheung-wan-a also blocks sheung-wan-ab.)
-  const venuesToBlock = venuesSharingSpace(data.venueId);
-  for (const vid of venuesToBlock) {
-    if (overnight) {
-      // Day 1: start → 23:59
-      await createBlockedSlot({
-        venueId: vid, date: data.date,
-        startTime: data.startTime, endTime: '23:59',
-        reason: 'booking', bookingId: ref.id,
-      });
-      // Day 2: 00:00 → end, plus cleaning buffer after.
-      await createBlockedSlot({
-        venueId: vid, date: endDate,
-        startTime: '00:00', endTime: data.endTime,
-        reason: 'booking', bookingId: ref.id,
-      });
-      await createBlockedSlot({
-        venueId: vid, date: endDate,
-        startTime: data.endTime, endTime: bufferEnd,
-        reason: 'cleaning', bookingId: ref.id,
-      });
-    } else {
-      await createBlockedSlot({
-        venueId: vid,
-        date: data.date,
-        startTime: data.startTime,
-        endTime: data.endTime,
-        reason: 'booking',
-        bookingId: ref.id,
-      });
-      await createBlockedSlot({
-        venueId: vid,
-        date: data.date,
-        startTime: data.endTime,
-        endTime: bufferEnd,
-        reason: 'cleaning',
-        bookingId: ref.id,
-      });
-    }
+  // Write the blocked_slot ONLY for the actual booked venue. Earlier
+  // versions also wrote a copy for every venue sharing the same
+  // physical space (sw-a / sw-b / sw-ab), but the conflict CHECKS
+  // already expand via venuesSharingSpace — doing it on writes too
+  // produces phantom slots that wrongly block sibling venues (a sw-b
+  // booking created an sw-ab phantom, which then made sw-a appear
+  // unbookable via the assertNoSlotConflict broad query). Heidi 2026-06.
+  const vid = data.venueId;
+  if (overnight) {
+    // Day 1: start → 23:59
+    await createBlockedSlot({
+      venueId: vid, date: data.date,
+      startTime: data.startTime, endTime: '23:59',
+      reason: 'booking', bookingId: ref.id,
+    });
+    // Day 2: 00:00 → end, plus cleaning buffer after.
+    await createBlockedSlot({
+      venueId: vid, date: endDate,
+      startTime: '00:00', endTime: data.endTime,
+      reason: 'booking', bookingId: ref.id,
+    });
+    await createBlockedSlot({
+      venueId: vid, date: endDate,
+      startTime: data.endTime, endTime: bufferEnd,
+      reason: 'cleaning', bookingId: ref.id,
+    });
+  } else {
+    await createBlockedSlot({
+      venueId: vid,
+      date: data.date,
+      startTime: data.startTime,
+      endTime: data.endTime,
+      reason: 'booking',
+      bookingId: ref.id,
+    });
+    await createBlockedSlot({
+      venueId: vid,
+      date: data.date,
+      startTime: data.endTime,
+      endTime: bufferEnd,
+      reason: 'cleaning',
+      bookingId: ref.id,
+    });
   }
 
   return ref.id;
@@ -192,6 +211,11 @@ async function assertNoSlotConflict(opts: {
   startTime: string;
   endTime: string;
   excludeBookingId: string;
+  /** Also skip blocked_slots whose googleEventId matches — when SPACO
+   *  pushes a booking to gcal, the SW calendar sync writes 3 phantom
+   *  slots back (sw-a + sw-b + sw-ab) with bookingId=null, so we can't
+   *  exclude them via bookingId alone. */
+  excludeGoogleEventId?: string;
 }): Promise<void> {
   const startMin = (h: string) => {
     const [hh, mm] = h.split(':').map(Number);
@@ -213,8 +237,14 @@ async function assertNoSlotConflict(opts: {
         where('date', '==', w.date),
       ));
       for (const docSnap of snap.docs) {
-        const data = docSnap.data() as { bookingId?: string; startTime: string; endTime: string };
+        const data = docSnap.data() as {
+          bookingId?: string;
+          startTime: string;
+          endTime: string;
+          googleEventId?: string;
+        };
         if (data.bookingId === opts.excludeBookingId) continue;
+        if (opts.excludeGoogleEventId && data.googleEventId === opts.excludeGoogleEventId) continue;
         const bStart = startMin(data.startTime);
         const bEnd = startMin(data.endTime);
         if (w.start < bEnd && bStart < w.end) {
@@ -286,6 +316,9 @@ export async function updateBookingDateTime(
   // Conflict check on the TARGET venue (and its shared-space siblings)
   // before touching anything. We do this BEFORE deleting the old slots
   // so a failed conflict check leaves the booking exactly as it was.
+  // Pass googleEventId so the booking's own gcal-mirror slots (which
+  // gcal-sync writes WITHOUT a bookingId, often for all 3 SW sub-rooms)
+  // don't self-conflict against the very booking we're editing.
   await assertNoSlotConflict({
     venueId: targetVenueId,
     date: next.date,
@@ -293,6 +326,7 @@ export async function updateBookingDateTime(
     startTime: next.startTime,
     endTime: next.endTime,
     excludeBookingId: bookingId,
+    excludeGoogleEventId: (booking as { googleEventId?: string }).googleEventId,
   });
 
   const [endH, endM] = next.endTime.split(':').map(Number);
@@ -304,47 +338,48 @@ export async function updateBookingDateTime(
     ? '23:59'      // cap at end of day; rare and admin can extend manually
     : `${String(bufferEndH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
 
-  const venuesToBlock = venuesSharingSpace(targetVenueId);
-
-  // Replace the blocked_slots tied to this booking.
+  // Replace the blocked_slots tied to this booking. Single venueId per
+  // slot (no shared-space expansion) — the conflict-check side already
+  // expands via venuesSharingSpace; expanding writes too would create
+  // phantom slots that wrongly block sibling venues. See createBooking
+  // for the same fix and the Heidi 2026-06 incident notes.
   const blockedSnap = await getDocs(
     query(collection(db, 'blocked_slots'), where('bookingId', '==', bookingId))
   );
   for (const b of blockedSnap.docs) {
     await deleteDoc(b.ref);
   }
-  for (const vid of venuesToBlock) {
-    if (overnight) {
-      // Day 1: from start → 23:59
-      await createBlockedSlot({
-        venueId: vid, date: next.date,
-        startTime: next.startTime, endTime: '23:59',
-        reason: 'booking', bookingId,
-      });
-      // Day 2: 00:00 → end + cleaning
-      await createBlockedSlot({
-        venueId: vid, date: endDate,
-        startTime: '00:00', endTime: next.endTime,
-        reason: 'booking', bookingId,
-      });
-      await createBlockedSlot({
-        venueId: vid, date: endDate,
-        startTime: next.endTime, endTime: bufferEnd,
-        reason: 'cleaning', bookingId,
-      });
-    } else {
-      // Same-day booking — original behaviour
-      await createBlockedSlot({
-        venueId: vid, date: next.date,
-        startTime: next.startTime, endTime: next.endTime,
-        reason: 'booking', bookingId,
-      });
-      await createBlockedSlot({
-        venueId: vid, date: next.date,
-        startTime: next.endTime, endTime: bufferEnd,
-        reason: 'cleaning', bookingId,
-      });
-    }
+  const vid = targetVenueId;
+  if (overnight) {
+    // Day 1: from start → 23:59
+    await createBlockedSlot({
+      venueId: vid, date: next.date,
+      startTime: next.startTime, endTime: '23:59',
+      reason: 'booking', bookingId,
+    });
+    // Day 2: 00:00 → end + cleaning
+    await createBlockedSlot({
+      venueId: vid, date: endDate,
+      startTime: '00:00', endTime: next.endTime,
+      reason: 'booking', bookingId,
+    });
+    await createBlockedSlot({
+      venueId: vid, date: endDate,
+      startTime: next.endTime, endTime: bufferEnd,
+      reason: 'cleaning', bookingId,
+    });
+  } else {
+    // Same-day booking — original behaviour
+    await createBlockedSlot({
+      venueId: vid, date: next.date,
+      startTime: next.startTime, endTime: next.endTime,
+      reason: 'booking', bookingId,
+    });
+    await createBlockedSlot({
+      venueId: vid, date: next.date,
+      startTime: next.endTime, endTime: bufferEnd,
+      reason: 'cleaning', bookingId,
+    });
   }
 
   // Recompute hours from the actual start/end timestamps so cross-midnight
@@ -364,6 +399,18 @@ export async function updateBookingDateTime(
   if (typeof next.guestCount === 'number') patch.guestCount = next.guestCount;
   if (typeof next.adultCount === 'number') patch.adultCount = next.adultCount;
   if (typeof next.childCount === 'number') patch.childCount = next.childCount;
+  // Keep adultCount in sync with guestCount when caller only updates
+  // guestCount. Otherwise admin bumping pax from 7 → 12 leaves
+  // adultCount=7 stale (#jMW2skDl), which downstream
+  // breakdown-displayers like "7 adults + 0 kids" render incoherently
+  // and the confirm-page promo formula picks the stale adultCount as
+  // the basis for free_drinks promo (charging the customer the diff).
+  if (typeof next.guestCount === 'number' && typeof next.adultCount !== 'number') {
+    const childrenForSync = typeof next.childCount === 'number'
+      ? next.childCount
+      : (booking.childCount ?? 0);
+    patch.adultCount = Math.max(0, next.guestCount - childrenForSync);
+  }
   if (typeof next.hasBYOFood === 'boolean') patch.hasBYOFood = next.hasBYOFood;
   if (next.addOns) patch.addOns = next.addOns;
   if (venueChanged) {
@@ -444,7 +491,37 @@ export async function updateBookingDateTime(
       // legacy bookings whose stored subtotal got corrupted, or
       // off-system price agreements that the venue × pax × hours
       // formula can't replicate.
-      const promoDiscount = booking.promoDiscount || 0;
+      //
+      // EXCEPTION — free_drinks promos. These cover the drinks line
+      // item exactly ($25 × adultEquiv), so when pax changes the
+      // discount amount MUST scale with it. #jMW2skDl: admin bumped 7
+      // → 12 pax, drinks recalc'd to $300, but promoDiscount stuck at
+      // the original $175 (7-pax worth) → customer charged $125 for
+      // what should be "free" drinks. Recompute when free_drinks is in
+      // play AND the booking still has drinks in addOns. Other promo
+      // types (cash / per_pax / percent) keep the stored value since
+      // their amount was already locked when the customer applied.
+      let promoDiscount = booking.promoDiscount || 0;
+      const isFreeDrinksPromo =
+        typeof booking.promoFreeDrinksCost === 'number' && booking.promoFreeDrinksCost > 0;
+      const hasDrinksAddOn = (addOns || []).some((a) => a.id === 'drinks');
+      if (isFreeDrinksPromo && hasDrinksAddOn) {
+        // adultEquiv MUST match pricing.ts adultEquivalent exactly,
+        // which derives adults from (guests − childCount) not from the
+        // stored booking.adultCount field. Otherwise admin's
+        // guestCount-only edit (e.g. #jMW2skDl 12 → 13 pax) computes
+        // promo against the STALE adultCount snapshot, giving 12 ×
+        // $25 = \$300 promo while drinks line shows 13 × \$25 = \$325
+        // — back to the same convention-drift bug.
+        const promoAdults = Math.max(0, guests - children);
+        const adultEquiv = promoAdults + 0.5 * children;
+        const newDrinksCost = freeDrinksVenues.includes(targetVenueId)
+          ? 0
+          : Math.round(25 * adultEquiv);
+        promoDiscount = newDrinksCost;
+        patch.promoDiscount = newDrinksCost;
+        patch.promoFreeDrinksCost = newDrinksCost;
+      }
       const baseSubtotal = typeof next.subtotalOverride === 'number'
         ? Math.max(0, next.subtotalOverride)
         : computed.subtotal;
@@ -525,16 +602,33 @@ export async function updateBookingDepositRefund(
   refundData: {
     amount: number;
     deductions: { label: string; amount: number }[];
+    /** When deductions exceed the security deposit, this is the
+     *  amount the customer still owes (e.g. +HK$250 for an
+     *  un-deposited overtime charge). When > 0 we keep status as
+     *  'confirmed' + set balanceDue so the booking re-enters the
+     *  "needs follow-up payment" workflow; admin records the
+     *  customer's offline payment via 已於線下付款 → balance hits
+     *  0 → endpoint auto-flips to 'completed'. */
+    overflowAmount?: number;
   }
 ) {
-  await updateDoc(doc(db, 'bookings', id), {
+  const overflow = Math.max(0, refundData.overflowAmount || 0);
+  const patch: Record<string, unknown> = {
     depositRefund: {
-      ...refundData,
+      amount: refundData.amount,
+      deductions: refundData.deductions,
       refundedAt: serverTimestamp(),
     },
-    status: 'completed',
     updatedAt: serverTimestamp(),
-  });
+  };
+  if (overflow > 0) {
+    patch.balanceDue = overflow;
+    patch.status = 'confirmed';
+  } else {
+    patch.balanceDue = 0;
+    patch.status = 'completed';
+  }
+  await updateDoc(doc(db, 'bookings', id), patch);
 }
 
 // ============ BLOCKED SLOTS ============
@@ -547,22 +641,18 @@ export async function createBlockedSlot(
 }
 
 /**
- * Create a blocked slot AND propagate to every venue sharing the same
- * physical space (Sheung Wan A / B / A+B). Use this for any admin manual
- * block — booking flows already iterate explicitly.
- *
- * Returns the id of the primary block (for the requested venueId).
+ * Create a blocked slot for an admin manual block. Earlier versions
+ * propagated copies to every venue sharing the same physical space
+ * (Sheung Wan A / B / A+B), but conflict CHECKS already expand via
+ * venuesSharingSpace — propagating writes too produced phantom slots
+ * that wrongly blocked sibling venues (Heidi 2026-06 incident: sw-b
+ * booking phantom-blocked sw-a). Now a single write; reads still
+ * correctly catch cross-room blocks via the expanding query.
  */
 export async function createSharedBlockedSlot(
   data: Omit<BlockedSlot, 'id'>
 ): Promise<string> {
-  const ids = venuesSharingSpace(data.venueId);
-  let primaryId = '';
-  for (const vid of ids) {
-    const id = await createBlockedSlot({ ...data, venueId: vid });
-    if (vid === data.venueId) primaryId = id;
-  }
-  return primaryId;
+  return await createBlockedSlot(data);
 }
 
 export async function getBlockedSlots(

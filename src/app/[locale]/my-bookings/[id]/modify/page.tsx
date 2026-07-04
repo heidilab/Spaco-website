@@ -238,13 +238,37 @@ export default function ModifyBookingPage() {
     if (timeChanged && timeConflict) return;
     setSubmitting(true);
     try {
-      const newBalance = (booking.balanceDue ?? 0) + subtotalDiff;
+      // If the booking has a free_drinks promo, the promo discount must
+      // scale with the new pax count (same rule as updateBookingDateTime
+      // in firestore.ts). Without this, adding people increases the
+      // drinks add-on cost but leaves promoDiscount frozen at the
+      // original pax amount — causing the customer to be charged for
+      // the incremental drinks that should be free.
+      let promoDiscountDelta = 0;
+      let promoDiscountPatch: Record<string, unknown> = {};
+      const isFreeDrinksPromo =
+        typeof booking.promoFreeDrinksCost === 'number' && booking.promoFreeDrinksCost > 0;
+      const hasDrinksInCart = cart.some((a) => a.id === 'drinks');
+      if (isFreeDrinksPromo && hasDrinksInCart) {
+        const promoAdults = Math.max(0, newGuestCount - childCount);
+        const adultEquiv = promoAdults + 0.5 * childCount;
+        const newPromoDiscount = freeDrinksVenues.includes(booking.venueId)
+          ? 0
+          : Math.round(25 * adultEquiv);
+        promoDiscountDelta = newPromoDiscount - (booking.promoDiscount || 0);
+        promoDiscountPatch = {
+          promoDiscount: newPromoDiscount,
+          promoFreeDrinksCost: newPromoDiscount,
+        };
+      }
+      const newBalance = (booking.balanceDue ?? 0) + subtotalDiff - promoDiscountDelta;
       const update: Record<string, unknown> = {
         addOns: cart,
         'pricing.subtotal': newPricing.subtotal,
         'pricing.addOnTotal': newPricing.addOnTotal,
         'pricing.baseCharge': newPricing.baseCharge,
-        balanceDue: newBalance,
+        balanceDue: Math.max(0, newBalance),
+        ...promoDiscountPatch,
       };
       // Persist guest count changes too (D3).
       if (guestsChanged) {

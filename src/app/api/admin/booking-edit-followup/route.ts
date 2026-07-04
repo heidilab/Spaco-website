@@ -48,12 +48,28 @@ export async function POST(req: NextRequest) {
       bookingId?: string;
       payment?: FollowupPayment;
       /** When true, ONLY do the Google Calendar sync — no payment recording,
-       *  no customer email. Used by the admin-detail save flow to guarantee
-       *  gcal mirrors every edit (time / guests / venue / date) immediately
-       *  without spamming the customer with a fresh "預訂已更新" email each
-       *  time admin tweaks something. The payment-modal path falls back to
-       *  the full flow (payment + email + gcal). */
+       *  no customer email. Use this for silent server-side resync flows
+       *  (e.g. periodic cron). For admin edits we WANT the customer to know
+       *  what changed, so handleSave passes syncOnly=false + previousSnapshot
+       *  to surface a 「預訂已更新」 banner with the diff. */
       syncOnly?: boolean;
+      /** Snapshot of booking fields BEFORE the admin's updateBookingDateTime
+       *  call. Used to build the human-readable change list shown in the
+       *  update email so the customer sees exactly what moved. */
+      previousSnapshot?: {
+        date?: string;
+        startTime?: string;
+        endTime?: string;
+        endDate?: string | null;
+        venueId?: string;
+        guestCount?: number;
+        adultCount?: number;
+        childCount?: number;
+        addOnsLine?: string;
+      };
+      /** When true, force-send the confirmation email even without payment
+       *  or pricing changes — used by the "重新發送確認 email" admin button. */
+      resendEmail?: boolean;
     };
     const bookingId = body.bookingId;
     if (!bookingId) {
@@ -178,7 +194,42 @@ export async function POST(req: NextRequest) {
     const venue = getVenueById(fresh.venueId);
     const venueName = venue?.name.zh || fresh.branchSlug;
 
-    if (!syncOnly && customerEmail) {
+    // Build the human-readable diff list when caller supplied a snapshot
+    // of pre-edit values. Each entry is shown as a bullet in the email's
+    // "🔄 你嘅預訂已更新" banner so customer sees exactly what moved.
+    const changes: string[] = [];
+    const prev = body.previousSnapshot;
+    if (prev) {
+      const venueLabel = (id?: string) => {
+        if (!id) return '';
+        return getVenueById(id)?.name.zh || id;
+      };
+      if (prev.date && prev.date !== fresh.date) {
+        changes.push(`日期: ${prev.date} → ${fresh.date}`);
+      }
+      const newRange = `${fresh.startTime}-${fresh.endTime}`;
+      const oldRange = `${prev.startTime || ''}-${prev.endTime || ''}`;
+      if ((prev.startTime || prev.endTime) && newRange !== oldRange) {
+        changes.push(`時段: ${oldRange} → ${newRange}`);
+      }
+      if (prev.venueId && prev.venueId !== fresh.venueId) {
+        changes.push(`場地: ${venueLabel(prev.venueId)} → ${venueLabel(fresh.venueId)}`);
+      }
+      if (typeof prev.guestCount === 'number' && prev.guestCount !== fresh.guestCount) {
+        changes.push(`人數: ${prev.guestCount} 人 → ${fresh.guestCount} 人`);
+      }
+      const newAddOnsLine = formatAddOnsForStaff(fresh.addOns, 'zh');
+      if (prev.addOnsLine !== undefined && prev.addOnsLine !== newAddOnsLine) {
+        changes.push(`附加服務: ${prev.addOnsLine || '(無)'} → ${newAddOnsLine || '(無)'}`);
+      }
+    }
+
+    // Email triggers:
+    //   - syncOnly=false (default for admin edits + "重新發送")  → email
+    //   - syncOnly=true                                          → skip
+    //   - resendEmail=true forces email regardless of syncOnly
+    const shouldEmail = (!syncOnly || body.resendEmail) && !!customerEmail;
+    if (shouldEmail) {
       const whatsappNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || '85292823060';
       const whatsappLink = generateWhatsAppLink(
         whatsappNumber,
@@ -206,17 +257,14 @@ export async function POST(req: NextRequest) {
         addOnsLine: formatAddOnsForStaff(fresh.addOns, 'zh'),
         paymentMethod: fresh.paymentMethod || 'Online',
         whatsappLink,
+        // Show the diff banner only when admin's edit actually changed
+        // something. Resends with no snapshot use the default subject.
+        changes: changes.length > 0 ? changes : undefined,
       });
-      // Custom subject so the customer knows it's an update, not a new
-      // booking — without bypassing the toggle wrapper.
-      const updateSubject = (locale: string = 'zh') =>
-        locale === 'zh'
-          ? `🔄 SPACO 預訂已更新 — ${venueName} (${fresh.date})`
-          : `🔄 SPACO Booking Updated — ${venueName} (${fresh.date})`;
       await sendAutomatedEmail({
         automationKey: 'booking_confirmation',
         to: customerEmail,
-        subject: updateSubject('zh'),
+        subject: tpl.subject,
         html: tpl.html,
       });
     }

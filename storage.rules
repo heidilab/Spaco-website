@@ -36,6 +36,15 @@ service firebase.storage {
       allow update, delete: if isStaff();
     }
 
+    // ───── Article assets (hero images + inline images) ─────
+    // Public READ — customer-facing article pages need to render
+    // these. Staff WRITE only; rolled out 2026-06-22 after Heidi hit
+    // storage/unauthorized on hero upload at /admin/articles/[id].
+    match /articles/{file=**} {
+      allow read:  if true;
+      allow write: if isStaff();
+    }
+
     // Default deny — any path not listed above
     match /{allPaths=**} {
       allow read, write: if false;

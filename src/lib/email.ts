@@ -1,5 +1,14 @@
 // Email helper using Resend REST API directly (no heavy SDK)
 
+import type { BookingRecord, AddOnOptions } from '@/types';
+import { calcShishaPrice } from './pricing';
+import { getDecorationById } from './decorations';
+import {
+  CATERING_ITEMS,
+  CATERING_TIERS,
+  CATERING_DELIVERY_ZONES,
+} from './cateringMenu';
+
 interface EmailParams {
   to: string;
   subject: string;
@@ -341,6 +350,11 @@ export function buildBookingConfirmationEmail(params: {
   addOnsLine?: string;
   paymentMethod: string;
   whatsappLink: string;
+  /** Optional list of human-readable change descriptions (e.g.
+   *  ["日期:2026-07-15 → 2026-07-20", "人數:10 → 15"]). When provided,
+   *  shows a yellow "預訂已更新" banner at the top so the customer
+   *  immediately knows what changed. */
+  changes?: string[];
 }) {
   const peopleLine = (params.childCount ?? 0) > 0
     ? `${params.guestCount} 人 (${params.adultCount ?? params.guestCount} 成人 + ${params.childCount} 小童)`
@@ -356,8 +370,23 @@ export function buildBookingConfirmationEmail(params: {
          </p>
        </div>`
     : '';
+  // Update notice — shown when admin edits the booking and the followup
+  // route detects diffs (date/time/venue/people/add-ons changed).
+  const changesNotice = (params.changes && params.changes.length > 0)
+    ? `<div style="background: #EFF6FF; border-left: 4px solid #3B82F6; border-radius: 12px; padding: 14px 18px; margin: 0 0 18px;">
+         <p style="margin: 0 0 8px; font-weight: 700; color: #1E40AF; font-size: 13px;">🔄 你嘅預訂已更新</p>
+         <p style="margin: 0 0 6px; font-size: 12px; color: #1E3A8A; line-height: 1.5;">以下項目已修改:</p>
+         <ul style="margin: 0; padding-left: 18px; color: #1E3A8A; font-size: 12px; line-height: 1.7;">
+           ${params.changes.map((c) => `<li>${c}</li>`).join('')}
+         </ul>
+       </div>`
+    : '';
+  // Subject reflects whether this is an update vs first-time confirmation.
+  const isUpdate = !!(params.changes && params.changes.length > 0);
   return {
-    subject: `🎉 SPACO 預約已確認 — ${params.venueName} (${params.date})`,
+    subject: isUpdate
+      ? `🔄 SPACO 預訂已更新 — ${params.venueName} (${params.date})`
+      : `🎉 SPACO 預約已確認 — ${params.venueName} (${params.date})`,
     html: `
       <div style="font-family: ${EMAIL_FONT}; max-width: 600px; margin: 0 auto; background: ${EMAIL_BG}; padding: 40px 20px;">
         ${emailHeader('預約已確認 · BOOKING CONFIRMED')}
@@ -377,6 +406,7 @@ export function buildBookingConfirmationEmail(params: {
             <p style="margin: 0; font-size: 13px; opacity: 0.92;">${peopleLine}</p>
           </div>
 
+          ${changesNotice}
           ${balanceNotice}
 
           <h3 style="margin: 0 0 12px; font-size: 14px; color: ${EMAIL_INK}; letter-spacing: 0.04em; text-transform: uppercase;">📋 預訂明細</h3>
@@ -651,6 +681,196 @@ export function buildStaffBookingNotificationEmail(params: {
     `,
   };
 }
+
+// ─────────────────────────────────────────────────────────────
+// Supplier-order notification — sent IN ADDITION to the regular
+// booking-confirmed notification when the booking contains any item
+// requiring CS to place a supplier order (火鍋 / Shisha / 免費佈置
+// / 代燒員 / 美食到會). Itemised so CS can copy-paste directly into
+// supplier WhatsApp / email.
+// ─────────────────────────────────────────────────────────────
+
+/** Detect whether a booking has any supplier-triggering add-on. */
+export function bookingNeedsSupplierOrder(booking: BookingRecord): boolean {
+  const SUPPLIER_IDS = new Set(['hotpot-standard', 'hotpot-seafood', 'hotpot-extra-soup', 'shisha', 'bbq-helper', 'catering']);
+  if ((booking.addOns || []).some((a) => SUPPLIER_IDS.has(a.id))) return true;
+  if (booking.decorationStyle) return true;
+  return false;
+}
+
+/** Render the supplier-order email. Each triggered category gets
+ *  its own clearly-labelled section so CS can scan + copy the
+ *  paragraph they need without rebuilding the order from scratch. */
+export function buildStaffSupplierOrderEmail(params: {
+  booking: BookingRecord;
+  venueName: string;
+  customerName: string;
+  customerEmail?: string;
+  adminUrl: string;
+}) {
+  const { booking, venueName, customerName, customerEmail, adminUrl } = params;
+  const adults = booking.adultCount ?? booking.guestCount;
+  const children = booking.childCount ?? 0;
+  const adultEquiv = adults + 0.5 * children;
+  const guestLabel = children > 0
+    ? `${booking.guestCount} 人（${adults} 成人 + ${children} 小童）`
+    : `${booking.guestCount} 人`;
+
+  const sections: string[] = [];
+
+  // ── Hotpot ──
+  const hotpotStd  = booking.addOns?.find((a) => a.id === 'hotpot-standard');
+  const hotpotSea  = booking.addOns?.find((a) => a.id === 'hotpot-seafood');
+  const extraSoup  = booking.addOns?.find((a) => a.id === 'hotpot-extra-soup');
+  if (hotpotStd || hotpotSea || extraSoup) {
+    const lines: string[] = [];
+    if (hotpotStd) lines.push(`• 火鍋標準套餐 × ${guestLabel}（每位 $168，總計 HK$${Math.round(168 * adultEquiv).toLocaleString()}）`);
+    if (hotpotSea) lines.push(`• 海鮮火鍋套餐 × ${guestLabel}（每位 $348，總計 HK$${Math.round(348 * adultEquiv).toLocaleString()}）`);
+    if (extraSoup) lines.push(`• 加購額外湯底 ×1 (HK$108)`);
+    sections.push(supplierSection('🍲', '火鍋', '須最少 3 日前向供應商落單', lines));
+  }
+
+  // ── Shisha ──
+  const shisha = booking.addOns?.find((a) => a.id === 'shisha');
+  if (shisha) {
+    const opts = (shisha.options || {}) as AddOnOptions;
+    const heads = shisha.quantity;
+    const pipes = Math.min(2, Math.max(1, opts.pipes ?? Math.min(2, heads)));
+    const staffSetup = !!opts.staffSetup;
+    const cost = calcShishaPrice(pipes, heads, staffSetup);
+    const flavorList = (opts.flavors || []).filter((f) => !!f);
+    const flavorLines = flavorList.length > 0
+      ? flavorList.map((f, i) => `  • Head ${i + 1}: ${SHISHA_FLAVOR_NAMES[f] || f}`).join('<br>')
+      : '<i style="color:#991B1B;">⚠️ 客人未揀煙頭口味,須跟進</i>';
+    const staffSetupLine = staffSetup
+      ? (opts.staffSetupTime
+          ? `是 (+$180) · <strong style="color:#B45309;">⏰ Setup 時間：${opts.staffSetupTime}</strong>（客人會喺場地內接收,請供應商當日聯絡客人 ${booking.whatsappPhone || ''}）`
+          : `是 (+$180) · <strong style="color:#991B1B;">⚠️ 客人未揀 setup 時間,須跟進</strong>`)
+      : '否';
+    const lines = [
+      `• ${pipes} 支水煙 × ${heads} 個煙頭（HK$${cost.toLocaleString()}）`,
+      `• 人手 setup：${staffSetupLine}`,
+      `• 口味：<br>${flavorLines}`,
+    ];
+    sections.push(supplierSection('💨', 'Shisha 水煙', '須最少 2 日前向供應商落單', lines));
+  }
+
+  // ── 免費佈置 (package booking) ──
+  if (booking.decorationStyle) {
+    const decor = getDecorationById(booking.decorationStyle);
+    sections.push(supplierSection('🎀', '免費佈置', '通知佈置 supplier 揀色', [
+      `• 顏色主題：${decor?.label.zh || booking.decorationStyle}`,
+      decor?.description.zh ? `• ${decor.description.zh}` : '',
+      booking.packageSlug ? `• 套餐：${booking.packageSlug}` : '',
+    ].filter(Boolean)));
+  }
+
+  // ── 代燒員 ──
+  const helper = booking.addOns?.find((a) => a.id === 'bbq-helper');
+  if (helper) {
+    const n = helper.quantity;
+    const cost = 300 * n * booking.hours;
+    sections.push(supplierSection('🧑‍🍳', '代燒員', '須最少 7 日前安排代燒員', [
+      `• 人數：${n} 位`,
+      `• 時段：${booking.startTime} – ${booking.endTime}（${booking.hours} 小時）`,
+      `• 收費：${n} × ${booking.hours} 小時 × $300 = HK$${cost.toLocaleString()}`,
+    ]));
+  }
+
+  // ── 美食到會 ──
+  const catering = booking.addOns?.find((a) => a.id === 'catering');
+  if (catering) {
+    const opts = (catering.options || {}) as AddOnOptions;
+    const tier = CATERING_TIERS.find((t) => t.id === opts.tierId);
+    const zone = CATERING_DELIVERY_ZONES.find((z) => z.id === opts.deliveryZoneId);
+    const codes = opts.dishCodes || [];
+    const picked = CATERING_ITEMS.filter((d) => codes.includes(d.code));
+    const nonAddon = picked.filter((d) => d.category !== 'addon');
+    const addonDishes = picked.filter((d) => d.category === 'addon');
+    const dishLinesByCategory = nonAddon.length > 0
+      ? `<ul style="margin: 4px 0 0; padding-left: 18px;">${nonAddon.map((d) => `<li>[${d.code}] ${d.name.zh}</li>`).join('')}</ul>`
+      : '<i style="color:#991B1B;">⚠️ 客人未揀菜式</i>';
+    const addonLines = addonDishes.length > 0
+      ? `<ul style="margin: 4px 0 0; padding-left: 18px;">${addonDishes.map((d) => `<li>[${d.code}] ${d.name.zh} ${d.price ? `(+HK$${d.price})` : ''}</li>`).join('')}</ul>`
+      : '';
+    const deliveryTimeLine = opts.deliveryTime
+      ? `<strong style="color:#B45309;">⏰ 送貨時間：${opts.deliveryTime}</strong>（客人會喺場地內接收,請供應商當日聯絡客人 ${booking.whatsappPhone || ''}）`
+      : '<strong style="color:#991B1B;">⚠️ 客人未揀送貨時間,須跟進</strong>';
+    const lines = [
+      `• 套餐：${tier?.paxRange.min}-${tier?.paxRange.max} 人 / 任選 ${tier?.pickCount} 盤 / HK$${tier?.price.toLocaleString()}`,
+      `• 已揀 ${nonAddon.length} 款主菜${nonAddon.length > (tier?.pickCount ?? 0) ? `（額外 ${nonAddon.length - (tier?.pickCount ?? 0)} × HK$155）` : ''}：${dishLinesByCategory}`,
+      addonDishes.length > 0 ? `• 追加款式：${addonLines}` : '',
+      `• 送貨區：${zone?.label.zh || '—'}${zone?.fee ? ` (+HK$${zone.fee})` : ''}${opts.doorstepDelivery ? ' / 上門交收 (+$150)' : ' / 樓下交收'}`,
+      `• ${deliveryTimeLine}`,
+      `• 餐具：${opts.noCutlery ? '走餐具 (−$10)' : '包餐具 + 1 食物夾'}${(opts.extraCutlerySets ?? 0) > 0 ? ` / 額外 ${opts.extraCutlerySets} set` : ''}${(opts.extraFoodTongs ?? 0) > 0 ? ` / 額外 ${opts.extraFoodTongs} 食物夾` : ''}`,
+    ].filter(Boolean);
+    sections.push(supplierSection('🍱', '美食到會', '須最少 2 日前向供應商落單', lines));
+  }
+
+  return {
+    subject: `📦 SUPPLIER ORDER · ${venueName} ${booking.date} (${customerName})`,
+    html: `
+      <div style="font-family: ${EMAIL_FONT}; max-width: 720px; margin: 0 auto; background: ${EMAIL_BG}; padding: 32px 20px;">
+        ${emailHeader('📦 SUPPLIER ORDER REQUIRED')}
+
+        <div style="background: #FEF3C7; border-left: 4px solid #F59E0B; border-radius: 8px; padding: 14px 16px; margin-bottom: 16px;">
+          <p style="margin: 0; font-size: 13px; color: #92400E; font-weight: 600;">
+            ⚠️ 呢張預約有 supplier 訂購項目，請即時聯絡相應供應商落單。
+          </p>
+        </div>
+
+        <div style="background: white; padding: 24px; border-radius: 16px; margin-bottom: 16px;">
+          <p style="margin: 0 0 4px; font-size: 12px; color: #999;">Booking ID</p>
+          <p style="margin: 0 0 14px; font-family: 'Courier New', monospace; font-size: 13px; color: ${EMAIL_INK};">${booking.id}</p>
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr><td style="padding: 6px 0; color: #999; font-size: 12px;">場地</td><td style="padding: 6px 0; text-align: right; font-weight: 600;">${venueName}</td></tr>
+            <tr><td style="padding: 6px 0; color: #999; font-size: 12px;">日期</td><td style="padding: 6px 0; text-align: right; font-weight: 600;">${booking.date}${booking.endDate && booking.endDate !== booking.date ? ` → ${booking.endDate}` : ''}</td></tr>
+            <tr><td style="padding: 6px 0; color: #999; font-size: 12px;">時段</td><td style="padding: 6px 0; text-align: right; font-weight: 600;">${booking.startTime} – ${booking.endTime}（${booking.hours} 小時）</td></tr>
+            <tr><td style="padding: 6px 0; color: #999; font-size: 12px;">人數</td><td style="padding: 6px 0; text-align: right; font-weight: 600;">${guestLabel}</td></tr>
+            <tr><td style="padding: 6px 0; color: #999; font-size: 12px;">客人</td><td style="padding: 6px 0; text-align: right; font-weight: 600;">${customerName}${booking.whatsappPhone ? ` · ${booking.whatsappPhone}` : ''}</td></tr>
+            ${customerEmail ? `<tr><td style="padding: 6px 0; color: #999; font-size: 12px;">Email</td><td style="padding: 6px 0; text-align: right; font-weight: 600;">${customerEmail}</td></tr>` : ''}
+          </table>
+        </div>
+
+        ${sections.join('')}
+
+        <div style="text-align: center; margin: 16px 0;">
+          <a href="${adminUrl}" style="display: inline-block; background: linear-gradient(135deg, ${EMAIL_PINK} 0%, ${EMAIL_PEACH} 100%); color: white; padding: 14px 32px; border-radius: 999px; text-decoration: none; font-weight: 700; font-size: 14px;">
+            打開後台 · Open Admin
+          </a>
+        </div>
+
+        ${emailFooter()}
+      </div>
+    `,
+  };
+}
+
+function supplierSection(emoji: string, title: string, hint: string, lines: string[]): string {
+  return `
+    <div style="background: white; padding: 22px 24px; border-radius: 16px; margin-bottom: 14px; border-left: 4px solid ${EMAIL_PINK};">
+      <h3 style="margin: 0 0 4px; font-size: 16px; color: ${EMAIL_INK};">${emoji} ${title}</h3>
+      <p style="margin: 0 0 12px; font-size: 12px; color: #B45309; font-weight: 600;">${hint}</p>
+      <div style="font-size: 13px; color: ${EMAIL_INK}; line-height: 1.7;">
+        ${lines.map((l) => `<div>${l}</div>`).join('')}
+      </div>
+    </div>
+  `;
+}
+
+/** Map of shisha flavor variant ids → human-readable Chinese names.
+ *  Mirrors the variants array in lib/pricing.ts (the shisha entry).
+ *  Updated 2026-06-22 — keep in sync if new flavors get added. */
+const SHISHA_FLAVOR_NAMES: Record<string, string> = {
+  A: 'A · 芒果菠蘿檸檬綠茶',
+  B: 'B · 蜜桃伯爵茶',
+  C: 'C · 提子茉莉青瓜',
+  D: 'D · 士多啤梨窩夫',
+  E: 'E · 蜜瓜牛奶',
+  F: 'F · 茉莉雞蛋花青檸',
+  G: 'G · 檀香伯爵蜜桃針葉',
+  H: 'H · 檀香綠茶蘋果',
+};
 
 // ─────────────────────────────────────────────────────────────
 // Booking cancelled — sent when admin cancels a booking.

@@ -12,7 +12,7 @@ import {
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { getVenueById } from '@/lib/venues';
-import { addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE, calculatePricing, freeDrinksVenues } from '@/lib/pricing';
+import { addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE, calculatePricing, freeDrinksVenues, isWithin2Days } from '@/lib/pricing';
 import { BookingRecord, RefundDetails, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
 import {
   loadBookingCheckoutDraft, saveBookingCheckoutDraft,
@@ -245,7 +245,7 @@ export default function ConfirmBookingPage() {
   const promoDiscount = applied?.amount || 0;
   const effectiveSubtotal = Math.max(0, booking.pricing.subtotal - promoDiscount);
   const effectiveGrandTotal = effectiveSubtotal + securityDeposit;
-  const isFullPayment = effectiveGrandTotal <= 10000;
+  const isFullPayment = effectiveGrandTotal <= 10000 || isWithin2Days(booking.date);
   const effectiveDeposit = isFullPayment
     ? effectiveGrandTotal
     : Math.round(effectiveGrandTotal * 0.5);
@@ -279,8 +279,19 @@ export default function ConfirmBookingPage() {
       // Compute the drinks portion as if it were already in the cart —
       // for `free_drinks` codes we'll auto-add the drinks add-on below
       // even if the customer hadn't picked it themselves.
-      const adultEquiv = (booking?.adultCount ?? booking?.guestCount ?? 0)
-        + 0.5 * (booking?.childCount ?? 0);
+      //
+      // MUST match pricing.ts's adultEquivalent formula exactly
+      // (adults = guestCount − childCount; equiv = adults + 0.5·children)
+      // so the promo amount equals the drinks line item. Previously this
+      // read `adultCount ?? guestCount` which diverged when admin edited
+      // a booking's guestCount without touching adultCount:
+      // #jMW2skDl was bumped from 7 → 12 pax, drinks recalc'd to
+      // 12 × \$25 = \$300, but promo stuck at adultCount=7 × \$25 = \$175.
+      // Net result: customer charged \$125 for "free" drinks.
+      const guestCount = booking?.guestCount ?? 0;
+      const childCount = booking?.childCount ?? 0;
+      const adults = Math.max(0, guestCount - childCount);
+      const adultEquiv = adults + 0.5 * childCount;
       const venueIncludesDrinksFree = booking
         ? freeDrinksVenues.includes(booking.venueId)
         : false;

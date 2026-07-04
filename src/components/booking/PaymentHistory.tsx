@@ -63,18 +63,12 @@ export default function PaymentHistory({
   const [refundBusy, setRefundBusy] = useState(false);
   const [refundResult, setRefundResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
-  // Legacy detection: any entry that has a positive amount but no split
-  // is from the pre-split endpoint. When at least one exists, pricing.*
-  // fields may not yet reflect the legacy money so any synthesis math
-  // would be off; we hide the initial row + show a banner asking admin
-  // to split before drawing the full audit.
-  const hasUnsplit = payments.some(
-    (p) =>
-      (p.amount || 0) > 0
-      && (p.rentalAmount || 0) === 0
-      && (p.addOnAmount || 0) === 0
-      && (p.depositAmount || 0) === 0,
-  );
+  // Heidi 2026-05-23 spec dropped per-bucket payment tracking — new
+  // entries only carry `amount`, no rental/addon/deposit split. The
+  // old "未拆分嘅付款" warning + 🪄 split modal were tied to that legacy
+  // model and just confused CS now. Keep `hasUnsplit = false` so the
+  // warning never renders (and the split modal stays inert).
+  const hasUnsplit = false;
 
   // Three-bucket sums across all logged payments (場租 / 附加項目 / 按金).
   // Legacy entries pre-dating the addOnAmount split lump everything into
@@ -99,11 +93,21 @@ export default function PaymentHistory({
   // payments[] (e.g. Stripe charges from before the webhook started
   // writing audit entries).
   //
-  // pricing.subtotal is ALREADY stored post-promo by
-  // updateBookingDateTime (see lib/firestore.ts). So:
-  //   actualPaidTotal = subtotal + securityDeposit − balanceDue
-  // — no further promo subtraction here, that would double-count
-  // (the $18,960 vs $19,960 bug on #WIiQYL2I).
+  // Compute the EFFECTIVE grand total from primitive fields
+  // (baseCharge + addOnTotal − promoDiscount + securityDeposit) so
+  // the math is correct regardless of whether `pricing.subtotal` was
+  // stored PRE-promo (venue page / admin/bookings/new post commit
+  // e1900f0) or POST-promo (legacy updateBookingPricing /
+  // booking-cleanup-fix output). Using primitives sidesteps the
+  // convention-drift entirely.
+  //
+  // Earlier this code used `pricing.subtotal + securityDeposit` on
+  // the assumption that subtotal was always POST-promo. After the
+  // PRE-promo storage was restored, that produced a phantom synth
+  // row equal to promoDiscount on every booking with a promo applied
+  // (e.g. #asQzC4PU: real Stripe $7,000, but grandTotal computed as
+  // $7,500 from PRE-promo subtotal, so a phantom $500 synth appeared
+  // and 已收總額 inflated to $7,500).
   //
   // Bucket-fill instead of pro-rata. The booking system's own pricing
   // flow charges the customer's confirmation payment against the
@@ -118,7 +122,13 @@ export default function PaymentHistory({
   // bucket-fill order below reconstructs the correct split for the
   // common "admin added an add-on after the customer already paid"
   // case without needing to store a pricing snapshot.
-  const grandTotal = (booking.pricing.subtotal || 0) + (booking.pricing.securityDeposit || 0);
+  const promoDiscountForGrandTotal = booking.promoDiscount || 0;
+  const grandTotal = Math.max(
+    0,
+    (booking.pricing.baseCharge || 0)
+      + (booking.pricing.addOnTotal || 0)
+      - promoDiscountForGrandTotal,
+  ) + (booking.pricing.securityDeposit || 0);
   const actualPaidTotal = isPaid ? Math.max(0, grandTotal - (booking.balanceDue || 0)) : 0;
   const loggedTotalAmount = payments.reduce((s, p) => s + (p.amount || 0), 0);
   const synthAmount = hasUnsplit ? 0 : Math.max(0, actualPaidTotal - loggedTotalAmount);
@@ -307,7 +317,10 @@ export default function PaymentHistory({
           {locale === 'zh' ? '已收總額' : 'Total received'}
         </p>
         <p className="font-bold text-lg">
-          HK${(totalRental + totalAddOn + totalDeposit).toLocaleString()}
+          HK${(
+            payments.reduce((s, p) => s + (p.amount || 0), 0)
+            + initialPaid
+          ).toLocaleString()}
         </p>
       </div>
 

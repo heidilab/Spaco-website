@@ -8,7 +8,7 @@ import { signInWithGoogle } from '@/lib/auth';
 import {
   LayoutDashboard, CalendarDays, ListOrdered,
   ChevronLeft, Shield, Image, Users, UserCog, Receipt, FileText, HelpCircle, Search, CalendarClock, Mail, Tag, BarChart3,
-  BookOpen, LogIn, Menu, X,
+  BookOpen, LogIn, Menu, X, Newspaper,
 } from 'lucide-react';
 
 const allSidebarLinks = [
@@ -16,6 +16,7 @@ const allSidebarLinks = [
   { href: '/admin/content', icon: Image, label: { zh: '內容管理', en: 'Content' }, permission: 'content' },
   { href: '/admin/seo', icon: Search, label: { zh: 'SEO 管理', en: 'SEO' }, permission: 'seo' },
   { href: '/admin/faq', icon: HelpCircle, label: { zh: '常見問題管理', en: 'FAQ' }, permission: 'faq' },
+  { href: '/admin/articles', icon: Newspaper, label: { zh: '文章分享', en: 'Articles' }, permission: 'content' },
   { href: '/admin/receipts', icon: Receipt, label: { zh: '待確認入數紙', en: 'Pending Receipts' }, permission: 'bookings' },
   { href: '/admin/bookings', icon: ListOrdered, label: { zh: '預訂管理', en: 'Bookings' }, permission: 'bookings' },
   { href: '/admin/calendar', icon: CalendarDays, label: { zh: '總日曆', en: 'Calendar' }, permission: 'calendar' },

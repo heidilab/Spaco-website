@@ -465,7 +465,43 @@ export default function AdminBookingsPage() {
                       <td className="px-6 py-4 text-sm text-ink">{booking.date}</td>
                       <td className="px-6 py-4 text-sm text-ink">{booking.startTime} - {booking.endTime}</td>
                       <td className="px-6 py-4 text-sm text-ink">{booking.guestCount}</td>
-                      <td className="px-6 py-4 text-sm font-bold font-display text-gradient-pink">HK${booking.pricing?.subtotal?.toLocaleString() || 0}</td>
+                      <td className="px-6 py-4 text-sm font-bold font-display text-gradient-pink">
+                        {(() => {
+                          // 「金額」 logic varies by booking lifecycle:
+                          //   • completed (deposit settled) → 結算訂單總額
+                          //       = sum(payments) − depositRefund.amount
+                          //     i.e. what customer actually paid NET of the
+                          //     deposit refunded back. Reflects the final
+                          //     real total per Heidi's 2026-06-22 spec.
+                          //   • pre-settlement (confirmed / awaiting…)
+                          //       = subtotal − promo − points + consumed
+                          //         deposit (forfeited portion that SPACO
+                          //         keeps; deductions ≤ securityDeposit).
+                          //     Until the deposit is settled the
+                          //     refundable portion isn't SPACO's revenue
+                          //     yet, so we don't include it.
+                          if (booking.status === 'completed' && booking.depositRefund) {
+                            const paymentsSum = (booking.payments || []).reduce(
+                              (s, p) => s + (p.amount || 0),
+                              0,
+                            );
+                            const refunded = (booking.depositRefund as { amount?: number })?.amount || 0;
+                            const finalTotal = Math.max(0, paymentsSum - refunded);
+                            return `HK$${finalTotal.toLocaleString()}`;
+                          }
+                          const subtotal = booking.pricing?.subtotal || 0;
+                          const promo = booking.promoDiscount || 0;
+                          const pts = booking.pointsDiscount || 0;
+                          const consumed = (
+                            (booking.depositRefund as { deductions?: { amount: number }[] } | null)?.deductions
+                            || []
+                          ).reduce((s, d) => s + (d.amount || 0), 0);
+                          const securityDeposit = booking.pricing?.securityDeposit || 0;
+                          const forfeitedDeposit = Math.min(consumed, securityDeposit);
+                          const total = Math.max(0, subtotal - promo - pts) + forfeitedDeposit;
+                          return `HK$${total.toLocaleString()}`;
+                        })()}
+                      </td>
                       <td className="px-6 py-4">
                         <div className="flex flex-col gap-1.5">
                           <span className={`inline-flex w-fit px-3 py-1 rounded-pill text-xs font-medium border ${statusColors[booking.status] || 'bg-white/60 text-ink-soft border-white/70'}`}>
@@ -722,7 +758,7 @@ function DraftsTable({ drafts, loading, locale, staffUid, onChange }: DraftsTabl
                   const expired = isDraftExpired(d);
                   const isPending = d.status === 'pending' && !expired;
                   const isClaimed = d.status === 'claimed';
-                  const total = d.pricing.subtotal + d.pricing.deposit;
+                  const total = d.pricing.subtotal + (d.pricing.securityDeposit ?? 0);
                   return (
                     <tr key={d.id} className="border-b border-white/40 last:border-0 hover:bg-white/40 transition-colors align-top">
                       <td className="px-5 py-4">

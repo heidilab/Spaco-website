@@ -53,6 +53,7 @@ export default function Header() {
     { href: '/corporate',         label: t('corporate') },
     { href: '/corporate-package', label: t('corporatePackage') },
     { href: '/family',            label: t('family') },
+    { href: '/articles',          label: locale === 'zh' ? '文章分享' : 'Articles' },
     { href: '/guidelines',        label: t('guidelines') },
     { href: '/faq',               label: t('faq') },
   ];

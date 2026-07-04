@@ -1,4 +1,45 @@
 import { Venue, AddOn, AddOnOptions } from '@/types';
+import {
+  CATERING_ITEMS,
+  CATERING_TIERS,
+  CATERING_DELIVERY_ZONES,
+  CATERING_EXTRA_DISH_FEE,
+  CATERING_DOORSTEP_DELIVERY_FEE,
+  CATERING_NO_CUTLERY_DISCOUNT,
+  CATERING_EXTRA_CUTLERY_SET_FEE,
+  CATERING_EXTRA_FOOD_TONG_FEE,
+} from './cateringMenu';
+
+/** Catering total = tier base + extras (non-addon dishes beyond tier
+ *  count × \$155) + addon dishes (A1-A10 own prices) + delivery
+ *  (zone fee + optional \$150 doorstep) + cutlery (−\$10 no cutlery,
+ *  +\$3/set extras, +\$9/tong extras). Used by both calculatePricing
+ *  and the CateringPickerModal live preview. */
+export function calcCateringTotal(opts: {
+  tierId?: string;
+  dishCodes?: string[];
+  deliveryZoneId?: string;
+  doorstepDelivery?: boolean;
+  noCutlery?: boolean;
+  extraCutlerySets?: number;
+  extraFoodTongs?: number;
+}): number {
+  const tier = CATERING_TIERS.find((t) => t.id === opts.tierId);
+  if (!tier) return 0;
+  const codes = opts.dishCodes || [];
+  const selected = CATERING_ITEMS.filter((d) => codes.includes(d.code));
+  const nonAddon = selected.filter((d) => d.category !== 'addon');
+  const addonDishes = selected.filter((d) => d.category === 'addon');
+  const extras = Math.max(0, nonAddon.length - tier.pickCount);
+  const extrasFee = extras * CATERING_EXTRA_DISH_FEE;
+  const addonDishesFee = addonDishes.reduce((s, d) => s + (d.price || 0), 0);
+  const zone = CATERING_DELIVERY_ZONES.find((z) => z.id === opts.deliveryZoneId);
+  const deliveryFee = (zone?.fee || 0) + (opts.doorstepDelivery ? CATERING_DOORSTEP_DELIVERY_FEE : 0);
+  const cutleryFee = (opts.noCutlery ? -CATERING_NO_CUTLERY_DISCOUNT : 0)
+    + (opts.extraCutlerySets || 0) * CATERING_EXTRA_CUTLERY_SET_FEE
+    + (opts.extraFoodTongs || 0) * CATERING_EXTRA_FOOD_TONG_FEE;
+  return Math.max(0, tier.price + extrasFee + addonDishesFee + deliveryFee + cutleryFee);
+}
 
 // Add-on definitions for the booking UI
 export const addOns: AddOn[] = [
@@ -31,6 +72,41 @@ export const addOns: AddOn[] = [
     description: {
       zh: '自攜食物必須租用 BBQ 爐（最多 2 個）',
       en: 'BBQ grill rental required for BYO food (max 2 units)',
+    },
+  },
+  {
+    // Helper chef — staff sent to operate the BBQ. Custom pricing:
+    // $300/hour × num_chefs × booking_hours. Min booking 5 hours
+    // (enforced in venue page UI) and 7 days advance notice.
+    // Hidden at venues in noBBQVenues (灣仔店 / wanchai).
+    id: 'bbq-helper',
+    name: { zh: '代燒員', en: 'BBQ Helper Chef' },
+    pricePerUnit: 300,
+    // unit:'item' (not 'person') because the quantity = number of
+    // chefs, not pax. Admin pages render 'person' add-ons as a
+    // simple checkbox (charged against guest count); we need the
+    // 1-6 stepper for chef count.
+    unit: 'item',
+    maxQuantity: 6,
+    description: {
+      zh: '每位代燒員每小時 $300；最少訂 5 小時；需提前最少 7 日預訂（灣仔店不適用）',
+      en: '$300/hr per chef; min 5-hour booking; reserve ≥ 7 days ahead (not available at Wan Chai)',
+    },
+  },
+  {
+    // Self-pick catering — customer fills its own modal-driven picker
+    // (CateringPickerModal). pricePerUnit is a token; the real total
+    // is derived from options.tierId + options.dishCodes
+    // + options.deliveryZoneId + cutlery flags by the calc branch
+    // below. Needs ≥ 2 days advance per the menu image footer.
+    id: 'catering',
+    name: { zh: '美食到會服務', en: 'Catering Service' },
+    pricePerUnit: 0,
+    unit: 'item',
+    maxQuantity: 1,
+    description: {
+      zh: '60+ 款菜式自選；按人數 tier 計價；需提前最少 2 日預訂',
+      en: '60+ dishes to pick; tier-based pricing by group size; reserve ≥ 2 days ahead',
     },
   },
   {
@@ -165,7 +241,8 @@ export function formatAddOnsForStaff(
     if (a.id.startsWith('custom-')) {
       const name = a.options?.customName?.trim() || (locale === 'zh' ? '自訂項目' : 'Custom item');
       const price = a.options?.customPrice ?? 0;
-      return price > 0 ? `${name} ($${price.toLocaleString()})` : name;
+      if (price > 0) return `${name} ($${price.toLocaleString()})`;
+      return locale === 'zh' ? `${name}（免費）` : `${name} (FREE)`;
     }
     if (a.id !== 'shisha') {
       // Per-head packages (BBQ / hotpot / drinks) charge against the
@@ -459,6 +536,53 @@ export function calculatePricing(
       continue;
     }
 
+    if (selected.id === 'catering') {
+      // Catering total derives from options (tier + dishes + delivery
+      // + cutlery). Imported lazily to keep the data file
+      // dependency-direction clean.
+      const opts = selected.options as {
+        tierId?: string;
+        dishCodes?: string[];
+        deliveryZoneId?: string;
+        doorstepDelivery?: boolean;
+        noCutlery?: boolean;
+        extraCutlerySets?: number;
+        extraFoodTongs?: number;
+      } | undefined;
+      const cost = calcCateringTotal(opts || {});
+      if (cost > 0) {
+        addOnTotal += cost;
+        const tierLbl = opts?.tierId ? ` (${opts.tierId})` : '';
+        breakdown.push({
+          label: {
+            zh: `美食到會服務${tierLbl}`,
+            en: `Catering Service${tierLbl}`,
+          },
+          amount: cost,
+        });
+      }
+      continue;
+    }
+
+    if (selected.id === 'bbq-helper') {
+      // Helper chef = \$300/hr × num_chefs × booked_hours.
+      // Min-5-hour + 7-day-advance constraints are enforced at the
+      // venue-page UI layer (block submit + tell customer); pricing
+      // just multiplies what came in, so an admin-issued booking
+      // with shorter hours still prices correctly.
+      const numChefs = selected.quantity;
+      const cost = 300 * numChefs * hours;
+      addOnTotal += cost;
+      breakdown.push({
+        label: {
+          zh: `代燒員 (${numChefs} 位 × ${hours} 小時 × $300)`,
+          en: `BBQ Helper Chef (${numChefs} × ${hours} hr × $300)`,
+        },
+        amount: cost,
+      });
+      continue;
+    }
+
     if (selected.id === 'hotpot-standard') {
       const cost = Math.round(168 * equiv);
       addOnTotal += cost;
@@ -523,13 +647,17 @@ export function calculatePricing(
     if (selected.id.startsWith('custom-')) {
       const customName = selected.options?.customName?.trim() || '自訂項目';
       const customPrice = Math.max(0, Math.floor(selected.options?.customPrice ?? 0));
-      if (customPrice > 0) {
-        addOnTotal += customPrice;
-        breakdown.push({
-          label: { zh: customName, en: customName },
-          amount: customPrice,
-        });
-      }
+      addOnTotal += customPrice;
+      // Render the breakdown line even for free items so admin/customer
+      // see CS-promised freebies on the receipt + emails. Label gets a
+      // 「(免費)」 / 「(FREE)」 suffix so it reads correctly when the
+      // amount is 0.
+      breakdown.push({
+        label: customPrice > 0
+          ? { zh: customName, en: customName }
+          : { zh: `${customName}（免費）`, en: `${customName} (FREE)` },
+        amount: customPrice,
+      });
       continue;
     }
 
@@ -604,8 +732,29 @@ export function calculateSecurityDeposit(rentalSubtotal: number): number {
  * against the GRAND TOTAL (subtotal + security deposit):
  *   grandTotal ≤ HK$10,000 → full payment (deposit = grandTotal, no balance)
  *   grandTotal >  HK$10,000 → 50% deposit; remaining 50% due 2 days before event.
+ *   grandTotal >  HK$10,000 AND event is within 2 calendar days → full payment
+ *     (balance due date has already passed, so installment is not offered).
  */
-export function calculateDeposit(grandTotal: number): number {
+export function calculateDeposit(grandTotal: number, bookingDateStr?: string): number {
   if (grandTotal <= 10000) return grandTotal;
+  if (bookingDateStr) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const eventDate = new Date(bookingDateStr);
+    eventDate.setHours(0, 0, 0, 0);
+    const daysUntil = Math.round((eventDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    if (daysUntil <= 2) return grandTotal;
+  }
   return Math.round(grandTotal * 0.5);
+}
+
+/** Returns true when a booking date is within 2 calendar days of today,
+ *  meaning the installment window has passed and full payment is required. */
+export function isWithin2Days(bookingDateStr: string): boolean {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const eventDate = new Date(bookingDateStr);
+  eventDate.setHours(0, 0, 0, 0);
+  const daysUntil = Math.round((eventDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  return daysUntil <= 2;
 }
