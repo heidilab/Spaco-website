@@ -159,15 +159,22 @@ export async function GET() {
         orderNo?: string;
         transactionState?: number;
         transactionStateDesc?: string;
+        transactionTypeId?: number;
         payAmount?: number;
         payMethodId?: number;
       } = {};
       try { parsed = JSON.parse(data.body || '{}'); } catch { /* raw kept below */ }
+      // KPay delivers refund results as SALES + transactionTypeId 31 +
+      // negative payAmount — relabel so the UI reads correctly.
+      const isRefundShaped =
+        parsed.eventType === 'REFUND'
+        || parsed.transactionTypeId === 31
+        || (typeof parsed.payAmount === 'number' && parsed.payAmount < 0);
       return {
         receivedAt: data.receivedAt,
         verifyOk: data.verifyOk ?? false,
         rawBody: data.body || '',
-        eventType: parsed.eventType,
+        eventType: isRefundShaped ? 'REFUND' : parsed.eventType,
         orderNo: parsed.orderNo,
         transactionState: parsed.transactionState,
         transactionStateDesc: parsed.transactionStateDesc,

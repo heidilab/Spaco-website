@@ -38,6 +38,7 @@ interface KPayNotifyPayload {
   transactionNo: string;
   transactionState: number;     // 1=pending 2=success 3=failed 4=refunded 5=cancelled
   transactionStateDesc?: string;
+  transactionTypeId?: number;   // 15=sale 31=refund (observed in UAT)
   payAmount: number;
   payCurrency: string;
   transactionFinishTime?: number;
@@ -125,7 +126,17 @@ export async function POST(req: NextRequest) {
   // recover the booking from our refund outTradeNo (R<bookingId>_<epoch>)
   // and append to kpayRefunds[] for audit — they do NOT auto-adjust
   // balanceDue/status (admin decides the booking-side consequence).
-  if (payload.eventType === 'REFUND') {
+  //
+  // ⚠️ KPay's docs describe a REFUND eventType, but in practice (UAT,
+  // confirmed 2026-07-04) refund results arrive as eventType SALES with
+  // transactionTypeId 31 and a NEGATIVE payAmount. Accept both shapes —
+  // otherwise refunds fall through to the sales branch and are silently
+  // dropped as booking-not-found.
+  const isRefundNotify =
+    payload.eventType === 'REFUND'
+    || payload.transactionTypeId === 31
+    || (typeof payload.payAmount === 'number' && payload.payAmount < 0);
+  if (isRefundNotify) {
     return handleRefundNotify(payload);
   }
 
