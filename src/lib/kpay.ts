@@ -19,6 +19,39 @@
  */
 
 import crypto from 'crypto';
+import { ProxyAgent } from 'undici';
+
+/**
+ * Static-IP egress proxy for KPay API calls.
+ *
+ * KPay's LIVE environment firewalls inbound API traffic to 1-3
+ * whitelisted fixed IPs, but Vercel serverless functions egress from
+ * dynamic IPs. Setting KPAY_PROXY_URL (e.g. a QuotaGuard/Fixie HTTPS
+ * proxy URL, http://user:pass@host:port) routes ONLY KPay API calls
+ * through that proxy's static IP. Unset → direct connection (fine for
+ * the UAT sandbox, which has no IP whitelist).
+ *
+ * Note: only server→KPay API calls need this. The hosted-cashier
+ * redirect is the customer's own browser, and KPay→us webhooks are
+ * inbound — neither is affected by the whitelist.
+ */
+let proxyDispatcher: ProxyAgent | null | undefined;
+
+function getKpayDispatcher(): ProxyAgent | undefined {
+  if (proxyDispatcher === undefined) {
+    const url = process.env.KPAY_PROXY_URL;
+    proxyDispatcher = url ? new ProxyAgent(url) : null;
+  }
+  return proxyDispatcher ?? undefined;
+}
+
+/** fetch() for KPay API calls — honours KPAY_PROXY_URL when set. */
+function kpayFetch(url: string, init: RequestInit): Promise<Response> {
+  const dispatcher = getKpayDispatcher();
+  // `dispatcher` is undici's extension to fetch options — Node's global
+  // fetch supports it but TypeScript's RequestInit doesn't declare it.
+  return fetch(url, { ...init, ...(dispatcher ? { dispatcher } : {}) } as RequestInit);
+}
 
 const HEADERS = {
   NONCE: 'K-Nonce-Str',
@@ -289,7 +322,7 @@ export async function createManagedOrder(
   });
 
   const headers = signRequest('POST', path, body);
-  const res = await fetch(`${getApiBase()}${path}`, {
+  const res = await kpayFetch(`${getApiBase()}${path}`, {
     method: 'POST',
     headers: headers as unknown as Record<string, string>,
     body,
@@ -379,7 +412,7 @@ export async function queryManagedOrder(
   const params = new URLSearchParams({ managedOutTradeNo });
   const path = `${ENDPOINTS.managedOrderResult}?${params.toString()}`;
   const headers = signRequest('GET', path, '');
-  const res = await fetch(`${getApiBase()}${path}`, {
+  const res = await kpayFetch(`${getApiBase()}${path}`, {
     method: 'GET',
     headers: headers as unknown as Record<string, string>,
   });
@@ -443,7 +476,7 @@ export async function refundOrder(
     notifyUrl: input.notifyUrl,
   });
   const headers = signRequest('POST', path, body);
-  const res = await fetch(`${getApiBase()}${path}`, {
+  const res = await kpayFetch(`${getApiBase()}${path}`, {
     method: 'POST',
     headers: headers as unknown as Record<string, string>,
     body,
