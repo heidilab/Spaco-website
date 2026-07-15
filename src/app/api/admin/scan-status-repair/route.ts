@@ -45,6 +45,8 @@ export async function GET(req: NextRequest) {
   const paidButOwing: unknown[] = [];
   const statusHistogram: Record<string, number> = {};
   let written = 0;
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
   for (const doc of snap.docs) {
     const b = { id: doc.id, ...doc.data() } as BookingRecord;
@@ -55,7 +57,13 @@ export async function GET(req: NextRequest) {
     const st = b.status || '(none)';
     statusHistogram[st] = (statusHistogram[st] || 0) + 1;
     paidButOwing.push({ id: b.id, date: b.date, venueId: b.venueId, status: st, balanceDue, guestCount: b.guestCount });
-    if (st === 'confirmed' || !REPAIRABLE.has(st)) continue;
+    // A 'completed' booking whose event is still in the FUTURE but now
+    // owes a balance was re-charged (admin added pax/add-ons) after being
+    // settled — it isn't actually complete. Re-open it. Past completed
+    // bookings (genuinely finished) are left alone.
+    const eventInFuture = !!b.date && b.date >= todayStr;
+    const isRepairable = REPAIRABLE.has(st) || (st === 'completed' && eventInFuture);
+    if (st === 'confirmed' || !isRepairable) continue;
 
     const paid = (b.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
     fixes.push({

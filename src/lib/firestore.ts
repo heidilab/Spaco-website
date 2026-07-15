@@ -604,7 +604,17 @@ export async function updateBookingDateTime(
       // balanceDue = what the customer still owes after past payments.
       // Clamp to 0 when customer overpaid (admin handles any refund out
       // of band — we don't auto-issue refunds from a booking edit).
-      patch.balanceDue = Math.max(0, effectiveGrandTotal - paidSoFar);
+      const newBalanceDue = Math.max(0, effectiveGrandTotal - paidSoFar);
+      patch.balanceDue = newBalanceDue;
+      // Adding a charge (pax / add-on) to a booking that was already
+      // settled ('completed') creates a fresh balance the customer must
+      // pay — so it's no longer complete. Re-open it to 'confirmed' so
+      // the pay-balance button reappears and the passcode/reminder flow
+      // treats it as active again. (Heidi added pax to a completed but
+      // future-dated booking and the $1,000 balance had no pay button.)
+      if (newBalanceDue > 0 && booking.status === 'completed') {
+        patch.status = 'confirmed';
+      }
     }
   }
 
