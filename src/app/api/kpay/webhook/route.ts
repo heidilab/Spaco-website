@@ -236,7 +236,18 @@ export async function POST(req: NextRequest) {
   // killed without flagging it (the slot may have been resold).
   const deadStates = ['payment_not_completed', 'cancelled'];
   const wasDead = deadStates.includes(booking.status || '');
-  const nextStatus = booking.status === 'completed' ? 'completed' : 'confirmed';
+  // Normally a payment confirms the booking. Exception: a booking whose
+  // deposit was already SETTLED (depositRefund present) but got re-opened
+  // to 'confirmed' by an admin add-on top-up — once this payment clears
+  // its balance, it's settled again, so flip it back to 'completed'
+  // (mirrors booking-record-offline-payment's settledWithOverflow case).
+  const wasSettled = !!(booking as { depositRefund?: unknown }).depositRefund;
+  const nextStatus =
+    booking.status === 'completed'
+      ? 'completed'
+      : (wasSettled && newBalanceDue === 0)
+        ? 'completed'
+        : 'confirmed';
 
   const updates: Record<string, unknown> = {
     payments: FieldValue.arrayUnion({

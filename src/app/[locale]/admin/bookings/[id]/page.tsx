@@ -667,6 +667,17 @@ export default function AdminBookingDetailPage() {
 
   async function handleSettleDeposit() {
     if (!booking) return;
+    // Deposit can only be settled AFTER the event ends — it's refunded
+    // once the guest has left and the venue is checked. Guard here too
+    // (not just the disabled button) so it can't fire early.
+    const eventEndMs = new Date(`${booking.date}T${booking.endTime}:00+08:00`).getTime();
+    if (Date.now() < eventEndMs) {
+      setSettleMsg({
+        kind: 'err',
+        text: locale === 'zh' ? '活動結束後才可結算按金。' : 'Deposit can only be settled after the event ends.',
+      });
+      return;
+    }
     setSettling(true);
     setSettleMsg(null);
     try {
@@ -2961,8 +2972,8 @@ function DepositSettlement(props: DepositSettlementProps) {
               <AlertCircle size={12} className="text-amber-600 mt-0.5 shrink-0" />
               <p className="text-xs text-amber-800">
                 {locale === 'zh'
-                  ? '活動仲未完成。可以預先選定扣費，但建議活動結束後先確認結算。'
-                  : 'Event hasn\'t ended yet. You can pre-select deductions, but it\'s safer to confirm after the event.'}
+                  ? '活動仲未結束，暫時未可以結算按金。按金要喺客人離場、場地檢查完畢後先退還，所以結算掣會喺活動結束後先開放。你可以預先剔選扣費項目。'
+                  : 'The event hasn\'t ended, so the deposit can\'t be settled yet. Deposits are only refunded after the guest leaves and the venue is checked, so the button unlocks after the event ends. You can pre-select deductions now.'}
               </p>
             </div>
           )}
@@ -3076,13 +3087,18 @@ function DepositSettlement(props: DepositSettlementProps) {
 
           <button
             onClick={onSettle}
-            disabled={settling}
-            className="w-full btn-primary justify-center disabled:opacity-50 flex items-center gap-2"
+            disabled={settling || !isAfterEvent}
+            title={!isAfterEvent
+              ? (locale === 'zh' ? '活動結束後才可結算按金' : 'Deposit can only be settled after the event ends')
+              : undefined}
+            className="w-full btn-primary justify-center disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
             {settling ? '...' : (
               <>
                 <Calculator size={14} />
-                {locale === 'zh' ? '確認結算 · 退款 + 加積分' : 'Confirm settlement'}
+                {!isAfterEvent
+                  ? (locale === 'zh' ? '活動結束後才可結算' : 'Available after the event')
+                  : (locale === 'zh' ? '確認結算 · 退款 + 加積分' : 'Confirm settlement')}
               </>
             )}
           </button>
