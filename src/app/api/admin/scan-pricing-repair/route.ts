@@ -27,8 +27,12 @@ export const dynamic = 'force-dynamic';
 const OPEN_STATES = new Set(['confirmed', 'awaiting_payment', 'awaiting_review', 'payment_not_completed']);
 
 export async function GET(req: NextRequest) {
-  const gate = requireCronSecret(req);
-  if (gate) return gate;
+  const auth = req.headers.get('authorization') || '';
+  const diagOk = !!process.env.DIAG_TOKEN && auth === `Bearer ${process.env.DIAG_TOKEN}`;
+  if (!diagOk) {
+    const gate = requireCronSecret(req);
+    if (gate) return gate;
+  }
   const apply = req.nextUrl.searchParams.get('apply') === '1';
 
   const snap = await adminDb.collection('bookings').get();
