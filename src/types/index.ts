@@ -220,7 +220,7 @@ export interface BookingRecord {
     /** Total = rentalAmount + addOnAmount + depositAmount, stored for
      *  convenience. */
     amount: number;
-    method: 'stripe' | 'fps' | 'bank' | 'cash' | 'other';
+    method: 'kpay' | 'stripe' | 'fps' | 'bank' | 'cash' | 'other';
     note?: string | null;
     /** Optional tag describing what this payment is for — used to
      *  distinguish the first deposit from a later balance payment from

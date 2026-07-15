@@ -13,6 +13,7 @@ import type { BookingRecord } from '@/types';
 import { CreditCard, Wand2, X as XIcon, Loader2, Check, Undo2 } from 'lucide-react';
 
 const METHOD_LABELS: Record<string, { zh: string; en: string }> = {
+  kpay:   { zh: 'KPay', en: 'KPay' },
   stripe: { zh: 'Stripe', en: 'Stripe' },
   fps:    { zh: 'FPS 轉數快', en: 'FPS' },
   bank:   { zh: '銀行轉帳', en: 'Bank' },

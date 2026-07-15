@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useLocale } from 'next-intl';
 import { Link, usePathname } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
@@ -29,6 +29,33 @@ const allSidebarLinks = [
   { href: '/admin/staff', icon: UserCog, label: { zh: '員工管理', en: 'Staff' }, permission: 'staff' },
   { href: '/admin/help/lock-passcode-manual', icon: BookOpen, label: { zh: '門鎖密碼 SOP', en: 'Lock Passcode SOP' }, permission: 'bookings' },
 ];
+
+/**
+ * Red banner shown on every non-production admin deployment (preview,
+ * localhost). Payment links generated here point to the UAT sandbox, so
+ * staff must never send them to real customers — this makes the test
+ * environment impossible to mistake for spacohk.com.
+ */
+function TestEnvBanner({ locale }: { locale: 'zh' | 'en' }) {
+  const [isTest, setIsTest] = useState(false);
+  useEffect(() => {
+    const host = window.location.hostname;
+    setIsTest(host !== 'spacohk.com' && host !== 'www.spacohk.com');
+  }, []);
+  if (!isTest) return null;
+  return (
+    <div className="mb-6 rounded-xl border-2 border-rose-400 bg-rose-50 px-4 py-3 text-rose-800">
+      <p className="font-bold text-sm">
+        {locale === 'zh' ? '⚠️ 測試環境（非正式網站）' : '⚠️ Test environment (not the live site)'}
+      </p>
+      <p className="text-xs mt-0.5">
+        {locale === 'zh'
+          ? '此處的付款連結指向 KPay 測試沙盒，切勿發送給真實客人。日常操作請用 spacohk.com/zh/admin。'
+          : 'Payment links here point to the KPay sandbox — never send them to real customers. Use spacohk.com/zh/admin for real work.'}
+      </p>
+    </div>
+  );
+}
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { user, loading, isAdminUser, userRole, hasPermission } = useAuth();
@@ -242,6 +269,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
       {/* Main Content */}
       <main className="flex-1 lg:ml-64 p-6 md:p-10">
+        <TestEnvBanner locale={locale} />
         {children}
       </main>
     </div>
