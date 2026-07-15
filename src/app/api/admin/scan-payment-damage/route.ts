@@ -20,8 +20,11 @@ export const dynamic = 'force-dynamic';
  * broader admin-auth pass lands in a later batch. Mutates nothing.
  */
 export async function GET(req: NextRequest) {
-  const auth = req.headers.get('authorization');
-  if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  const auth = req.headers.get('authorization') || '';
+  const ok =
+    (!!process.env.CRON_SECRET && auth === `Bearer ${process.env.CRON_SECRET}`) ||
+    (!!process.env.DIAG_TOKEN && auth === `Bearer ${process.env.DIAG_TOKEN}`);
+  if (!ok) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
