@@ -19,6 +19,7 @@ import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { BookingRecord, UserProfile, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
 import { venues } from '@/lib/venues';
+import { getHoliday } from '@/lib/hkHolidays';
 import { getPackageBySlug } from '@/lib/packages';
 import { getDecorationById } from '@/lib/decorations';
 import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
@@ -356,11 +357,33 @@ export default function AdminBookingDetailPage() {
           options: { customName: c.name.trim(), customPrice: Math.max(0, Math.floor(c.price)) },
         })),
     ];
+    // Derive hours + isWeekend from the EDITED date/time (not the stored
+    // values) so a combined date/time + pax/add-on edit previews the
+    // correct price. Mirrors updateBookingDateTime's own recompute — must
+    // stay in sync with it. Falls back to stored values if the edited
+    // date/time isn't parseable yet (mid-typing).
+    let liveHours = bookingForFormula.hours;
+    let liveIsWeekend = bookingForFormula.isWeekend;
+    if (date && startTime && endTime) {
+      const effEndDate = endDate && endDate !== date ? endDate : date;
+      const startMs = new Date(`${date}T${startTime}:00+08:00`).getTime();
+      const endMs = new Date(`${effEndDate}T${endTime}:00+08:00`).getTime();
+      if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs) {
+        liveHours = Math.max(1, Math.round((endMs - startMs) / 3600000));
+      }
+      const day = new Date(date).getDay();
+      const holiday = getHoliday(date);
+      const nextDay = new Date(`${date}T00:00:00`);
+      nextDay.setDate(nextDay.getDate() + 1);
+      const nextDayStr = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
+      const eveHoliday = getHoliday(nextDayStr);
+      liveIsWeekend = day === 5 || day === 6 || holiday?.type === 'public' || eveHoliday?.type === 'public';
+    }
     try {
       const live = calculatePricing(
         liveVenue,
-        bookingForFormula.isWeekend,
-        bookingForFormula.hours,
+        liveIsWeekend,
+        liveHours,
         guestCount,
         liveAddOns,
         childCount,
@@ -386,6 +409,7 @@ export default function AdminBookingDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     addOnQty, customAddOns, shishaOptions, guestCount, childCount, venueId,
+    date, startTime, endTime, endDate,
     bookingForFormula,
   ]);
 
@@ -2802,7 +2826,19 @@ function DepositSettlement(props: DepositSettlementProps) {
     const settledDeductions =
       (booking.depositRefund as { deductions?: { amount: number }[] } | null)?.deductions
         ?.reduce((s, d) => s + (d.amount || 0), 0) || 0;
-    return (booking.pricing.subtotal || 0) + settledDeductions;
+    // Match the actual credit formula in handleSettleDeposit: earnable
+    // spend = gross consumption − promo − points, plus the settled
+    // deductions (consumed deposit + any overflow). Previously this used
+    // the gross subtotal without subtracting promo/points, so the preview
+    // overstated the points the button would actually credit.
+    const effectiveSpend = Math.max(
+      0,
+      (booking.pricing.baseCharge || 0)
+        + (booking.pricing.addOnTotal || 0)
+        - (booking.promoDiscount || 0)
+        - (booking.pointsDiscount || 0),
+    );
+    return effectiveSpend + settledDeductions;
   })();
 
   // Past-event check: settlement should only be done after the event.

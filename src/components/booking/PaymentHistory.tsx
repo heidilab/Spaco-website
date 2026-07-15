@@ -125,11 +125,13 @@ export default function PaymentHistory({
   // common "admin added an add-on after the customer already paid"
   // case without needing to store a pricing snapshot.
   const promoDiscountForGrandTotal = booking.promoDiscount || 0;
+  const pointsDiscountForGrandTotal = booking.pointsDiscount || 0;
   const grandTotal = Math.max(
     0,
     (booking.pricing.baseCharge || 0)
       + (booking.pricing.addOnTotal || 0)
-      - promoDiscountForGrandTotal,
+      - promoDiscountForGrandTotal
+      - pointsDiscountForGrandTotal,
   ) + (booking.pricing.securityDeposit || 0);
   const actualPaidTotal = isPaid ? Math.max(0, grandTotal - (booking.balanceDue || 0)) : 0;
   const loggedTotalAmount = payments.reduce((s, p) => s + (p.amount || 0), 0);

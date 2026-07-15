@@ -19,8 +19,6 @@ import { useParams } from 'next/navigation';
 import { useRouter, Link } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
 import { getBooking, getBlockedSlots, updateBookingDateTime } from '@/lib/firestore';
-import { doc, updateDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
 import { getVenueById, venuesSharingSpace } from '@/lib/venues';
 import {
   addOns as addOnCatalog, calculatePricing, noBBQVenues, freeDrinksVenues,
@@ -238,64 +236,27 @@ export default function ModifyBookingPage() {
     if (timeChanged && timeConflict) return;
     setSubmitting(true);
     try {
-      // If the booking has a free_drinks promo, the promo discount must
-      // scale with the new pax count (same rule as updateBookingDateTime
-      // in firestore.ts). Without this, adding people increases the
-      // drinks add-on cost but leaves promoDiscount frozen at the
-      // original pax amount — causing the customer to be charged for
-      // the incremental drinks that should be free.
-      let promoDiscountDelta = 0;
-      let promoDiscountPatch: Record<string, unknown> = {};
-      const isFreeDrinksPromo =
-        typeof booking.promoFreeDrinksCost === 'number' && booking.promoFreeDrinksCost > 0;
-      const hasDrinksInCart = cart.some((a) => a.id === 'drinks');
-      if (isFreeDrinksPromo && hasDrinksInCart) {
-        const promoAdults = Math.max(0, newGuestCount - childCount);
-        const adultEquiv = promoAdults + 0.5 * childCount;
-        const newPromoDiscount = freeDrinksVenues.includes(booking.venueId)
-          ? 0
-          : Math.round(25 * adultEquiv);
-        promoDiscountDelta = newPromoDiscount - (booking.promoDiscount || 0);
-        promoDiscountPatch = {
-          promoDiscount: newPromoDiscount,
-          promoFreeDrinksCost: newPromoDiscount,
-        };
-      }
-      const newBalance = (booking.balanceDue ?? 0) + subtotalDiff - promoDiscountDelta;
-      const update: Record<string, unknown> = {
+      // Route the WHOLE modification through updateBookingDateTime — the
+      // single canonical writer. It recomputes pricing (incl. free_drinks
+      // promo scaling with the new pax), securityDeposit (sticky for
+      // already-paid bookings), and balanceDue (= canonical grandTotal −
+      // Σ payments) from primitives, and atomically replaces the
+      // blocked_slots when the time changed. Previously this did an
+      // incremental client-side balance patch AND separately called
+      // updateBookingDateTime for time changes — the two writes raced,
+      // and the add-ons weren't even passed to that recompute, so pricing
+      // and balance could end up from different carts.
+      await updateBookingDateTime(booking.id, {
+        date: booking.date,
+        startTime: timeChanged ? startTime : booking.startTime,
+        endTime: timeChanged ? endTime : booking.endTime,
+        // Modify is "extend only" — carry the cross-midnight flag through.
+        ...(booking.endDate ? { endDate: booking.endDate } : {}),
         addOns: cart,
-        'pricing.subtotal': newPricing.subtotal,
-        'pricing.addOnTotal': newPricing.addOnTotal,
-        'pricing.baseCharge': newPricing.baseCharge,
-        balanceDue: Math.max(0, newBalance),
-        ...promoDiscountPatch,
-      };
-      // Persist guest count changes too (D3).
-      if (guestsChanged) {
-        update.adultCount = adultCount;
-        update.childCount = childCount;
-        update.guestCount = newGuestCount;
-      }
-
-      if (timeChanged) {
-        // D4 — also update the blocked_slots so the schedule stays
-        // consistent. updateBookingDateTime atomically replaces the
-        // booking + cleaning blocks for this booking.
-        await updateBookingDateTime(booking.id, {
-          date: booking.date,
-          startTime,
-          endTime,
-          // Preserve the original cross-midnight flag. Modify is "extend only"
-          // so the endDate is carried through unchanged.
-          ...(booking.endDate ? { endDate: booking.endDate } : {}),
-          guestCount: guestsChanged ? newGuestCount : undefined,
-        });
-        update.startTime = startTime;
-        update.endTime = endTime;
-        update.hours = newHours;
-      }
-
-      await updateDoc(doc(db, 'bookings', booking.id), update);
+        ...(guestsChanged
+          ? { guestCount: newGuestCount, adultCount, childCount }
+          : {}),
+      });
       router.push(`/book/${booking.branchSlug}/pay-balance/${booking.id}`);
     } catch (err) {
       setError((locale === 'zh' ? '儲存失敗：' : 'Save failed: ') + (err instanceof Error ? err.message : 'unknown'));

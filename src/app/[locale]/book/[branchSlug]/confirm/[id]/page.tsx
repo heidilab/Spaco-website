@@ -110,6 +110,11 @@ export default function ConfirmBookingPage() {
     amount: number;
     freeDrinks: boolean;
   } | null>(null);
+  // True when applying a free_drinks promo auto-added the drinks add-on
+  // (customer didn't have it). Clearing the promo must then REMOVE those
+  // drinks + restore pricing — otherwise the drinks cost stays while the
+  // discount vanishes and the customer is overcharged for them.
+  const [promoAutoAddedDrinks, setPromoAutoAddedDrinks] = useState(false);
 
   // Refund details form state
   const [method, setMethod] = useState<'fps' | 'bank'>('fps');
@@ -270,7 +275,56 @@ export default function ConfirmBookingPage() {
     !!marketingChannel && (marketingChannel !== 'other' || marketingOther.trim().length > 0)
   );
 
+  /** Remove the drinks add-on that a free_drinks promo auto-added, and
+   *  restore pricing — the inverse of the auto-add in handleApplyPromo. */
+  async function removeAutoAddedDrinks() {
+    if (!booking) return;
+    const venue = getVenueById(booking.venueId);
+    if (!venue) return;
+    const newAddOns = (booking.addOns || []).filter((a) => a.id !== 'drinks');
+    const newPricing = calculatePricing(
+      venue, booking.isWeekend, booking.hours, booking.guestCount, newAddOns, booking.childCount,
+    );
+    if (isDraft) {
+      const draft = loadBookingCheckoutDraft();
+      if (draft) {
+        saveBookingCheckoutDraft({
+          ...draft,
+          addOns: newAddOns,
+          pricing: {
+            ...draft.pricing,
+            baseCharge: newPricing.baseCharge,
+            addOnTotal: newPricing.addOnTotal,
+            subtotal: newPricing.subtotal,
+          },
+        });
+      }
+      setBooking((b) => b ? ({
+        ...b,
+        addOns: newAddOns,
+        pricing: {
+          ...b.pricing,
+          baseCharge: newPricing.baseCharge,
+          addOnTotal: newPricing.addOnTotal,
+          subtotal: newPricing.subtotal,
+        },
+      }) : b);
+    } else {
+      await updateDoc(doc(db, 'bookings', booking.id), {
+        addOns: newAddOns,
+        'pricing.baseCharge': newPricing.baseCharge,
+        'pricing.addOnTotal': newPricing.addOnTotal,
+        'pricing.subtotal':   newPricing.subtotal,
+      });
+      const fresh = await getBooking(booking.id);
+      if (fresh) setBooking(fresh);
+    }
+  }
+
   async function handleApplyPromo() {
+    // Re-applying replaces any prior auto-add; reset the flag so a
+    // non-free-drinks code doesn't inherit a stale "true".
+    setPromoAutoAddedDrinks(false);
     const code = promoInput.trim().toUpperCase();
     if (!code) return;
     setPromoChecking(true);
@@ -405,6 +459,7 @@ export default function ConfirmBookingPage() {
           // The promo's discount tracks the actual drinks cost we just added.
           const drinksCost = Math.round(25 * adultEquiv);
           finalApplied = { ...finalApplied, amount: drinksCost };
+          setPromoAutoAddedDrinks(true);
         }
       }
       setApplied(finalApplied);
@@ -416,7 +471,14 @@ export default function ConfirmBookingPage() {
     }
   }
 
-  function handleClearPromo() {
+  async function handleClearPromo() {
+    // If applying this promo auto-added the drinks add-on, take it back
+    // out so the customer isn't left paying for drinks they only got
+    // because of the (now-removed) free-drinks discount.
+    if (promoAutoAddedDrinks) {
+      await removeAutoAddedDrinks();
+      setPromoAutoAddedDrinks(false);
+    }
     setApplied(null);
     setPromoInput('');
     setPromoError(null);
