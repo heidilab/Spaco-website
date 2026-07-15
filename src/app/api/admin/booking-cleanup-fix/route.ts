@@ -75,6 +75,7 @@ export async function POST(req: NextRequest) {
     const b = snap.data() as {
       pricing?: { baseCharge?: number; addOnTotal?: number; subtotal?: number; securityDeposit?: number; deposit?: number };
       promoDiscount?: number;
+      pointsDiscount?: number;
       promoFreeDrinksCost?: number;
       balanceDue?: number;
       payments?: Array<{ amount?: number }>;
@@ -84,6 +85,7 @@ export async function POST(req: NextRequest) {
     const baseCharge = b.pricing?.baseCharge ?? 0;
     const storedAddOnTotal = b.pricing?.addOnTotal ?? 0;
     const storedPromoDiscount = b.promoDiscount ?? 0;
+    const pointsDiscount = b.pointsDiscount ?? 0;
     const storedSecurityDeposit = b.pricing?.securityDeposit ?? 0;
     const securityDeposit = typeof body.setSecurityDeposit === 'number'
       ? Math.max(0, body.setSecurityDeposit)
@@ -105,14 +107,17 @@ export async function POST(req: NextRequest) {
       ? Math.max(0, body.setPromoDiscount)
       : storedPromoDiscount;
 
-    const newSubtotal = Math.max(0, baseCharge + addOnTotal - promoDiscount);
+    // Store subtotal GROSS (pre-promo) — the single convention now.
+    const newSubtotal = Math.max(0, baseCharge + addOnTotal);
 
     // Filter remaining payments after dropping the requested indexes.
     const allPayments = b.payments || [];
     const remaining = allPayments.filter((_, i) => !drops.includes(i));
     const dropped = drops.map((i) => ({ index: i, entry: allPayments[i] })).filter((d) => d.entry);
 
-    const newGrandTotal = newSubtotal + securityDeposit;
+    // CANONICAL grand total: gross minus promo AND points, plus deposit.
+    const newGrandTotal =
+      Math.max(0, baseCharge + addOnTotal - promoDiscount - pointsDiscount) + securityDeposit;
     const newDeposit = newGrandTotal <= 10000 ? newGrandTotal : Math.round(newGrandTotal * 0.5);
     const remainingSum = remaining.reduce((s, p) => s + (p.amount ?? 0), 0);
     const newBalanceDue = Math.max(0, newGrandTotal - remainingSum);

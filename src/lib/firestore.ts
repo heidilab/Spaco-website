@@ -521,11 +521,28 @@ export async function updateBookingDateTime(
         promoDiscount = newDrinksCost;
         patch.promoDiscount = newDrinksCost;
         patch.promoFreeDrinksCost = newDrinksCost;
+      } else if (isFreeDrinksPromo && !hasDrinksAddOn) {
+        // Drinks add-on removed → a free_drinks promo now covers nothing.
+        // Zero it, otherwise the stale promoDiscount keeps discounting a
+        // line item that no longer exists (silent undercharge — the
+        // save path used to keep the old value while the live preview
+        // already showed 0).
+        promoDiscount = 0;
+        patch.promoDiscount = 0;
+        patch.promoFreeDrinksCost = 0;
       }
+      const pointsDiscount = booking.pointsDiscount || 0;
       const baseSubtotal = typeof next.subtotalOverride === 'number'
         ? Math.max(0, next.subtotalOverride)
         : computed.subtotal;
-      const effectiveSubtotal = Math.max(0, baseSubtotal - promoDiscount);
+      // Keep the invariant subtotal === baseCharge + addOnTotal so the
+      // canonical computeGrandTotal (webhook / scans) agrees with what we
+      // store. When admin overrides the subtotal, fold the difference
+      // into baseCharge (the venue-rental line).
+      const newAddOnTotal = computed.addOnTotal;
+      const newBaseCharge = typeof next.subtotalOverride === 'number'
+        ? Math.max(0, baseSubtotal - newAddOnTotal)
+        : computed.baseCharge;
 
       // Refundable security deposit resolution, in priority order:
       //   1. Explicit `securityDepositOverride` from admin — used both
@@ -546,8 +563,15 @@ export async function updateBookingDateTime(
           : wasPaid && typeof booking.pricing.securityDeposit === 'number'
             ? booking.pricing.securityDeposit
             : computed.securityDeposit;
-      const effectiveGrandTotal = effectiveSubtotal + stickyDeposit;
-      const effectiveDeposit = calculateDeposit(effectiveGrandTotal);
+      // CANONICAL grand total: gross subtotal minus promo AND points,
+      // plus the refundable deposit. Matches computeGrandTotal used by
+      // the KPay webhook + scan-balance-mismatch, so front-end, webhook
+      // and admin never disagree. Previously this subtracted promo only
+      // (via effectiveSubtotal) and ignored pointsDiscount, and stored a
+      // POST-promo subtotal — the root cause of the recurring drift.
+      const effectiveGrandTotal =
+        Math.max(0, baseSubtotal - promoDiscount - pointsDiscount) + stickyDeposit;
+      const effectiveDeposit = calculateDeposit(effectiveGrandTotal, next.date);
 
       // How much the customer has already paid against this booking.
       // Confirmed/completed bookings: grandTotal − balanceDue (the old
@@ -570,9 +594,11 @@ export async function updateBookingDateTime(
       // 「已於線下付款」 admin action).
       const paidSoFar = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
 
-      patch['pricing.baseCharge'] = computed.baseCharge;
-      patch['pricing.addOnTotal'] = computed.addOnTotal;
-      patch['pricing.subtotal'] = effectiveSubtotal;
+      patch['pricing.baseCharge'] = newBaseCharge;
+      patch['pricing.addOnTotal'] = newAddOnTotal;
+      // GROSS (pre-promo) subtotal — the single stored convention now.
+      // Consumers derive the effective total by subtracting promo/points.
+      patch['pricing.subtotal'] = baseSubtotal;
       patch['pricing.securityDeposit'] = stickyDeposit;
       patch['pricing.deposit'] = effectiveDeposit;
       // balanceDue = what the customer still owes after past payments.

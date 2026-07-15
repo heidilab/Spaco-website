@@ -3,6 +3,7 @@ import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import type { BookingRecord } from '@/types';
 import { requireAdmin } from '@/lib/adminAuth';
+import { computeGrandTotal } from '@/lib/finalizeBooking';
 
 export const runtime = 'nodejs';
 
@@ -59,15 +60,14 @@ export async function POST(req: NextRequest) {
     }
     const booking = { id: snap.id, ...snap.data() } as BookingRecord;
 
-    // Recompute balanceDue from scratch using payments[] as the source
-    // of truth (Option C). pricing.subtotal is ALREADY stored post-
-    // promo by updateBookingDateTime (see lib/firestore.ts where it
-    // assigns `effectiveSubtotal = baseSubtotal − promoDiscount`), so
-    // no further promo subtraction here — that would double-count
-    // (the $18,960 vs $19,960 bug on #WIiQYL2I).
-    const subtotal = booking.pricing?.subtotal || 0;
-    const securityDeposit = booking.pricing?.securityDeposit || 0;
-    const grandTotal = subtotal + securityDeposit;
+    // Recompute balanceDue from the CANONICAL primitives formula
+    // (baseCharge + addOnTotal − promo − points + securityDeposit), the
+    // same computeGrandTotal used by the KPay webhook + scans, with
+    // payments[] as the source of truth for what's been paid. Previously
+    // this used pricing.subtotal + securityDeposit and assumed subtotal
+    // was post-promo — now subtotal is stored GROSS, and this formula
+    // subtracts promo/points itself, so it's correct either way.
+    const grandTotal = computeGrandTotal(booking);
     const loggedSum = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
     const newBalanceDue = Math.max(0, grandTotal - loggedSum - total);
 
