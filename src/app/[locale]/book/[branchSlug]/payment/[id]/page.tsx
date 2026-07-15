@@ -8,10 +8,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getBooking, updateBookingPaymentMethod } from '@/lib/firestore';
 import { getVenueById } from '@/lib/venues';
 import { BookingRecord } from '@/types';
-import { LogIn, CreditCard, Smartphone, Building2 } from 'lucide-react';
+import { LogIn, CreditCard, Smartphone, Building2, MapPin, CalendarDays, Clock, Users } from 'lucide-react';
 import { motion } from 'framer-motion';
 import AuthModal from '@/components/auth/AuthModal';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
+import { addOns as addOnCatalog } from '@/lib/pricing';
 import {
   loadBookingCheckoutDraft, clearBookingCheckoutDraft,
   type BookingCheckoutDraft,
@@ -69,6 +70,7 @@ function draftToBooking(
     paymentMethod: null,
     receiptUrl: null,
     depositRefund: null,
+    balanceDue: draft.effectiveBalanceDue ?? 0,
     createdAt: null,
     updatedAt: null,
   } as unknown as BookingRecord;
@@ -208,6 +210,16 @@ export default function PaymentMethodPage() {
   const chargeAmount = Math.max(1, booking.pricing.deposit - pointsDiscount);
   const cardFee = surchargeFor(chargeAmount);
   const cardTotal = Math.round((chargeAmount + cardFee) * 100) / 100;
+
+  // Order breakdown numbers — mirrors the confirm page's math so the
+  // customer can double-check the whole order one last time before
+  // committing to pay.
+  const securityDeposit = booking.pricing.securityDeposit ?? 0;
+  const promoDiscount = booking.promoDiscount || 0;
+  const effectiveSubtotal = Math.max(0, booking.pricing.subtotal - promoDiscount);
+  const grandTotal = effectiveSubtotal + securityDeposit;
+  const isFullPayment = booking.pricing.deposit >= grandTotal;
+  const balanceDue = booking.balanceDue ?? 0;
 
   /** Draft mode: first (atomic, server-side) write of the booking —
    *  this is also what holds the physical slot. Returns the real id. */
@@ -361,14 +373,87 @@ export default function PaymentMethodPage() {
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="max-w-md mx-auto space-y-6">
           <div className="text-center space-y-2">
             <h1 className="text-heading font-display">
-              <span className="text-gradient-pink">{locale === 'zh' ? '選擇付款方式' : 'Choose Payment Method'}</span>
+              <span className="text-gradient-pink">{locale === 'zh' ? '確認訂單並付款' : 'Review & Pay'}</span>
             </h1>
-            <p className="text-ink-soft text-sm">{venueName} • {booking.date}</p>
             <p className="text-ink-soft text-sm">
-              {locale === 'zh' ? '應付金額' : 'Amount due'}：
-              <span className="font-bold text-ink ml-1">HK${chargeAmount.toLocaleString()}</span>
+              {locale === 'zh' ? '請最後核對一次預約明細' : 'Please double-check your booking details'}
             </p>
           </div>
+
+          {/* Order breakdown — one last look before paying */}
+          <div className="glass-card p-6 space-y-3 text-sm">
+            <div className="flex items-center gap-2 text-ink-soft"><MapPin size={14} /><span className="flex-1">{locale === 'zh' ? '場地' : 'Venue'}</span><span className="font-medium text-ink">{venueName}</span></div>
+            <div className="flex items-center gap-2 text-ink-soft"><CalendarDays size={14} /><span className="flex-1">{locale === 'zh' ? '日期' : 'Date'}</span><span className="font-medium text-ink">{booking.date}{booking.endDate ? ` → ${booking.endDate}` : ''}</span></div>
+            <div className="flex items-center gap-2 text-ink-soft"><Clock size={14} /><span className="flex-1">{locale === 'zh' ? '時間' : 'Time'}</span><span className="font-medium text-ink">{booking.startTime} – {booking.endTime}（{booking.hours}{locale === 'zh' ? ' 小時' : ' hrs'}）</span></div>
+            <div className="flex items-center gap-2 text-ink-soft"><Users size={14} /><span className="flex-1">{locale === 'zh' ? '人數' : 'Guests'}</span><span className="font-medium text-ink">{
+              (booking.childCount ?? 0) > 0
+                ? (locale === 'zh'
+                    ? `${booking.guestCount} 人（${booking.adultCount ?? booking.guestCount} 成人 + ${booking.childCount} 小童）`
+                    : `${booking.guestCount} pax (${booking.adultCount ?? booking.guestCount} adults + ${booking.childCount} kids)`)
+                : `${booking.guestCount} ${locale === 'zh' ? '人' : 'pax'}`
+            }</span></div>
+
+            {booking.addOns.length > 0 && (
+              <div className="pt-2 border-t border-white/40 space-y-1">
+                <p className="text-xs text-ink-soft">{locale === 'zh' ? '附加服務' : 'Add-ons'}</p>
+                {booking.addOns.map((a) => {
+                  const meta = addOnCatalog.find((c) => c.id === a.id);
+                  return (
+                    <p key={a.id}>• {meta?.name[locale] || a.id}{a.quantity > 1 ? ` × ${a.quantity}` : ''}</p>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="pt-3 border-t border-white/40 space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-ink-soft">{locale === 'zh' ? '小計' : 'Subtotal'}</span>
+                <span>HK${booking.pricing.subtotal.toLocaleString()}</span>
+              </div>
+              {promoDiscount > 0 && (
+                <div className="flex justify-between text-emerald-700">
+                  <span>− {locale === 'zh' ? '優惠碼折扣' : 'Promo discount'}{booking.promoCode ? <span className="font-mono text-xs ml-1">{booking.promoCode}</span> : null}</span>
+                  <span>−HK${promoDiscount.toLocaleString()}</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-ink-soft">{locale === 'zh' ? '場地按金（活動後退還）' : 'Security deposit (refunded after event)'}</span>
+                <span>HK${securityDeposit.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between font-semibold pt-1.5 border-t border-white/40">
+                <span>{locale === 'zh' ? '訂單總計' : 'Grand total'}</span>
+                <span>HK${grandTotal.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-ink-soft">
+                  {isFullPayment
+                    ? (locale === 'zh' ? '今次應付（全數）' : 'Due now (full)')
+                    : (locale === 'zh' ? '今次應付（訂金）' : 'Due now (deposit)')}
+                </span>
+                <span className="font-medium">HK${booking.pricing.deposit.toLocaleString()}</span>
+              </div>
+              {pointsDiscount > 0 && (
+                <div className="flex justify-between text-pink">
+                  <span>− {locale === 'zh' ? '積分抵扣' : 'Points redemption'}</span>
+                  <span>−HK${pointsDiscount.toLocaleString()}</span>
+                </div>
+              )}
+              <div className="flex justify-between text-base pt-2 border-t border-white/40">
+                <span className="text-ink-soft font-semibold">{locale === 'zh' ? '即時應付' : 'Pay now'}</span>
+                <span className="font-bold text-gradient-pink text-xl">HK${chargeAmount.toLocaleString()}</span>
+              </div>
+              {!isFullPayment && balanceDue > 0 && (
+                <div className="flex justify-between text-xs text-amber-700 bg-amber-50 p-2 rounded mt-1">
+                  <span>{locale === 'zh' ? '尾數（活動前 2 日繳清）' : 'Balance (due 2 days before event)'}</span>
+                  <span className="font-semibold">HK${balanceDue.toLocaleString()}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <p className="text-center text-sm font-semibold text-ink">
+            {locale === 'zh' ? '選擇付款方式' : 'Choose payment method'}
+          </p>
 
           <div className="space-y-3">
             <OptionCard

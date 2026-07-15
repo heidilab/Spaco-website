@@ -164,9 +164,21 @@ export default function BookingSuccessPage() {
                     <span className="font-medium text-ink">{booking.startTime} - {booking.endTime}</span>
                   </div>
                   <div className="flex justify-between border-t border-white/60 pt-3">
-                    <span className="text-ink-soft">{locale === 'zh' ? '總額' : 'Total'}</span>
-                    <span className="font-bold text-lg font-display text-gradient-pink">HK${booking.pricing.subtotal.toLocaleString()}</span>
+                    <span className="text-ink-soft">{locale === 'zh' ? '訂單總額' : 'Order total'}</span>
+                    <span className="font-bold text-lg font-display text-gradient-pink">
+                      HK${(
+                        Math.max(0, booking.pricing.subtotal - (booking.promoDiscount || 0))
+                        + (booking.pricing.securityDeposit ?? 0)
+                      ).toLocaleString()}
+                    </span>
                   </div>
+                  {(booking.pricing.securityDeposit ?? 0) > 0 && (
+                    <p className="text-xs text-ink-soft text-right -mt-1">
+                      {locale === 'zh'
+                        ? `已包含場地按金 HK$${(booking.pricing.securityDeposit ?? 0).toLocaleString()}（活動後退還）`
+                        : `Includes HK$${(booking.pricing.securityDeposit ?? 0).toLocaleString()} refundable security deposit`}
+                    </p>
+                  )}
                 </div>
               </div>
             )}
