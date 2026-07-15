@@ -6,6 +6,12 @@ import { finalizeConfirmedBooking, computeGrandTotal } from '@/lib/finalizeBooki
 import type { BookingRecord } from '@/types';
 
 export const runtime = 'nodejs';
+// finalizeConfirmedBooking runs ~20 sequential awaits (Firestore reads,
+// 3 emails, Google Calendar, staff + supplier notify). Under the default
+// ~10s timeout the LAST steps (staff notification) were being killed
+// mid-run, and KPay's retry hit the idempotency marker and skipped — so
+// staff never got notified of the first real KPay booking. Give it room.
+export const maxDuration = 60;
 
 /**
  * POST /api/kpay/webhook

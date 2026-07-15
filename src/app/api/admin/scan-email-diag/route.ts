@@ -14,12 +14,8 @@ export const dynamic = 'force-dynamic';
  * CRON_SECRET or DIAG_TOKEN.
  */
 export async function GET(req: NextRequest) {
-  const auth = req.headers.get('authorization') || '';
-  const diagOk = !!process.env.DIAG_TOKEN && auth === `Bearer ${process.env.DIAG_TOKEN}`;
-  if (!diagOk) {
-    const gate = requireCronSecret(req);
-    if (gate) return gate;
-  }
+  const gate = requireCronSecret(req);
+  if (gate) return gate;
 
   const toggleSnap = await adminDb.doc('system/email_automations').get();
   const toggles = toggleSnap.exists ? toggleSnap.data() : { _note: 'doc missing → all default ENABLED' };

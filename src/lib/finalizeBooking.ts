@@ -219,29 +219,22 @@ export async function finalizeConfirmedBooking(
     console.warn('[finalizeBooking] lock passcode trigger failed:', err);
   }
 
-  // 5 + 6. Google Calendar sync + staff notifications.
-  let bookingForNotify: BookingRecord | undefined;
+  // Fetch booking + customer profile ONCE for the remaining steps.
+  const snap = await bookingRef.get();
+  const data = snap.data() as BookingRecord | undefined;
+  const bookingForNotify = data ? ({ ...data, id: bookingId } as BookingRecord) : undefined;
   let profileForNotify: UserProfile | undefined;
-  try {
-    const snap = await bookingRef.get();
-    const data = snap.data() as BookingRecord | undefined;
-    const booking = data ? ({ ...data, id: bookingId } as BookingRecord) : undefined;
-    bookingForNotify = booking;
-    if (booking) {
-      const userSnap = await adminDb.collection('users').doc(booking.userId).get();
+  if (bookingForNotify) {
+    try {
+      const userSnap = await adminDb.collection('users').doc(bookingForNotify.userId).get();
       profileForNotify = userSnap.data() as UserProfile | undefined;
-      const customerName = profileForNotify?.displayName;
-      if (booking.googleEventId) {
-        await updateBookingOnCalendar(redirectUri, { booking, customerName });
-      } else {
-        const eventId = await pushBookingToCalendar(redirectUri, { booking, customerName });
-        if (eventId) await bookingRef.update({ googleEventId: eventId });
-      }
-    }
-  } catch (err) {
-    console.warn('[finalizeBooking] gcal sync failed:', err);
+    } catch { /* profile optional */ }
   }
 
+  // 5. Staff booking + supplier-order notifications. Ordered BEFORE the
+  //    Google Calendar sync (slower, external) so the ops-critical "new
+  //    booking" alert to staff goes out first — if a later step is slow
+  //    or the function is near its time budget, staff are still notified.
   try {
     if (bookingForNotify) {
       const venue = getVenueById(bookingForNotify.venueId);
@@ -276,5 +269,20 @@ export async function finalizeConfirmedBooking(
     }
   } catch (err) {
     console.warn('[finalizeBooking] staff notify failed:', err);
+  }
+
+  // 6. Google Calendar sync (last — external + slowest, least critical).
+  try {
+    if (bookingForNotify) {
+      const customerName = profileForNotify?.displayName;
+      if (bookingForNotify.googleEventId) {
+        await updateBookingOnCalendar(redirectUri, { booking: bookingForNotify, customerName });
+      } else {
+        const eventId = await pushBookingToCalendar(redirectUri, { booking: bookingForNotify, customerName });
+        if (eventId) await bookingRef.update({ googleEventId: eventId });
+      }
+    }
+  } catch (err) {
+    console.warn('[finalizeBooking] gcal sync failed:', err);
   }
 }
