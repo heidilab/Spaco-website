@@ -24,7 +24,11 @@ export const dynamic = 'force-dynamic';
  * GET  ?apply=1    → write the changes.
  * Gated by CRON_SECRET.
  */
-const OPEN_STATES = new Set(['confirmed', 'awaiting_payment', 'awaiting_review', 'payment_not_completed']);
+// Only genuinely ACTIVE bookings get their balanceDue recomputed.
+// 'payment_not_completed' / 'cancelled' are dead (expired unpaid) — their
+// balanceDue is 0 by design; recomputing it to the full grand total would
+// resurrect a phantom debt on a cancelled booking (caught in dry-run).
+const OPEN_STATES = new Set(['confirmed', 'awaiting_payment', 'awaiting_review']);
 
 export async function GET(req: NextRequest) {
   const auth = req.headers.get('authorization') || '';
