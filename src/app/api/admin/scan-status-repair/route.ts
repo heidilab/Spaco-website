@@ -27,12 +27,8 @@ export const dynamic = 'force-dynamic';
  * GET (default) dry-run; GET ?apply=1 writes. CRON_SECRET (or DIAG_TOKEN).
  */
 export async function GET(req: NextRequest) {
-  const auth = req.headers.get('authorization') || '';
-  const diagOk = !!process.env.DIAG_TOKEN && auth === `Bearer ${process.env.DIAG_TOKEN}`;
-  if (!diagOk) {
-    const gate = requireCronSecret(req);
-    if (gate) return gate;
-  }
+  const gate = requireCronSecret(req);
+  if (gate) return gate;
   const apply = req.nextUrl.searchParams.get('apply') === '1';
 
   // Any booking the customer has PAID into but that isn't in a
