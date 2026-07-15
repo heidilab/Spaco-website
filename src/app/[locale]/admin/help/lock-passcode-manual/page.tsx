@@ -6,18 +6,58 @@
  * detail page's lock-passcode panel when it's in manual mode.
  */
 
+import { useState, useEffect } from 'react';
 import { useLocale } from 'next-intl';
 import { Link } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
+import { getSiteContent } from '@/lib/content';
 import {
   ArrowLeft, KeyRound, Smartphone, Type, Send, AlertTriangle,
   CheckCircle2, Clock, Building2, BookOpen,
 } from 'lucide-react';
 
+// The branches whose lock status this SOP reflects. Order + names only;
+// connected/manual status is read LIVE from the lock config below.
+const LOCK_VENUES: { id: string; name: { zh: string; en: string } }[] = [
+  { id: 'cwb',     name: { zh: '銅鑼灣 (CWB)', en: 'Causeway Bay' } },
+  { id: 'wanchai', name: { zh: '灣仔 (Wanchai)', en: 'Wan Chai' } },
+  { id: 'sw-a',    name: { zh: '上環 Room A (SW-A)', en: 'Sheung Wan A' } },
+  { id: 'sw-b',    name: { zh: '上環 Room B (SW-B)', en: 'Sheung Wan B' } },
+  { id: 'sw-ab',   name: { zh: '上環全層 (SW-AB)', en: 'Sheung Wan A+B' } },
+  { id: 'tst',     name: { zh: '尖沙咀 (TST)', en: 'Tsim Sha Tsui' } },
+];
+
 export default function ManualLockPasscodeSopPage() {
   const locale = useLocale() as 'zh' | 'en';
   const { hasPermission } = useAuth();
   const canAccess = hasPermission('bookings');
+
+  // Live lockId map (venueId → lockId), read from the same Firestore
+  // settings the passcode engine uses. Mirrors getVenueLockMap() so the
+  // table below reflects reality — set a lockId in 內容管理 → 系統設定 and
+  // this branch flips to "connected" with no code change.
+  const [lockMap, setLockMap] = useState<Record<string, number>>({});
+  const [loadingLocks, setLoadingLocks] = useState(true);
+  useEffect(() => {
+    if (!canAccess) return;
+    (async () => {
+      try {
+        const cms = await getSiteContent('settings');
+        const map: Record<string, number> = {};
+        if (cms) {
+          for (const [k, v] of Object.entries(cms)) {
+            if (!k.startsWith('ttlock_')) continue;
+            const raw = ((v as { zh?: string; en?: string })?.zh || (v as { zh?: string; en?: string })?.en || '').trim();
+            const parsed = parseInt(raw, 10);
+            if (Number.isFinite(parsed) && parsed > 0) map[k.slice('ttlock_'.length)] = parsed;
+          }
+        }
+        setLockMap(map);
+      } finally {
+        setLoadingLocks(false);
+      }
+    })();
+  }, [canAccess]);
 
   if (!canAccess) {
     return (
@@ -54,44 +94,46 @@ export default function ManualLockPasscodeSopPage() {
           <Building2 size={18} className="text-pink" />
           {locale === 'zh' ? '受影響嘅分店' : 'Affected branches'}
         </h2>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-ink-soft border-b">
-              <th className="py-2">分店</th>
-              <th className="py-2">情況</th>
-              <th className="py-2 text-right">點處理</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr className="border-b border-charcoal/10">
-              <td className="py-2 font-semibold">銅鑼灣 (CWB)</td>
-              <td className="py-2"><span className="chip text-[10px]">✅ 有 Gateway</span></td>
-              <td className="py-2 text-right text-ink-soft">系統自動處理</td>
-            </tr>
-            <tr className="border-b border-charcoal/10">
-              <td className="py-2 font-semibold">灣仔 (Wanchai)</td>
-              <td className="py-2"><span className="chip text-[10px] bg-amber-100 text-amber-800">⚠️ 未配 Gateway</span></td>
-              <td className="py-2 text-right font-medium text-pink">手動 (跟下面 4 步)</td>
-            </tr>
-            <tr className="border-b border-charcoal/10">
-              <td className="py-2 font-semibold">上環 Room A (SW-A)</td>
-              <td className="py-2"><span className="chip text-[10px] bg-amber-100 text-amber-800">⚠️ 未配 Gateway</span></td>
-              <td className="py-2 text-right font-medium text-pink">手動</td>
-            </tr>
-            <tr className="border-b border-charcoal/10">
-              <td className="py-2 font-semibold">上環 Room B / 全層 (SW-B / SW-AB)</td>
-              <td className="py-2"><span className="chip text-[10px] bg-amber-100 text-amber-800">⚠️ 未配 TTLock</span></td>
-              <td className="py-2 text-right font-medium text-pink">手動</td>
-            </tr>
-            <tr>
-              <td className="py-2 font-semibold">尖沙咀 (TST)</td>
-              <td className="py-2"><span className="chip text-[10px] bg-amber-100 text-amber-800">⚠️ 未配 Gateway</span></td>
-              <td className="py-2 text-right font-medium text-pink">手動</td>
-            </tr>
-          </tbody>
-        </table>
+        {loadingLocks ? (
+          <p className="text-sm text-ink-soft animate-pulse">{locale === 'zh' ? '讀取門鎖設定中…' : 'Loading lock config…'}</p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-ink-soft border-b">
+                <th className="py-2">{locale === 'zh' ? '分店' : 'Branch'}</th>
+                <th className="py-2">{locale === 'zh' ? '狀態' : 'Status'}</th>
+                <th className="py-2 text-right">{locale === 'zh' ? '點處理' : 'Handling'}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {LOCK_VENUES.map((v) => {
+                const lockId = lockMap[v.id];
+                const connected = !!lockId;
+                return (
+                  <tr key={v.id} className="border-b border-charcoal/10 last:border-0">
+                    <td className="py-2 font-semibold">{v.name[locale]}</td>
+                    <td className="py-2">
+                      {connected ? (
+                        <span className="chip text-[10px] bg-emerald-100 text-emerald-800">✅ {locale === 'zh' ? '已連接' : 'Connected'} · lockId {lockId}</span>
+                      ) : (
+                        <span className="chip text-[10px] bg-amber-100 text-amber-800">⚠️ {locale === 'zh' ? '未設定 lockId' : 'No lockId'}</span>
+                      )}
+                    </td>
+                    <td className="py-2 text-right">
+                      {connected
+                        ? <span className="text-ink-soft">{locale === 'zh' ? '系統自動處理' : 'Automatic'}</span>
+                        : <span className="font-medium text-pink">{locale === 'zh' ? '手動（跟下面 4 步）' : 'Manual (4 steps below)'}</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
         <p className="text-xs text-ink-soft">
-          📌 將來 Gateway 安裝完成之後，系統設定填返 lockId，個 booking 詳情頁就會自動轉返「TTLock」mode，唔再需要手動。
+          {locale === 'zh'
+            ? '📌 呢個表即時反映真實設定。喺 內容管理 → 文字內容 → 系統設定 填返該分店嘅 lockId，個分店就會即刻轉做「已連接 · 系統自動」，唔需要改 code。'
+            : '📌 This table is live. Set a branch\'s lockId in Content → Text → Settings and it flips to "Connected · Automatic" with no code change.'}
         </p>
       </div>
 
