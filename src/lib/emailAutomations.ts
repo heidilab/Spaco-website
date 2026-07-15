@@ -11,6 +11,40 @@
 import { adminDb } from './firebaseAdmin';
 import { sendEmail, buildStaffBookingNotificationEmail, buildStaffReceiptPendingEmail, buildStaffSupplierOrderEmail, bookingNeedsSupplierOrder } from './email';
 import type { BookingRecord } from '@/types';
+import { ROLE_PERMISSIONS } from '@/types';
+
+/** Company main inbox — ALWAYS receives staff notifications, permanently. */
+const ALWAYS_NOTIFY_EMAIL = 'spacohk@gmail.com';
+
+/**
+ * Recipients for internal staff notifications, computed LIVE each time:
+ *   • spacohk@gmail.com (always), plus
+ *   • every current staff member whose role grants the `bookings`
+ *     permission (admin + cs) — their email is read from admin_users.
+ *
+ * So a CS hire auto-receives the moment they're added in 員工管理, and a
+ * departing CS stops the moment they're removed / demoted to a plain
+ * member — no env-var edit needed. Falls back to STAFF_NOTIFICATION_EMAILS
+ * (then spacohk@gmail.com) only if the roster read fails, so we never
+ * silently send to nobody.
+ */
+export async function getStaffNotificationRecipients(): Promise<string[]> {
+  const set = new Set<string>([ALWAYS_NOTIFY_EMAIL]);
+  try {
+    const snap = await adminDb.collection('admin_users').get();
+    for (const doc of snap.docs) {
+      const d = doc.data() as { role?: string; email?: string };
+      const perms = d.role ? ROLE_PERMISSIONS[d.role as keyof typeof ROLE_PERMISSIONS] : null;
+      const email = (d.email || '').trim();
+      if (email && Array.isArray(perms) && perms.includes('bookings')) set.add(email);
+    }
+  } catch (err) {
+    console.warn('[staff-recipients] admin_users read failed, using env fallback:', err);
+    (process.env.STAFF_NOTIFICATION_EMAILS || '')
+      .split(',').map((s) => s.trim()).filter(Boolean).forEach((e) => set.add(e));
+  }
+  return Array.from(set).filter(Boolean);
+}
 
 export type EmailAutomationKey =
   | 'booking_confirmation'
@@ -261,10 +295,7 @@ export async function sendStaffBookingNotification(
     console.log('[staff-notify] skipped (automation disabled)');
     return;
   }
-  const list = (process.env.STAFF_NOTIFICATION_EMAILS || 'spacohk@gmail.com')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const list = await getStaffNotificationRecipients();
   if (list.length === 0) return;
   const tpl = buildStaffBookingNotificationEmail(params);
   await Promise.all(list.map((to) =>
@@ -289,10 +320,7 @@ export async function sendStaffSupplierOrderNotification(params: {
     console.log('[staff-supplier] skipped (automation disabled)');
     return;
   }
-  const list = (process.env.STAFF_NOTIFICATION_EMAILS || 'spacohk@gmail.com')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const list = await getStaffNotificationRecipients();
   if (list.length === 0) return;
   const tpl = buildStaffSupplierOrderEmail(params);
   await Promise.all(list.map((to) =>
@@ -310,10 +338,7 @@ export async function sendStaffReceiptPendingNotification(
     console.log('[staff-receipt-pending] skipped (automation disabled)');
     return;
   }
-  const list = (process.env.STAFF_NOTIFICATION_EMAILS || 'spacohk@gmail.com')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const list = await getStaffNotificationRecipients();
   if (list.length === 0) return;
   const tpl = buildStaffReceiptPendingEmail(params);
   await Promise.all(list.map((to) =>
