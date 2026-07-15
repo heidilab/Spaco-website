@@ -42,6 +42,7 @@ export async function GET(req: NextRequest) {
   const snap = await adminDb.collection('bookings').get();
 
   const fixes: unknown[] = [];
+  const paidButOwing: unknown[] = [];
   const statusHistogram: Record<string, number> = {};
   let written = 0;
 
@@ -50,9 +51,10 @@ export async function GET(req: NextRequest) {
     const hasPayments = (b.payments?.length ?? 0) > 0;
     const balanceDue = b.balanceDue ?? 0;
     if (!hasPayments || balanceDue <= 0) continue;
-    // Tally the status of every paid-but-owing booking for diagnosis.
+    // Tally + list every paid-but-owing booking for diagnosis.
     const st = b.status || '(none)';
     statusHistogram[st] = (statusHistogram[st] || 0) + 1;
+    paidButOwing.push({ id: b.id, date: b.date, venueId: b.venueId, status: st, balanceDue, guestCount: b.guestCount });
     if (st === 'confirmed' || !REPAIRABLE.has(st)) continue;
 
     const paid = (b.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
@@ -82,6 +84,7 @@ export async function GET(req: NextRequest) {
     scannedAt: new Date().toISOString(),
     totalBookings: snap.size,
     paidButOwingByStatus: statusHistogram,
+    paidButOwing,
     repairable: fixes.length,
     bookingsWritten: written,
     fixes,
