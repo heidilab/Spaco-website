@@ -35,23 +35,30 @@ export async function GET(req: NextRequest) {
   }
   const apply = req.nextUrl.searchParams.get('apply') === '1';
 
-  const snap = await adminDb
-    .collection('bookings')
-    .where('status', '==', 'awaiting_payment')
-    .get();
+  // Any booking the customer has PAID into but that isn't in a
+  // customer-payable/confirmed state — these show a balance with no way
+  // to pay and won't reach the passcode cron. Repair → 'confirmed'.
+  const REPAIRABLE = new Set(['awaiting_payment', 'awaiting_review', 'pending']);
+  const snap = await adminDb.collection('bookings').get();
 
   const fixes: unknown[] = [];
+  const statusHistogram: Record<string, number> = {};
   let written = 0;
 
   for (const doc of snap.docs) {
     const b = { id: doc.id, ...doc.data() } as BookingRecord;
-    const paid = (b.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
-    if ((b.payments?.length ?? 0) === 0) continue;   // never paid — leave as-is
-
+    const hasPayments = (b.payments?.length ?? 0) > 0;
     const balanceDue = b.balanceDue ?? 0;
+    if (!hasPayments || balanceDue <= 0) continue;
+    // Tally the status of every paid-but-owing booking for diagnosis.
+    const st = b.status || '(none)';
+    statusHistogram[st] = (statusHistogram[st] || 0) + 1;
+    if (st === 'confirmed' || !REPAIRABLE.has(st)) continue;
+
+    const paid = (b.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
     fixes.push({
       id: b.id, date: b.date, venueId: b.venueId,
-      paidSum: paid, balanceDue,
+      fromStatus: st, paidSum: paid, balanceDue,
       to: 'confirmed',
       willStampPaid: balanceDue === 0,
     });
@@ -73,8 +80,9 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     mode: apply ? 'APPLIED' : 'DRY_RUN',
     scannedAt: new Date().toISOString(),
-    awaitingPaymentTotal: snap.size,
-    stuckWithPayment: fixes.length,
+    totalBookings: snap.size,
+    paidButOwingByStatus: statusHistogram,
+    repairable: fixes.length,
     bookingsWritten: written,
     fixes,
   });
