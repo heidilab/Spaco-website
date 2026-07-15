@@ -263,6 +263,14 @@ export default function PaymentHistory({
       setRefundResult({ ok: false, msg: locale === 'zh' ? '請輸入有效金額' : 'Enter a valid amount' });
       return;
     }
+    // Second confirmation — this issues a REAL refund to the customer's
+    // original payment method, immediately and irreversibly. Heidi's
+    // normal deposit-settlement / manual-FPS-refund workflows do NOT use
+    // this button, so guard against an accidental click.
+    const confirmMsg = locale === 'zh'
+      ? `⚠️ 確定要經 KPay 向客人退回真實款項 HK$${amt.toLocaleString()}？\n\n此操作會即時退款到客人原本付款方式，不可撤銷。\n\n（提提你：按金結算退還、人手轉數快退款都不需要用此功能。）`
+      : `⚠️ Issue a REAL KPay refund of HK$${amt.toLocaleString()} to the customer's original payment method? This is immediate and cannot be undone.`;
+    if (!window.confirm(confirmMsg)) return;
     setRefundBusy(true);
     setRefundResult(null);
     try {
