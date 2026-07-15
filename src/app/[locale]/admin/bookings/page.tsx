@@ -1,5 +1,6 @@
 'use client';
 
+import { adminApiFetch } from '@/lib/adminApiFetch';
 import { useEffect, useMemo, useState, useRef, type ReactNode } from 'react';
 import { useLocale } from 'next-intl';
 import { getAllBookings, updateBookingStatus, updateBookingBalance, getAllUsers } from '@/lib/firestore';
@@ -190,7 +191,7 @@ export default function AdminBookingsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bookingId }),
       }).catch(() => { /* gcal disconnected — fine */ });
-      fetch('/api/admin/notify-booking', {
+      adminApiFetch('/api/admin/notify-booking', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bookingId }),

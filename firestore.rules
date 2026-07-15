@@ -51,10 +51,25 @@ service cloud.firestore {
 
     // ───── Bookings ─────
     // Owners + staff can read; owners can create their own; staff can edit any.
+    //
+    // Owner updates are RESTRICTED so a customer can't grant themselves value
+    // without paying (previously any owner could self-patch status:'confirmed'
+    // + balanceDue:0 and the daily cron would then mint a real door passcode).
+    // A non-staff owner may NOT:
+    //   • change the payments[] array (money records are server-written only), or
+    //   • transition the booking INTO 'confirmed' / 'completed' status.
+    // They can still keep an already-confirmed booking confirmed (self-modify),
+    // move to awaiting_payment / awaiting_review / cancelled, upload receipts,
+    // and set promo/points/refund details. Staff bypass all of this.
     match /bookings/{bookingId} {
       allow read:   if (isAuthed() && resource.data.userId == request.auth.uid) || isStaff();
       allow create: if isAuthed() && request.resource.data.userId == request.auth.uid;
-      allow update: if (isAuthed() && resource.data.userId == request.auth.uid) || isStaff();
+      allow update: if isStaff()
+        || (isAuthed()
+            && resource.data.userId == request.auth.uid
+            && request.resource.data.get('payments', []) == resource.data.get('payments', [])
+            && (request.resource.data.status == resource.data.status
+                || !(request.resource.data.status in ['confirmed', 'completed'])));
       allow delete: if isStaff();
     }
 

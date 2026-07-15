@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import type { BookingRecord } from '@/types';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 
@@ -24,6 +25,9 @@ export const runtime = 'nodejs';
  * happens via updateBookingDateTime on save).
  */
 export async function POST(req: NextRequest) {
+  const _gate = await requireAdmin(req, 'bookings');
+  if (!_gate.ok) return _gate.res;
+
   try {
     const body = await req.json() as {
       bookingId?: string;

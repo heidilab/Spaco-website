@@ -7,6 +7,7 @@
 // rental/deposit split) get a "拆分" button so admin can retroactively
 // attribute the money.
 
+import { adminApiFetch } from '@/lib/adminApiFetch';
 import { useState } from 'react';
 import type { BookingRecord } from '@/types';
 import { CreditCard, Wand2, X as XIcon, Loader2, Check, Undo2 } from 'lucide-react';
@@ -182,7 +183,7 @@ export default function PaymentHistory({
     setFreezingSynth(true);
     setFreezeMsg(null);
     try {
-      const res = await fetch('/api/admin/booking-freeze-synth-payment', {
+      const res = await adminApiFetch('/api/admin/booking-freeze-synth-payment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -222,7 +223,7 @@ export default function PaymentHistory({
     setBusy(true);
     setErr(null);
     try {
-      const res = await fetch('/api/admin/booking-fix-payment-split', {
+      const res = await adminApiFetch('/api/admin/booking-fix-payment-split', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -265,7 +266,7 @@ export default function PaymentHistory({
     setRefundBusy(true);
     setRefundResult(null);
     try {
-      const res = await fetch('/api/kpay/refund', {
+      const res = await adminApiFetch('/api/kpay/refund', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

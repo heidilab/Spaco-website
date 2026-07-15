@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
+import { requireCronSecret } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -22,7 +23,10 @@ export const maxDuration = 60;
  * Also flags bookings where balanceDue > 0 but payments[] sum already
  * covers the full grandTotal (i.e. the balance is phantom).
  */
-export async function GET() {
+export async function GET(req: Request) {
+  const _gate = requireCronSecret(req);
+  if (_gate) return _gate;
+
   const snap = await adminDb.collection('bookings').get();
 
   const mismatches: Array<Record<string, unknown>> = [];

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
+import { requireCronSecret } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 
@@ -12,6 +13,9 @@ export const runtime = 'nodejs';
  * downstream.
  */
 export async function GET(req: NextRequest) {
+  const _gate = requireCronSecret(req);
+  if (_gate) return _gate;
+
   const date = req.nextUrl.searchParams.get('date');
   const venueId = req.nextUrl.searchParams.get('venueId');
   const startTime = req.nextUrl.searchParams.get('startTime');

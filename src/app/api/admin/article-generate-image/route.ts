@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminStorage } from '@/lib/firebaseAdmin';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 // DALL-E can take 20+ seconds; bump the function timeout.
@@ -23,6 +24,9 @@ const SPACO_STYLE_SUFFIX =
   + 'multifunctional event space (SPACO). High-quality, magazine-style.';
 
 export async function POST(req: NextRequest) {
+  const _gate = await requireAdmin(req, 'content');
+  if (!_gate.ok) return _gate.res;
+
   try {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {

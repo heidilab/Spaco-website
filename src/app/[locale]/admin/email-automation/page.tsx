@@ -1,5 +1,6 @@
 'use client';
 
+import { adminApiFetch } from '@/lib/adminApiFetch';
 import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
@@ -34,7 +35,7 @@ export default function EmailAutomationPage() {
   async function load() {
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/email-automation');
+      const res = await adminApiFetch('/api/admin/email-automation');
       const data = await res.json();
       setRows(data.automations || []);
     } catch {
@@ -52,7 +53,7 @@ export default function EmailAutomationPage() {
   async function handleToggle(key: string, nextEnabled: boolean) {
     setBusyKey(key);
     try {
-      const res = await fetch('/api/admin/email-automation', {
+      const res = await adminApiFetch('/api/admin/email-automation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'toggle', key, enabled: nextEnabled }),
@@ -76,7 +77,7 @@ export default function EmailAutomationPage() {
   async function handlePreview(key: string) {
     setBusyKey(key);
     try {
-      const res = await fetch('/api/admin/email-automation', {
+      const res = await adminApiFetch('/api/admin/email-automation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'preview', key }),
@@ -104,7 +105,7 @@ export default function EmailAutomationPage() {
     }
     setBusyKey(key);
     try {
-      const res = await fetch('/api/admin/email-automation', {
+      const res = await adminApiFetch('/api/admin/email-automation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'test', key, to: testEmail }),

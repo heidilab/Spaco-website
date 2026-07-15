@@ -11,6 +11,7 @@ import {
 import { getVenueById } from '@/lib/venues';
 import { formatAddOnsForStaff } from '@/lib/pricing';
 import type { BookingRecord, UserProfile } from '@/types';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 
@@ -43,6 +44,9 @@ interface FollowupPayment {
 }
 
 export async function POST(req: NextRequest) {
+  const _gate = await requireAdmin(req, 'bookings');
+  if (!_gate.ok) return _gate.res;
+
   try {
     const body = await req.json() as {
       bookingId?: string;

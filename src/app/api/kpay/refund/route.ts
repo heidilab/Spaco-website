@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { refundOrder, isKpayConfigured } from '@/lib/kpay';
 import type { BookingRecord } from '@/types';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 
@@ -23,6 +24,9 @@ export const runtime = 'nodejs';
  * a refund entry.
  */
 export async function POST(req: NextRequest) {
+  const _gate = await requireAdmin(req, 'bookings');
+  if (!_gate.ok) return _gate.res;
+
   try {
     if (!isKpayConfigured()) {
       return NextResponse.json({ error: 'KPay is not configured' }, { status: 500 });

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { requireCronSecret } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -30,6 +31,9 @@ export const maxDuration = 60;
  *       backfill to a specific subset.
  */
 export async function POST(req: NextRequest) {
+  const _gate = requireCronSecret(req);
+  if (_gate) return _gate;
+
   const body = (await req.json().catch(() => ({}))) as {
     dryRun?: boolean;
     ids?: string[];

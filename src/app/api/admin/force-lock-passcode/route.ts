@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { processBookingForLockAccess } from '@/lib/lockPasscode';
+import { requireCronSecret } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -16,6 +17,9 @@ export const maxDuration = 60;
  * we need to see the exact ProcessResult.reason/.error.
  */
 export async function GET(req: NextRequest) {
+  const _gate = requireCronSecret(req);
+  if (_gate) return _gate;
+
   const id = req.nextUrl.searchParams.get('id');
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 

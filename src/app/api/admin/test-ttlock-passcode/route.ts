@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { addKeyboardPasscode, deleteKeyboardPasscode } from '@/lib/ttlock';
 import { getVenueLockMap } from '@/lib/lockPasscode';
+import { requireCronSecret } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -22,6 +23,9 @@ export const maxDuration = 60;
  *  - No Firestore writes, no customer emails
  */
 export async function GET(req: NextRequest) {
+  const _gate = requireCronSecret(req);
+  if (_gate) return _gate;
+
   const targetVenue = req.nextUrl.searchParams.get('venue');
   const lockMap = await getVenueLockMap();
   const targets = targetVenue

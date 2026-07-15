@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
+import { requireCronSecret } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,6 +14,9 @@ export const dynamic = 'force-dynamic';
  * the conflict check).
  */
 export async function GET(req: NextRequest) {
+  const _gate = requireCronSecret(req);
+  if (_gate) return _gate;
+
   const date = req.nextUrl.searchParams.get('date');
   const venueId = req.nextUrl.searchParams.get('venueId');
   if (!date) return NextResponse.json({ error: 'date required' }, { status: 400 });

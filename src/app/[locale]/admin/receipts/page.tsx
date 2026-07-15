@@ -1,5 +1,6 @@
 'use client';
 
+import { adminApiFetch } from '@/lib/adminApiFetch';
 import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
@@ -188,7 +189,7 @@ export default function AdminReceiptsPage() {
     // Staff notification — same email the Stripe webhook fires when a
     // payment lands. Without this, offline payments were silently confirmed
     // and admin/CS never got the "new confirmed booking" email.
-    fetch('/api/admin/notify-booking', {
+    adminApiFetch('/api/admin/notify-booking', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ bookingId }),
@@ -200,7 +201,7 @@ export default function AdminReceiptsPage() {
     // none exists yet. The older /api/google/push-booking POST was a
     // no-op on already-pushed events, so a balance-receipt approval
     // never refreshed the "⚠️ 未找清尾數" warning.
-    fetch('/api/admin/booking-edit-followup', {
+    adminApiFetch('/api/admin/booking-edit-followup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ bookingId, syncOnly: true }),

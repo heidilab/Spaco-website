@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { isTTLockConfigured } from '@/lib/ttlock';
+import { requireCronSecret } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 
@@ -16,7 +17,10 @@ export const runtime = 'nodejs';
  * bug: usually means `lock_sw-a` is missing / blank / non-numeric in
  * the admin CMS settings.
  */
-export async function GET() {
+export async function GET(req: Request) {
+  const _gate = requireCronSecret(req);
+  if (_gate) return _gate;
+
   const settingsSnap = await adminDb.collection('site_content').doc('settings').get();
   // site_content uses a nested `sections` map (see lib/content.ts
   // getSiteContent). Top-level only carries updatedAt / updatedBy /

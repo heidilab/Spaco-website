@@ -1,5 +1,6 @@
 'use client';
 
+import { adminApiFetch } from '@/lib/adminApiFetch';
 import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useParams, useRouter } from 'next/navigation';
@@ -572,7 +573,7 @@ export default function AdminBookingDetailPage() {
       // attendee removal. Now we always email so the customer has a
       // concrete record of the new schedule.
       try {
-        await fetch('/api/admin/booking-edit-followup', {
+        await adminApiFetch('/api/admin/booking-edit-followup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -828,7 +829,7 @@ export default function AdminBookingDetailPage() {
         setFollowupBusy(false);
         return;
       }
-      const res = await fetch('/api/admin/booking-record-offline-payment', {
+      const res = await adminApiFetch('/api/admin/booking-record-offline-payment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -843,7 +844,7 @@ export default function AdminBookingDetailPage() {
       if (!res.ok) throw new Error(data?.error || 'Record failed');
       // Mirror booking-edit-followup gcal-only sync so the calendar
       // event description's balance line updates.
-      fetch('/api/admin/booking-edit-followup', {
+      adminApiFetch('/api/admin/booking-edit-followup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bookingId: booking.id, syncOnly: true }),
@@ -878,7 +879,7 @@ export default function AdminBookingDetailPage() {
     setResendingEmail(true);
     setResendMsg(null);
     try {
-      const res = await fetch('/api/admin/booking-edit-followup', {
+      const res = await adminApiFetch('/api/admin/booking-edit-followup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -971,7 +972,7 @@ export default function AdminBookingDetailPage() {
         // active calendar surface; awaiting_review hints CS to review).
         // Skipped for cancel since cancelBooking handles its own gcal
         // removal. Fire-and-forget — booking is already saved.
-        fetch('/api/admin/booking-edit-followup', {
+        adminApiFetch('/api/admin/booking-edit-followup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ bookingId: booking.id, syncOnly: true }),
@@ -1983,7 +1984,7 @@ export default function AdminBookingDetailPage() {
                           if (!booking) return;
                           setSaving(true);
                           try {
-                            const res = await fetch('/api/admin/fix-free-drinks-promo', {
+                            const res = await adminApiFetch('/api/admin/fix-free-drinks-promo', {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({ bookingId: booking.id }),
@@ -2552,7 +2553,7 @@ function OutstandingBalanceSection({
 
       // Mirror handleSave's auto-gcal-sync so the event description
       // reflects the refreshed totals.
-      fetch('/api/admin/booking-edit-followup', {
+      adminApiFetch('/api/admin/booking-edit-followup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bookingId: booking.id, syncOnly: true }),
@@ -2585,7 +2586,7 @@ function OutstandingBalanceSection({
     setSettling(true);
     setSettleMsg(null);
     try {
-      const res = await fetch('/api/admin/booking-settle-balance', {
+      const res = await adminApiFetch('/api/admin/booking-settle-balance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bookingId: booking.id }),
@@ -2594,7 +2595,7 @@ function OutstandingBalanceSection({
       if (!res.ok) throw new Error(data?.error || 'Settle failed');
       // Sync Google Calendar — the "⚠️ 未找清尾數" warning line in the
       // event description needs to disappear now that balance is 0.
-      fetch('/api/admin/booking-edit-followup', {
+      adminApiFetch('/api/admin/booking-edit-followup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bookingId: booking.id, syncOnly: true }),

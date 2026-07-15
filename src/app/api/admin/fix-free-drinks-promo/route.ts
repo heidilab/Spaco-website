@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 
@@ -16,6 +17,9 @@ export const runtime = 'nodejs';
  * patch, never throws SLOT_CONFLICT.
  */
 export async function POST(req: NextRequest) {
+  const _gate = await requireAdmin(req, 'bookings');
+  if (!_gate.ok) return _gate.res;
+
   const { bookingId } = await req.json() as { bookingId: string };
   if (!bookingId) {
     return NextResponse.json({ error: 'missing bookingId' }, { status: 400 });

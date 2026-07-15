@@ -1,5 +1,6 @@
 'use client';
 
+import { adminApiFetch } from '@/lib/adminApiFetch';
 import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useParams } from 'next/navigation';
@@ -160,7 +161,7 @@ export default function AdminArticleEditPage() {
     setGenBusy((b) => ({ ...b, [literal]: true }));
     setError(null);
     try {
-      const res = await fetch('/api/admin/article-generate-image', {
+      const res = await adminApiFetch('/api/admin/article-generate-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: description, size: '1792x1024' }),
@@ -220,7 +221,7 @@ export default function AdminArticleEditPage() {
     setFormatting(true);
     setError(null);
     try {
-      const res = await fetch('/api/admin/article-smart-format', {
+      const res = await adminApiFetch('/api/admin/article-smart-format', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: contentZh, title: titleZh }),
@@ -247,7 +248,7 @@ export default function AdminArticleEditPage() {
     setTranslating(true);
     setError(null);
     try {
-      const res = await fetch('/api/admin/article-translate', {
+      const res = await adminApiFetch('/api/admin/article-translate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

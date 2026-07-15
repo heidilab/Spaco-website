@@ -1,5 +1,6 @@
 'use client';
 
+import { adminApiFetch } from '@/lib/adminApiFetch';
 import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useSearchParams } from 'next/navigation';
@@ -100,7 +101,7 @@ export default function CalendarSyncPage() {
     if (!confirm(locale === 'zh' ? '確定中斷 Google 連接？網站將唔再 sync。' : 'Disconnect Google? Sync will stop.')) return;
     setBusy('disconnect');
     try {
-      const res = await fetch('/api/google/disconnect', { method: 'POST' });
+      const res = await adminApiFetch('/api/google/disconnect', { method: 'POST' });
       if (!res.ok) throw new Error((await res.json()).error || 'Failed');
       setFlash({ kind: 'ok', text: locale === 'zh' ? '已中斷連接' : 'Disconnected' });
     } catch (err) {
@@ -113,7 +114,7 @@ export default function CalendarSyncPage() {
   const handleSync = async () => {
     setBusy('sync');
     try {
-      const res = await fetch('/api/google/sync', { method: 'POST' });
+      const res = await adminApiFetch('/api/google/sync', { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed');
       setFlash({

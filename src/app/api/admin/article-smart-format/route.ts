@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { callClaude } from '@/lib/llm';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 
@@ -37,6 +38,9 @@ const SYSTEM = `你係 SPACO(香港高級派對場地)個資深 lifestyle 編輯
 7. **直接出 Markdown 結果**,唔好包 code block,唔好寫前言/說明/解釋。`;
 
 export async function POST(req: NextRequest) {
+  const _gate = await requireAdmin(req, 'content');
+  if (!_gate.ok) return _gate.res;
+
   try {
     const { content, title } = (await req.json()) as { content?: string; title?: string };
     if (!content?.trim()) {

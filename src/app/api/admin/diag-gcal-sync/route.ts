@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { syncCalendars, getCalendarIds } from '@/lib/googleCalendar';
 import { adminDb } from '@/lib/firebaseAdmin';
+import { requireCronSecret } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -15,6 +16,9 @@ export const maxDuration = 60;
  * exist + the most recent sync timestamp on any of them.
  */
 export async function GET(req: NextRequest) {
+  const _gate = requireCronSecret(req);
+  if (_gate) return _gate;
+
   const origin = req.nextUrl.origin;
   const redirectUri = `${origin}/api/google/callback`;
 

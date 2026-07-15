@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { listLocks, isTTLockConfigured } from '@/lib/ttlock';
 import { getVenueLockMap } from '@/lib/lockPasscode';
+import { requireCronSecret } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -18,7 +19,10 @@ export const maxDuration = 30;
  * generate (presumably because the lockId is for a lock OTHER than
  * the one the customer's email sends them to use).
  */
-export async function GET() {
+export async function GET(req: Request) {
+  const _gate = requireCronSecret(req);
+  if (_gate) return _gate;
+
   if (!isTTLockConfigured()) {
     return NextResponse.json({
       ok: false,

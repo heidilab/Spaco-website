@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
+import { requireCronSecret } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 
@@ -23,6 +24,9 @@ export const runtime = 'nodejs';
 const SW_GROUP = new Set(['sw-a', 'sw-b', 'sw-ab']);
 
 export async function POST(req: NextRequest) {
+  const _gate = requireCronSecret(req);
+  if (_gate) return _gate;
+
   try {
     const body = await req.json().catch(() => ({}));
     const dryRun = body?.dryRun !== false; // default true

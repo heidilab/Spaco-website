@@ -4,6 +4,7 @@ import { sendStaffBookingNotification, sendStaffSupplierOrderNotification } from
 import { getVenueById } from '@/lib/venues';
 import { formatAddOnsForStaff } from '@/lib/pricing';
 import type { BookingRecord, UserProfile } from '@/types';
+import { requireAdmin } from '@/lib/adminAuth';
 
 // POST /api/admin/notify-booking { bookingId }
 // Triggered when admin manually confirms a booking. Sends the staff
@@ -17,6 +18,9 @@ import type { BookingRecord, UserProfile } from '@/types';
 export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
+  const _gate = await requireAdmin(req, 'bookings');
+  if (!_gate.ok) return _gate.res;
+
   try {
     const { bookingId } = await req.json();
     if (!bookingId) {

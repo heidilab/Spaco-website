@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { processBookingForLockAccess } from '@/lib/lockPasscode';
+import { requireCronSecret } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -20,6 +21,9 @@ export const maxDuration = 60;
  *                            passcode-exists)
  */
 export async function GET(req: NextRequest) {
+  const _gate = requireCronSecret(req);
+  if (_gate) return _gate;
+
   const apply = req.nextUrl.searchParams.get('apply') === 'true';
   const days = parseInt(req.nextUrl.searchParams.get('days') || '7', 10);
   const now = Date.now();

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { callClaude } from '@/lib/llm';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 
@@ -28,6 +29,9 @@ interface TranslateResult {
 }
 
 export async function POST(req: NextRequest) {
+  const _gate = await requireAdmin(req, 'content');
+  if (!_gate.ok) return _gate.res;
+
   try {
     const { title, excerpt, content } = (await req.json()) as {
       title?: string; excerpt?: string; content?: string;

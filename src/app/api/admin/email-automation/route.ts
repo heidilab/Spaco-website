@@ -12,6 +12,7 @@ import {
   buildBookingCancelledEmail, sendEmail,
 } from '@/lib/email';
 import type { BookingRecord } from '@/types';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 
@@ -189,7 +190,10 @@ function buildPreview(key: EmailAutomationKey): { subject: string; html: string 
 }
 
 // GET — list all automations + toggle states.
-export async function GET() {
+export async function GET(req: Request) {
+  const _gate = await requireAdmin(req, 'gcal');
+  if (!_gate.ok) return _gate.res;
+
   try {
     const toggles = await getAllEmailAutomationToggles();
     const automations = EMAIL_AUTOMATIONS.map((def) => ({
@@ -207,6 +211,9 @@ export async function GET() {
 
 // POST — actions: toggle | preview | test
 export async function POST(req: NextRequest) {
+  const _gate = await requireAdmin(req, 'gcal');
+  if (!_gate.ok) return _gate.res;
+
   try {
     const body = await req.json();
     const action: 'toggle' | 'preview' | 'test' = body.action;

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
+import { requireCronSecret } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -26,7 +27,10 @@ export const dynamic = 'force-dynamic';
  * Returns negative `delta` = under-credited (customer owed more pts),
  * positive `delta` = over-credited (customer got extra).
  */
-export async function GET() {
+export async function GET(req: Request) {
+  const _gate = requireCronSecret(req);
+  if (_gate) return _gate;
+
   const all = await adminDb.collection('bookings').get();
   const affected: Array<Record<string, unknown>> = [];
   for (const doc of all.docs) {
