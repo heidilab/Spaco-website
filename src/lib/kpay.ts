@@ -19,7 +19,7 @@
  */
 
 import crypto from 'crypto';
-import { ProxyAgent } from 'undici';
+import { fetch as undiciFetch, ProxyAgent } from 'undici';
 
 /**
  * Static-IP egress proxy for KPay API calls.
@@ -48,9 +48,19 @@ function getKpayDispatcher(): ProxyAgent | undefined {
 /** fetch() for KPay API calls — honours KPAY_PROXY_URL when set. */
 function kpayFetch(url: string, init: RequestInit): Promise<Response> {
   const dispatcher = getKpayDispatcher();
-  // `dispatcher` is undici's extension to fetch options — Node's global
-  // fetch supports it but TypeScript's RequestInit doesn't declare it.
-  return fetch(url, { ...init, ...(dispatcher ? { dispatcher } : {}) } as RequestInit);
+  if (dispatcher) {
+    // MUST use undici's own fetch with undici's ProxyAgent. Next.js
+    // patches global fetch with a BUNDLED undici whose dispatch-handler
+    // interface differs from the npm package's — mixing them throws
+    // UND_ERR_INVALID_ARG "invalid onRequestStart method" (broke
+    // production checkout on 2026-07-15). Same-package fetch + agent
+    // always agree on the interface.
+    return undiciFetch(
+      url,
+      { ...(init as Record<string, unknown>), dispatcher } as never,
+    ) as unknown as Promise<Response>;
+  }
+  return fetch(url, init);
 }
 
 const HEADERS = {
