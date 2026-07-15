@@ -8,9 +8,18 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getBooking } from '@/lib/firestore';
 import { getVenueById } from '@/lib/venues';
 import { BookingRecord } from '@/types';
-import { LogIn } from 'lucide-react';
+import { LogIn, CreditCard, Smartphone, Building2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import AuthModal from '@/components/auth/AuthModal';
+
+/** Must match CARD_SURCHARGE_RATE in /api/kpay/checkout. */
+const CARD_SURCHARGE_RATE = 0.015;
+
+function surchargeFor(amount: number): number {
+  return Math.round(amount * CARD_SURCHARGE_RATE * 100) / 100;
+}
+
+type PayChoice = 'card' | 'wallet' | 'fps';
 
 export default function PayBalancePage() {
   const locale = useLocale() as 'zh' | 'en';
@@ -18,13 +27,13 @@ export default function PayBalancePage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   const bookingId = params.id as string;
+  const slug = params.branchSlug as string;
 
   const [booking, setBooking] = useState<BookingRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Starts at true — we auto-redirect to KPay on entry (no picker).
-  const [submitting, setSubmitting] = useState(true);
-  const [fired, setFired] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [selected, setSelected] = useState<PayChoice | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
 
   useEffect(() => {
@@ -35,7 +44,6 @@ export default function PayBalancePage() {
       // (Heidi 2026-05-28: #uD9WqI2P couldn't reach the payment page from
       // the WhatsApp link because the homepage redirect dropped the URL.)
       setLoading(false);
-      setSubmitting(false);
       return;
     }
     setLoading(true);
@@ -52,12 +60,19 @@ export default function PayBalancePage() {
   const venue = booking ? getVenueById(booking.venueId) : null;
   const venueName = venue?.name[locale] || booking?.branchSlug || '';
   const balance = booking?.balanceDue ?? 0;
+  const cardFee = surchargeFor(balance);
+  const cardTotal = Math.round((balance + cardFee) * 100) / 100;
 
-  async function proceedToKpay() {
-    if (!booking) return;
+  async function handleProceed() {
+    if (!selected || !booking) return;
     setError(null);
     setSubmitting(true);
     try {
+      if (selected === 'fps') {
+        // Offline — reuse the pay-offline page (payment details + receipt upload).
+        router.push(`/book/${slug}/pay-offline/${booking.id}`);
+        return;
+      }
       const res = await fetch('/api/kpay/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -67,6 +82,7 @@ export default function PayBalancePage() {
           venueName: `${venueName} (${locale === 'zh' ? '尾數' : 'balance'})`,
           customerEmail: user?.email,
           isBalancePayment: true,
+          methodGroup: selected,
         }),
       });
       if (!res.ok) throw new Error(`Checkout API ${res.status}`);
@@ -79,14 +95,6 @@ export default function PayBalancePage() {
       setSubmitting(false);
     }
   }
-
-  // Auto-fire when booking loads.
-  useEffect(() => {
-    if (fired || !booking || authLoading || loading) return;
-    setFired(true);
-    proceedToKpay();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [booking, authLoading, loading]);
 
   if (authLoading || loading) {
     return <div className="pt-28 min-h-screen flex items-center justify-center"><div className="animate-pulse text-ink-soft">Loading...</div></div>;
@@ -124,11 +132,11 @@ export default function PayBalancePage() {
     );
   }
 
-  if (error && !booking) {
+  if (error || !booking) {
     return (
       <div className="pt-28 min-h-screen flex items-center justify-center px-6">
         <div className="max-w-md w-full text-center space-y-4">
-          <p className="text-rose-500">{error}</p>
+          <p className="text-rose-500">{error || 'Error'}</p>
           <button
             onClick={() => router.push('/account')}
             className="text-sm text-ink-soft hover:text-ink underline"
@@ -139,54 +147,113 @@ export default function PayBalancePage() {
       </div>
     );
   }
-  if (!booking) {
-    return <div className="pt-28 min-h-screen flex items-center justify-center"><div className="animate-pulse text-ink-soft">Loading...</div></div>;
+
+  function OptionCard(props: {
+    choice: PayChoice;
+    icon: React.ReactNode;
+    title: string;
+    subtitle: string;
+    badge?: { text: string; tone: 'fee' | 'free' };
+  }) {
+    const active = selected === props.choice;
+    return (
+      <button
+        onClick={() => setSelected(props.choice)}
+        className={`w-full text-left border-2 rounded-2xl p-4 flex items-center gap-4 transition-all ${
+          active ? 'border-accent bg-accent/5 shadow-sm' : 'border-line hover:border-ink-soft/40'
+        }`}
+      >
+        <div className={`shrink-0 ${active ? 'text-accent' : 'text-ink-soft'}`}>{props.icon}</div>
+        <div className="flex-1 min-w-0">
+          <div className="font-bold text-ink flex items-center gap-2 flex-wrap">
+            {props.title}
+            {props.badge && (
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                props.badge.tone === 'fee'
+                  ? 'bg-amber-100 text-amber-700'
+                  : 'bg-emerald-100 text-emerald-700'
+              }`}>
+                {props.badge.text}
+              </span>
+            )}
+          </div>
+          <div className="text-xs text-ink-soft mt-0.5">{props.subtitle}</div>
+        </div>
+        <div className={`w-5 h-5 rounded-full border-2 shrink-0 ${
+          active ? 'border-accent bg-accent' : 'border-line'
+        }`} />
+      </button>
+    );
   }
 
   return (
-    <div className="pt-28 pb-20 relative overflow-hidden min-h-screen flex items-center justify-center">
+    <div className="pt-28 pb-20 relative overflow-hidden min-h-screen">
       <div className="orb orb-pink animate-float-slow" style={{ width: 280, height: 280, top: '-60px', right: '-60px', opacity: 0.4 }} />
       <div className="max-content mx-auto px-6 md:px-12 lg:px-20 relative z-10">
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="max-w-md mx-auto text-center space-y-6">
-          <h1 className="text-heading font-display">
-            <span className="text-gradient-pink">
-              {error
-                ? (locale === 'zh' ? '處理失敗' : 'Payment Error')
-                : (locale === 'zh' ? '正在跳轉到付款頁面' : 'Redirecting to Payment')}
-            </span>
-          </h1>
-          <div>
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="max-w-md mx-auto space-y-6">
+          <div className="text-center space-y-2">
+            <h1 className="text-heading font-display">
+              <span className="text-gradient-pink">{locale === 'zh' ? '繳付尾數' : 'Pay Balance'}</span>
+            </h1>
             <p className="text-ink-soft text-sm">{venueName} • {booking.date}</p>
-            <p className="text-ink-soft mt-1 text-sm">
+            <p className="text-ink-soft text-sm">
               {locale === 'zh' ? '尾數' : 'Balance'}：
               <span className="font-bold text-ink ml-1">HK${balance.toLocaleString()}</span>
             </p>
           </div>
-          {!error && (
-            <p className="text-ink-soft text-xs">
+
+          <div className="space-y-3">
+            <OptionCard
+              choice="wallet"
+              icon={<Smartphone size={24} />}
+              title={locale === 'zh' ? '電子錢包' : 'E-Wallet'}
+              subtitle={locale === 'zh' ? 'AlipayHK / 支付寶 / WeChat Pay / PayMe' : 'AlipayHK / Alipay / WeChat Pay / PayMe'}
+              badge={{ text: locale === 'zh' ? '免手續費' : 'No fee', tone: 'free' }}
+            />
+            <OptionCard
+              choice="fps"
+              icon={<Building2 size={24} />}
+              title={locale === 'zh' ? '轉數快 FPS / 銀行轉賬' : 'FPS / Bank Transfer'}
+              subtitle={locale === 'zh' ? '過數後上載入數紙，職員核對後確認' : 'Transfer, upload the receipt, staff verifies'}
+              badge={{ text: locale === 'zh' ? '免手續費' : 'No fee', tone: 'free' }}
+            />
+            <OptionCard
+              choice="card"
+              icon={<CreditCard size={24} />}
+              title={locale === 'zh' ? '信用卡 / Apple Pay / Samsung Pay' : 'Card / Apple Pay / Samsung Pay'}
+              subtitle={
+                locale === 'zh'
+                  ? `手續費 HK$${cardFee.toLocaleString()}，合共 HK$${cardTotal.toLocaleString()}`
+                  : `HK$${cardFee.toLocaleString()} fee, total HK$${cardTotal.toLocaleString()}`
+              }
+              badge={{ text: locale === 'zh' ? '+1.5% 手續費' : '+1.5% fee', tone: 'fee' }}
+            />
+          </div>
+
+          {selected === 'card' && (
+            <p className="text-xs text-ink-soft text-center">
               {locale === 'zh'
-                ? 'KPay 安全收銀台支援信用卡 / FPS / AlipayHK / WeChat / PayMe / Apple Pay。請稍候…'
-                : 'KPay secure cashier supports card / FPS / AlipayHK / WeChat / PayMe / Apple Pay. Hang tight…'}
+                ? '💡 想慳返手續費？可以揀電子錢包或者轉數快付款。'
+                : '💡 Choose an e-wallet or FPS to skip the card fee.'}
             </p>
           )}
-          {submitting && !error && (
-            <div className="flex justify-center pt-2">
-              <div className="w-10 h-10 border-3 border-accent border-t-transparent rounded-full animate-spin" />
-            </div>
-          )}
-          {error && (
-            <>
-              <p className="text-sm text-rose-500">{error}</p>
-              <button
-                onClick={() => { setFired(false); }}
-                className="px-6 py-3 rounded-xl bg-accent text-white font-bold hover:bg-accent/90"
-              >
-                {locale === 'zh' ? '再試一次' : 'Try again'}
-              </button>
-            </>
-          )}
+
+          {error && <p className="text-sm text-rose-500 text-center">{error}</p>}
+
+          <button
+            disabled={!selected || submitting}
+            onClick={handleProceed}
+            className="w-full bg-accent text-white py-4 rounded-xl font-bold text-lg hover:bg-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {submitting
+              ? (locale === 'zh' ? '處理中…' : 'Processing…')
+              : selected === 'card'
+                ? (locale === 'zh' ? `付款 HK$${cardTotal.toLocaleString()}` : `Pay HK$${cardTotal.toLocaleString()}`)
+                : (locale === 'zh' ? `付款 HK$${balance.toLocaleString()}` : `Pay HK$${balance.toLocaleString()}`)}
+          </button>
         </motion.div>
       </div>
+      <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} />
     </div>
   );
 }

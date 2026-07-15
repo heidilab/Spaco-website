@@ -8,7 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getBooking, updateBookingPaymentMethod } from '@/lib/firestore';
 import { getVenueById } from '@/lib/venues';
 import { BookingRecord } from '@/types';
-import { LogIn } from 'lucide-react';
+import { LogIn, CreditCard, Smartphone, Building2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import AuthModal from '@/components/auth/AuthModal';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
@@ -16,6 +16,18 @@ import {
   loadBookingCheckoutDraft, clearBookingCheckoutDraft,
   type BookingCheckoutDraft,
 } from '@/lib/bookingCheckoutDraft';
+
+/** Card-network payments (credit card / Apple Pay / Samsung Pay) carry
+ *  a 1.5% surcharge passed through to the customer — KPay's fee on
+ *  card rails is materially higher than on e-wallets. Must match
+ *  CARD_SURCHARGE_RATE in /api/kpay/checkout. */
+const CARD_SURCHARGE_RATE = 0.015;
+
+function surchargeFor(amount: number): number {
+  return Math.round(amount * CARD_SURCHARGE_RATE * 100) / 100;
+}
+
+type PayChoice = 'card' | 'wallet' | 'fps';
 
 // Local helper — synthesizes a BookingRecord-like object from the draft
 // so the existing summary UI renders without changes. Kept in sync with
@@ -75,14 +87,8 @@ export default function PaymentMethodPage() {
   const [draft, setDraft] = useState<BookingCheckoutDraft | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // 'submitting' starts as true now — we auto-redirect to KPay on
-  // entry (no more picker UI). Stays true until the redirect fires
-  // OR an error occurs.
-  const [submitting, setSubmitting] = useState(true);
-  // `fired` is a one-shot guard for the auto-redirect useEffect so
-  // a re-render doesn't fire two createBooking calls. Declared HERE
-  // (before any early return) to keep the Hook order stable.
-  const [fired, setFired] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [selected, setSelected] = useState<PayChoice | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
 
   useEffect(() => {
@@ -93,7 +99,6 @@ export default function PaymentMethodPage() {
       // (Same fix as pay-balance: an initial-payment link clicked while
       // logged out used to drop the bookingId and strand the customer.)
       setLoading(false);
-      setSubmitting(false);
       return;
     }
 
@@ -133,17 +138,6 @@ export default function PaymentMethodPage() {
       })
       .finally(() => setLoading(false));
   }, [bookingId, user, authLoading, router, locale, slug, isDraft]);
-
-  // Auto-fire KPay redirect once booking + auth are ready. Declared
-  // BEFORE any early-return so the hook count stays stable across
-  // renders. `proceedToKpay` is a function declaration further down
-  // — JS hoists it, so the reference resolves.
-  useEffect(() => {
-    if (fired || !booking || authLoading || loading) return;
-    setFired(true);
-    proceedToKpay();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [booking, authLoading, loading]);
 
   if (authLoading || loading) {
     return (
@@ -185,11 +179,11 @@ export default function PaymentMethodPage() {
     );
   }
 
-  if (error || !booking) {
+  if (error && !booking) {
     return (
       <div className="pt-28 min-h-screen flex items-center justify-center px-6">
         <div className="max-w-md w-full text-center space-y-4">
-          <p className="text-rose-500">{error || 'Error'}</p>
+          <p className="text-rose-500">{error}</p>
           <button
             onClick={() => router.push('/account')}
             className="text-sm text-ink-soft hover:text-ink underline"
@@ -200,94 +194,108 @@ export default function PaymentMethodPage() {
       </div>
     );
   }
+  if (!booking) {
+    return (
+      <div className="pt-28 min-h-screen flex items-center justify-center">
+        <div className="animate-pulse text-ink-soft">Loading...</div>
+      </div>
+    );
+  }
 
   const venue = getVenueById(booking.venueId);
   const venueName = venue?.name[locale] || booking.branchSlug;
+  const pointsDiscount = booking.pointsDiscount || 0;
+  const chargeAmount = Math.max(1, booking.pricing.deposit - pointsDiscount);
+  const cardFee = surchargeFor(chargeAmount);
+  const cardTotal = Math.round((chargeAmount + cardFee) * 100) / 100;
 
-  async function proceedToKpay() {
-    if (!booking) return;
+  /** Draft mode: first (atomic, server-side) write of the booking —
+   *  this is also what holds the physical slot. Returns the real id. */
+  async function ensureBooking(paymentMethod: 'stripe' | 'fps'): Promise<string> {
+    if (!isDraft) {
+      await updateBookingPaymentMethod(booking!.id, paymentMethod);
+      return booking!.id;
+    }
+    if (!draft || !draft.refundDetails || !user) throw new Error('Draft missing');
+    const pendingExpiresAt =
+      Date.now() + PAYMENT_DETAILS.pendingHoldMinutes * 60 * 1000;
+    const createRes = await fetch('/api/bookings/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: user.uid,
+        whatsappPhone: draft.whatsappPhone,
+        venueId: draft.venueId,
+        branchSlug: draft.branchSlug,
+        date: draft.date,
+        startTime: draft.startTime,
+        endTime: draft.endTime,
+        ...(draft.endDate ? { endDate: draft.endDate } : {}),
+        hours: draft.hours,
+        guestCount: draft.guestCount,
+        adultCount: draft.adultCount,
+        childCount: draft.childCount,
+        isWeekend: draft.isWeekend,
+        addOns: draft.addOns,
+        hasBYOFood: draft.hasBYOFood,
+        pricing: draft.pricing,
+        status: 'awaiting_payment',
+        paymentMethod,
+        receiptUrl: null,
+        refundDetails: draft.refundDetails,
+        balanceDue: draft.effectiveBalanceDue ?? 0,
+        pendingExpiresAt,
+        depositRefund: null,
+        ...(draft.promoCode ? { promoCode: draft.promoCode } : {}),
+        ...(draft.promoCodeId ? { promoCodeId: draft.promoCodeId } : {}),
+        ...(typeof draft.promoDiscount === 'number' ? { promoDiscount: draft.promoDiscount } : {}),
+        ...(typeof draft.promoFreeDrinksCost === 'number'
+          ? { promoFreeDrinksCost: draft.promoFreeDrinksCost } : {}),
+        ...(typeof draft.pointsUsed === 'number' ? { pointsUsed: draft.pointsUsed } : {}),
+        ...(typeof draft.pointsDiscount === 'number' ? { pointsDiscount: draft.pointsDiscount } : {}),
+        ...(draft.marketingChannel ? { marketingChannel: draft.marketingChannel } : {}),
+        ...(draft.marketingChannelOther ? { marketingChannelOther: draft.marketingChannelOther } : {}),
+        ...(draft.packageSlug ? { packageSlug: draft.packageSlug } : {}),
+        ...(draft.decorationStyle ? { decorationStyle: draft.decorationStyle } : {}),
+      }),
+    });
+    if (!createRes.ok) {
+      const errData = await createRes.json().catch(() => ({}));
+      throw new Error((errData as { error?: string }).error || 'CREATE_FAILED');
+    }
+    const { bookingId: newId } = await createRes.json() as { bookingId: string };
+    clearBookingCheckoutDraft();
+    return newId;
+  }
+
+  async function handleProceed() {
+    if (!selected || !booking) return;
     setError(null);
     setSubmitting(true);
     try {
-      let effectiveBookingId = booking.id;
-
-      // Draft mode — this is the FIRST write of the booking to Firestore.
-      // createBooking is what creates the blocked_slot rows too, so the
-      // physical slot only gets held now that the customer commits to
-      // pay. 30-minute pendingExpiresAt countdown starts here.
-      if (isDraft) {
-        if (!draft || !draft.refundDetails || !user) {
-          throw new Error('Draft missing');
-        }
-        const pendingExpiresAt =
-          Date.now() + PAYMENT_DETAILS.pendingHoldMinutes * 60 * 1000;
-        const createRes = await fetch('/api/bookings/create', {
+      if (selected === 'fps') {
+        // FPS / bank transfer stays OFF KPay: customer transfers
+        // directly and uploads the receipt; admin verifies by hand.
+        const id = await ensureBooking('fps');
+        fetch('/api/email/offline-pending', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId: user.uid,
-            whatsappPhone: draft.whatsappPhone,
-            venueId: draft.venueId,
-            branchSlug: draft.branchSlug,
-            date: draft.date,
-            startTime: draft.startTime,
-            endTime: draft.endTime,
-            ...(draft.endDate ? { endDate: draft.endDate } : {}),
-            hours: draft.hours,
-            guestCount: draft.guestCount,
-            adultCount: draft.adultCount,
-            childCount: draft.childCount,
-            isWeekend: draft.isWeekend,
-            addOns: draft.addOns,
-            hasBYOFood: draft.hasBYOFood,
-            pricing: draft.pricing,
-            status: 'awaiting_payment',
-            paymentMethod: 'stripe',  // generic "online" — KPay's webhook
-                                      // records the actual method (card /
-                                      // FPS / AlipayHK / etc.) on each
-                                      // payments[] entry.
-            receiptUrl: null,
-            refundDetails: draft.refundDetails,
-            balanceDue: draft.effectiveBalanceDue ?? 0,
-            pendingExpiresAt,
-            depositRefund: null,
-            ...(draft.promoCode ? { promoCode: draft.promoCode } : {}),
-            ...(draft.promoCodeId ? { promoCodeId: draft.promoCodeId } : {}),
-            ...(typeof draft.promoDiscount === 'number' ? { promoDiscount: draft.promoDiscount } : {}),
-            ...(typeof draft.promoFreeDrinksCost === 'number'
-              ? { promoFreeDrinksCost: draft.promoFreeDrinksCost } : {}),
-            ...(typeof draft.pointsUsed === 'number' ? { pointsUsed: draft.pointsUsed } : {}),
-            ...(typeof draft.pointsDiscount === 'number' ? { pointsDiscount: draft.pointsDiscount } : {}),
-            ...(draft.marketingChannel ? { marketingChannel: draft.marketingChannel } : {}),
-            ...(draft.marketingChannelOther ? { marketingChannelOther: draft.marketingChannelOther } : {}),
-            ...(draft.packageSlug ? { packageSlug: draft.packageSlug } : {}),
-            ...(draft.decorationStyle ? { decorationStyle: draft.decorationStyle } : {}),
-          }),
-        });
-        if (!createRes.ok) {
-          const errData = await createRes.json().catch(() => ({}));
-          throw new Error((errData as { error?: string }).error || 'CREATE_FAILED');
-        }
-        const { bookingId: newId } = await createRes.json() as { bookingId: string };
-        effectiveBookingId = newId;
-        clearBookingCheckoutDraft();
-      } else {
-        await updateBookingPaymentMethod(booking.id, 'stripe');
+          body: JSON.stringify({ bookingId: id }),
+        }).catch((err) => console.warn('[offline-pending email] failed:', err));
+        router.push(`/book/${slug}/pay-offline/${id}`);
+        return;
       }
 
-      // Skip the method-picker page — KPay's hosted cashier supports
-      // card + FPS + AlipayHK + WeChat HK + PayMe + Apple Pay all in
-      // one place, so a Spaco-side picker is redundant.
-      const pointsDiscount = booking.pointsDiscount || 0;
-      const chargeAmount = Math.max(1, booking.pricing.deposit - pointsDiscount);
+      const id = await ensureBooking('stripe');
       const res = await fetch('/api/kpay/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          bookingId: effectiveBookingId,
+          bookingId: id,
           amount: chargeAmount,
           venueName,
           customerEmail: user?.email,
+          methodGroup: selected,   // 'card' → +1.5%, 'wallet' → none
         }),
       });
       if (!res.ok) throw new Error(`Checkout API ${res.status}`);
@@ -308,48 +316,118 @@ export default function PaymentMethodPage() {
     }
   }
 
+  function OptionCard(props: {
+    choice: PayChoice;
+    icon: React.ReactNode;
+    title: string;
+    subtitle: string;
+    badge?: { text: string; tone: 'fee' | 'free' };
+  }) {
+    const active = selected === props.choice;
+    return (
+      <button
+        onClick={() => setSelected(props.choice)}
+        className={`w-full text-left border-2 rounded-2xl p-4 flex items-center gap-4 transition-all ${
+          active ? 'border-accent bg-accent/5 shadow-sm' : 'border-line hover:border-ink-soft/40'
+        }`}
+      >
+        <div className={`shrink-0 ${active ? 'text-accent' : 'text-ink-soft'}`}>{props.icon}</div>
+        <div className="flex-1 min-w-0">
+          <div className="font-bold text-ink flex items-center gap-2 flex-wrap">
+            {props.title}
+            {props.badge && (
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                props.badge.tone === 'fee'
+                  ? 'bg-amber-100 text-amber-700'
+                  : 'bg-emerald-100 text-emerald-700'
+              }`}>
+                {props.badge.text}
+              </span>
+            )}
+          </div>
+          <div className="text-xs text-ink-soft mt-0.5">{props.subtitle}</div>
+        </div>
+        <div className={`w-5 h-5 rounded-full border-2 shrink-0 ${
+          active ? 'border-accent bg-accent' : 'border-line'
+        }`} />
+      </button>
+    );
+  }
 
   return (
-    <div className="pt-28 pb-20 relative overflow-hidden min-h-screen flex items-center justify-center">
+    <div className="pt-28 pb-20 relative overflow-hidden min-h-screen">
       <div className="orb orb-pink animate-float-slow" style={{ width: 280, height: 280, top: '-60px', right: '-60px', opacity: 0.4 }} />
       <div className="max-content mx-auto px-6 md:px-12 lg:px-20 relative z-10">
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="max-w-md mx-auto text-center space-y-6">
-          <h1 className="text-heading font-display">
-            <span className="text-gradient-pink">
-              {error
-                ? (locale === 'zh' ? '處理失敗' : 'Payment Error')
-                : (locale === 'zh' ? '正在跳轉到付款頁面' : 'Redirecting to Payment')}
-            </span>
-          </h1>
-          <p className="text-ink-soft text-sm">
-            {locale === 'zh' ? '應付金額' : 'Amount due'}：
-            <span className="font-bold text-ink ml-1">HK${booking.pricing.deposit.toLocaleString()}</span>
-          </p>
-          {!error && (
-            <p className="text-ink-soft text-xs">
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="max-w-md mx-auto space-y-6">
+          <div className="text-center space-y-2">
+            <h1 className="text-heading font-display">
+              <span className="text-gradient-pink">{locale === 'zh' ? '選擇付款方式' : 'Choose Payment Method'}</span>
+            </h1>
+            <p className="text-ink-soft text-sm">{venueName} • {booking.date}</p>
+            <p className="text-ink-soft text-sm">
+              {locale === 'zh' ? '應付金額' : 'Amount due'}：
+              <span className="font-bold text-ink ml-1">HK${chargeAmount.toLocaleString()}</span>
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            <OptionCard
+              choice="wallet"
+              icon={<Smartphone size={24} />}
+              title={locale === 'zh' ? '電子錢包' : 'E-Wallet'}
+              subtitle={locale === 'zh' ? 'AlipayHK / 支付寶 / WeChat Pay / PayMe' : 'AlipayHK / Alipay / WeChat Pay / PayMe'}
+              badge={{ text: locale === 'zh' ? '免手續費' : 'No fee', tone: 'free' }}
+            />
+            <OptionCard
+              choice="fps"
+              icon={<Building2 size={24} />}
+              title={locale === 'zh' ? '轉數快 FPS / 銀行轉賬' : 'FPS / Bank Transfer'}
+              subtitle={locale === 'zh' ? '過數後上載入數紙，職員核對後確認' : 'Transfer, upload the receipt, staff verifies'}
+              badge={{ text: locale === 'zh' ? '免手續費' : 'No fee', tone: 'free' }}
+            />
+            <OptionCard
+              choice="card"
+              icon={<CreditCard size={24} />}
+              title={locale === 'zh' ? '信用卡 / Apple Pay / Samsung Pay' : 'Card / Apple Pay / Samsung Pay'}
+              subtitle={
+                locale === 'zh'
+                  ? `手續費 HK$${cardFee.toLocaleString()}，合共 HK$${cardTotal.toLocaleString()}`
+                  : `HK$${cardFee.toLocaleString()} fee, total HK$${cardTotal.toLocaleString()}`
+              }
+              badge={{ text: locale === 'zh' ? '+1.5% 手續費' : '+1.5% fee', tone: 'fee' }}
+            />
+          </div>
+
+          {selected === 'card' && (
+            <p className="text-xs text-ink-soft text-center">
               {locale === 'zh'
-                ? 'KPay 安全收銀台支援信用卡 / FPS / AlipayHK / WeChat / PayMe / Apple Pay。請稍候…'
-                : 'KPay secure cashier supports card / FPS / AlipayHK / WeChat / PayMe / Apple Pay. Hang tight…'}
+                ? '💡 想慳返手續費？可以揀電子錢包或者轉數快付款。'
+                : '💡 Choose an e-wallet or FPS to skip the card fee.'}
             </p>
           )}
-          {submitting && !error && (
-            <div className="flex justify-center pt-2">
-              <div className="w-10 h-10 border-3 border-accent border-t-transparent rounded-full animate-spin" />
-            </div>
-          )}
-          {error && (
-            <>
-              <p className="text-sm text-rose-500">{error}</p>
-              <button
-                onClick={() => { setFired(false); }}
-                className="px-6 py-3 rounded-xl bg-accent text-white font-bold hover:bg-accent/90"
-              >
-                {locale === 'zh' ? '再試一次' : 'Try again'}
-              </button>
-            </>
-          )}
+
+          {error && <p className="text-sm text-rose-500 text-center">{error}</p>}
+
+          <button
+            disabled={!selected || submitting}
+            onClick={handleProceed}
+            className="w-full bg-accent text-white py-4 rounded-xl font-bold text-lg hover:bg-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {submitting
+              ? (locale === 'zh' ? '處理中…' : 'Processing…')
+              : selected === 'card'
+                ? (locale === 'zh' ? `付款 HK$${cardTotal.toLocaleString()}` : `Pay HK$${cardTotal.toLocaleString()}`)
+                : (locale === 'zh' ? `付款 HK$${chargeAmount.toLocaleString()}` : `Pay HK$${chargeAmount.toLocaleString()}`)}
+          </button>
+
+          <p className="text-xs text-ink-soft text-center">
+            {locale === 'zh'
+              ? '網上付款經 KPay 安全處理；轉數快為銀行直接過數。'
+              : 'Online payments are securely processed by KPay; FPS is a direct bank transfer.'}
+          </p>
         </motion.div>
       </div>
+      <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} />
     </div>
   );
 }

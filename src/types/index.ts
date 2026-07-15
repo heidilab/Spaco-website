@@ -228,7 +228,15 @@ export interface BookingRecord {
     kind?: 'initial' | 'balance' | 'topup';
     recordedBy: string;     // admin uid OR 'stripe-webhook' for automated
     recordedAt: unknown;    // Firestore Timestamp / ISO string
+    /** HK$ card-network surcharge the CUSTOMER paid on top of `amount`
+     *  (KPay card/Apple Pay/Google Pay +1.5%). Not part of the booking's
+     *  own math — `amount` is already the base credited to the booking. */
+    cardSurcharge?: number;
   }>;
+  /** Pending card surcharges keyed by KPay managedOutTradeNo — written
+   *  at checkout, consumed by the KPay webhook to split base vs
+   *  surcharge on the resulting payment entry. */
+  kpaySurcharges?: Record<string, number>;
   /** Audit log of KPay refunds issued against this booking's card/QR
    *  payments (via /api/kpay/refund → KPay /v1/refund). Recorded by the
    *  REFUND webhook; does not affect balanceDue/status. */

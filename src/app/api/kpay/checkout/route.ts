@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { adminDb } from '@/lib/firebaseAdmin';
 import {
   createManagedOrder,
   buildCashierRedirectUrl,
@@ -7,6 +8,31 @@ import {
 } from '@/lib/kpay';
 
 export const runtime = 'nodejs';
+
+/**
+ * Payment-method groups shown on the hosted cashier.
+ *
+ * card   → card-network rails (credit card / Apple Pay / Google Pay;
+ *          Samsung Pay rides CARD). KPay's fee is higher here, so the
+ *          customer pays a CARD_SURCHARGE_RATE surcharge on top.
+ * wallet → e-wallets with no surcharge.
+ *
+ * FPS is deliberately in NEITHER list — FPS is handled off-KPay via
+ * the pay-offline flow (bank transfer + receipt upload + admin
+ * verification), so the cashier must never offer it.
+ */
+const PAY_METHOD_GROUPS: Record<'card' | 'wallet', string[]> = {
+  card: ['CARD', 'APPLEPAY', 'GOOGLEPAY'],
+  wallet: ['ALIPAYHK', 'ALIPAYCN', 'WXPAY', 'PAYME'],
+};
+
+/** 1.5% card surcharge, rounded to the cent. (Route files may only
+ *  export Next.js handler names, so this stays module-local.) */
+const CARD_SURCHARGE_RATE = 0.015;
+
+function cardSurchargeFor(amount: number): number {
+  return Math.round(amount * CARD_SURCHARGE_RATE * 100) / 100;
+}
 
 /**
  * POST /api/kpay/checkout
@@ -37,17 +63,26 @@ export async function POST(req: NextRequest) {
       amount,
       venueName,
       isBalancePayment,
+      methodGroup,
     } = await req.json() as {
       bookingId: string;
       amount: number;
       venueName?: string;
       customerEmail?: string;
       isBalancePayment?: boolean;
+      /** 'card' → +1.5% surcharge, card rails only. 'wallet' → e-wallets
+       *  only, no surcharge. Omitted → legacy behaviour (all methods,
+       *  no surcharge) so old clients keep working mid-deploy. */
+      methodGroup?: 'card' | 'wallet';
     };
 
     if (!bookingId || !amount || amount <= 0) {
       return NextResponse.json({ error: 'bookingId + positive amount required' }, { status: 400 });
     }
+
+    const surcharge = methodGroup === 'card' ? cardSurchargeFor(amount) : 0;
+    const chargeTotal = Math.round((amount + surcharge) * 100) / 100;
+    const payMethodOrder = methodGroup ? PAY_METHOD_GROUPS[methodGroup] : undefined;
 
     // Compose a unique managedOutTradeNo. KPay limit: 32 chars.
     // Format: B<bookingId-first-12>_<P|B><epoch-seconds>
@@ -62,20 +97,36 @@ export async function POST(req: NextRequest) {
     const notifyUrl = `${origin}/api/kpay/webhook`;
     const returnUrl = `${origin}/zh/book/success?booking_id=${bookingId}`;
 
+    // Record the surcharge BEFORE creating the KPay order, keyed by
+    // managedOutTradeNo, so the webhook credits only the base amount
+    // toward the booking's balance and books the surcharge separately.
+    // Fire-and-tolerate: a missing booking doc (diagnostic orders) is
+    // fine — the webhook treats absent records as zero surcharge.
+    if (surcharge > 0) {
+      try {
+        await adminDb.collection('bookings').doc(bookingId).update({
+          [`kpaySurcharges.${managedOutTradeNo}`]: surcharge,
+        });
+      } catch (err) {
+        console.warn('[kpay/checkout] surcharge record skipped:', err);
+      }
+    }
+
     const create = await createManagedOrder({
       managedOutTradeNo,
-      payAmount: amount,
+      payAmount: chargeTotal,
       returnUrl,
       notifyUrl,
       itemList: [
         {
           itemNo: bookingId.slice(0, 32),
-          itemName: `SPACO — ${venueName || 'Booking'}${isBalancePayment ? ' (Balance)' : ''}`,
-          price: amount,
+          itemName: `SPACO — ${venueName || 'Booking'}${isBalancePayment ? ' (Balance)' : ''}${surcharge > 0 ? ' +1.5% card fee' : ''}`,
+          price: chargeTotal,
           quantity: 1,
         },
       ],
       orderRemark: `Booking ID: ${bookingId}`,
+      payMethodOrder,
     });
 
     if (!create.ok || !create.managedOrderNo) {
@@ -94,6 +145,9 @@ export async function POST(req: NextRequest) {
       sessionUrl: redirectUrl,    // mirror stripe/checkout's response shape
       managedOrderNo: create.managedOrderNo,
       managedOutTradeNo,
+      baseAmount: amount,
+      surcharge,
+      chargeTotal,
     });
   } catch (err) {
     console.error('[kpay/checkout] error:', err);

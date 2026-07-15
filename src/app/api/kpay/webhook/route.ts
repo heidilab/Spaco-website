@@ -207,24 +207,30 @@ export async function POST(req: NextRequest) {
   }
 
   // Append a payments[] entry. KPay's payAmount is the actual charged
-  // amount in HKD with 2 dp.
+  // amount in HKD with 2 dp — which INCLUDES any card surcharge the
+  // customer paid. Only the base amount counts toward the booking's
+  // balance; the surcharge is a pass-through of KPay's card fee.
+  const surcharge = booking.kpaySurcharges?.[managedTradeNo] || 0;
+  const creditAmount = Math.max(0, Math.round((payload.payAmount - surcharge) * 100) / 100);
+
   const payments = booking.payments || [];
   const realGrandTotal =
     (booking.pricing?.subtotal || 0) + (booking.pricing?.securityDeposit || 0);
   const loggedSum = payments.reduce((s, p) => s + (p.amount || 0), 0);
-  const newBalanceDue = Math.max(0, realGrandTotal - loggedSum - payload.payAmount);
+  const newBalanceDue = Math.max(0, realGrandTotal - loggedSum - creditAmount);
 
   const updates: Record<string, unknown> = {
     payments: FieldValue.arrayUnion({
       rentalAmount: 0,
       addOnAmount: 0,
       depositAmount: 0,
-      amount: payload.payAmount,
+      amount: creditAmount,
       method: 'stripe',  // KPay is a Stripe-like card processor; we'll add a 'kpay' method in a follow-up
       kind: isBalancePayment ? 'balance' : 'initial',
-      note: 'KPay',
+      note: surcharge > 0 ? `KPay（另收 1.5% 卡類手續費 HK$${surcharge}）` : 'KPay',
       recordedBy: 'kpay-webhook',
       recordedAt: new Date().toISOString(),
+      ...(surcharge > 0 ? { cardSurcharge: surcharge } : {}),
       // KPay-specific metadata for audit + idempotency
       kpayTransactionNo: payload.transactionNo,
       kpayOrderNo: payload.orderNo,

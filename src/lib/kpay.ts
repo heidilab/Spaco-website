@@ -297,6 +297,14 @@ export interface CreateManagedOrderInput {
     quantity: number;
   }>;
   orderRemark?: string;
+  /**
+   * Which payment methods the hosted cashier shows, in display order
+   * (docs: properties.md "Pay Method Order"). Methods not listed are
+   * HIDDEN. Values: CARD, ALIPAYCN, ALIPAYHK, WXPAY, UNIONPAY, PAYME,
+   * FPS, APPLEPAY, GOOGLEPAY, OCTOPUS. Omit → cashier shows every
+   * method enabled on the merchant.
+   */
+  payMethodOrder?: string[];
 }
 
 export interface CreateManagedOrderResult {
@@ -322,6 +330,7 @@ export async function createManagedOrder(
     notifyUrl: input.notifyUrl,
     returnUrl: input.returnUrl,
     orderRemark: input.orderRemark || '',
+    ...(input.payMethodOrder?.length ? { payMethodOrder: input.payMethodOrder } : {}),
     itemList: input.itemList.map((i) => ({
       itemNo: i.itemNo,
       itemName: i.itemName,
