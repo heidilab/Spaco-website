@@ -65,14 +65,26 @@ export async function GET(request: NextRequest) {
     return ts <= now;
   };
 
+  // A booking that already has ANY payment recorded must NEVER be swept
+  // — a paid deposit (>$10k booking pays 50%, so it stays awaiting_payment
+  // legitimately) or any partial payment means real money changed hands.
+  // Before this guard, a KPay-paid deposit booking got auto-cancelled at
+  // the 30-min mark and its slot resold.
+  const isPaid = (d: { data: () => { payments?: unknown[] } }) => {
+    const p = d.data().payments;
+    return Array.isArray(p) && p.length > 0;
+  };
+
   const flipped: string[] = [];
   const candidates = [
-    ...pendingSnap.docs.filter(isExpired),
+    ...pendingSnap.docs.filter((d) => isExpired(d) && !isPaid(d)),
     // Sweep ANY paymentMethod (incl. Stripe — its checkout session
-    // expires at the same 30-min mark). Skip only when the customer
-    // already uploaded an offline receipt; those rows go to admin
-    // review on /admin/receipts and shouldn't auto-flip.
-    ...offlineAwaitingSnap.docs.filter((d) => isExpired(d) && !d.data().receiptUrl),
+    // expires at the same 30-min mark). Skip when the customer already
+    // uploaded an offline receipt (goes to /admin/receipts review) OR
+    // when any payment is already recorded on the booking.
+    ...offlineAwaitingSnap.docs.filter(
+      (d) => isExpired(d) && !d.data().receiptUrl && !isPaid(d),
+    ),
   ];
 
   const origin = request.nextUrl.origin;

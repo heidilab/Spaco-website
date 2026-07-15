@@ -80,6 +80,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'bookingId + positive amount required' }, { status: 400 });
     }
 
+    // Double-charge guard — refuse to mint a second KPay order for a
+    // booking that's already been paid (two-tab / re-open race). The
+    // webhook is idempotent per transactionNo, but two DISTINCT orders
+    // for one booking each produce a distinct transactionNo and both
+    // would record. This is the front-line stop.
+    const guardSnap = await adminDb.collection('bookings').doc(bookingId).get();
+    if (guardSnap.exists) {
+      const gb = guardSnap.data() as {
+        status?: string;
+        payments?: unknown[];
+        balanceDue?: number;
+      };
+      const paidCount = Array.isArray(gb.payments) ? gb.payments.length : 0;
+      if (gb.status === 'completed') {
+        return NextResponse.json({ error: 'ALREADY_PAID', message: '此預訂已完成付款' }, { status: 409 });
+      }
+      if (!isBalancePayment && paidCount > 0) {
+        return NextResponse.json({ error: 'DEPOSIT_ALREADY_PAID', message: '此預訂已付訂金' }, { status: 409 });
+      }
+      if (isBalancePayment && (gb.balanceDue ?? 0) <= 0) {
+        return NextResponse.json({ error: 'NO_BALANCE_DUE', message: '此預訂沒有未繳尾數' }, { status: 409 });
+      }
+    }
+
     const surcharge = methodGroup === 'card' ? cardSurchargeFor(amount) : 0;
     const chargeTotal = Math.round((amount + surcharge) * 100) / 100;
     const payMethodOrder = methodGroup ? PAY_METHOD_GROUPS[methodGroup] : undefined;

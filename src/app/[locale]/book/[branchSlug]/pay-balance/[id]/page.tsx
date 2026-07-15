@@ -85,8 +85,15 @@ export default function PayBalancePage() {
           methodGroup: selected,
         }),
       });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        setError((data as { message?: string }).message
+          || (locale === 'zh' ? '此預訂已付款' : 'This booking is already paid'));
+        setSubmitting(false);
+        return;
+      }
       if (!res.ok) throw new Error(`Checkout API ${res.status}`);
-      const { sessionUrl } = await res.json();
+      const { sessionUrl } = data as { sessionUrl?: string };
       if (!sessionUrl) throw new Error('No checkout URL returned');
       window.location.href = sessionUrl;
     } catch (err) {

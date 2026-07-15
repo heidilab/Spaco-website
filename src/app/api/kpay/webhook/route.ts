@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { verifyNotifyMulti, isTransactionSuccess } from '@/lib/kpay';
-import { pushBookingToCalendar, updateBookingOnCalendar } from '@/lib/googleCalendar';
-import type { BookingRecord, UserProfile } from '@/types';
+import { finalizeConfirmedBooking, computeGrandTotal } from '@/lib/finalizeBooking';
+import type { BookingRecord } from '@/types';
 
 export const runtime = 'nodejs';
 
@@ -198,26 +198,45 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, notFound: true, managedTradeNo });
   }
 
-  // Idempotency — skip if we've already recorded this transaction.
-  const alreadyRecorded = (booking.payments || []).some(
-    (p) => (p as { kpayTransactionNo?: string }).kpayTransactionNo === payload.transactionNo,
-  );
-  if (alreadyRecorded) {
+  // Idempotency — reserve this transaction atomically BEFORE any write.
+  // arrayUnion can't dedupe (each entry embeds a fresh recordedAt), and
+  // KPay fires 2 immediate retries on slow ACK, so a plain read-check
+  // races into duplicate payments[] rows (the #WIiQYL2I $31,920 class).
+  // A create()-based marker makes recording at-most-once.
+  const markerRef = adminDb.collection('_kpay_webhook_events').doc(payload.transactionNo);
+  try {
+    await markerRef.create({
+      transactionNo: payload.transactionNo,
+      bookingId: bookingRef.id,
+      isBalancePayment,
+      processedAt: FieldValue.serverTimestamp(),
+    });
+  } catch {
+    // ALREADY_EXISTS — a concurrent retry beat us. Skip.
     return NextResponse.json({ ok: true, alreadyRecorded: true });
   }
 
-  // Append a payments[] entry. KPay's payAmount is the actual charged
-  // amount in HKD with 2 dp — which INCLUDES any card surcharge the
-  // customer paid. Only the base amount counts toward the booking's
-  // balance; the surcharge is a pass-through of KPay's card fee.
+  // KPay's payAmount INCLUDES any card surcharge the customer paid.
+  // Only the base amount counts toward the booking balance; the
+  // surcharge is a pass-through of KPay's card fee.
   const surcharge = booking.kpaySurcharges?.[managedTradeNo] || 0;
   const creditAmount = Math.max(0, Math.round((payload.payAmount - surcharge) * 100) / 100);
 
-  const payments = booking.payments || [];
-  const realGrandTotal =
-    (booking.pricing?.subtotal || 0) + (booking.pricing?.securityDeposit || 0);
-  const loggedSum = payments.reduce((s, p) => s + (p.amount || 0), 0);
-  const newBalanceDue = Math.max(0, realGrandTotal - loggedSum - creditAmount);
+  // Balance from the CANONICAL primitives formula (subtracts promo +
+  // points) — NOT pricing.subtotal, which drifts pre/post-promo. Old
+  // code used subtotal+securityDeposit and ignored promo/points, so
+  // every promo/points booking was left with a phantom balance.
+  const loggedSum = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+  const grandTotal = computeGrandTotal(booking);
+  const newBalanceDue = Math.max(0, Math.round((grandTotal - loggedSum - creditAmount) * 100) / 100);
+
+  // A successful payment CONFIRMS the booking even if a balance remains
+  // (matches the old Stripe semantics). Never downgrade a booking that's
+  // already completed, and never resurrect one the cron/admin already
+  // killed without flagging it (the slot may have been resold).
+  const deadStates = ['payment_not_completed', 'cancelled'];
+  const wasDead = deadStates.includes(booking.status || '');
+  const nextStatus = booking.status === 'completed' ? 'completed' : 'confirmed';
 
   const updates: Record<string, unknown> = {
     payments: FieldValue.arrayUnion({
@@ -225,20 +244,23 @@ export async function POST(req: NextRequest) {
       addOnAmount: 0,
       depositAmount: 0,
       amount: creditAmount,
-      method: 'stripe',  // KPay is a Stripe-like card processor; we'll add a 'kpay' method in a follow-up
+      method: 'kpay',
       kind: isBalancePayment ? 'balance' : 'initial',
       note: surcharge > 0 ? `KPay（另收 1.5% 卡類手續費 HK$${surcharge}）` : 'KPay',
       recordedBy: 'kpay-webhook',
       recordedAt: new Date().toISOString(),
       ...(surcharge > 0 ? { cardSurcharge: surcharge } : {}),
-      // KPay-specific metadata for audit + idempotency
       kpayTransactionNo: payload.transactionNo,
       kpayOrderNo: payload.orderNo,
       kpayPayMethodId: payload.payMethodId,
     }),
     balanceDue: newBalanceDue,
-    status: newBalanceDue === 0 ? 'confirmed' : 'awaiting_payment',
-    paymentMethod: 'stripe',
+    status: nextStatus,
+    paymentMethod: 'kpay',
+    // Clear the 30-min hold so the expire cron never sweeps a paid booking.
+    pendingExpiresAt: FieldValue.delete(),
+    // Consume the surcharge marker so a retry / re-read can't re-apply it.
+    ...(surcharge > 0 ? { [`kpaySurcharges.${managedTradeNo}`]: FieldValue.delete() } : {}),
     updatedAt: FieldValue.serverTimestamp(),
     ...(newBalanceDue === 0 && !booking.balancePaidAt
       ? { balancePaidAt: FieldValue.serverTimestamp() }
@@ -249,32 +271,19 @@ export async function POST(req: NextRequest) {
   };
   await bookingRef.update(updates);
 
-  // Push to Google Calendar — gated on payment status inside the helper.
-  try {
-    const userSnap = booking.userId
-      ? await adminDb.collection('users').doc(booking.userId).get()
-      : null;
-    const customerName = userSnap?.exists
-      ? (userSnap.data() as UserProfile).displayName
-      : undefined;
-    const fresh = { ...booking, ...updates } as BookingRecord;
-    const origin = req.nextUrl.origin;
-    const redirectUri = `${origin}/api/google/callback`;
-    if (fresh.googleEventId) {
-      await updateBookingOnCalendar(redirectUri, { booking: fresh, customerName });
-    } else {
-      const newEventId = await pushBookingToCalendar(redirectUri, {
-        booking: fresh,
-        customerName,
-      });
-      if (newEventId) {
-        await bookingRef.update({ googleEventId: newEventId });
-      }
-    }
-  } catch (err) {
-    console.warn('[kpay/webhook] gcal sync failed:', err);
-    // Non-fatal — booking is already updated.
+  if (wasDead) {
+    console.warn('[kpay/webhook] RESURRECTED a', booking.status, 'booking on payment —',
+      bookingRef.id, '— slot may have been resold; finalize will rebuild blocked_slots. Review manually.');
   }
+
+  // All post-payment side-effects (blocked_slots restore, loyalty/promo,
+  // confirmation email, lock passcode, gcal, staff + supplier notify) —
+  // shared with the Stripe rail so KPay can't silently skip any of them.
+  await finalizeConfirmedBooking(bookingRef.id, {
+    isBalancePayment,
+    paymentMethodLabel: 'KPay',
+    origin: req.nextUrl.origin,
+  });
 
   return NextResponse.json({ ok: true, bookingId: bookingRef.id });
 }
