@@ -212,7 +212,12 @@ function BookingCard({
     (booking.status === 'pending' || booking.status === 'awaiting_payment')
     && booking.paymentMethod !== 'stripe'
     && stillInHoldWindow;
-  const showPayBalance = booking.status === 'confirmed' && balanceDue > 0;
+  // See my-bookings/[id]/page.tsx — key on "has paid something" rather
+  // than status === 'confirmed' so a balance is always payable on an
+  // active booking the customer already paid into.
+  const hasPaidSomething = (booking.payments?.length ?? 0) > 0;
+  const showPayBalance = balanceDue > 0 && hasPaidSomething
+    && !['cancelled', 'payment_not_completed', 'completed'].includes(booking.status || '');
 
   const whatsappMsg =
     locale === 'zh'

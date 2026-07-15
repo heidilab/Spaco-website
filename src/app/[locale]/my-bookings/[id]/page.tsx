@@ -117,7 +117,16 @@ export default function MyBookingDetailPage() {
   const canModify = (booking.status === 'confirmed' || booking.status === 'awaiting_payment')
     && hoursUntilStart >= 24;
 
-  const showPayBalance = booking.status === 'confirmed' && balanceDue > 0;
+  // Show the "pay balance" button whenever a balance is owed on a booking
+  // the customer has ALREADY paid into (payments[] non-empty) and that
+  // isn't cancelled / expired / completed. Keying on payments instead of
+  // status === 'confirmed' means a booking still stuck at
+  // 'awaiting_payment' (e.g. a deposit paid via the pre-batch-1 KPay
+  // webhook, or an admin add-on top-up that raised the balance) still
+  // lets the customer pay — previously the button silently vanished.
+  const hasPaidSomething = (booking.payments?.length ?? 0) > 0;
+  const showPayBalance = balanceDue > 0 && hasPaidSomething
+    && !['cancelled', 'payment_not_completed', 'completed'].includes(booking.status || '');
 
   const overnightSuffix = booking.endDate && booking.endDate !== booking.date
     ? (locale === 'zh' ? `（翌日 ${booking.endDate}）` : ` (next day ${booking.endDate})`)
