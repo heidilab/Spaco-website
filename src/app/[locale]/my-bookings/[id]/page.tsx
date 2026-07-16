@@ -93,17 +93,24 @@ export default function MyBookingDetailPage() {
   const venue = getVenueById(booking.venueId);
   const venueName = venue?.name[locale] || booking.branchSlug;
   const securityDeposit = booking.pricing.securityDeposit ?? 0;
-  // grandTotal derived from primitives so it's correct regardless of
-  // whether `pricing.subtotal` is stored PRE- or POST-promo.
-  // See commit 295b68b + PaymentHistory.tsx for the rationale.
+  // Grand total = the full bill BEFORE points, matching the payment page
+  // (訂單總計 = subtotal − promo + securityDeposit). Points are NOT folded
+  // into the total — they're a redemption shown as a separate line below,
+  // exactly like cash paid. Folding points in here (the old code did
+  // − pointsDiscount) made the total read 1900 while 已付 showed 3400, so
+  // the two looked swapped. Derived from primitives so it's correct
+  // whether pricing.subtotal is stored PRE- or POST-promo.
   const grandTotal = Math.max(
     0,
     (booking.pricing.baseCharge || 0)
       + (booking.pricing.addOnTotal || 0)
-      - (booking.promoDiscount || 0)
-      - (booking.pointsDiscount || 0),
+      - (booking.promoDiscount || 0),
   ) + securityDeposit;
   const balanceDue = booking.balanceDue ?? 0;
+  // Actual cash paid = sum of logged payments (single source of truth).
+  // The old code showed pricing.deposit here (the deposit installment),
+  // which for a points-redeemed booking overstated what was paid.
+  const paidSoFar = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
   const peopleLine = (booking.childCount ?? 0) > 0
     ? (locale === 'zh'
         ? `${booking.guestCount} 人 (${booking.adultCount ?? booking.guestCount} 成人 + ${booking.childCount} 小童)`
@@ -267,7 +274,7 @@ export default function MyBookingDetailPage() {
             </div>
             <div className="flex justify-between pt-1">
               <span className="text-ink-soft">{locale === 'zh' ? '已付' : 'Paid'}</span>
-              <span>HK${booking.pricing.deposit.toLocaleString()}</span>
+              <span>HK${paidSoFar.toLocaleString()}</span>
             </div>
             {(booking.pointsDiscount ?? 0) > 0 && (
               <div className="flex justify-between text-violet-700">

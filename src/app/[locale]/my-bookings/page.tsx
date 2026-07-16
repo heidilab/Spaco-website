@@ -267,13 +267,12 @@ function BookingCard({
                 0,
                 (booking.pricing.baseCharge || 0)
                   + (booking.pricing.addOnTotal || 0)
-                  - (booking.promoDiscount || 0)
-                  - (booking.pointsDiscount || 0),
+                  - (booking.promoDiscount || 0),
               ) + (booking.pricing.securityDeposit ?? 0)
             ).toLocaleString()}
           </p>
           <p className="text-xs text-ink-soft">
-            {locale === 'zh' ? '應付' : 'Due'}: HK${booking.pricing.deposit.toLocaleString()}
+            {locale === 'zh' ? '已付' : 'Paid'}: HK${(booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0).toLocaleString()}
           </p>
           {balanceDue > 0 && (
             <p className="text-xs text-amber-700 mt-0.5">
