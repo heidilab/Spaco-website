@@ -19,8 +19,6 @@ import { useParams } from 'next/navigation';
 import { useRouter, Link } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
 import { getBooking, getBlockedSlots } from '@/lib/firestore';
-import { doc, updateDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
 import { getVenueById, venuesSharingSpace } from '@/lib/venues';
 import {
   addOns as addOnCatalog, calculatePricing, noBBQVenues, freeDrinksVenues,
@@ -236,57 +234,49 @@ export default function ModifyBookingPage() {
   async function handleSave() {
     if (!booking || subtotalDiff <= 0 || !newPricing) return;
     if (timeChanged && timeConflict) return;
-    // Extending the TIME rewrites the venue's blocked-slot schedule, which
-    // only staff can write under the Firestore rules — a customer self-save
-    // would fail with a permissions error. So route time changes to staff.
-    // Add-on / guest-count changes don't touch the schedule and are saved
-    // directly below. (Server-side self-service time change is Batch A2.)
-    if (timeChanged) {
-      setError(locale === 'zh'
-        ? '更改時間需要職員協助 — 請 WhatsApp 聯絡我們安排。加購 / 人數更改可以喺呢度自助修改。'
-        : 'Changing the time needs staff help — please WhatsApp us. Add-on / guest changes can still be done here.');
-      return;
-    }
+    if (!user) { setError(locale === 'zh' ? '請先登入' : 'Please sign in'); return; }
     setSubmitting(true);
     try {
-      // Add-on / guest-count change only (time unchanged) → this does NOT
-      // touch blocked_slots, so the owner can write it directly under the
-      // Firestore rules. Recompute pricing + balanceDue with the canonical
-      // GROSS formula (matches computeGrandTotal): grandTotal =
-      // max(0, baseCharge+addOnTotal − promo − points) + securityDeposit,
-      // balanceDue = max(0, grandTotal − Σ payments). Keep securityDeposit
-      // sticky (don't auto-bump on a customer edit).
-      let promoDiscount = booking.promoDiscount || 0;
-      let promoPatch: Record<string, unknown> = {};
-      const isFreeDrinksPromo =
-        typeof booking.promoFreeDrinksCost === 'number' && booking.promoFreeDrinksCost > 0;
-      const hasDrinksInCart = cart.some((a) => a.id === 'drinks');
-      if (isFreeDrinksPromo && hasDrinksInCart) {
-        // free_drinks discount scales with pax so added guests' drinks stay free.
-        const promoAdults = Math.max(0, newGuestCount - childCount);
-        const adultEquiv = promoAdults + 0.5 * childCount;
-        promoDiscount = freeDrinksVenues.includes(booking.venueId) ? 0 : Math.round(25 * adultEquiv);
-        promoPatch = { promoDiscount, promoFreeDrinksCost: promoDiscount };
-      } else if (isFreeDrinksPromo && !hasDrinksInCart) {
-        promoDiscount = 0;
-        promoPatch = { promoDiscount: 0, promoFreeDrinksCost: 0 };
-      }
-      const pointsDiscount = booking.pointsDiscount || 0;
-      const securityDeposit = booking.pricing.securityDeposit || 0;
-      const grandTotal =
-        Math.max(0, newPricing.baseCharge + newPricing.addOnTotal - promoDiscount - pointsDiscount)
-        + securityDeposit;
-      const paidSoFar = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
-      const balanceDue = Math.max(0, grandTotal - paidSoFar);
-      await updateDoc(doc(db, 'bookings', booking.id), {
-        addOns: cart,
-        'pricing.baseCharge': newPricing.baseCharge,
-        'pricing.addOnTotal': newPricing.addOnTotal,
-        'pricing.subtotal': newPricing.subtotal,   // GROSS (pre-promo)
-        balanceDue,
-        ...(guestsChanged ? { guestCount: newGuestCount, adultCount, childCount } : {}),
-        ...promoPatch,
+      // All customer edits (add-ons, guests, AND time) now go through the
+      // server route. It re-verifies ownership + the add-only policy,
+      // recomputes pricing/balanceDue with the canonical GROSS formula, and
+      // — for time changes — rewrites the venue's blocked_slots atomically
+      // (which the Firestore rules only allow staff to touch). The customer
+      // never writes pricing/balanceDue directly, so the rules can freeze
+      // those fields on owner writes (Batch A2).
+      const idToken = await user.getIdToken();
+      const res = await fetch(`/api/bookings/${booking.id}/modify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          addOns: cart,
+          ...(guestsChanged ? { adultCount, childCount } : {}),
+          ...(timeChanged ? { startTime, endTime } : {}),
+        }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        if (data.error === 'SLOT_CONFLICT') {
+          setError(locale === 'zh'
+            ? '你揀嘅時段啱啱俾人訂咗，請返回揀過其他時間。'
+            : 'That time slot was just taken — please pick another time.');
+        } else if (data.error === 'deadline-passed') {
+          setError(locale === 'zh'
+            ? '距離活動少於 24 小時，已唔可以自助修改，請 WhatsApp 我哋。'
+            : 'Less than 24 hours to start — please WhatsApp us.');
+        } else if (data.error === 'food-deadline-passed') {
+          setError(locale === 'zh'
+            ? '距離活動少於 48 小時，BBQ／火鍋等唔可以後加。'
+            : 'Food add-ons can no longer be added within 48 hours.');
+        } else {
+          setError((locale === 'zh' ? '儲存失敗：' : 'Save failed: ') + (data.error || 'unknown'));
+        }
+        setSubmitting(false);
+        return;
+      }
       router.push(`/book/${booking.branchSlug}/pay-balance/${booking.id}`);
     } catch (err) {
       setError((locale === 'zh' ? '儲存失敗：' : 'Save failed: ') + (err instanceof Error ? err.message : 'unknown'));
