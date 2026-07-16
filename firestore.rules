@@ -69,7 +69,17 @@ service cloud.firestore {
             && resource.data.userId == request.auth.uid
             && request.resource.data.get('payments', []) == resource.data.get('payments', [])
             && (request.resource.data.status == resource.data.status
-                || !(request.resource.data.status in ['confirmed', 'completed'])));
+                || !(request.resource.data.status in ['confirmed', 'completed']))
+            // Once a booking is paid (confirmed/completed), freeze the money
+            // fields on owner writes: a customer could otherwise self-zero
+            // balanceDue to trigger a free door passcode, or rewrite pricing
+            // after paying. Legit post-payment edits (customer self-modify,
+            // admin edits) go through the server / Admin SDK, which bypasses
+            // these rules. Pre-payment bookings stay owner-writable so the
+            // confirm page can apply promos + set the deposit.
+            && (!(resource.data.status in ['confirmed', 'completed'])
+                || (request.resource.data.get('balanceDue', 0) == resource.data.get('balanceDue', 0)
+                    && request.resource.data.get('pricing', {}) == resource.data.get('pricing', {}))));
       allow delete: if isStaff();
     }
 
