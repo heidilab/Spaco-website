@@ -1,5 +1,6 @@
 'use client';
 
+import { adminApiFetch } from '@/lib/adminApiFetch';
 import { useEffect, useState, useMemo } from 'react';
 import { useLocale } from 'next-intl';
 import Link from 'next/link';
@@ -278,7 +279,7 @@ export default function AdminCalendarPage() {
           bookingId: null,
         });
       } else {
-        const res = await fetch('/api/calendar-events', {
+        const res = await adminApiFetch('/api/calendar-events', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
@@ -311,7 +312,7 @@ export default function AdminCalendarPage() {
       if (detailsModal.kind === 'block') {
         await deleteBlockedSlot(detailsModal.data.id);
       } else if (detailsModal.kind === 'event') {
-        const res = await fetch(`/api/calendar-events/${detailsModal.data.id}`, { method: 'DELETE' });
+        const res = await adminApiFetch(`/api/calendar-events/${detailsModal.data.id}`, { method: 'DELETE' });
         if (!res.ok) {
           const j = await res.json().catch(() => ({}));
           throw new Error(j.error || `HTTP ${res.status}`);

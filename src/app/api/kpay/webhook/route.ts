@@ -217,9 +217,18 @@ export async function POST(req: NextRequest) {
       isBalancePayment,
       processedAt: FieldValue.serverTimestamp(),
     });
-  } catch {
-    // ALREADY_EXISTS — a concurrent retry beat us. Skip.
-    return NextResponse.json({ ok: true, alreadyRecorded: true });
+  } catch (err) {
+    // ALREADY_EXISTS (gRPC code 6) — a concurrent retry beat us; this
+    // transaction is already recorded, so ACK and skip.
+    if ((err as { code?: number }).code === 6) {
+      return NextResponse.json({ ok: true, alreadyRecorded: true });
+    }
+    // ANY other error (Firestore unavailable, deadline) must NOT be
+    // treated as "already recorded" — otherwise we'd 200-ACK and KPay
+    // stops retrying while the payment was never recorded anywhere.
+    // Return 500 so KPay's retry ladder recovers it.
+    console.error('[kpay/webhook] marker create failed (will retry):', err);
+    return NextResponse.json({ error: 'marker-create-failed' }, { status: 500 });
   }
 
   // KPay's payAmount INCLUDES any card surcharge the customer paid.
@@ -286,7 +295,18 @@ export async function POST(req: NextRequest) {
       ? { paymentVerifiedAt: FieldValue.serverTimestamp() }
       : {}),
   };
-  await bookingRef.update(updates);
+  try {
+    await bookingRef.update(updates);
+  } catch (err) {
+    // The marker was reserved before this write. If the write fails we
+    // must RELEASE the marker, otherwise every KPay retry sees the marker,
+    // returns alreadyRecorded, and the payment is lost forever (money
+    // charged, nothing recorded). Delete it and 500 so KPay retries clean.
+    console.error('[kpay/webhook] booking update failed — releasing marker for retry:', err);
+    await markerRef.delete().catch((delErr) =>
+      console.error('[kpay/webhook] marker release ALSO failed:', delErr));
+    return NextResponse.json({ error: 'booking-update-failed' }, { status: 500 });
+  }
 
   if (wasDead) {
     console.warn('[kpay/webhook] RESURRECTED a', booking.status, 'booking on payment —',

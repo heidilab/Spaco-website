@@ -8,6 +8,7 @@ import { formatAddOnsForStaff } from '@/lib/pricing';
 import { deductLoyaltyPoints } from '@/lib/loyaltyServer';
 import { FieldValue } from 'firebase-admin/firestore';
 import type { BookingRecord } from '@/types';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,6 +18,9 @@ export const dynamic = 'force-dynamic';
  * receipt (mirrors what Stripe webhook does for online payments).
  */
 export async function POST(req: NextRequest) {
+  const _gate = await requireAdmin(req, 'bookings');
+  if (!_gate.ok) return _gate.res;
+
   try {
     const { bookingId } = await req.json();
     if (!bookingId) return NextResponse.json({ error: 'bookingId required' }, { status: 400 });

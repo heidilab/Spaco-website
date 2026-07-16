@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { existsSync, readFileSync } from 'fs';
+import { requireCronSecret } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,11 +13,10 @@ export const dynamic = 'force-dynamic';
  * Hit GET /api/debug/wif?key=spaco-debug to see status.
  */
 export async function GET(req: NextRequest) {
-  // Light gate so this isn't an internet-wide info-leak surface.
-  const key = req.nextUrl.searchParams.get('key');
-  if (key !== 'spaco-debug') {
-    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  }
+  // CRON_SECRET-gated (was a hardcoded ?key=spaco-debug, an internet-wide
+  // info-leak). Invoke with Authorization: Bearer <CRON_SECRET>.
+  const gate = requireCronSecret(req);
+  if (gate) return gate;
 
   const wifConfigRaw = process.env.GCP_WIF_CONFIG;
   const oidcToken = process.env.VERCEL_OIDC_TOKEN;

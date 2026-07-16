@@ -670,7 +670,8 @@ export default function AdminBookingDetailPage() {
     // Deposit can only be settled AFTER the event ends — it's refunded
     // once the guest has left and the venue is checked. Guard here too
     // (not just the disabled button) so it can't fire early.
-    const eventEndMs = new Date(`${booking.date}T${booking.endTime}:00+08:00`).getTime();
+    const settleEndDay = booking.endDate && booking.endDate !== booking.date ? booking.endDate : booking.date;
+    const eventEndMs = new Date(`${settleEndDay}T${booking.endTime}:00+08:00`).getTime();
     if (Date.now() < eventEndMs) {
       setSettleMsg({
         kind: 'err',
@@ -890,6 +891,16 @@ export default function AdminBookingDetailPage() {
       });
       const fresh = await getBooking(booking.id);
       if (fresh) setBooking(fresh);
+      // If this settled the balance, try to generate the door passcode now
+      // (same as the receipts-approve flow). Without this, a same-day
+      // balance settlement left the customer with no door code until the
+      // next 01:00 cron — after the event. tryGenerateLockPasscode checks
+      // eligibility internally (confirmed + balanceDue 0 + within window),
+      // so it's a safe no-op when not applicable.
+      if ((fresh?.balanceDue ?? 1) <= 0) {
+        tryGenerateLockPasscode(booking.id).catch((err) =>
+          console.warn('[offline-pay passcode] failed:', err));
+      }
       setPayAmount('');
       setPayNote('');
       setTimeout(() => setShowPaymentModal(false), 1500);
@@ -2853,7 +2864,8 @@ function DepositSettlement(props: DepositSettlementProps) {
   })();
 
   // Past-event check: settlement should only be done after the event.
-  const endMs = new Date(`${booking.date}T${booking.endTime}:00+08:00`).getTime();
+  const settleEndDay = booking.endDate && booking.endDate !== booking.date ? booking.endDate : booking.date;
+  const endMs = new Date(`${settleEndDay}T${booking.endTime}:00+08:00`).getTime();
   const isAfterEvent = Date.now() >= endMs;
 
   function toggleFixed(id: string) {

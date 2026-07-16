@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createCalendarEvent } from '@/lib/calendarEvents';
 import { CalendarEventType } from '@/types';
+import { requireAdmin } from '@/lib/adminAuth';
 
 const VALID_TYPES: CalendarEventType[] = ['site_visit', 'delivery'];
 
 // POST /api/calendar-events
 // body: { type, venueId, date, startTime, endTime, notes? }
 export async function POST(req: NextRequest) {
+  const _gate = await requireAdmin(req, 'gcal');
+  if (!_gate.ok) return _gate.res;
+
   try {
     const body = await req.json();
     const { type, venueId, date, startTime, endTime, notes } = body || {};

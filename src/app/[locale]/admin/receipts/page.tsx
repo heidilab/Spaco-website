@@ -181,7 +181,7 @@ export default function AdminReceiptsPage() {
     }
 
     // Send the booking-confirmation email (mirrors Stripe webhook flow).
-    fetch('/api/email/payment-confirmed', {
+    adminApiFetch('/api/email/payment-confirmed', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ bookingId }),
