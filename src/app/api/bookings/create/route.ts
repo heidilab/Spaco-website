@@ -1,9 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { adminVerifyIdToken } from '@/lib/adminAuth';
+import { getVenueById } from '@/lib/venues';
+import { calculatePricing, calculateDeposit, adultEquivalent, freeDrinksVenues } from '@/lib/pricing';
+import { calcPromoDiscount } from '@/lib/promoCodes';
+import { getHoliday } from '@/lib/hkHolidays';
+import type { PromoCode } from '@/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+/** Server-side isWeekend from a date string (Fri/Sat/public holiday/eve),
+ *  matching updateBookingDateTime + the booking form. */
+function serverIsWeekend(dateStr: string): boolean {
+  const day = new Date(`${dateStr}T00:00:00`).getDay();
+  const holiday = getHoliday(dateStr);
+  const next = new Date(`${dateStr}T00:00:00`);
+  next.setDate(next.getDate() + 1);
+  const nextStr = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
+  const eve = getHoliday(nextStr);
+  return day === 5 || day === 6 || holiday?.type === 'public' || eve?.type === 'public';
+}
 
 // Mirrors venues.ts VENUE_CONFLICTS — must stay in sync when new shared-space
 // venues are added.
@@ -72,6 +90,104 @@ export async function POST(req: NextRequest) {
   if (!venueId || !date || !startTime || !endTime) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
   }
+
+  // ── AUTH ── verify the caller's Firebase ID token and force the
+  // booking's userId to the token's uid. Without this the route was
+  // unauthenticated and trusted a client-supplied userId (book in anyone's
+  // name) + client pricing/status/balanceDue/payments (free bookings).
+  const authHeader = req.headers.get('authorization') || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  if (!token) return NextResponse.json({ error: 'missing-token' }, { status: 401 });
+  let uid: string;
+  try {
+    uid = (await adminVerifyIdToken(token)).uid;
+  } catch {
+    return NextResponse.json({ error: 'invalid-token' }, { status: 401 });
+  }
+
+  // ── SERVER-RECOMPUTE the money fields (override, never reject — a legit
+  // booking's client values already match, a tampered one gets corrected).
+  const venue = getVenueById(venueId);
+  const guestCount = Math.max(1, Number(rest.guestCount) || 1);
+  const childCount = Math.max(0, Number(rest.childCount) || 0);
+  const adultCount = Math.max(0, Number(rest.adultCount ?? (guestCount - childCount)));
+  const addOns = Array.isArray(rest.addOns) ? rest.addOns : [];
+  const isWeekend = serverIsWeekend(date as string);
+  const endDayForHours = (endDate && endDate !== date) ? (endDate as string) : (date as string);
+  const startMs = new Date(`${date}T${startTime}:00+08:00`).getTime();
+  const endMs = new Date(`${endDayForHours}T${endTime}:00+08:00`).getTime();
+  const hours = Math.max(1, Math.round((endMs - startMs) / 3600000));
+
+  // Package bookings are priced by a fixed package, not the venue formula —
+  // trust their stored pricing but still lock down the safety fields below.
+  const isPackage = !!rest.packageSlug;
+  let sanitizedPricing = rest.pricing;
+  let promoDiscount = 0;
+  let promoFreeDrinksCost = 0;
+  let promoCode: string | null = null;
+  let promoCodeId: string | null = null;
+
+  if (!isPackage && venue) {
+    const computed = calculatePricing(venue, isWeekend, hours, guestCount, addOns, childCount);
+    // Revalidate the promo server-side (window / venue / min-subtotal /
+    // usage limits all enforced inside calcPromoDiscount).
+    if (rest.promoCodeId) {
+      try {
+        const pcSnap = await adminDb.collection('promo_codes').doc(String(rest.promoCodeId)).get();
+        if (pcSnap.exists) {
+          const pc = { id: pcSnap.id, ...pcSnap.data() } as PromoCode;
+          const equiv = adultEquivalent(Math.max(0, guestCount - childCount), childCount);
+          const drinksCost = freeDrinksVenues.includes(venueId) ? 0 : Math.round(25 * equiv);
+          const d = calcPromoDiscount(pc, { subtotal: computed.subtotal, adultEquiv: equiv, drinksCost, venueId });
+          const withinTotal = pc.totalUsageLimit == null || pc.totalUsageCount < pc.totalUsageLimit;
+          if (d && d.amount > 0 && pc.enabled !== false && withinTotal) {
+            promoDiscount = Math.min(d.amount, computed.subtotal);
+            promoFreeDrinksCost = d.freeDrinks ? drinksCost : 0;
+            promoCode = pc.code;
+            promoCodeId = pc.id;
+          }
+        }
+      } catch (err) {
+        console.warn('[bookings/create] promo revalidation failed, dropping promo:', err);
+      }
+    }
+    sanitizedPricing = {
+      baseCharge: computed.baseCharge,
+      addOnTotal: computed.addOnTotal,
+      subtotal: computed.subtotal,   // GROSS (pre-promo)
+      securityDeposit: computed.securityDeposit,
+      deposit: computed.deposit,     // recomputed below with promo/points
+    };
+  }
+
+  // Clamp points redemption to the user's actual balance (a tamperer
+  // can't claim more than they hold to shrink the charge to $1).
+  let pointsUsed = Math.max(0, Math.floor(Number(rest.pointsUsed) || 0));
+  if (pointsUsed > 0) {
+    try {
+      const uSnap = await adminDb.collection('users').doc(uid).get();
+      const bal = (uSnap.data() as { loyaltyPoints?: number } | undefined)?.loyaltyPoints || 0;
+      pointsUsed = Math.min(pointsUsed, bal);
+    } catch { pointsUsed = 0; }
+  }
+  const pointsDiscount = pointsUsed;  // 1 pt = HK$1
+
+  // Deposit + balanceDue, matching the confirm/payment pages exactly so
+  // nothing drifts. Points do NOT reduce the stored deposit/balance — they
+  // reduce only what the customer pays UPFRONT (kpay/checkout charges
+  // pricing.deposit − pointsDiscount). The remaining balance is
+  // grandTotal(excl. points) − deposit; the KPay webhook reconciles the
+  // points against the smaller payment amount so the two agree.
+  const baseCharge = Number(sanitizedPricing?.baseCharge) || 0;
+  const addOnTotal = Number(sanitizedPricing?.addOnTotal) || 0;
+  const securityDeposit = Number(sanitizedPricing?.securityDeposit) || 0;
+  const grossSubtotal = baseCharge + addOnTotal;
+  const grandTotalForDeposit = Math.max(0, grossSubtotal - promoDiscount) + securityDeposit;
+  const deposit = calculateDeposit(grandTotalForDeposit, date as string);
+  const balanceDue = Math.max(0, grandTotalForDeposit - deposit);
+  sanitizedPricing = {
+    baseCharge, addOnTotal, subtotal: grossSubtotal, securityDeposit, deposit,
+  };
 
   const overnight = !!endDate && endDate !== date;
   const resolvedEndDate = overnight ? (endDate as string) : date;
@@ -152,16 +268,47 @@ export async function POST(req: NextRequest) {
       // ── 5. Create booking document ────────────────────────────────────
       const bookingRef = adminDb.collection('bookings').doc();
       bookingId = bookingRef.id;
+      // WHITELIST — persist only trusted/server-derived fields. Never
+      // spread ...rest (that let a client set status/payments/balanceDue).
+      const pendingExpiresAt = typeof rest.pendingExpiresAt === 'number'
+        ? rest.pendingExpiresAt
+        : Date.now() + 30 * 60 * 1000;
       t.create(bookingRef, {
+        userId: uid,                    // forced from the verified token
         venueId,
+        branchSlug: rest.branchSlug ?? null,
         date,
         startTime,
         endTime,
         ...(overnight ? { endDate } : {}),
-        // Rename draftIdField → draftId so the booking record stores the
-        // correct field name (consistent with BookingRecord type).
         ...(draftIdField ? { draftId: draftIdField } : {}),
-        ...rest,
+        hours,
+        guestCount,
+        adultCount,
+        childCount,
+        isWeekend,
+        addOns,
+        hasBYOFood: !!rest.hasBYOFood,
+        pricing: sanitizedPricing,      // server-recomputed
+        status: 'awaiting_payment',     // forced — never client 'confirmed'
+        paymentMethod: rest.paymentMethod ?? 'stripe',
+        receiptUrl: rest.receiptUrl ?? null,
+        refundDetails: rest.refundDetails ?? null,
+        balanceDue,                     // server-derived
+        payments: [],                   // never trust client-supplied payments
+        pendingExpiresAt,
+        depositRefund: null,
+        whatsappPhone: rest.whatsappPhone ?? null,
+        ...(promoCode ? { promoCode } : {}),
+        ...(promoCodeId ? { promoCodeId } : {}),
+        ...(promoDiscount > 0 ? { promoDiscount } : {}),
+        ...(promoFreeDrinksCost > 0 ? { promoFreeDrinksCost } : {}),
+        ...(pointsUsed > 0 ? { pointsUsed, pointsDiscount } : {}),
+        ...(rest.marketingChannel ? { marketingChannel: rest.marketingChannel } : {}),
+        ...(rest.marketingChannelOther ? { marketingChannelOther: rest.marketingChannelOther } : {}),
+        ...(rest.packageSlug ? { packageSlug: rest.packageSlug } : {}),
+        ...(rest.decorationStyle ? { decorationStyle: rest.decorationStyle } : {}),
+        ...(rest.balanceDueDate ? { balanceDueDate: rest.balanceDueDate } : {}),
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
@@ -182,7 +329,7 @@ export async function POST(req: NextRequest) {
       // ── 7. Mark booking draft as claimed ──────────────────────────────
       if (draftRef) {
         t.update(draftRef, {
-          claimedBy: rest.userId ?? null,
+          claimedBy: uid,
           claimedAt: FieldValue.serverTimestamp(),
           bookingId,
           status: 'claimed',

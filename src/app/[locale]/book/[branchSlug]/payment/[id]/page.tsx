@@ -233,7 +233,10 @@ export default function PaymentMethodPage() {
       Date.now() + PAYMENT_DETAILS.pendingHoldMinutes * 60 * 1000;
     const createRes = await fetch('/api/bookings/create', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${await user.getIdToken()}`,
+      },
       body: JSON.stringify({
         userId: user.uid,
         whatsappPhone: draft.whatsappPhone,

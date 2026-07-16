@@ -3,7 +3,7 @@ import {
   query, where, orderBy,
   serverTimestamp, Timestamp, updateDoc,
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { db, auth } from './firebase';
 import { BookingDraft, BookingRecord } from '@/types';
 
 // Booking links must be acted on quickly — 8 hours mirrors the "first to pay"
@@ -111,9 +111,16 @@ export async function claimBookingDraft(
   //   • marks the draft as claimed — all in one transaction
   // This replaces the previous hasSlotConflict() + createBooking() two-step
   // which had a race window between the read and the write.
+  // /api/bookings/create now requires the caller's Firebase ID token and
+  // forces userId to the token's uid.
+  const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : '';
+  if (!idToken) throw new Error('Not signed in.');
   const res = await fetch('/api/bookings/create', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
     body: JSON.stringify({
       draftId: draft.id,
       userId: customerUid,
