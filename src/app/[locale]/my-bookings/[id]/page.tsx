@@ -107,10 +107,14 @@ export default function MyBookingDetailPage() {
       - (booking.promoDiscount || 0),
   ) + securityDeposit;
   const balanceDue = booking.balanceDue ?? 0;
-  // Actual cash paid = sum of logged payments (single source of truth).
-  // The old code showed pricing.deposit here (the deposit installment),
-  // which for a points-redeemed booking overstated what was paid.
-  const paidSoFar = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+  // "已付" must match what the KPay / FPS gateway actually took from the
+  // customer, so they can reconcile against their card / bank record. That
+  // is the base amount credited to the booking PLUS the 1.5% card surcharge
+  // (a pass-through fee). The old code showed pricing.deposit (the deposit
+  // installment), which for a points-redeemed booking was neither.
+  const paidBase = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+  const surchargePaid = (booking.payments || []).reduce((s, p) => s + (p.cardSurcharge || 0), 0);
+  const paidGross = Math.round((paidBase + surchargePaid) * 100) / 100;
   const peopleLine = (booking.childCount ?? 0) > 0
     ? (locale === 'zh'
         ? `${booking.guestCount} 人 (${booking.adultCount ?? booking.guestCount} 成人 + ${booking.childCount} 小童)`
@@ -272,14 +276,24 @@ export default function MyBookingDetailPage() {
               <span>{locale === 'zh' ? '總計' : 'Grand total'}</span>
               <span>HK${grandTotal.toLocaleString()}</span>
             </div>
-            <div className="flex justify-between pt-1">
-              <span className="text-ink-soft">{locale === 'zh' ? '已付' : 'Paid'}</span>
-              <span>HK${paidSoFar.toLocaleString()}</span>
-            </div>
             {(booking.pointsDiscount ?? 0) > 0 && (
               <div className="flex justify-between text-violet-700">
                 <span className="flex items-center gap-1.5"><Sparkles size={12} />{locale === 'zh' ? '積分抵扣' : 'Points'}</span>
                 <span>−HK${(booking.pointsDiscount || 0).toLocaleString()} ({(booking.pointsUsed || 0).toLocaleString()} {locale === 'zh' ? '分' : 'pts'})</span>
+              </div>
+            )}
+            {paidGross > 0 && (
+              <div className="flex justify-between pt-1">
+                <span className="text-ink-soft">
+                  {locale === 'zh' ? '已付（KPay／FPS 實收）' : 'Paid (gateway)'}
+                </span>
+                <span>HK${paidGross.toLocaleString()}</span>
+              </div>
+            )}
+            {surchargePaid > 0 && (
+              <div className="flex justify-between text-[11px] text-ink-soft">
+                <span>{locale === 'zh' ? '　含 1.5% 卡手續費' : '　incl. 1.5% card fee'}</span>
+                <span>HK${surchargePaid.toLocaleString()}</span>
               </div>
             )}
             {balanceDue > 0 && (

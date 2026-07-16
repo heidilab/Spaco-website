@@ -170,7 +170,10 @@ export async function POST(req: NextRequest) {
       pointsUsed = Math.min(pointsUsed, bal);
     } catch { pointsUsed = 0; }
   }
-  const pointsDiscount = pointsUsed;  // 1 pt = HK$1
+  // 100 loyalty points = HK$1 (POINTS_PER_HKD). pointsUsed is in POINTS;
+  // pointsDiscount is the HK$ value. The old `= pointsUsed` treated 1pt=$1,
+  // storing a 100× discount (1,500 pts showed −$1,500 instead of −$15).
+  const pointsDiscount = Math.round((pointsUsed / 100) * 100) / 100;
 
   // Deposit + balanceDue, matching the confirm/payment pages exactly so
   // nothing drifts. Points do NOT reduce the stored deposit/balance — they

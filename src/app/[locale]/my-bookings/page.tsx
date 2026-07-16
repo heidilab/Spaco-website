@@ -272,7 +272,7 @@ function BookingCard({
             ).toLocaleString()}
           </p>
           <p className="text-xs text-ink-soft">
-            {locale === 'zh' ? '已付' : 'Paid'}: HK${(booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0).toLocaleString()}
+            {locale === 'zh' ? '已付' : 'Paid'}: HK${(booking.payments || []).reduce((s, p) => s + (p.amount || 0) + (p.cardSurcharge || 0), 0).toLocaleString()}
           </p>
           {balanceDue > 0 && (
             <p className="text-xs text-amber-700 mt-0.5">
