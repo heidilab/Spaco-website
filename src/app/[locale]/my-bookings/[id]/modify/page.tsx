@@ -18,7 +18,9 @@ import { useLocale } from 'next-intl';
 import { useParams } from 'next/navigation';
 import { useRouter, Link } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
-import { getBooking, getBlockedSlots, updateBookingDateTime } from '@/lib/firestore';
+import { getBooking, getBlockedSlots } from '@/lib/firestore';
+import { doc, updateDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import { getVenueById, venuesSharingSpace } from '@/lib/venues';
 import {
   addOns as addOnCatalog, calculatePricing, noBBQVenues, freeDrinksVenues,
@@ -234,28 +236,56 @@ export default function ModifyBookingPage() {
   async function handleSave() {
     if (!booking || subtotalDiff <= 0 || !newPricing) return;
     if (timeChanged && timeConflict) return;
+    // Extending the TIME rewrites the venue's blocked-slot schedule, which
+    // only staff can write under the Firestore rules — a customer self-save
+    // would fail with a permissions error. So route time changes to staff.
+    // Add-on / guest-count changes don't touch the schedule and are saved
+    // directly below. (Server-side self-service time change is Batch A2.)
+    if (timeChanged) {
+      setError(locale === 'zh'
+        ? '更改時間需要職員協助 — 請 WhatsApp 聯絡我們安排。加購 / 人數更改可以喺呢度自助修改。'
+        : 'Changing the time needs staff help — please WhatsApp us. Add-on / guest changes can still be done here.');
+      return;
+    }
     setSubmitting(true);
     try {
-      // Route the WHOLE modification through updateBookingDateTime — the
-      // single canonical writer. It recomputes pricing (incl. free_drinks
-      // promo scaling with the new pax), securityDeposit (sticky for
-      // already-paid bookings), and balanceDue (= canonical grandTotal −
-      // Σ payments) from primitives, and atomically replaces the
-      // blocked_slots when the time changed. Previously this did an
-      // incremental client-side balance patch AND separately called
-      // updateBookingDateTime for time changes — the two writes raced,
-      // and the add-ons weren't even passed to that recompute, so pricing
-      // and balance could end up from different carts.
-      await updateBookingDateTime(booking.id, {
-        date: booking.date,
-        startTime: timeChanged ? startTime : booking.startTime,
-        endTime: timeChanged ? endTime : booking.endTime,
-        // Modify is "extend only" — carry the cross-midnight flag through.
-        ...(booking.endDate ? { endDate: booking.endDate } : {}),
+      // Add-on / guest-count change only (time unchanged) → this does NOT
+      // touch blocked_slots, so the owner can write it directly under the
+      // Firestore rules. Recompute pricing + balanceDue with the canonical
+      // GROSS formula (matches computeGrandTotal): grandTotal =
+      // max(0, baseCharge+addOnTotal − promo − points) + securityDeposit,
+      // balanceDue = max(0, grandTotal − Σ payments). Keep securityDeposit
+      // sticky (don't auto-bump on a customer edit).
+      let promoDiscount = booking.promoDiscount || 0;
+      let promoPatch: Record<string, unknown> = {};
+      const isFreeDrinksPromo =
+        typeof booking.promoFreeDrinksCost === 'number' && booking.promoFreeDrinksCost > 0;
+      const hasDrinksInCart = cart.some((a) => a.id === 'drinks');
+      if (isFreeDrinksPromo && hasDrinksInCart) {
+        // free_drinks discount scales with pax so added guests' drinks stay free.
+        const promoAdults = Math.max(0, newGuestCount - childCount);
+        const adultEquiv = promoAdults + 0.5 * childCount;
+        promoDiscount = freeDrinksVenues.includes(booking.venueId) ? 0 : Math.round(25 * adultEquiv);
+        promoPatch = { promoDiscount, promoFreeDrinksCost: promoDiscount };
+      } else if (isFreeDrinksPromo && !hasDrinksInCart) {
+        promoDiscount = 0;
+        promoPatch = { promoDiscount: 0, promoFreeDrinksCost: 0 };
+      }
+      const pointsDiscount = booking.pointsDiscount || 0;
+      const securityDeposit = booking.pricing.securityDeposit || 0;
+      const grandTotal =
+        Math.max(0, newPricing.baseCharge + newPricing.addOnTotal - promoDiscount - pointsDiscount)
+        + securityDeposit;
+      const paidSoFar = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+      const balanceDue = Math.max(0, grandTotal - paidSoFar);
+      await updateDoc(doc(db, 'bookings', booking.id), {
         addOns: cart,
-        ...(guestsChanged
-          ? { guestCount: newGuestCount, adultCount, childCount }
-          : {}),
+        'pricing.baseCharge': newPricing.baseCharge,
+        'pricing.addOnTotal': newPricing.addOnTotal,
+        'pricing.subtotal': newPricing.subtotal,   // GROSS (pre-promo)
+        balanceDue,
+        ...(guestsChanged ? { guestCount: newGuestCount, adultCount, childCount } : {}),
+        ...promoPatch,
       });
       router.push(`/book/${booking.branchSlug}/pay-balance/${booking.id}`);
     } catch (err) {
