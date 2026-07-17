@@ -294,7 +294,7 @@ export async function POST(req: NextRequest) {
         hasBYOFood: !!rest.hasBYOFood,
         pricing: sanitizedPricing,      // server-recomputed
         status: 'awaiting_payment',     // forced — never client 'confirmed'
-        paymentMethod: rest.paymentMethod ?? 'stripe',
+        paymentMethod: rest.paymentMethod ?? null,
         receiptUrl: rest.receiptUrl ?? null,
         refundDetails: rest.refundDetails ?? null,
         balanceDue,                     // server-derived

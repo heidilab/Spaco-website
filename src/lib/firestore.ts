@@ -831,12 +831,11 @@ export async function updateBookingRefundDetails(
 /** Set the customer-chosen payment method (online/offline) on the booking. */
 export async function updateBookingPaymentMethod(
   bookingId: string,
-  paymentMethod: 'fps' | 'stripe' | 'bank'
+  paymentMethod: 'fps' | 'kpay' | 'stripe' | 'bank'
 ) {
-  const status = paymentMethod === 'stripe' ? 'awaiting_payment' : 'awaiting_payment';
   await updateDoc(doc(db, 'bookings', bookingId), {
     paymentMethod,
-    status,
+    status: 'awaiting_payment',
     updatedAt: serverTimestamp(),
   });
 }

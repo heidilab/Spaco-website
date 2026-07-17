@@ -223,7 +223,7 @@ export default function PaymentMethodPage() {
 
   /** Draft mode: first (atomic, server-side) write of the booking —
    *  this is also what holds the physical slot. Returns the real id. */
-  async function ensureBooking(paymentMethod: 'stripe' | 'fps'): Promise<string> {
+  async function ensureBooking(paymentMethod: 'kpay' | 'fps'): Promise<string> {
     if (!isDraft) {
       await updateBookingPaymentMethod(booking!.id, paymentMethod);
       return booking!.id;
@@ -301,7 +301,7 @@ export default function PaymentMethodPage() {
         return;
       }
 
-      const id = await ensureBooking('stripe');
+      const id = await ensureBooking('kpay');
       const res = await fetch('/api/kpay/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -2203,7 +2203,7 @@ export default function AdminBookingDetailPage() {
            *  or record an offline payment via the modal. The same
            *  balanceDue surfaces on the customer's /my-bookings card as
            *  a "找尾數" button, so the customer can self-serve too. */}
-          {(booking.balanceDue ?? 0) > 0 && (
+          {booking.status !== 'cancelled' && (
             <OutstandingBalanceSection
               booking={booking}
               locale={locale}
@@ -2509,6 +2509,23 @@ function OutstandingBalanceSection({
   onUpdated?: () => void;
 }) {
   const balance = booking.balanceDue ?? 0;
+  // TRUE amount still owed = canonical grand total − everything actually
+  // paid. This differs from `balanceDue`, which is the balance AFTER the
+  // deposit and is 0 on a brand-new booking whose deposit hasn't been
+  // recorded yet. Keying the card off balanceDue meant an FPS/offline
+  // booking with NOTHING recorded showed no card → admin had no way to log
+  // the customer's late FPS transfer (#2qzYQOU4). Key off the true unpaid
+  // amount so the record-payment action is always reachable while money is
+  // outstanding.
+  const paidTotal = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+  const grandTotalCanonical = Math.max(
+    0,
+    (booking.pricing?.baseCharge || 0)
+      + (booking.pricing?.addOnTotal || 0)
+      - (booking.promoDiscount || 0)
+      - (booking.pointsDiscount || 0),
+  ) + (booking.pricing?.securityDeposit ?? 0);
+  const unpaidTotal = Math.max(0, Math.round((grandTotalCanonical - paidTotal) * 100) / 100);
   const [origin, setOrigin] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);
   const [settling, setSettling] = useState<boolean>(false);
@@ -2658,7 +2675,7 @@ function OutstandingBalanceSection({
     }
   }
 
-  if (balance <= 0) return null;
+  if (unpaidTotal <= 0) return null;
 
   const payUrl = origin
     ? `${origin}/${locale}/book/${booking.branchSlug}/pay-balance/${booking.id}`
@@ -2694,9 +2711,13 @@ function OutstandingBalanceSection({
             {locale === 'zh' ? '預訂未付尾數' : 'Outstanding Balance'}
           </h2>
           <p className="text-sm text-amber-800">
-            {locale === 'zh'
-              ? '客人需要補付尾數，請發送付款連結或記錄線下收款。'
-              : 'Customer owes the balance below — send them the pay link, or record an offline payment.'}
+            {paidTotal <= 0
+              ? (locale === 'zh'
+                  ? '此預訂仲未有任何付款記錄。如客人已用 FPS／銀行／現金付款，請用下面「已於線下付款」記錄；或發送線上付款連結。'
+                  : 'No payment recorded yet. If the customer paid by FPS / bank / cash, log it with "Record offline payment" below, or send the online pay link.')
+              : (locale === 'zh'
+                  ? '客人需要補付尾數，請發送付款連結或記錄線下收款。'
+                  : 'Customer owes the balance below — send them the pay link, or record an offline payment.')}
           </p>
         </div>
         <div className="text-right">
@@ -2704,13 +2725,17 @@ function OutstandingBalanceSection({
             {locale === 'zh' ? '尚欠' : 'Owed'}
           </p>
           <p className="text-2xl font-bold text-amber-900 font-display">
-            HK${balance.toLocaleString()}
+            HK${unpaidTotal.toLocaleString()}
           </p>
         </div>
       </div>
 
-      {/* Payment URL — read-only input so admin can see + select manually
-       *  if clipboard write fails (Safari / locked-down browsers). */}
+      {/* Online pay-link — only meaningful when there's a `balanceDue` the
+       *  pay-balance page can actually charge. A brand-new unpaid booking
+       *  has balanceDue 0 (its deposit link is the original payment page),
+       *  so we hide the balance link there and steer admin to record the
+       *  offline payment instead. */}
+      {balance > 0 && (
       <div className="mb-3">
         <label className="block text-xs text-ink-soft mb-1 font-semibold">
           {locale === 'zh' ? '線上付款連結（可發送俾客人）' : 'Online payment link (send to customer)'}
@@ -2734,9 +2759,10 @@ function OutstandingBalanceSection({
           </button>
         </div>
       </div>
+      )}
 
       <div className="flex flex-wrap gap-2">
-        {whatsappHref ? (
+        {balance > 0 && (whatsappHref ? (
           <a
             href={whatsappHref}
             target="_blank"
@@ -2751,7 +2777,7 @@ function OutstandingBalanceSection({
             <MessageCircle size={14} />
             {locale === 'zh' ? 'WhatsApp 不適用（客人未綁定電話）' : 'WhatsApp unavailable (no phone on file)'}
           </span>
-        )}
+        ))}
 
         <button
           onClick={onRecordPaymentClick}

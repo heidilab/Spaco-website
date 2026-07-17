@@ -452,6 +452,7 @@ export default function FinanceOverviewPage() {
   }
 
   function methodLabel(m: string): string {
+    if (m === 'kpay') return 'KPay';
     if (m === 'stripe') return 'Stripe';
     if (m === 'fps') return 'FPS';
     if (m === 'bank') return 'Bank';

@@ -328,7 +328,7 @@ export interface BookingRecord {
     | 'completed'
     | 'cancelled'
     | 'payment_not_completed';
-  paymentMethod: 'fps' | 'stripe' | 'bank' | null;
+  paymentMethod: 'fps' | 'kpay' | 'stripe' | 'bank' | null;
   receiptUrl: string | null;
   /** When the customer uploaded their offline-payment receipt screenshot.
    *  null means not yet uploaded. */
