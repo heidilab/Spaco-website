@@ -10,6 +10,7 @@ import {
   ChevronLeft, Shield, Image, Users, UserCog, Receipt, FileText, HelpCircle, Search, CalendarClock, Mail, Tag, BarChart3,
   BookOpen, LogIn, Menu, X, Newspaper,
 } from 'lucide-react';
+import AdminPushSetup from '@/components/admin/AdminPushSetup';
 
 const allSidebarLinks = [
   { href: '/admin', icon: LayoutDashboard, label: { zh: '控制中心', en: 'Dashboard' }, permission: null },
@@ -213,7 +214,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         })}
       </nav>
 
-      <div className="p-4 border-t border-white/40">
+      <div className="p-4 border-t border-white/40 space-y-3">
+        {/* Push notifications — only offered to roles that receive staff
+            notifications (bookings permission = admin + cs). */}
+        {hasPermission('bookings') && <AdminPushSetup />}
         <Link
           href="/"
           onClick={() => setMobileNavOpen(false)}

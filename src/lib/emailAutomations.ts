@@ -10,6 +10,7 @@
 
 import { adminDb } from './firebaseAdmin';
 import { sendEmail, buildStaffBookingNotificationEmail, buildStaffReceiptPendingEmail, buildStaffSupplierOrderEmail, bookingNeedsSupplierOrder } from './email';
+import { sendStaffPush } from './webPushServer';
 import type { BookingRecord } from '@/types';
 import { ROLE_PERMISSIONS } from '@/types';
 
@@ -302,6 +303,14 @@ export async function sendStaffBookingNotification(
     sendEmail({ to, subject: tpl.subject, html: tpl.html })
       .catch((err) => console.warn(`[staff-notify] send to ${to} failed:`, err)),
   ));
+  // Mirror to staff phones (PWA web push). Same automation toggle governs
+  // both channels; sendStaffPush never throws.
+  await sendStaffPush({
+    title: `💰 新預訂 — ${params.venueName}`,
+    body: `${params.date} ${params.startTime}–${params.endTime} · ${params.guestCount}人 · ${params.customerName}${params.balanceDue > 0 ? ` · 尚欠尾數 HK$${params.balanceDue.toLocaleString()}` : ''}`,
+    url: `/zh/admin/bookings/${params.bookingId}`,
+    tag: `booking-${params.bookingId}`,
+  });
 }
 
 /** Send the supplier-order email — only when the booking actually
@@ -327,6 +336,12 @@ export async function sendStaffSupplierOrderNotification(params: {
     sendEmail({ to, subject: tpl.subject, html: tpl.html })
       .catch((err) => console.warn(`[staff-supplier] send to ${to} failed:`, err)),
   ));
+  await sendStaffPush({
+    title: `📦 需向供應商落單 — ${params.venueName}`,
+    body: `${params.booking.date} ${params.booking.startTime} · ${params.customerName} · 有火鍋/Shisha/佈置等項目`,
+    url: `/zh/admin/bookings/${params.booking.id}`,
+    tag: `supplier-${params.booking.id}`,
+  });
 }
 
 /** Send the "receipt pending review" notification to staff. Same recipient
@@ -345,4 +360,10 @@ export async function sendStaffReceiptPendingNotification(
     sendEmail({ to, subject: tpl.subject, html: tpl.html })
       .catch((err) => console.warn(`[staff-receipt-pending] send to ${to} failed:`, err)),
   ));
+  await sendStaffPush({
+    title: `🧾 待核實付款 — ${params.venueName}`,
+    body: `${params.date} ${params.startTime} · ${params.customerName} · HK$${params.amountDue.toLocaleString()} 入數紙待審核`,
+    url: '/zh/admin/receipts',
+    tag: `receipt-${params.bookingId}`,
+  });
 }
