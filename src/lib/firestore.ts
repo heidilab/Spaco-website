@@ -526,8 +526,19 @@ export async function updateBookingDateTime(
             const promoDrinksCost = hasDrinksAddOn && !freeDrinksVenues.includes(targetVenueId)
               ? Math.round(25 * promoAdultEquiv)
               : 0;
+            // Bypass the eligibility gates (enabled / date window / venue
+            // scope / minSubtotal) — those were validated when the customer
+            // APPLIED the code; a recompute only rescales the amount. A
+            // TST50NEW-style limited-window code would otherwise return
+            // null after its endDate and the stale amount would stick
+            // forever (#2p8F1WEp).
+            const pcForRescale = {
+              ...(pcSnap.data() as PromoCode), id: pcSnap.id,
+              enabled: true, startDate: undefined, endDate: undefined,
+              venueIds: undefined, minSubtotal: undefined,
+            } as PromoCode;
             const d = calcPromoDiscount(
-              { id: pcSnap.id, ...pcSnap.data() } as PromoCode,
+              pcForRescale,
               {
                 subtotal: typeof next.subtotalOverride === 'number'
                   ? Math.max(0, next.subtotalOverride)

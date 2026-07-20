@@ -191,8 +191,16 @@ export async function POST(
     try {
       const pcSnap = await adminDb.collection('promo_codes').doc(booking.promoCodeId).get();
       if (pcSnap.exists) {
+        // Bypass eligibility gates (enabled / window / venue / minSubtotal)
+        // — validated at apply time; a recompute only rescales the amount.
+        // See updateBookingDateTime for the #2p8F1WEp rationale.
+        const pcForRescale = {
+          ...(pcSnap.data() as PromoCode), id: pcSnap.id,
+          enabled: true, startDate: undefined, endDate: undefined,
+          venueIds: undefined, minSubtotal: undefined,
+        } as PromoCode;
         const d = calcPromoDiscount(
-          { id: pcSnap.id, ...pcSnap.data() } as PromoCode,
+          pcForRescale,
           {
             subtotal: computed.subtotal,
             adultEquiv: promoAdultEquiv,
