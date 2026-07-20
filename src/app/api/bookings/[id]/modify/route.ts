@@ -6,7 +6,8 @@ import { getVenueById } from '@/lib/venues';
 import {
   calculatePricing, calculateDeposit, freeDrinksVenues,
 } from '@/lib/pricing';
-import type { BookingRecord, AddOnOptions } from '@/types';
+import { calcPromoDiscount } from '@/lib/promoCodes';
+import type { BookingRecord, AddOnOptions, PromoCode } from '@/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -166,19 +167,55 @@ export async function POST(
     venue, booking.isWeekend, hours, newGuestCount, reqAddOns, childCount,
   );
 
-  // free_drinks promo scales with pax; other promo types keep stored value.
+  // Recompute the promo against the NEW pax / subtotal by reloading the
+  // code doc. per_pax scales with adultEquiv, percent with subtotal,
+  // free_drinks with the drinks line; cash stays fixed by its own formula.
+  // (Same fix as updateBookingDateTime — #2p8F1WEp: pax 13 → 19 left a
+  // per_pax discount at the 13-pax value.) If the code doc is gone or now
+  // outside its window (calcPromoDiscount returns null), KEEP the stored
+  // discount — it was locked in when the customer applied it; the
+  // free_drinks fallback below still handles legacy bookings without a
+  // promoCodeId.
   let promoDiscount = booking.promoDiscount || 0;
   const promoPatch: Record<string, unknown> = {};
   const isFreeDrinksPromo =
     typeof booking.promoFreeDrinksCost === 'number' && booking.promoFreeDrinksCost > 0;
   const hasDrinks = reqAddOns.some((a) => a.id === 'drinks');
-  if (isFreeDrinksPromo && hasDrinks) {
-    const promoAdults = Math.max(0, newGuestCount - childCount);
-    const adultEquiv = promoAdults + 0.5 * childCount;
-    promoDiscount = freeDrinksVenues.includes(booking.venueId) ? 0 : Math.round(25 * adultEquiv);
+  const promoAdults = Math.max(0, newGuestCount - childCount);
+  const promoAdultEquiv = promoAdults + 0.5 * childCount;
+  const promoDrinksCost = hasDrinks && !freeDrinksVenues.includes(booking.venueId)
+    ? Math.round(25 * promoAdultEquiv)
+    : 0;
+  let promoRecomputed = false;
+  if (promoDiscount > 0 && booking.promoCodeId) {
+    try {
+      const pcSnap = await adminDb.collection('promo_codes').doc(booking.promoCodeId).get();
+      if (pcSnap.exists) {
+        const d = calcPromoDiscount(
+          { id: pcSnap.id, ...pcSnap.data() } as PromoCode,
+          {
+            subtotal: computed.subtotal,
+            adultEquiv: promoAdultEquiv,
+            drinksCost: promoDrinksCost,
+            venueId: booking.venueId,
+          },
+        );
+        if (d) {
+          promoDiscount = d.amount;
+          promoPatch.promoDiscount = d.amount;
+          promoPatch.promoFreeDrinksCost = d.freeDrinks ? promoDrinksCost : 0;
+          promoRecomputed = true;
+        }
+      }
+    } catch (err) {
+      console.warn('[bookings/modify] promo recompute failed, keeping stored discount:', err);
+    }
+  }
+  if (!promoRecomputed && isFreeDrinksPromo && hasDrinks) {
+    promoDiscount = promoDrinksCost;
     promoPatch.promoDiscount = promoDiscount;
     promoPatch.promoFreeDrinksCost = promoDiscount;
-  } else if (isFreeDrinksPromo && !hasDrinks) {
+  } else if (!promoRecomputed && isFreeDrinksPromo && !hasDrinks) {
     promoDiscount = 0;
     promoPatch.promoDiscount = 0;
     promoPatch.promoFreeDrinksCost = 0;

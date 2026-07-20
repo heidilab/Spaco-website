@@ -14,9 +14,10 @@ import {
   arrayUnion,
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { BookingRecord, BlockedSlot, BusinessDocument, DocumentType, DocumentRevision, CalendarEvent, AddOnOptions } from '@/types';
+import { BookingRecord, BlockedSlot, BusinessDocument, DocumentType, DocumentRevision, CalendarEvent, AddOnOptions, PromoCode } from '@/types';
 import { venuesSharingSpace, getVenueById } from './venues';
 import { calculatePricing, calculateDeposit, freeDrinksVenues } from './pricing';
+import { calcPromoDiscount } from './promoCodes';
 import { getHoliday } from './hkHolidays';
 
 // ============ BOOKINGS ============
@@ -505,7 +506,49 @@ export async function updateBookingDateTime(
       const isFreeDrinksPromo =
         typeof booking.promoFreeDrinksCost === 'number' && booking.promoFreeDrinksCost > 0;
       const hasDrinksAddOn = (addOns || []).some((a) => a.id === 'drinks');
-      if (isFreeDrinksPromo && hasDrinksAddOn) {
+      // Recompute the promo against the NEW pax / subtotal by reloading the
+      // code doc (staff-readable — this runs in the admin UI). per_pax
+      // scales with adultEquiv, percent with subtotal, free_drinks with the
+      // drinks line; cash stays fixed by its own formula. Previously only
+      // free_drinks rescaled, so admin adding 6 pax (#2p8F1WEp, 13 → 19)
+      // left a per_pax discount at the 13-pax value. If the code doc is
+      // gone or now outside its window (calcPromoDiscount returns null),
+      // KEEP the stored discount — the promo was locked in when the
+      // customer applied it; the free_drinks fallback below still handles
+      // legacy bookings without a promoCodeId.
+      let promoRecomputed = false;
+      if (promoDiscount > 0 && booking.promoCodeId) {
+        try {
+          const pcSnap = await getDoc(doc(db, 'promo_codes', booking.promoCodeId));
+          if (pcSnap.exists()) {
+            const promoAdults = Math.max(0, guests - children);
+            const promoAdultEquiv = promoAdults + 0.5 * children;
+            const promoDrinksCost = hasDrinksAddOn && !freeDrinksVenues.includes(targetVenueId)
+              ? Math.round(25 * promoAdultEquiv)
+              : 0;
+            const d = calcPromoDiscount(
+              { id: pcSnap.id, ...pcSnap.data() } as PromoCode,
+              {
+                subtotal: typeof next.subtotalOverride === 'number'
+                  ? Math.max(0, next.subtotalOverride)
+                  : computed.subtotal,
+                adultEquiv: promoAdultEquiv,
+                drinksCost: promoDrinksCost,
+                venueId: targetVenueId,
+              },
+            );
+            if (d) {
+              promoDiscount = d.amount;
+              patch.promoDiscount = d.amount;
+              patch.promoFreeDrinksCost = d.freeDrinks ? promoDrinksCost : 0;
+              promoRecomputed = true;
+            }
+          }
+        } catch (err) {
+          console.warn('[updateBookingDateTime] promo recompute failed, keeping stored discount:', err);
+        }
+      }
+      if (!promoRecomputed && isFreeDrinksPromo && hasDrinksAddOn) {
         // adultEquiv MUST match pricing.ts adultEquivalent exactly,
         // which derives adults from (guests − childCount) not from the
         // stored booking.adultCount field. Otherwise admin's
@@ -521,7 +564,7 @@ export async function updateBookingDateTime(
         promoDiscount = newDrinksCost;
         patch.promoDiscount = newDrinksCost;
         patch.promoFreeDrinksCost = newDrinksCost;
-      } else if (isFreeDrinksPromo && !hasDrinksAddOn) {
+      } else if (!promoRecomputed && isFreeDrinksPromo && !hasDrinksAddOn) {
         // Drinks add-on removed → a free_drinks promo now covers nothing.
         // Zero it, otherwise the stale promoDiscount keeps discounting a
         // line item that no longer exists (silent undercharge — the
