@@ -214,7 +214,7 @@ export default function PayBalancePage() {
               choice="wallet"
               icon={<Smartphone size={24} />}
               title={locale === 'zh' ? '電子錢包' : 'E-Wallet'}
-              subtitle={locale === 'zh' ? 'AlipayHK / 支付寶 / WeChat Pay / PayMe' : 'AlipayHK / Alipay / WeChat Pay / PayMe'}
+              subtitle={locale === 'zh' ? 'AlipayHK / 支付寶 / WeChat Pay' : 'AlipayHK / Alipay / WeChat Pay'}
               badge={{ text: locale === 'zh' ? '免手續費' : 'No fee', tone: 'free' }}
             />
             <OptionCard
@@ -227,7 +227,7 @@ export default function PayBalancePage() {
             <OptionCard
               choice="card"
               icon={<CreditCard size={24} />}
-              title={locale === 'zh' ? '信用卡 / Apple Pay / Samsung Pay' : 'Card / Apple Pay / Samsung Pay'}
+              title={locale === 'zh' ? '信用卡 / Samsung Pay' : 'Card / Samsung Pay'}
               subtitle={
                 locale === 'zh'
                   ? `手續費 HK$${cardFee.toLocaleString()}，合共 HK$${cardTotal.toLocaleString()}`

@@ -22,8 +22,18 @@ export const runtime = 'nodejs';
  * verification), so the cashier must never offer it.
  */
 const PAY_METHOD_GROUPS: Record<'card' | 'wallet', string[]> = {
-  card: ['CARD', 'APPLEPAY', 'GOOGLEPAY'],
-  wallet: ['ALIPAYHK', 'ALIPAYCN', 'WXPAY', 'PAYME'],
+  // APPLEPAY / GOOGLEPAY temporarily REMOVED (2026-07-21): the KPay
+  // merchant account hasn't provisioned those channels yet, so tapping
+  // Apple Pay on the hosted cashier returned 403 Forbidden to customers
+  // (3 stuck retries in prod logs). Same class as the PayMe complaint —
+  // channels are enabled per-merchant by KPay. Re-add here once KPay
+  // confirms APPLEPAY / GOOGLEPAY (and PAYME below) are enabled on
+  // merchant 852124324500007. Samsung Pay rides CARD and still works.
+  card: ['CARD'],
+  // PAYME also removed pending KPay channel confirmation (customer
+  // reported PayMe payment failing on 2026-07-20). WeChat has proven
+  // production transactions; Alipay rides the base activation.
+  wallet: ['ALIPAYHK', 'ALIPAYCN', 'WXPAY'],
 };
 
 /** 1.5% card surcharge, rounded to the cent. (Route files may only
