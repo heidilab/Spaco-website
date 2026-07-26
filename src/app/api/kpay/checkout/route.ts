@@ -21,19 +21,20 @@ export const runtime = 'nodejs';
  * the pay-offline flow (bank transfer + receipt upload + admin
  * verification), so the cashier must never offer it.
  */
+// APPLEPAY / GOOGLEPAY / PAYME were pulled on 2026-07-21 when Apple Pay
+// returned 403 to customers, on the theory that KPay had not provisioned
+// those channels. The real cause turned out to be a KPay-side cashier
+// outage (payment.kpay-group.com returned 403 to every request, from any
+// network, for all methods). KPay resolved it on 2026-07-22, so the
+// channels are restored here. Samsung Pay rides CARD.
+//
+// If any single method fails again while the OTHERS still work, that IS a
+// per-merchant channel issue — remove just that one and ask KPay to
+// enable it on merchant 852124324500007. If EVERY method fails, check the
+// cashier host itself before touching this list.
 const PAY_METHOD_GROUPS: Record<'card' | 'wallet', string[]> = {
-  // APPLEPAY / GOOGLEPAY temporarily REMOVED (2026-07-21): the KPay
-  // merchant account hasn't provisioned those channels yet, so tapping
-  // Apple Pay on the hosted cashier returned 403 Forbidden to customers
-  // (3 stuck retries in prod logs). Same class as the PayMe complaint —
-  // channels are enabled per-merchant by KPay. Re-add here once KPay
-  // confirms APPLEPAY / GOOGLEPAY (and PAYME below) are enabled on
-  // merchant 852124324500007. Samsung Pay rides CARD and still works.
-  card: ['CARD'],
-  // PAYME also removed pending KPay channel confirmation (customer
-  // reported PayMe payment failing on 2026-07-20). WeChat has proven
-  // production transactions; Alipay rides the base activation.
-  wallet: ['ALIPAYHK', 'ALIPAYCN', 'WXPAY'],
+  card: ['CARD', 'APPLEPAY', 'GOOGLEPAY'],
+  wallet: ['ALIPAYHK', 'ALIPAYCN', 'WXPAY', 'PAYME'],
 };
 
 /** 1.5% card surcharge, rounded to the cent. (Route files may only
