@@ -2526,6 +2526,16 @@ function OutstandingBalanceSection({
       - (booking.pointsDiscount || 0),
   ) + (booking.pricing?.securityDeposit ?? 0);
   const unpaidTotal = Math.max(0, Math.round((grandTotalCanonical - paidTotal) * 100) / 100);
+  // What admin should chase. Two independent ways a booking can owe money:
+  //   • unpaidTotal — bill not fully paid yet (new / partially-paid booking)
+  //   • balanceDue  — a charge raised AFTER full payment, most importantly
+  //     deposit-settlement overflow: deductions exceeded the security
+  //     deposit, so settlement writes the excess to balanceDue even though
+  //     the original bill is fully settled (unpaidTotal === 0).
+  // Gating on unpaidTotal alone hid the card for settled overflow
+  // (#LSi5Z31A owed $650 with nowhere to record it), gating on balanceDue
+  // alone hid it for never-paid offline bookings (#2qzYQOU4). Take both.
+  const owed = Math.max(unpaidTotal, balance);
   const [origin, setOrigin] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);
   const [settling, setSettling] = useState<boolean>(false);
@@ -2675,7 +2685,7 @@ function OutstandingBalanceSection({
     }
   }
 
-  if (unpaidTotal <= 0) return null;
+  if (owed <= 0) return null;
 
   const payUrl = origin
     ? `${origin}/${locale}/book/${booking.branchSlug}/pay-balance/${booking.id}`
@@ -2715,9 +2725,13 @@ function OutstandingBalanceSection({
               ? (locale === 'zh'
                   ? '此預訂仲未有任何付款記錄。如客人已用 FPS／銀行／現金付款，請用下面「已於線下付款」記錄；或發送線上付款連結。'
                   : 'No payment recorded yet. If the customer paid by FPS / bank / cash, log it with "Record offline payment" below, or send the online pay link.')
-              : (locale === 'zh'
-                  ? '客人需要補付尾數，請發送付款連結或記錄線下收款。'
-                  : 'Customer owes the balance below — send them the pay link, or record an offline payment.')}
+              : unpaidTotal <= 0 && booking.depositRefund
+                ? (locale === 'zh'
+                    ? '按金結算後扣減超出按金，客人需補付以下金額。請發送付款連結或用「已於線下付款」記錄收到嘅金額。'
+                    : 'Deductions exceeded the security deposit at settlement — the customer owes the amount below. Send the pay link or record an offline payment.')
+                : (locale === 'zh'
+                    ? '客人需要補付尾數，請發送付款連結或記錄線下收款。'
+                    : 'Customer owes the balance below — send them the pay link, or record an offline payment.')}
           </p>
         </div>
         <div className="text-right">
@@ -2725,7 +2739,7 @@ function OutstandingBalanceSection({
             {locale === 'zh' ? '尚欠' : 'Owed'}
           </p>
           <p className="text-2xl font-bold text-amber-900 font-display">
-            HK${unpaidTotal.toLocaleString()}
+            HK${owed.toLocaleString()}
           </p>
         </div>
       </div>
