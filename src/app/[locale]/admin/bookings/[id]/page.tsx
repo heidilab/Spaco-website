@@ -31,6 +31,7 @@ import {
   calcCateringTotal,
   freeDrinksVenues,
 } from '@/lib/pricing';
+import { amountOwed, paidBase, isSettlementOverflow, computeGrandTotal, netConsumption } from '@/lib/bookingMoney';
 
 /**
  * Live-preview recompute of free_drinks promo amount when admin
@@ -735,13 +736,7 @@ export default function AdminBookingDetailPage() {
         // regardless of whether pricing.subtotal happens to be stored
         // PRE- or POST-promo (convention drift between admin/bookings/new
         // and updateBookingPricing).
-        const effectiveSpend = Math.max(
-          0,
-          (booking.pricing.baseCharge || 0)
-            + (booking.pricing.addOnTotal || 0)
-            - promoDiscount
-            - pointsDiscount,
-        );
+        const effectiveSpend = netConsumption(booking);
         const points = effectiveSpend + consumedDeposit + overflowPaid;
         creditedPoints = await creditLoyaltyPoints(booking.userId, points);
         if (creditedPoints > 0) {
@@ -800,13 +795,7 @@ export default function AdminBookingDetailPage() {
       const securityDepositAtSettle = booking.pricing.securityDeposit ?? 0;
       const consumedDeposit = Math.min(settledDeductions, securityDepositAtSettle);
       const overflowPaid = Math.max(0, settledDeductions - securityDepositAtSettle);
-      const effectiveSpend = Math.max(
-        0,
-        (booking.pricing.baseCharge || 0)
-          + (booking.pricing.addOnTotal || 0)
-          - promoDiscount
-          - pointsDiscount,
-      );
+      const effectiveSpend = netConsumption(booking);
       const points = effectiveSpend + consumedDeposit + overflowPaid;
       const credited = await creditLoyaltyPoints(booking.userId, points);
       if (credited > 0) {
@@ -2065,13 +2054,7 @@ export default function AdminBookingDetailPage() {
             <Row label={locale === 'zh' ? '可退按金' : 'Refundable deposit'} value={`HK$${(booking.pricing.securityDeposit ?? 0).toLocaleString()}`} />
             {(() => {
               const grandTotal =
-                Math.max(
-                  0,
-                  (booking.pricing.baseCharge || 0)
-                    + (booking.pricing.addOnTotal || 0)
-                    - (booking.promoDiscount || 0)
-                    - (booking.pointsDiscount || 0),
-                ) + (booking.pricing.securityDeposit || 0);
+                computeGrandTotal(booking);
               const actualPaid =
                 (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
               const outstanding = Math.max(0, grandTotal - actualPaid);
@@ -2508,34 +2491,13 @@ function OutstandingBalanceSection({
    *  the parent page reloads the fresh booking. */
   onUpdated?: () => void;
 }) {
+  // Money figures come from the shared bookingMoney module. `owed` covers
+  // BOTH ways a booking can owe (unpaid bill vs post-payment charge such
+  // as settlement overflow) — see amountOwed's docs; narrowing it to one
+  // term has broken production twice (#2qzYQOU4, #LSi5Z31A).
   const balance = booking.balanceDue ?? 0;
-  // TRUE amount still owed = canonical grand total − everything actually
-  // paid. This differs from `balanceDue`, which is the balance AFTER the
-  // deposit and is 0 on a brand-new booking whose deposit hasn't been
-  // recorded yet. Keying the card off balanceDue meant an FPS/offline
-  // booking with NOTHING recorded showed no card → admin had no way to log
-  // the customer's late FPS transfer (#2qzYQOU4). Key off the true unpaid
-  // amount so the record-payment action is always reachable while money is
-  // outstanding.
-  const paidTotal = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
-  const grandTotalCanonical = Math.max(
-    0,
-    (booking.pricing?.baseCharge || 0)
-      + (booking.pricing?.addOnTotal || 0)
-      - (booking.promoDiscount || 0)
-      - (booking.pointsDiscount || 0),
-  ) + (booking.pricing?.securityDeposit ?? 0);
-  const unpaidTotal = Math.max(0, Math.round((grandTotalCanonical - paidTotal) * 100) / 100);
-  // What admin should chase. Two independent ways a booking can owe money:
-  //   • unpaidTotal — bill not fully paid yet (new / partially-paid booking)
-  //   • balanceDue  — a charge raised AFTER full payment, most importantly
-  //     deposit-settlement overflow: deductions exceeded the security
-  //     deposit, so settlement writes the excess to balanceDue even though
-  //     the original bill is fully settled (unpaidTotal === 0).
-  // Gating on unpaidTotal alone hid the card for settled overflow
-  // (#LSi5Z31A owed $650 with nowhere to record it), gating on balanceDue
-  // alone hid it for never-paid offline bookings (#2qzYQOU4). Take both.
-  const owed = Math.max(unpaidTotal, balance);
+  const paidTotal = paidBase(booking);
+  const owed = amountOwed(booking);
   const [origin, setOrigin] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);
   const [settling, setSettling] = useState<boolean>(false);
@@ -2725,7 +2687,7 @@ function OutstandingBalanceSection({
               ? (locale === 'zh'
                   ? '此預訂仲未有任何付款記錄。如客人已用 FPS／銀行／現金付款，請用下面「已於線下付款」記錄；或發送線上付款連結。'
                   : 'No payment recorded yet. If the customer paid by FPS / bank / cash, log it with "Record offline payment" below, or send the online pay link.')
-              : unpaidTotal <= 0 && booking.depositRefund
+              : isSettlementOverflow(booking)
                 ? (locale === 'zh'
                     ? '按金結算後扣減超出按金，客人需補付以下金額。請發送付款連結或用「已於線下付款」記錄收到嘅金額。'
                     : 'Deductions exceeded the security deposit at settlement — the customer owes the amount below. Send the pay link or record an offline payment.')
@@ -2893,13 +2855,7 @@ function DepositSettlement(props: DepositSettlementProps) {
     // deductions (consumed deposit + any overflow). Previously this used
     // the gross subtotal without subtracting promo/points, so the preview
     // overstated the points the button would actually credit.
-    const effectiveSpend = Math.max(
-      0,
-      (booking.pricing.baseCharge || 0)
-        + (booking.pricing.addOnTotal || 0)
-        - (booking.promoDiscount || 0)
-        - (booking.pointsDiscount || 0),
-    );
+    const effectiveSpend = netConsumption(booking);
     return effectiveSpend + settledDeductions;
   })();
 
@@ -3116,13 +3072,7 @@ function DepositSettlement(props: DepositSettlementProps) {
                 // + consumedDeposit (deductions ≤ security deposit)
                 // + overflowPaid (deductions − security deposit, what
                 //                  customer pays out of pocket).
-                Math.max(
-                  0,
-                  (booking.pricing.baseCharge || 0)
-                    + (booking.pricing.addOnTotal || 0)
-                    - (booking.promoDiscount || 0)
-                    - (booking.pointsDiscount || 0),
-                )
+                netConsumption(booking)
                 + Math.min(total, booking.pricing.securityDeposit || 0)
                 + Math.max(0, total - (booking.pricing.securityDeposit || 0))
               ).toLocaleString()} {locale === 'zh' ? '分' : 'pts'}</span>

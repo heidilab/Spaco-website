@@ -7,6 +7,7 @@ import {
   calculatePricing, calculateDeposit, freeDrinksVenues,
 } from '@/lib/pricing';
 import { calcPromoDiscount } from '@/lib/promoCodes';
+import { computeGrandTotal, computeBalanceDue, paidBase } from '@/lib/bookingMoney';
 import type { BookingRecord, AddOnOptions, PromoCode } from '@/types';
 
 export const runtime = 'nodejs';
@@ -231,12 +232,21 @@ export async function POST(
   const pointsDiscount = booking.pointsDiscount || 0;
   // Security deposit sticky — never auto-bump on a customer self-edit.
   const securityDeposit = booking.pricing?.securityDeposit || 0;
-  const grandTotal =
-    Math.max(0, computed.baseCharge + computed.addOnTotal - promoDiscount - pointsDiscount)
-    + securityDeposit;
+  // Canonical totals from the shared module — never re-derive inline.
+  const repriced = {
+    pricing: {
+      baseCharge: computed.baseCharge,
+      addOnTotal: computed.addOnTotal,
+      securityDeposit,
+    },
+    promoDiscount,
+    pointsDiscount,
+    payments: booking.payments,
+  };
+  const grandTotal = computeGrandTotal(repriced);
   const effectiveDeposit = calculateDeposit(grandTotal, booking.date);
-  const paidSoFar = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
-  const balanceDue = Math.max(0, grandTotal - paidSoFar);
+  const paidSoFar = paidBase(repriced);
+  const balanceDue = computeBalanceDue(repriced);
 
   // Guard: self-service is add-only, so the new gross subtotal must never
   // be LOWER than what's booked. Defense-in-depth against a forged payload

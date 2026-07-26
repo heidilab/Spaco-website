@@ -11,6 +11,7 @@ import {
   addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE,
   calculatePricing,
 } from '@/lib/pricing';
+import { displayBillTotal, paidGateway, surchargePaid } from '@/lib/bookingMoney';
 import { generateWhatsAppLink } from '@/lib/email';
 import PaymentHistory from '@/components/booking/PaymentHistory';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
@@ -93,28 +94,12 @@ export default function MyBookingDetailPage() {
   const venue = getVenueById(booking.venueId);
   const venueName = venue?.name[locale] || booking.branchSlug;
   const securityDeposit = booking.pricing.securityDeposit ?? 0;
-  // Grand total = the full bill BEFORE points, matching the payment page
-  // (訂單總計 = subtotal − promo + securityDeposit). Points are NOT folded
-  // into the total — they're a redemption shown as a separate line below,
-  // exactly like cash paid. Folding points in here (the old code did
-  // − pointsDiscount) made the total read 1900 while 已付 showed 3400, so
-  // the two looked swapped. Derived from primitives so it's correct
-  // whether pricing.subtotal is stored PRE- or POST-promo.
-  const grandTotal = Math.max(
-    0,
-    (booking.pricing.baseCharge || 0)
-      + (booking.pricing.addOnTotal || 0)
-      - (booking.promoDiscount || 0),
-  ) + securityDeposit;
+  // All money figures come from the shared bookingMoney module — see its
+  // header for why nothing here may be re-derived inline.
+  const grandTotal = displayBillTotal(booking);
   const balanceDue = booking.balanceDue ?? 0;
-  // "已付" must match what the KPay / FPS gateway actually took from the
-  // customer, so they can reconcile against their card / bank record. That
-  // is the base amount credited to the booking PLUS the 1.5% card surcharge
-  // (a pass-through fee). The old code showed pricing.deposit (the deposit
-  // installment), which for a points-redeemed booking was neither.
-  const paidBase = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
-  const surchargePaid = (booking.payments || []).reduce((s, p) => s + (p.cardSurcharge || 0), 0);
-  const paidGross = Math.round((paidBase + surchargePaid) * 100) / 100;
+  const surcharge = surchargePaid(booking);
+  const paidGross = paidGateway(booking);
   const peopleLine = (booking.childCount ?? 0) > 0
     ? (locale === 'zh'
         ? `${booking.guestCount} 人 (${booking.adultCount ?? booking.guestCount} 成人 + ${booking.childCount} 小童)`
@@ -290,10 +275,10 @@ export default function MyBookingDetailPage() {
                 <span>HK${paidGross.toLocaleString()}</span>
               </div>
             )}
-            {surchargePaid > 0 && (
+            {surcharge > 0 && (
               <div className="flex justify-between text-[11px] text-ink-soft">
                 <span>{locale === 'zh' ? '　含 1.5% 卡手續費' : '　incl. 1.5% card fee'}</span>
-                <span>HK${surchargePaid.toLocaleString()}</span>
+                <span>HK${surcharge.toLocaleString()}</span>
               </div>
             )}
             {balanceDue > 0 && (

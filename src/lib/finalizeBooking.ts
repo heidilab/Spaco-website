@@ -25,33 +25,11 @@ import type { BookingRecord, UserProfile } from '@/types';
  * from primitives (baseCharge/addOnTotal/promoDiscount/pointsDiscount)
  * sidesteps that entirely. Mirrors scan-balance-mismatch.
  */
-export function computeGrandTotal(booking: {
-  pricing?: { baseCharge?: number; addOnTotal?: number; securityDeposit?: number };
-  promoDiscount?: number;
-  pointsDiscount?: number;
-}): number {
-  const p = booking.pricing || {};
-  return (
-    Math.max(
-      0,
-      (p.baseCharge || 0) +
-        (p.addOnTotal || 0) -
-        (booking.promoDiscount || 0) -
-        (booking.pointsDiscount || 0),
-    ) + (p.securityDeposit || 0)
-  );
-}
-
-/** balanceDue derived from the canonical grand total and payments so far. */
-export function computeBalanceDue(booking: {
-  pricing?: { baseCharge?: number; addOnTotal?: number; securityDeposit?: number };
-  promoDiscount?: number;
-  pointsDiscount?: number;
-  payments?: Array<{ amount?: number }>;
-}): number {
-  const paid = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
-  return Math.max(0, computeGrandTotal(booking) - paid);
-}
+// Canonical money math now lives in the pure, testable bookingMoney
+// module so client pages can import the SAME functions instead of
+// re-typing them (the drift that caused #2qzYQOU4 / #LSi5Z31A). These
+// re-exports keep every existing server import working unchanged.
+export { computeGrandTotal, computeBalanceDue } from './bookingMoney';
 
 /**
  * Rebuild the blocked_slots for a booking if the expire cron deleted

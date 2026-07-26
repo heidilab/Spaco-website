@@ -8,6 +8,7 @@ import { storage } from '@/lib/firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { BookingRecord } from '@/types';
 import { venues } from '@/lib/venues';
+import { displayBillTotal, paidGateway } from '@/lib/bookingMoney';
 import { generateWhatsAppLink } from '@/lib/email';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
 import { CalendarDays, Clock, Users, Upload, MessageCircle, CreditCard, AlertCircle, ChevronRight } from 'lucide-react';
@@ -262,17 +263,10 @@ function BookingCard({
         </div>
         <div className="text-right">
           <p className="text-2xl font-bold font-display text-gradient-pink">
-            HK${(
-              Math.max(
-                0,
-                (booking.pricing.baseCharge || 0)
-                  + (booking.pricing.addOnTotal || 0)
-                  - (booking.promoDiscount || 0),
-              ) + (booking.pricing.securityDeposit ?? 0)
-            ).toLocaleString()}
+            HK${displayBillTotal(booking).toLocaleString()}
           </p>
           <p className="text-xs text-ink-soft">
-            {locale === 'zh' ? '已付' : 'Paid'}: HK${(booking.payments || []).reduce((s, p) => s + (p.amount || 0) + (p.cardSurcharge || 0), 0).toLocaleString()}
+            {locale === 'zh' ? '已付' : 'Paid'}: HK${paidGateway(booking).toLocaleString()}
           </p>
           {balanceDue > 0 && (
             <p className="text-xs text-amber-700 mt-0.5">

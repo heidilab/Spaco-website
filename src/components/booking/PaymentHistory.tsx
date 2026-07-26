@@ -8,6 +8,7 @@
 // attribute the money.
 
 import { adminApiFetch } from '@/lib/adminApiFetch';
+import { computeGrandTotal } from '@/lib/bookingMoney';
 import { useState } from 'react';
 import type { BookingRecord } from '@/types';
 import { CreditCard, Wand2, X as XIcon, Loader2, Check, Undo2 } from 'lucide-react';
@@ -124,15 +125,7 @@ export default function PaymentHistory({
   // bucket-fill order below reconstructs the correct split for the
   // common "admin added an add-on after the customer already paid"
   // case without needing to store a pricing snapshot.
-  const promoDiscountForGrandTotal = booking.promoDiscount || 0;
-  const pointsDiscountForGrandTotal = booking.pointsDiscount || 0;
-  const grandTotal = Math.max(
-    0,
-    (booking.pricing.baseCharge || 0)
-      + (booking.pricing.addOnTotal || 0)
-      - promoDiscountForGrandTotal
-      - pointsDiscountForGrandTotal,
-  ) + (booking.pricing.securityDeposit || 0);
+  const grandTotal = computeGrandTotal(booking);
   const actualPaidTotal = isPaid ? Math.max(0, grandTotal - (booking.balanceDue || 0)) : 0;
   const loggedTotalAmount = payments.reduce((s, p) => s + (p.amount || 0), 0);
   const synthAmount = hasUnsplit ? 0 : Math.max(0, actualPaidTotal - loggedTotalAmount);
