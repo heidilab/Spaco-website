@@ -54,6 +54,7 @@ export async function POST(req: NextRequest) {
       childCount: booking.childCount,
       subtotal: booking.pricing.subtotal,
       deposit: booking.pricing.deposit,
+      securityDeposit: booking.pricing.securityDeposit,
       promoCode: booking.promoCode,
       promoDiscount: booking.promoDiscount,
       pointsUsed: booking.pointsUsed,

@@ -11,7 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   POINTS_PER_HKD, pointsToHkd, hkdToPoints,
-  grossSubtotal, computeGrandTotal, netConsumption, displayBillTotal,
+  grossSubtotal, computeGrandTotal, netConsumption, displayBillTotal, discountedSubtotal,
   paidBase, surchargePaid, paidGateway, computeBalanceDue,
   amountOwed, hasOutstanding, isSettlementOverflow,
 } from './bookingMoney';
@@ -86,6 +86,18 @@ describe('netConsumption — the loyalty-earning basis', () => {
       pricing: { baseCharge: 100, addOnTotal: 0, securityDeposit: 1000 },
       promoDiscount: 500,
     })).toBe(0);
+  });
+});
+
+describe('discountedSubtotal — the displayed 小計 (#nbWTrtyG)', () => {
+  it('deducts the promo so a 小計 under a −優惠碼 line reads correctly', () => {
+    expect(discountedSubtotal(1650, 150)).toBe(1500);
+  });
+  it('passes gross through when no promo', () => {
+    expect(discountedSubtotal(1650, undefined)).toBe(1650);
+  });
+  it('floors at zero', () => {
+    expect(discountedSubtotal(100, 500)).toBe(0);
   });
 });
 

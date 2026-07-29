@@ -252,6 +252,7 @@ export async function POST(req: NextRequest) {
         childCount: fresh.childCount,
         subtotal: fresh.pricing.subtotal,
         deposit: fresh.pricing.deposit,
+        securityDeposit: fresh.pricing.securityDeposit,
         promoCode: fresh.promoCode,
         promoDiscount: fresh.promoDiscount,
         pointsUsed: fresh.pointsUsed,

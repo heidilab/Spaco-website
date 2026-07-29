@@ -39,6 +39,7 @@ function buildPreview(key: EmailAutomationKey): { subject: string; html: string 
         childCount: 6,
         subtotal: 8400,
         deposit: 4200,
+        securityDeposit: 2000,
         balanceDue: 4200,
         balanceDueDate: '2026-06-13',
         addOnsLine: 'BBQ Standard Package ×15, Drinks Package ×15, Shisha 水煙 ×2 (A·芒果×1, C·提子×1, +人手setup)',

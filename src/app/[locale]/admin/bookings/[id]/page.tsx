@@ -31,7 +31,7 @@ import {
   calcCateringTotal,
   freeDrinksVenues,
 } from '@/lib/pricing';
-import { amountOwed, paidBase, isSettlementOverflow, computeGrandTotal, netConsumption } from '@/lib/bookingMoney';
+import { amountOwed, paidBase, isSettlementOverflow, computeGrandTotal, netConsumption, discountedSubtotal } from '@/lib/bookingMoney';
 
 /**
  * Live-preview recompute of free_drinks promo amount when admin
@@ -2050,7 +2050,10 @@ export default function AdminBookingDetailPage() {
                 highlight="violet"
               />
             )}
-            <Row label={locale === 'zh' ? '小計' : 'Subtotal'} value={`HK$${booking.pricing.subtotal.toLocaleString()}`} />
+            {/* 小計 sits BELOW the −優惠碼 row, so it must already reflect
+              * the deduction (#nbWTrtyG showed gross $1,650 under a −$150
+              * promo line): 場租 + 加購 − 優惠 = 小計. */}
+            <Row label={locale === 'zh' ? '小計' : 'Subtotal'} value={`HK$${discountedSubtotal(booking.pricing.subtotal, booking.promoDiscount).toLocaleString()}`} />
             <Row label={locale === 'zh' ? '可退按金' : 'Refundable deposit'} value={`HK$${(booking.pricing.securityDeposit ?? 0).toLocaleString()}`} />
             {(() => {
               const grandTotal =

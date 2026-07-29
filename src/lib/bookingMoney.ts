@@ -110,6 +110,16 @@ export function netConsumption(booking: MoneyBooking): number {
 }
 
 /**
+ * 小計 as displayed to people: AFTER the promo discount. Heidi's spec
+ * (#nbWTrtyG): a 小計 line that sits below a −優惠碼 line must already
+ * reflect the deduction — 場租 + 加購 − 優惠 = 小計. Takes the raw
+ * numbers (not a booking) because email templates receive flat params.
+ */
+export function discountedSubtotal(grossSubtotal: number, promoDiscount?: number): number {
+  return Math.max(0, (grossSubtotal || 0) - (promoDiscount || 0));
+}
+
+/**
  * Customer-facing 總計 — the full bill BEFORE points, matching the
  * payment page. Points are a redemption shown on their own line next to
  * cash paid, NOT folded into the total.
