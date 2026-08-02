@@ -1175,8 +1175,8 @@ export default function BookingPage() {
                       {cateringAddOn && cateringSelection?.tierId && (
                         <p className="text-xs text-pink font-semibold mt-2">
                           {locale === 'zh'
-                            ? `已揀 ${(cateringSelection.dishCodes || []).length} 款 · 套餐 ${cateringSelection.tierId} · 小計 HK$${cateringTotal.toLocaleString()}`
-                            : `${(cateringSelection.dishCodes || []).length} dishes · ${cateringSelection.tierId} · HK$${cateringTotal.toLocaleString()}`}
+                            ? `已揀 ${(cateringSelection.dishCodes || []).length} 盤 · 套餐 ${cateringSelection.tierId} · 小計 HK$${cateringTotal.toLocaleString()}`
+                            : `${(cateringSelection.dishCodes || []).length} portions · ${cateringSelection.tierId} · HK$${cateringTotal.toLocaleString()}`}
                         </p>
                       )}
                     </div>

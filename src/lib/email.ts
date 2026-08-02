@@ -802,22 +802,31 @@ export function buildStaffSupplierOrderEmail(params: {
     const opts = (catering.options || {}) as AddOnOptions;
     const tier = CATERING_TIERS.find((t) => t.id === opts.tierId);
     const zone = CATERING_DELIVERY_ZONES.find((z) => z.id === opts.deliveryZoneId);
+    // dishCodes carries one entry PER PORTION — the same code repeats when
+    // the customer orders multiple 盤 of a dish. GROUP with ×N for the
+    // supplier sheet; a naive .includes() dedupe here once collapsed a
+    // 20-portion order into a single line.
     const codes = opts.dishCodes || [];
-    const picked = CATERING_ITEMS.filter((d) => codes.includes(d.code));
-    const nonAddon = picked.filter((d) => d.category !== 'addon');
-    const addonDishes = picked.filter((d) => d.category === 'addon');
+    const qtyByCode = new Map<string, number>();
+    for (const c of codes) qtyByCode.set(c, (qtyByCode.get(c) || 0) + 1);
+    const grouped = Array.from(qtyByCode.entries())
+      .map(([c, qty]) => ({ item: CATERING_ITEMS.find((d) => d.code === c), qty }))
+      .filter((g): g is { item: (typeof CATERING_ITEMS)[number]; qty: number } => !!g.item);
+    const nonAddon = grouped.filter((g) => g.item.category !== 'addon');
+    const addonDishes = grouped.filter((g) => g.item.category === 'addon');
+    const nonAddonPortions = nonAddon.reduce((s, g) => s + g.qty, 0);
     const dishLinesByCategory = nonAddon.length > 0
-      ? `<ul style="margin: 4px 0 0; padding-left: 18px;">${nonAddon.map((d) => `<li>[${d.code}] ${d.name.zh}</li>`).join('')}</ul>`
+      ? `<ul style="margin: 4px 0 0; padding-left: 18px;">${nonAddon.map((g) => `<li>[${g.item.code}] ${g.item.name.zh}${g.qty > 1 ? ` <strong>× ${g.qty} 盤</strong>` : ''}</li>`).join('')}</ul>`
       : '<i style="color:#991B1B;">⚠️ 客人未揀菜式</i>';
     const addonLines = addonDishes.length > 0
-      ? `<ul style="margin: 4px 0 0; padding-left: 18px;">${addonDishes.map((d) => `<li>[${d.code}] ${d.name.zh} ${d.price ? `(+HK$${d.price})` : ''}</li>`).join('')}</ul>`
+      ? `<ul style="margin: 4px 0 0; padding-left: 18px;">${addonDishes.map((g) => `<li>[${g.item.code}] ${g.item.name.zh}${g.qty > 1 ? ` <strong>× ${g.qty} 盤</strong>` : ''} ${g.item.price ? `(+HK$${g.item.price}${g.qty > 1 ? `×${g.qty}` : ''})` : ''}</li>`).join('')}</ul>`
       : '';
     const deliveryTimeLine = opts.deliveryTime
       ? `<strong style="color:#B45309;">⏰ 送貨時間：${opts.deliveryTime}</strong>（客人會喺場地內接收,請供應商當日聯絡客人 ${booking.whatsappPhone || ''}）`
       : '<strong style="color:#991B1B;">⚠️ 客人未揀送貨時間,須跟進</strong>';
     const lines = [
       `• 套餐：${tier?.paxRange.min}-${tier?.paxRange.max} 人 / 任選 ${tier?.pickCount} 盤 / HK$${tier?.price.toLocaleString()}`,
-      `• 已揀 ${nonAddon.length} 款主菜${nonAddon.length > (tier?.pickCount ?? 0) ? `（額外 ${nonAddon.length - (tier?.pickCount ?? 0)} × HK$155）` : ''}：${dishLinesByCategory}`,
+      `• 已揀 ${nonAddonPortions} 盤主菜${nonAddonPortions > (tier?.pickCount ?? 0) ? `（額外 ${nonAddonPortions - (tier?.pickCount ?? 0)} 盤 × HK$155）` : ''}：${dishLinesByCategory}`,
       addonDishes.length > 0 ? `• 追加款式：${addonLines}` : '',
       `• 送貨區：${zone?.label.zh || '—'}${zone?.fee ? ` (+HK$${zone.fee})` : ''}${opts.doorstepDelivery ? ' / 上門交收 (+$150)' : ' / 樓下交收'}`,
       `• ${deliveryTimeLine}`,

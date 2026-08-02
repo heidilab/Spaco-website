@@ -61,6 +61,76 @@ export async function deletePromoCode(id: string): Promise<void> {
   await deleteDoc(doc(db, 'promo_codes', id));
 }
 
+// ───── Voucher campaigns (活動現金券) ─────
+//
+// Batch-generated single-use cash vouchers for marketing campaigns.
+// Each code: type 'cash', totalUsageLimit 1 (the leak-proofing Heidi
+// asked for — a screenshot forwarded to a group chat is dead after the
+// first redemption), optional min spend (consumption subtotal, which
+// already EXCLUDES the security deposit), and a validity window.
+
+/** Unambiguous charset — no 0/O/1/I/L so codes survive being read out
+ *  loud or retyped from a photo. */
+const VOUCHER_CHARSET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+function randomVoucherSuffix(len: number): string {
+  let s = '';
+  for (let i = 0; i < len; i++) {
+    s += VOUCHER_CHARSET[Math.floor(Math.random() * VOUCHER_CHARSET.length)];
+  }
+  return s;
+}
+
+export interface VoucherCampaignParams {
+  /** Campaign name — groups the codes in the admin list. */
+  campaign: string;
+  /** Code prefix, e.g. "SPACO500" → SPACO500-X7KQ2M. */
+  prefix: string;
+  /** How many codes to generate (1-200). */
+  quantity: number;
+  /** HK$ cash value of each voucher. */
+  amount: number;
+  /** Min consumption subtotal (EXCLUDES deposit). 0 = no minimum. */
+  minSubtotal: number;
+  startDate: string | null;
+  endDate: string | null;
+}
+
+/** Generate a batch of single-use cash voucher codes. Returns the created
+ *  codes in order. Codes are unique within the batch; the random space
+ *  (31^6 ≈ 890M) makes cross-batch collisions vanishingly unlikely, and a
+ *  duplicate would just be two docs with the same code string — the
+ *  validator matches the first, so worst case one voucher is unusable,
+ *  never double-spendable. */
+export async function createVoucherCampaign(params: VoucherCampaignParams): Promise<PromoCode[]> {
+  const qty = Math.max(1, Math.min(200, Math.floor(params.quantity)));
+  const created: PromoCode[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < qty; i++) {
+    let code: string;
+    do { code = `${params.prefix.toUpperCase()}-${randomVoucherSuffix(6)}`; } while (seen.has(code));
+    seen.add(code);
+    // NOTE: no `undefined` values — the client Firestore SDK rejects them.
+    const data = {
+      code,
+      type: 'cash' as const,
+      amount: params.amount,
+      ...(params.minSubtotal > 0 ? { minSubtotal: params.minSubtotal } : {}),
+      startDate: params.startDate,
+      endDate: params.endDate,
+      totalUsageLimit: 1,
+      perUserLimit: 1,
+      enabled: true,
+      campaign: params.campaign,
+      description: params.campaign,
+      note: '',
+    };
+    const id = await createPromoCode(data as unknown as Parameters<typeof createPromoCode>[0]);
+    created.push({ id, totalUsageCount: 0, ...data } as unknown as PromoCode);
+  }
+  return created;
+}
+
 // ───── Pure pricing logic (no Firestore) — shared with server validator ─────
 
 /** Compute the HK$ value of a promo code applied to a given booking

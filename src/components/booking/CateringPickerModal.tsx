@@ -96,8 +96,12 @@ export default function CateringPickerModal({
   }, [open]);
 
   const tier = CATERING_TIERS.find((t) => t.id === tierId)!;
-  const selectedItems = CATERING_ITEMS.filter((d) => dishCodes.includes(d.code));
-  const nonAddonSelectedCount = selectedItems.filter((d) => d.category !== 'addon').length;
+  // dishCodes carries one entry PER PORTION (盤) — the same code may
+  // repeat (e.g. 20× '102'). Counts below are per-entry so pricing and
+  // the tier progress reflect portions, not distinct dishes.
+  const qtyOf = (code: string) => dishCodes.filter((c) => c === code).length;
+  const nonAddonSelectedCount = dishCodes
+    .filter((c) => CATERING_ITEMS.find((d) => d.code === c)?.category !== 'addon').length;
   const overTierCount = Math.max(0, nonAddonSelectedCount - tier.pickCount);
 
   const total = useMemo(() => calcCateringTotal({
@@ -115,8 +119,15 @@ export default function CateringPickerModal({
     .filter((d) => d.category === activeCategory)
     .filter((d) => !activeTagFilter || (d.tags || []).includes(activeTagFilter));
 
-  const toggleDish = (code: string) => {
-    setDishCodes((prev) => prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]);
+  const incDish = (code: string) => {
+    setDishCodes((prev) => [...prev, code]);
+  };
+  const decDish = (code: string) => {
+    setDishCodes((prev) => {
+      const i = prev.lastIndexOf(code);
+      if (i === -1) return prev;
+      return [...prev.slice(0, i), ...prev.slice(i + 1)];
+    });
   };
 
   // Delivery time options — 15-min increments within the booking
@@ -218,7 +229,7 @@ export default function CateringPickerModal({
                 <div className="flex gap-1.5 overflow-x-auto pb-1 flex-1 min-w-0">
                   {CATERING_CATEGORIES.map((c) => {
                     const active = activeCategory === c.id;
-                    const cnt = CATERING_ITEMS.filter((d) => d.category === c.id && dishCodes.includes(d.code)).length;
+                    const cnt = dishCodes.filter((code) => CATERING_ITEMS.find((d) => d.code === code)?.category === c.id).length;
                     return (
                       <button
                         key={c.id}
@@ -258,13 +269,16 @@ export default function CateringPickerModal({
               {/* Dish grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 {visibleItems.map((d) => {
-                  const selected = dishCodes.includes(d.code);
+                  const qty = qtyOf(d.code);
+                  const selected = qty > 0;
                   return (
-                    <button
+                    <div
                       key={d.code}
-                      type="button"
-                      onClick={() => toggleDish(d.code)}
-                      className={`text-left p-3 rounded-xl border transition-all ${
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => { if (qty === 0) incDish(d.code); }}
+                      onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && qty === 0) { e.preventDefault(); incDish(d.code); } }}
+                      className={`text-left p-3 rounded-xl border transition-all cursor-pointer ${
                         selected ? 'border-pink bg-pink/5 ring-1 ring-pink' : 'border-charcoal/10 hover:border-charcoal/30 bg-white'
                       }`}
                     >
@@ -288,11 +302,30 @@ export default function CateringPickerModal({
                         {d.price && (
                           <span className="text-xs font-bold font-display text-pink whitespace-nowrap">+${d.price}</span>
                         )}
-                        <div className={`w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center ${selected ? 'border-pink bg-pink text-white' : 'border-charcoal/20'}`}>
-                          {selected && <span className="text-[10px] font-bold">✓</span>}
-                        </div>
+                        {/* Portion stepper — the same dish can be ordered
+                          * many times (20 盤同一款都得); each portion is one
+                          * dishCodes entry. */}
+                        {selected ? (
+                          <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={() => decDish(d.code)}
+                              className="w-6 h-6 rounded-full border border-charcoal/20 bg-white flex items-center justify-center text-ink hover:bg-cream text-sm font-bold"
+                              aria-label="minus one portion"
+                            >−</button>
+                            <span className="w-7 text-center text-sm font-bold text-pink">×{qty}</span>
+                            <button
+                              type="button"
+                              onClick={() => incDish(d.code)}
+                              className="w-6 h-6 rounded-full border border-pink bg-pink text-white flex items-center justify-center hover:opacity-90 text-sm font-bold"
+                              aria-label="plus one portion"
+                            >+</button>
+                          </div>
+                        ) : (
+                          <div className="w-5 h-5 rounded-full border-2 border-charcoal/20 shrink-0" />
+                        )}
                       </div>
-                    </button>
+                    </div>
                   );
                 })}
               </div>

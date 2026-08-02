@@ -7,6 +7,7 @@ import {
   listPromoCodes, createPromoCode, updatePromoCode, deletePromoCode,
 } from '@/lib/promoCodes';
 import type { PromoCode, PromoCodeType } from '@/types';
+import VoucherCampaigns from '@/components/admin/VoucherCampaigns';
 import { venues } from '@/lib/venues';
 import {
   Tag, Plus, Edit2, Trash2, X, Check, Loader2, Calendar, Users as UsersIcon, AlertCircle, Building2,
@@ -57,6 +58,9 @@ export default function PromoCodesPage() {
   const canAccess = hasPermission('gcal');
 
   const [codes, setCodes] = useState<PromoCode[]>([]);
+  // Campaign vouchers render in their own grouped section; the classic
+  // list below shows only hand-made codes.
+  const regularCodes = codes.filter((c) => !c.campaign);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null); // null = none, "new" = creating
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
@@ -214,6 +218,11 @@ export default function PromoCodesPage() {
           {flash.text}
         </div>
       )}
+
+      {/* Voucher campaigns — batch single-use cash codes, grouped by
+        * campaign with per-code notes. Their docs are excluded from the
+        * regular list below so 200 giveaway codes don't swamp it. */}
+      <VoucherCampaigns codes={codes} locale={locale} onChanged={load} />
 
       {/* Editor */}
       {editingId && (
@@ -430,14 +439,14 @@ export default function PromoCodesPage() {
         <div className="glass-card p-10 text-center text-ink-soft">
           <Loader2 size={20} className="animate-spin inline mr-2" /> Loading…
         </div>
-      ) : codes.length === 0 ? (
+      ) : regularCodes.length === 0 ? (
         <div className="glass-card p-10 text-center text-ink-soft">
           <Tag size={32} className="mx-auto mb-3 opacity-40" />
           <p className="text-sm">{locale === 'zh' ? '未有優惠碼。撳「新增優惠碼」開始。' : 'No codes yet. Click "New Code" to start.'}</p>
         </div>
       ) : (
         <div className="space-y-3">
-          {codes.map((c) => (
+          {regularCodes.map((c) => (
             <div key={c.id} className="glass-card p-5">
               <div className="flex items-start justify-between gap-4 flex-wrap">
                 <div className="flex-1 min-w-0">

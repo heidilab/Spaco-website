@@ -26,13 +26,20 @@ export function calcCateringTotal(opts: {
 }): number {
   const tier = CATERING_TIERS.find((t) => t.id === opts.tierId);
   if (!tier) return 0;
+  // `dishCodes` may contain REPEATED codes — one entry per 盤 (portion),
+  // so 20 portions of dish 102 = twenty '102' entries. Every entry counts
+  // toward the tier pick-count / extras fee (or its own price for A1-A10
+  // add-on dishes). Legacy bookings with unique codes behave identically.
   const codes = opts.dishCodes || [];
-  const selected = CATERING_ITEMS.filter((d) => codes.includes(d.code));
-  const nonAddon = selected.filter((d) => d.category !== 'addon');
-  const addonDishes = selected.filter((d) => d.category === 'addon');
-  const extras = Math.max(0, nonAddon.length - tier.pickCount);
+  const entries = codes
+    .map((c) => CATERING_ITEMS.find((d) => d.code === c))
+    .filter((d): d is (typeof CATERING_ITEMS)[number] => !!d);
+  const nonAddonCount = entries.filter((d) => d.category !== 'addon').length;
+  const extras = Math.max(0, nonAddonCount - tier.pickCount);
   const extrasFee = extras * CATERING_EXTRA_DISH_FEE;
-  const addonDishesFee = addonDishes.reduce((s, d) => s + (d.price || 0), 0);
+  const addonDishesFee = entries
+    .filter((d) => d.category === 'addon')
+    .reduce((s, d) => s + (d.price || 0), 0);
   const zone = CATERING_DELIVERY_ZONES.find((z) => z.id === opts.deliveryZoneId);
   const deliveryFee = (zone?.fee || 0) + (opts.doorstepDelivery ? CATERING_DOORSTEP_DELIVERY_FEE : 0);
   const cutleryFee = (opts.noCutlery ? -CATERING_NO_CUTLERY_DISCOUNT : 0)

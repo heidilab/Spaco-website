@@ -1319,8 +1319,8 @@ export default function AdminBookingDetailPage() {
                           {cateringSelection && (
                             <p className="text-[11px] text-pink mt-1">
                               {locale === 'zh'
-                                ? `已揀 ${(cateringSelection.dishCodes || []).length} 款 · ${cateringSelection.tierId} · HK$${calcCateringTotal(cateringSelection).toLocaleString()}`
-                                : `${(cateringSelection.dishCodes || []).length} dishes · ${cateringSelection.tierId} · HK$${calcCateringTotal(cateringSelection).toLocaleString()}`}
+                                ? `已揀 ${(cateringSelection.dishCodes || []).length} 盤 · ${cateringSelection.tierId} · HK$${calcCateringTotal(cateringSelection).toLocaleString()}`
+                                : `${(cateringSelection.dishCodes || []).length} portions · ${cateringSelection.tierId} · HK$${calcCateringTotal(cateringSelection).toLocaleString()}`}
                             </p>
                           )}
                         </button>

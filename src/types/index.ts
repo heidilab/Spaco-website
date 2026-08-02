@@ -551,6 +551,12 @@ export interface PromoCode {
   enabled: boolean;
   /** Optional human-friendly description shown in the admin list. */
   description?: string;
+  /** Campaign name for batch-generated single-use vouchers (活動現金券).
+   *  Codes sharing a campaign are grouped in the admin list. */
+  campaign?: string;
+  /** Free-text remark per code — which customer it was sent to (member
+   *  or not; admin types whatever identifies them). */
+  note?: string;
   /** Venue ids the code is valid for. Empty / undefined = all branches. */
   venueIds?: string[];
   /** Orthogonal "also make the drinks add-on free" flag — combines with
