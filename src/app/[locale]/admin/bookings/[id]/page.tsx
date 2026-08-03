@@ -71,7 +71,7 @@ import { buildWhatsAppLink, formatHkPhone } from '@/lib/whatsapp';
 import {
   ArrowLeft, CalendarDays, Clock, Users, Save, MessageCircle,
   Mail, Phone, User as UserIcon, Sparkles, AlertCircle, CalendarPlus, Package,
-  Calculator, Plus, Minus, Check, KeyRound, Send, X as XIcon,
+  Calculator, Plus, Minus, Check, KeyRound, Send, X as XIcon, Edit2,
 } from 'lucide-react';
 import { getSiteContent } from '@/lib/content';
 import { resendLockPasscode, setManualLockPasscode, tryGenerateLockPasscode } from '@/lib/lockPasscodeClient';
@@ -204,6 +204,9 @@ export default function AdminBookingDetailPage() {
   const [customDeductions, setCustomDeductions] = useState<{ label: string; amount: number }[]>([]);
   const [settling, setSettling] = useState(false);
   const [settleMsg, setSettleMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  // Amend-settlement mode (admin role only) — re-opens the deduction form
+  // prefilled with the stored settlement so it can be corrected.
+  const [amendingSettle, setAmendingSettle] = useState(false);
   const [recoveringPoints, setRecoveringPoints] = useState(false);
 
   useEffect(() => {
@@ -664,6 +667,129 @@ export default function AdminBookingDetailPage() {
       0,
     );
     return fixed + custom;
+  }
+
+  /** Enter amend mode: prefill the deduction form from the STORED
+   *  settlement (fixed items matched back by label+amount; the rest load
+   *  as custom rows). Admin-role only — gated at the button. */
+  function startAmendSettle() {
+    if (!booking) return;
+    const stored = (booking.depositRefund as { deductions?: { label: string; amount: number }[] } | null)?.deductions || [];
+    const fixedIds: string[] = [];
+    const custom: { label: string; amount: number }[] = [];
+    for (const d of stored) {
+      const fixed = FIXED_DEDUCTIONS.find(
+        (f) => (f.label.zh === d.label || f.label.en === d.label) && f.amount === d.amount,
+      );
+      if (fixed && !fixedIds.includes(fixed.id)) fixedIds.push(fixed.id);
+      else custom.push({ label: d.label, amount: d.amount });
+    }
+    setSelectedFixed(fixedIds);
+    setCustomDeductions(custom);
+    setSettleMsg(null);
+    setAmendingSettle(true);
+  }
+
+  function cancelAmendSettle() {
+    setAmendingSettle(false);
+    setSelectedFixed([]);
+    setCustomDeductions([]);
+    setSettleMsg(null);
+  }
+
+  /** Overwrite an existing settlement with corrected deductions.
+   *  Recomputes refund/overflow, keeps balanceDue PAYMENT-AWARE (money
+   *  already received toward the old overflow stays counted), and
+   *  reconciles loyalty points against the new expected credit. */
+  async function handleAmendSettle() {
+    if (!booking || !booking.depositRefund) return;
+    const securityDeposit = booking.pricing.securityDeposit ?? 0;
+    const total = totalDeductions();
+    const refundAmount = Math.max(0, Math.min(securityDeposit, securityDeposit - total));
+    const overflowAmount = Math.max(0, total - securityDeposit);
+    if (!window.confirm(locale === 'zh'
+      ? `確認修改結算？\n\n新總扣費：HK$${total.toLocaleString()}\n新退款金額：HK$${refundAmount.toLocaleString()}${overflowAmount > 0 ? `\n客人需補付：HK$${overflowAmount.toLocaleString()}` : ''}\n\n會覆蓋原有結算並自動調整積分。`
+      : `Amend settlement?\n\nNew deductions: HK$${total.toLocaleString()}\nNew refund: HK$${refundAmount.toLocaleString()}${overflowAmount > 0 ? `\nCustomer owes: HK$${overflowAmount.toLocaleString()}` : ''}\n\nOverwrites the stored settlement and reconciles points.`)) return;
+    setSettling(true);
+    setSettleMsg(null);
+    try {
+      const deductions = [
+        ...selectedFixed.map((id) => {
+          const item = FIXED_DEDUCTIONS.find((d) => d.id === id)!;
+          return { label: item.label[locale], amount: item.amount };
+        }),
+        ...customDeductions.filter((d) => d.label && d.amount > 0),
+      ];
+
+      // Money already received BEYOND the canonical bill = what the
+      // customer paid toward the previous overflow. The amended balance
+      // only asks for the part of the NEW overflow not yet covered, so
+      // shrinking a deduction never re-bills money already collected.
+      const paidTowardOverflow = Math.max(0, paidBase(booking) - computeGrandTotal(booking));
+      const newBalance = Math.max(0, overflowAmount - paidTowardOverflow);
+
+      const prevRefundedAt = (booking.depositRefund as { refundedAt?: unknown })?.refundedAt;
+      await updateDoc(doc(db, 'bookings', booking.id), {
+        depositRefund: {
+          amount: refundAmount,
+          deductions,
+          refundedAt: prevRefundedAt ?? serverTimestamp(),
+          amendedAt: serverTimestamp(),
+          amendedBy: user?.email ?? null,
+        },
+        balanceDue: newBalance,
+        status: newBalance > 0 ? 'confirmed' : 'completed',
+        updatedAt: serverTimestamp(),
+      });
+
+      // Loyalty reconciliation — same expected-credit formula as settle:
+      // net consumption + deposit actually consumed + overflow the
+      // customer pays out of pocket. Diff against what was credited.
+      let pointsMsg = '';
+      if (booking.userId && booking.pointsCreditedAt) {
+        const expected = netConsumption(booking) + Math.min(total, securityDeposit) + overflowAmount;
+        const oldCredited = booking.pointsActuallyCredited || 0;
+        const diff = expected - oldCredited;
+        if (diff > 0) {
+          const added = await creditLoyaltyPoints(booking.userId, diff);
+          await updateDoc(doc(db, 'bookings', booking.id), {
+            pointsActuallyCredited: oldCredited + added, updatedAt: serverTimestamp(),
+          });
+          pointsMsg = locale === 'zh' ? `；積分補加 +${added.toLocaleString()}` : `; +${added.toLocaleString()} pts`;
+        } else if (diff < 0) {
+          const taken = await redeemLoyaltyPoints(booking.userId, -diff);
+          if (taken) {
+            await updateDoc(doc(db, 'bookings', booking.id), {
+              pointsActuallyCredited: expected, updatedAt: serverTimestamp(),
+            });
+            pointsMsg = locale === 'zh' ? `；積分扣返 −${(-diff).toLocaleString()}` : `; −${(-diff).toLocaleString()} pts`;
+          } else {
+            pointsMsg = locale === 'zh'
+              ? `；積分需減 ${(-diff).toLocaleString()} 但客戶餘額不足，請手動調整`
+              : `; need −${(-diff).toLocaleString()} pts but balance too low — adjust manually`;
+          }
+        }
+      }
+
+      setSettleMsg({
+        kind: 'ok',
+        text: (locale === 'zh'
+          ? `✓ 已修改結算。新退款 HK$${refundAmount.toLocaleString()}${newBalance > 0 ? `；客人尚欠 HK$${newBalance.toLocaleString()}` : ''}`
+          : `✓ Settlement amended. Refund HK$${refundAmount.toLocaleString()}${newBalance > 0 ? `; customer owes HK$${newBalance.toLocaleString()}` : ''}`) + pointsMsg,
+      });
+      const fresh = await getBooking(booking.id);
+      if (fresh) setBooking(fresh);
+      setAmendingSettle(false);
+      setSelectedFixed([]);
+      setCustomDeductions([]);
+    } catch (err) {
+      setSettleMsg({
+        kind: 'err',
+        text: (locale === 'zh' ? '修改失敗：' : 'Amend failed: ') + (err instanceof Error ? err.message : 'unknown'),
+      });
+    } finally {
+      setSettling(false);
+    }
   }
 
   async function handleSettleDeposit() {
@@ -2237,6 +2363,11 @@ export default function AdminBookingDetailPage() {
               onSettle={handleSettleDeposit}
               onRecoverPoints={handleRecoverPoints}
               recoveringPoints={recoveringPoints}
+              canAmend={hasPermission('staff')}
+              amending={amendingSettle}
+              onStartAmend={startAmendSettle}
+              onCancelAmend={cancelAmendSettle}
+              onAmendSettle={handleAmendSettle}
             />
           )}
         </div>
@@ -2837,6 +2968,12 @@ interface DepositSettlementProps {
    *  bookings settled while the user account didn't exist yet). */
   onRecoverPoints: () => void;
   recoveringPoints: boolean;
+  /** Admin role only — amend an existing settlement. */
+  canAmend: boolean;
+  amending: boolean;
+  onStartAmend: () => void;
+  onCancelAmend: () => void;
+  onAmendSettle: () => void;
 }
 
 function DepositSettlement(props: DepositSettlementProps) {
@@ -2844,6 +2981,7 @@ function DepositSettlement(props: DepositSettlementProps) {
     booking, locale, selectedFixed, setSelectedFixed,
     customDeductions, setCustomDeductions, total, settling, settleMsg, onSettle,
     onRecoverPoints, recoveringPoints,
+    canAmend, amending, onStartAmend, onCancelAmend, onAmendSettle,
   } = props;
   const securityDeposit = booking.pricing.securityDeposit ?? 0;
   const refundAmount = Math.max(0, securityDeposit - total);
@@ -2901,7 +3039,7 @@ function DepositSettlement(props: DepositSettlementProps) {
         <h2 className="font-bold">{locale === 'zh' ? '按金結算' : 'Deposit Settlement'}</h2>
       </div>
 
-      {alreadySettled ? (
+      {alreadySettled && !amending ? (
         <div className="space-y-2 text-sm">
           {/* Detect "deductions exceed deposit" — overflow lives on
            *  booking.balanceDue when status is still 'confirmed' after
@@ -2975,9 +3113,35 @@ function DepositSettlement(props: DepositSettlementProps) {
               </div>
             )}
           </div>
+
+          {/* Amend — admin role only. Re-opens the deduction form
+            * prefilled with the stored settlement; saving overwrites it,
+            * payment-aware, and reconciles loyalty points. */}
+          {canAmend && (
+            <button
+              type="button"
+              onClick={onStartAmend}
+              className="w-full mt-1 px-3 py-2 rounded-xl border border-charcoal/15 bg-white text-xs font-semibold text-ink-soft hover:bg-cream flex items-center justify-center gap-1.5"
+            >
+              <Edit2 size={12} />
+              {locale === 'zh' ? '修改結算（只限 Admin）' : 'Amend settlement (admin only)'}
+            </button>
+          )}
         </div>
       ) : (
         <>
+          {amending && (
+            <div className="bg-violet-50 border border-violet-200 rounded-xl px-3 py-2 flex items-start justify-between gap-2">
+              <p className="text-xs text-violet-800 font-semibold">
+                ✏️ {locale === 'zh'
+                  ? '修改結算模式 — 儲存會覆蓋原有結算並自動調整退款/尾數/積分。'
+                  : 'Amending — saving overwrites the stored settlement and reconciles refund / balance / points.'}
+              </p>
+              <button type="button" onClick={onCancelAmend} className="text-xs text-violet-700 underline whitespace-nowrap">
+                {locale === 'zh' ? '取消' : 'Cancel'}
+              </button>
+            </div>
+          )}
           {!isAfterEvent && (
             <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 flex items-start gap-1.5">
               <AlertCircle size={12} className="text-amber-600 mt-0.5 shrink-0" />
@@ -3091,9 +3255,9 @@ function DepositSettlement(props: DepositSettlementProps) {
           )}
 
           <button
-            onClick={onSettle}
-            disabled={settling || !isAfterEvent}
-            title={!isAfterEvent
+            onClick={amending ? onAmendSettle : onSettle}
+            disabled={settling || (!amending && !isAfterEvent)}
+            title={!amending && !isAfterEvent
               ? (locale === 'zh' ? '活動結束後才可結算按金' : 'Deposit can only be settled after the event ends')
               : undefined}
             className="w-full btn-primary justify-center disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
@@ -3101,9 +3265,11 @@ function DepositSettlement(props: DepositSettlementProps) {
             {settling ? '...' : (
               <>
                 <Calculator size={14} />
-                {!isAfterEvent
-                  ? (locale === 'zh' ? '活動結束後才可結算' : 'Available after the event')
-                  : (locale === 'zh' ? '確認結算 · 退款 + 加積分' : 'Confirm settlement')}
+                {amending
+                  ? (locale === 'zh' ? '確認修改結算（覆蓋原結算）' : 'Confirm amendment (overwrites)')
+                  : !isAfterEvent
+                    ? (locale === 'zh' ? '活動結束後才可結算' : 'Available after the event')
+                    : (locale === 'zh' ? '確認結算 · 退款 + 加積分' : 'Confirm settlement')}
               </>
             )}
           </button>
