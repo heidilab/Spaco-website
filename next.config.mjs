@@ -22,6 +22,24 @@ const nextConfig = {
       },
     ];
   },
+  // Legacy URLs from the OLD website that customers still have saved or
+  // bookmarked. next.config redirects run BEFORE the i18n middleware, so
+  // the bare (locale-less) old path works too. Permanent (308) so
+  // browsers and search engines remember the new home.
+  async redirects() {
+    return [
+      {
+        source: '/guestnotice',
+        destination: '/zh/guidelines',
+        permanent: true,
+      },
+      {
+        source: '/:locale(zh|en)/guestnotice',
+        destination: '/:locale/guidelines',
+        permanent: true,
+      },
+    ];
+  },
 };
 
 export default withNextIntl(nextConfig);
