@@ -8,7 +8,10 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
-  const _gate = await requireAdmin(req, 'gcal');
+  // 'bookings' (admin + cs), NOT 'gcal' (admin-only): site-visit /
+  // delivery scheduling is CS daily work — the original 'gcal' gate
+  // 403'd CS on 新增排程 (2026-08-12 'forbidden' incident).
+  const _gate = await requireAdmin(req, 'bookings');
   if (!_gate.ok) return _gate.res;
 
   try {
@@ -29,7 +32,10 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
-  const _gate = await requireAdmin(req, 'gcal');
+  // 'bookings' (admin + cs), NOT 'gcal' (admin-only): site-visit /
+  // delivery scheduling is CS daily work — the original 'gcal' gate
+  // 403'd CS on 新增排程 (2026-08-12 'forbidden' incident).
+  const _gate = await requireAdmin(req, 'bookings');
   if (!_gate.ok) return _gate.res;
 
   try {
