@@ -21,7 +21,14 @@ import {
 } from 'lucide-react';
 import { getHolidaysForMonth, Holiday } from '@/lib/hkHolidays';
 
-const timeSlots = Array.from({ length: 14 }, (_, i) => `${String(i + 10).padStart(2, '0')}:00`);
+// 15-minute increments, 10:00–23:45 — schedule entries (site visits /
+// deliveries) rarely land on the hour, so the pickers need minutes
+// (Heidi 2026-08: supplier deliveries at e.g. 14:30).
+const timeSlots = Array.from({ length: 14 * 4 }, (_, i) => {
+  const h = 10 + Math.floor(i / 4);
+  const m = (i % 4) * 15;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+});
 
 // Sheung Wan group — sw-a / sw-b / sw-ab share one physical floor.
 // Heidi's 2026-06 ask: collapse to a single 上環店 filter so the day view
