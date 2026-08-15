@@ -30,6 +30,7 @@ import {
   calcShishaPrice,
   calcCateringTotal,
   freeDrinksVenues,
+  earlySetupPriceByVenue,
 } from '@/lib/pricing';
 import { amountOwed, paidBase, isSettlementOverflow, computeGrandTotal, netConsumption, discountedSubtotal } from '@/lib/bookingMoney';
 
@@ -1478,7 +1479,9 @@ export default function AdminBookingDetailPage() {
                             <span className="text-ink-soft text-[11px] whitespace-nowrap">
                               {cfg.id === 'shisha' && enabled
                                 ? `$${calcShishaPrice(shishaOptions.pipes, qty, shishaOptions.staffSetup).toLocaleString()}`
-                                : `$${cfg.pricePerUnit}${isPerHead ? '/位' : ''}`}
+                                : cfg.id === 'early-setup'
+                                  ? `$${(earlySetupPriceByVenue[venueId] || 500).toLocaleString()}/小時`
+                                  : `$${cfg.pricePerUnit}${isPerHead ? '/位' : ''}`}
                             </span>
                           </div>
                           {enabled && isPerHead && (

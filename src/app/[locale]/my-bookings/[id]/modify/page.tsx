@@ -22,6 +22,7 @@ import { getBooking, getBlockedSlots } from '@/lib/firestore';
 import { getVenueById, venuesSharingSpace } from '@/lib/venues';
 import {
   addOns as addOnCatalog, calculatePricing, noBBQVenues, freeDrinksVenues,
+  earlySetupPriceByVenue,
 } from '@/lib/pricing';
 import { BookingRecord, AddOnOptions } from '@/types';
 import {
@@ -508,7 +509,14 @@ export default function ModifyBookingPage() {
                 <div key={a.id} className={`glass-card p-5 ${qty > (floor[a.id] || 0) ? 'border-accent/40 bg-accent/5' : ''} ${lockedFood ? 'opacity-50' : ''}`}>
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
-                      <p className="font-semibold">{a.name[locale]}</p>
+                      <p className="font-semibold">
+                        {a.name[locale]}
+                        {a.id === 'early-setup' && venue && (
+                          <span className="text-pink font-bold ml-2">
+                            +HK${(earlySetupPriceByVenue[venue.id] || 500).toLocaleString()}/{locale === 'zh' ? '小時' : 'hr'}
+                          </span>
+                        )}
+                      </p>
                       <p className="text-xs text-muted mt-1">{a.description?.[locale]}</p>
                       {(floor[a.id] || 0) > 0 && (
                         <p className="text-[11px] text-emerald-700 mt-1">
