@@ -5,6 +5,7 @@ import { adminVerifyIdToken } from '@/lib/adminAuth';
 import { getVenueById } from '@/lib/venues';
 import {
   calculatePricing, calculateDeposit, freeDrinksVenues, subtractHours,
+  earlySetupPriceByVenue,
 } from '@/lib/pricing';
 import { calcPromoDiscount } from '@/lib/promoCodes';
 import { computeGrandTotal, computeBalanceDue, paidBase } from '@/lib/bookingMoney';
@@ -93,11 +94,11 @@ export async function POST(
   if (booking.status !== 'confirmed' && booking.status !== 'awaiting_payment') {
     return NextResponse.json({ error: 'not-modifiable' }, { status: 400 });
   }
-  if (booking.packageSlug) {
-    // Package bookings are flat-priced with their own extra-pax logic —
-    // out of scope for customer self-service.
-    return NextResponse.json({ error: 'package-not-supported' }, { status: 400 });
-  }
+  // Package bookings are flat-priced with their own extra-pax logic —
+  // per-head recompute would clobber the package price. Self-service is
+  // limited to ADDING early-setup hours (validated below); everything
+  // else stays package-not-supported.
+  const isPackage = !!booking.packageSlug;
 
   const venue = getVenueById(booking.venueId);
   if (!venue) return NextResponse.json({ error: 'venue-not-found' }, { status: 400 });
@@ -169,6 +170,91 @@ export async function POST(
   const setupChanged = newSetupHours !== oldSetupHours;
   if (newSetupHours > 0 && toMin(startTime) - newSetupHours * 60 < 0) {
     return NextResponse.json({ error: 'EARLY_SETUP_BEFORE_DAY' }, { status: 400 });
+  }
+
+  // Package bookings: the ONLY allowed change is adding early-setup
+  // hours. Time / pax / any other add-on change is rejected so the
+  // flat package price is never touched.
+  if (isPackage) {
+    const otherAddOnChanged = reqAddOns.some((a) => a.id !== 'early-setup' && a.quantity !== (floor[a.id] || 0))
+      || Object.keys(floor).some((k) => k !== 'early-setup' && !reqAddOns.find((a) => a.id === k));
+    if (timeChanged || adultCount !== adultFloor || childCount !== childFloor || otherAddOnChanged) {
+      return NextResponse.json({ error: 'package-not-supported' }, { status: 400 });
+    }
+    if (!setupChanged) {
+      return NextResponse.json({ error: 'nothing-changed' }, { status: 400 });
+    }
+
+    // Additive pricing — flat package price untouched, setup diff goes
+    // straight onto addOnTotal / subtotal / balanceDue. Customer pays
+    // the diff via the pay-balance page after saving.
+    const setupPrice = earlySetupPriceByVenue[booking.venueId] || 500;
+    const addDiff = setupPrice * (newSetupHours - oldSetupHours);
+    const pkgPatch: Record<string, unknown> = {
+      addOns: reqAddOns,
+      earlySetupHours: newSetupHours,
+      'pricing.addOnTotal': (booking.pricing?.addOnTotal || 0) + addDiff,
+      'pricing.subtotal': (booking.pricing?.subtotal || 0) + addDiff,
+      balanceDue: Math.max(0, (booking.balanceDue || 0) + addDiff),
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+    const pkgSetupStart = newSetupHours > 0 ? subtractHours(startTime, newSetupHours) : null;
+
+    const sharedVenuesPkg = venuesSharingSpace(booking.venueId);
+    const lockKeyPkg = physicalSpaceLockKey(booking.venueId);
+    try {
+      await adminDb.runTransaction(async (t) => {
+        const lockRef = adminDb.collection('_venue_booking_locks').doc(`${lockKeyPkg}_${booking.date}`);
+        await t.get(lockRef);
+        const allSlots: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+        for (const vid of sharedVenuesPkg) {
+          const s = await t.get(
+            adminDb.collection('blocked_slots')
+              .where('venueId', '==', vid)
+              .where('date', '==', booking.date)
+          );
+          allSlots.push(...s.docs);
+        }
+        // Conflict check on the setup window only (booking window unchanged).
+        if (pkgSetupStart) {
+          const wStart = toMin(pkgSetupStart);
+          const wEnd = toMin(startTime);
+          for (const docSnap of allSlots) {
+            const b = docSnap.data() as { date: string; startTime: string; endTime: string; bookingId?: string };
+            if (b.bookingId === id) continue;
+            if (b.date !== booking.date) continue;
+            if (wStart < toMin(b.endTime) && toMin(b.startTime) < wEnd) {
+              throw new Error('SLOT_CONFLICT');
+            }
+          }
+        }
+        // Replace this booking's existing setup slot (if any).
+        for (const docSnap of allSlots) {
+          const b = docSnap.data() as { bookingId?: string; reason?: string };
+          if (b.bookingId === id && b.reason === 'setup') t.delete(docSnap.ref);
+        }
+        if (pkgSetupStart) {
+          t.create(adminDb.collection('blocked_slots').doc(), {
+            venueId: booking.venueId, date: booking.date,
+            startTime: pkgSetupStart, endTime: startTime,
+            reason: 'setup', bookingId: id,
+          });
+        }
+        t.update(bookingRef, pkgPatch);
+        t.set(lockRef, { lastBookingAt: FieldValue.serverTimestamp() }, { merge: true });
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg === 'SLOT_CONFLICT') {
+        return NextResponse.json({ error: 'SLOT_CONFLICT' }, { status: 409 });
+      }
+      console.error('[/api/bookings/[id]/modify package-setup]', err);
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    }
+    return NextResponse.json({
+      balanceDue: Math.max(0, (booking.balanceDue || 0) + addDiff),
+      subtotalDiff: addDiff,
+    });
   }
 
   // ── Recompute pricing canonically (GROSS subtotal + promo/points) ──
