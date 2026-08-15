@@ -5,7 +5,7 @@ import { Link } from '@/i18n/routing';
 import { useParams } from 'next/navigation';
 import { useState, useMemo, useEffect } from 'react';
 import { getVenueBySlug } from '@/lib/venues';
-import { addOns, calculatePricing, noBBQVenues, freeDrinksVenues, hotpotVenues, bbqStandardPriceByVenue, bbqStandardMenu, bbqPremiumMenu, hotpotStandardMenu, hotpotSeafoodMenu, hotpotSoupBases, calcShishaPrice, SHISHA_STAFF_SETUP_FEE, SHISHA_MAX_PIPES } from '@/lib/pricing';
+import { addOns, calculatePricing, noBBQVenues, freeDrinksVenues, hotpotVenues, bbqStandardPriceByVenue, bbqStandardMenu, bbqPremiumMenu, hotpotStandardMenu, hotpotSeafoodMenu, hotpotSoupBases, calcShishaPrice, SHISHA_STAFF_SETUP_FEE, SHISHA_MAX_PIPES, earlySetupPriceByVenue, subtractHours } from '@/lib/pricing';
 import type { AddOnOptions } from '@/types';
 import {
   ArrowLeft, ArrowRight, Calendar, Clock, Users,
@@ -275,6 +275,22 @@ export default function BookingPage() {
         setSelectedAddOns(selectedAddOns.map((a) => a.id === 'bbq-grill' ? { ...a, quantity: capped } : a));
       } else {
         setSelectedAddOns([...selectedAddOns, { id: 'bbq-grill', quantity: capped }]);
+      }
+    }
+  };
+
+  // Early setup access hours (提早入場佈置) — 0-3 hrs before start.
+  const earlySetupQty = selectedAddOns.find((a) => a.id === 'early-setup')?.quantity || 0;
+  const setEarlySetupQty = (qty: number) => {
+    if (qty <= 0) {
+      setSelectedAddOns(selectedAddOns.filter((a) => a.id !== 'early-setup'));
+    } else {
+      const capped = Math.min(qty, 3);
+      const existing = selectedAddOns.find((a) => a.id === 'early-setup');
+      if (existing) {
+        setSelectedAddOns(selectedAddOns.map((a) => a.id === 'early-setup' ? { ...a, quantity: capped } : a));
+      } else {
+        setSelectedAddOns([...selectedAddOns, { id: 'early-setup', quantity: capped }]);
       }
     }
   };
@@ -1234,6 +1250,40 @@ export default function BookingPage() {
                     </p>
                   </div>
                 )}
+
+                {/* Early setup access (提早入場佈置) — hours stepper */}
+                <div className={`p-5 rounded-2xl border ${earlySetupQty > 0 ? 'border-accent bg-accent/5' : 'border-charcoal/5'}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-semibold">{locale === 'zh' ? '提早入場佈置' : 'Early Setup Access'}</p>
+                      <p className="text-sm text-muted mt-1">
+                        {locale === 'zh'
+                          ? `提早開場俾你佈置場地，每小時 +HK$${earlySetupPriceByVenue[venue.id] || 500}，最多 3 小時。佈置時段會鎖埋喺你嘅預訂入面。`
+                          : `Get in early to decorate — +HK$${earlySetupPriceByVenue[venue.id] || 500}/hr, max 3 hrs. The setup window is reserved with your booking.`}
+                      </p>
+                      {earlySetupQty > 0 && (
+                        <p className="text-xs text-amber-700 mt-2">
+                          🎈 {subtractHours(startTime, earlySetupQty)}–{startTime}{locale === 'zh' ? ' 提早入場佈置' : ' early setup'}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setEarlySetupQty(earlySetupQty - 1)}
+                        disabled={earlySetupQty <= 0}
+                        className="w-8 h-8 rounded-full border border-charcoal/20 flex items-center justify-center disabled:opacity-30"
+                      >−</button>
+                      <span className="w-10 text-center font-bold">{earlySetupQty}{locale === 'zh' ? '小時' : 'h'}</span>
+                      <button
+                        type="button"
+                        onClick={() => setEarlySetupQty(earlySetupQty + 1)}
+                        disabled={earlySetupQty >= 3}
+                        className="w-8 h-8 rounded-full border border-charcoal/20 flex items-center justify-center disabled:opacity-30"
+                      >+</button>
+                    </div>
+                  </div>
+                </div>
 
                 {/* Shisha Package — pipes + heads + per-head flavor selection */}
                 {shishaCatalogEntry && (

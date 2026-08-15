@@ -667,7 +667,14 @@ function SummaryItemTitle({ item, locale, userNames }: { item: DayItem; locale: 
     : (item.data as BlockedSlot).endTime
   }`;
   if (item.kind === 'booking') {
-    return <>{timeRange}  <span className="font-semibold">{venueTag(item.data.venueId)}</span>  · {bookingIdent(item.data, userNames)}  · {item.data.guestCount}p</>;
+    const setupH = item.data.earlySetupHours || 0;
+    const setupTag = setupH > 0 ? (() => {
+      const [h, m] = item.data.startTime.split(':').map(Number);
+      const t = Math.max(0, h * 60 + (m || 0) - setupH * 60);
+      const ss = `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+      return <span className="text-amber-700"> · 🎈{ss}-{item.data.startTime} {locale === 'zh' ? '提早入場佈置' : 'early setup'}</span>;
+    })() : null;
+    return <>{timeRange}  <span className="font-semibold">{venueTag(item.data.venueId)}</span>  · {bookingIdent(item.data, userNames)}  · {item.data.guestCount}p{setupTag}</>;
   }
   if (item.kind === 'block') {
     return <>{timeRange}  <span className="font-semibold">{venueTag(item.data.venueId)}</span>  · {locale === 'zh' ? '人手封鎖' : 'Manual block'}</>;
