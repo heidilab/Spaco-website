@@ -104,17 +104,21 @@ export default function ModifyBookingPage() {
   const canModify = !!booking && (booking.status === 'confirmed' || booking.status === 'awaiting_payment') && hoursUntilStart >= 24;
   const canAddFood = hoursUntilStart >= 48;
 
+  // Package bookings: flat price — only early-setup can be self-added.
+  const isPackage = !!booking?.packageSlug;
+
   // Add-ons currently visible (filter out shisha — out of D2 scope —
-  // and venue-incompatible items).
+  // and venue-incompatible items). Package bookings only see early-setup.
   const visibleAddOns = useMemo(() => {
     if (!venue) return [];
     return addOnCatalog.filter((a) => {
+      if (isPackage) return a.id === 'early-setup';
       if (a.id === 'shisha') return false; // D2 skip
       if ((a.id === 'bbq-standard' || a.id === 'bbq-premium' || a.id === 'bbq-grill') && noBBQVenues.includes(venue.id)) return false;
       if (a.id === 'drinks' && freeDrinksVenues.includes(venue.id)) return false;
       return true;
     });
-  }, [venue]);
+  }, [venue, isPackage]);
 
   // Diff calculation — full pricing recalc with new cart, compared
   // to the original. Use the booking's own subtotal as baseline so
@@ -141,7 +145,16 @@ export default function ModifyBookingPage() {
     );
   }, [venue, booking, cart, newGuestCount, childCount, newHours]);
 
-  const subtotalDiff = newPricing && booking ? Math.max(0, newPricing.subtotal - booking.pricing.subtotal) : 0;
+  // Package bookings: diff is ADDITIVE (setup hrs × venue rate) — the
+  // per-head calculatePricing result must never touch a flat package
+  // price (#m4Dg9Gb0 clobber incident).
+  const pkgSetupQty = cart.find((c) => c.id === 'early-setup')?.quantity || 0;
+  const pkgSetupDiff = isPackage && venue
+    ? Math.max(0, (pkgSetupQty - (floor['early-setup'] || 0)) * (earlySetupPriceByVenue[venue.id] || 500))
+    : 0;
+  const subtotalDiff = isPackage
+    ? pkgSetupDiff
+    : (newPricing && booking ? Math.max(0, newPricing.subtotal - booking.pricing.subtotal) : 0);
   const guestsChanged = adultCount !== adultFloor || childCount !== childFloor;
   const timeChanged = startTime !== startFloor || endTime !== endFloor;
 
@@ -372,7 +385,10 @@ export default function ModifyBookingPage() {
             </div>
           )}
 
-          {/* Time modify (D4) — start can only move earlier, end only later */}
+          {/* Time modify (D4) — start can only move earlier, end only later.
+           *  Hidden for package bookings (flat-priced; only early-setup
+           *  can be self-added). */}
+          {!isPackage && (
           <div className="glass-card p-5">
             <div className="flex items-center gap-2 mb-3">
               <Clock size={16} className="text-pink" />
@@ -429,8 +445,19 @@ export default function ModifyBookingPage() {
               </p>
             )}
           </div>
+          )}
+
+          {/* Package bookings: setup-conflict warning surfaces here since
+           *  the time card above is hidden. */}
+          {isPackage && timeConflict && (
+            <div className="rounded-xl bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700 flex items-start gap-1.5">
+              <AlertCircle size={12} className="mt-0.5 shrink-0" />
+              {timeConflict}
+            </div>
+          )}
 
           {/* Guest count modify (D3) — only +, floors locked */}
+          {!isPackage && (
           <div className="glass-card p-5">
             <p className="font-semibold mb-3">{locale === 'zh' ? '預約人數' : 'Guests'}</p>
 
@@ -498,6 +525,7 @@ export default function ModifyBookingPage() {
               </p>
             )}
           </div>
+          )}
 
           <div className="space-y-3">
             {visibleAddOns.map((a) => {
