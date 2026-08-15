@@ -191,6 +191,11 @@ export interface BookingRecord {
   isWeekend: boolean;
   addOns: { id: string; quantity: number; options?: AddOnOptions }[];
   hasBYOFood: boolean;
+  /** Hours of early setup access (提早入場佈置) booked before startTime.
+   *  Mirrors the 'early-setup' add-on quantity; the setup window
+   *  (startTime − N hrs → startTime) is locked via a 'setup'
+   *  blocked_slot. */
+  earlySetupHours?: number;
   pricing: {
     baseCharge: number;
     addOnTotal: number;
@@ -478,7 +483,7 @@ export interface BlockedSlot {
   startTime: string;
   endTime: string;
   /** 'gcal' = mirrored from a Google Calendar event we synced down. */
-  reason: 'booking' | 'cleaning' | 'admin_block' | 'gcal';
+  reason: 'booking' | 'cleaning' | 'setup' | 'admin_block' | 'gcal';
   bookingId: string | null;
   /** When `reason === 'gcal'`, identifies the source Google Calendar event so
    *  the periodic sync can update / remove it cleanly. */

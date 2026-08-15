@@ -3,7 +3,7 @@ import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminVerifyIdToken } from '@/lib/adminAuth';
 import { getVenueById } from '@/lib/venues';
-import { calculatePricing, calculateDeposit, adultEquivalent, freeDrinksVenues } from '@/lib/pricing';
+import { calculatePricing, calculateDeposit, adultEquivalent, freeDrinksVenues, subtractHours } from '@/lib/pricing';
 import { calcPromoDiscount } from '@/lib/promoCodes';
 import { getHoliday } from '@/lib/hkHolidays';
 import type { PromoCode } from '@/types';
@@ -205,6 +205,17 @@ export async function POST(req: NextRequest) {
   const sharedVenues = venuesSharingSpace(venueId);
   const lockKey = physicalSpaceLockKey(venueId);
 
+  // Early setup access (提早入場佈置) — locks N hours BEFORE startTime.
+  // The window is conflict-checked like the booking itself, so it also
+  // collides with the previous booking's 1-hr cleaning buffer (i.e. the
+  // previous booking must end ≥ setup hours + 1 hr before this start).
+  const earlySetupHours = Math.max(0, Math.min(3,
+    Math.floor(addOns.find((a: { id: string; quantity: number }) => a.id === 'early-setup')?.quantity || 0)));
+  const setupStart = earlySetupHours > 0 ? subtractHours(startTime as string, earlySetupHours) : null;
+  if (earlySetupHours > 0 && toMin(startTime) - earlySetupHours * 60 < 0) {
+    return NextResponse.json({ error: 'EARLY_SETUP_BEFORE_DAY' }, { status: 400 });
+  }
+
   // Time windows to check for conflicts (each window belongs to one calendar date).
   const checkWindows = overnight
     ? [
@@ -212,6 +223,9 @@ export async function POST(req: NextRequest) {
         { date: resolvedEndDate, start: 0, end: toMin(endTime) },
       ]
     : [{ date: date as string, start: toMin(startTime), end: toMin(endTime) }];
+  if (setupStart) {
+    checkWindows.push({ date: date as string, start: toMin(setupStart), end: toMin(startTime) });
+  }
 
   // Dates that need the lock touched (covers overnight Day 2 as well).
   const lockDates = resolvedEndDate !== date
@@ -292,6 +306,7 @@ export async function POST(req: NextRequest) {
         isWeekend,
         addOns,
         hasBYOFood: !!rest.hasBYOFood,
+        ...(earlySetupHours > 0 ? { earlySetupHours } : {}),
         pricing: sanitizedPricing,      // server-recomputed
         status: 'awaiting_payment',     // forced — never client 'confirmed'
         paymentMethod: rest.paymentMethod ?? null,
@@ -327,6 +342,11 @@ export async function POST(req: NextRequest) {
       } else {
         addSlot({ venueId, date, startTime, endTime, reason: 'booking', bookingId });
         addSlot({ venueId, date, startTime: endTime, endTime: bufferEnd, reason: 'cleaning', bookingId });
+      }
+      // Early setup window — locked before the booking start with its
+      // own labelled slot (提早入場佈置) so the calendar shows it.
+      if (setupStart) {
+        addSlot({ venueId, date, startTime: setupStart, endTime: startTime, reason: 'setup', bookingId });
       }
 
       // ── 7. Mark booking draft as claimed ──────────────────────────────

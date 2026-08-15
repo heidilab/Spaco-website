@@ -380,8 +380,28 @@ function buildEventSummary(b: BookingRecord, customerName?: string): string {
   return `${venueLabel}${name}${guestSuffix}`;
 }
 
+/** "HH:MM" minus N hours (clamped at 00:00) — early setup window start. */
+function gcalSubtractHours(time: string, hoursBack: number): string {
+  const [h, m] = time.split(':').map(Number);
+  const total = Math.max(0, h * 60 + (m || 0) - Math.round(hoursBack * 60));
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
+/** Event start = setup start when the booking has early setup hours, so
+ *  the gcal block covers the full locked window (e.g. 15:00–21:00 for a
+ *  16:00 booking with 1 hr setup). */
+function eventStartTime(b: BookingRecord): string {
+  const setupHours = b.earlySetupHours || 0;
+  return setupHours > 0 ? gcalSubtractHours(b.startTime, setupHours) : b.startTime;
+}
+
 function buildEventDescription(b: BookingRecord, customerName?: string, notes?: string): string {
   const lines: string[] = [];
+  // Early setup note at the top — staff must know the customer arrives
+  // before the "real" booking start (e.g. "15:00-16:00 提早入場佈置").
+  if ((b.earlySetupHours || 0) > 0) {
+    lines.push(`🎈 ${eventStartTime(b)}-${b.startTime} 提早入場佈置`, '');
+  }
   // Outstanding balance warning — surfaced at the top so staff scanning the
   // calendar see it before clicking in.
   if (typeof b.balanceDue === 'number' && b.balanceDue > 0) {
@@ -439,7 +459,7 @@ export async function pushBookingToCalendar(
   const cal = google.calendar({ version: 'v3', auth: oauth2 });
 
   const endDate = input.booking.endDate || input.booking.date;
-  const startISO = `${input.booking.date}T${input.booking.startTime}:00+08:00`;
+  const startISO = `${input.booking.date}T${eventStartTime(input.booking)}:00+08:00`;
   const endISO   = `${endDate}T${input.booking.endTime}:00+08:00`;
 
   const res = await cal.events.insert({
@@ -484,7 +504,7 @@ export async function updateBookingOnCalendar(
   const cal = google.calendar({ version: 'v3', auth: oauth2 });
 
   const endDate = input.booking.endDate || input.booking.date;
-  const startISO = `${input.booking.date}T${input.booking.startTime}:00+08:00`;
+  const startISO = `${input.booking.date}T${eventStartTime(input.booking)}:00+08:00`;
   const endISO   = `${endDate}T${input.booking.endTime}:00+08:00`;
 
   try {

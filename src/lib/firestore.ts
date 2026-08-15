@@ -314,17 +314,32 @@ export async function updateBookingDateTime(
   const targetVenueId = next.venueId || booking.venueId;
   const venueChanged = next.venueId !== undefined && next.venueId !== booking.venueId;
 
+  // Early setup access (提早入場佈置) — hours locked BEFORE startTime.
+  // Derived from the (new or existing) early-setup add-on quantity so the
+  // setup window survives admin edits and is conflict-checked as part of
+  // the booking's own window below.
+  const effAddOns = next.addOns ?? booking.addOns ?? [];
+  const earlySetupHours = Math.max(0, Math.min(3,
+    Math.floor(effAddOns.find((a) => a.id === 'early-setup')?.quantity || 0)));
+  const toMinLocal = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+  const setupStartMin = toMinLocal(next.startTime) - earlySetupHours * 60;
+  const setupStart = earlySetupHours > 0 && setupStartMin >= 0
+    ? `${String(Math.floor(setupStartMin / 60)).padStart(2, '0')}:${String(setupStartMin % 60).padStart(2, '0')}`
+    : null;
+
   // Conflict check on the TARGET venue (and its shared-space siblings)
   // before touching anything. We do this BEFORE deleting the old slots
   // so a failed conflict check leaves the booking exactly as it was.
   // Pass googleEventId so the booking's own gcal-mirror slots (which
   // gcal-sync writes WITHOUT a bookingId, often for all 3 SW sub-rooms)
   // don't self-conflict against the very booking we're editing.
+  // The checked window starts at the setup start (if any) so the setup
+  // hours collide with the previous booking's cleaning buffer too.
   await assertNoSlotConflict({
     venueId: targetVenueId,
     date: next.date,
     endDate: overnight ? endDate : undefined,
-    startTime: next.startTime,
+    startTime: setupStart ?? next.startTime,
     endTime: next.endTime,
     excludeBookingId: bookingId,
     excludeGoogleEventId: (booking as { googleEventId?: string }).googleEventId,
@@ -382,6 +397,15 @@ export async function updateBookingDateTime(
       reason: 'cleaning', bookingId,
     });
   }
+  // Early setup window (提早入場佈置) — re-created on every edit so it
+  // follows the (possibly moved) start time.
+  if (setupStart) {
+    await createBlockedSlot({
+      venueId: vid, date: next.date,
+      startTime: setupStart, endTime: next.startTime,
+      reason: 'setup', bookingId,
+    });
+  }
 
   // Recompute hours from the actual start/end timestamps so cross-midnight
   // bookings get the right rental duration.
@@ -414,6 +438,7 @@ export async function updateBookingDateTime(
   }
   if (typeof next.hasBYOFood === 'boolean') patch.hasBYOFood = next.hasBYOFood;
   if (next.addOns) patch.addOns = next.addOns;
+  patch.earlySetupHours = earlySetupHours;
   if (venueChanged) {
     patch.venueId = next.venueId;
     if (next.branchSlug) patch.branchSlug = next.branchSlug;

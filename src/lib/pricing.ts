@@ -148,6 +148,22 @@ export const addOns: AddOn[] = [
     },
   },
   {
+    // Early setup access — customer gets the venue N hours before their
+    // booked start for decoration/setup. Per-hour price varies by venue
+    // (earlySetupPriceByVenue); quantity = number of hours. The setup
+    // window is locked on the calendar via a 'setup' blocked_slot, and
+    // conflicts with the previous booking's cleaning buffer are rejected.
+    id: 'early-setup',
+    name: { zh: '提早入場佈置', en: 'Early Setup Access' },
+    pricePerUnit: 500, // token — real price from earlySetupPriceByVenue
+    unit: 'item',
+    maxQuantity: 3,
+    description: {
+      zh: '每小時收費：灣仔 $500／尖沙咀 $800／銅鑼灣 $1,000／上環 Room A $800／Room B $1,200／全場 $2,000。佈置時段會鎖定喺你預訂時間之前',
+      en: 'Per hour: Wan Chai $500 / TST $800 / CWB $1,000 / SW Room A $800 / Room B $1,200 / Full Floor $2,000. The setup window is reserved before your booked start time',
+    },
+  },
+  {
     id: 'drinks',
     name: { zh: '無酒精飲品任飲', en: 'Unlimited Non-Alcoholic Drinks' },
     pricePerUnit: 25,
@@ -278,6 +294,24 @@ export function formatAddOnsForStaff(
       .join(', ');
     return `${getAddOnLabel(a.id, locale)} (${detail})`;
   }).join(', ');
+}
+
+// Early setup access (提早入場佈置) — per-hour price by venue.
+export const earlySetupPriceByVenue: Record<string, number> = {
+  wanchai: 500,
+  tst: 800,
+  cwb: 1000,
+  'sw-a': 800,
+  'sw-b': 1200,
+  'sw-ab': 2000,
+};
+
+/** "HH:MM" minus N hours (clamped at 00:00). Used to derive the early
+ *  setup window start from the booking startTime. */
+export function subtractHours(time: string, hoursBack: number): string {
+  const [h, m] = time.split(':').map(Number);
+  const total = Math.max(0, h * 60 + (m || 0) - Math.round(hoursBack * 60));
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
 }
 
 // BBQ Standard package prices differ by venue
@@ -623,6 +657,21 @@ export function calculatePricing(
         label: {
           zh: `加購額外湯底 (${selected.quantity}個 x $108)`,
           en: `Extra Soup Base (${selected.quantity} x $108)`,
+        },
+        amount: cost,
+      });
+      continue;
+    }
+
+    if (selected.id === 'early-setup') {
+      // Per-hour venue-specific price; quantity = hours of early access.
+      const price = earlySetupPriceByVenue[venue.id] || 500;
+      const cost = price * selected.quantity;
+      addOnTotal += cost;
+      breakdown.push({
+        label: {
+          zh: `提早入場佈置 (${selected.quantity}小時 x $${price})`,
+          en: `Early Setup Access (${selected.quantity} hr x $${price})`,
         },
         amount: cost,
       });

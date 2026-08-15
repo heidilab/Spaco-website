@@ -148,8 +148,11 @@ export default function ModifyBookingPage() {
   // Compares the proposed window (incl. 1-hr cleaning buffer) against
   // every other booking / cleaning / admin block on the same date for
   // the venue (or any venue sharing physical space).
+  const setupQty = cart.find((c) => c.id === 'early-setup')?.quantity || 0;
+  const setupQtyChanged = setupQty !== (floor['early-setup'] || 0);
+
   useEffect(() => {
-    if (!booking || !venue || !timeChanged) {
+    if (!booking || !venue || (!timeChanged && !setupQtyChanged)) {
       setTimeConflict(null);
       return;
     }
@@ -166,6 +169,15 @@ export default function ModifyBookingPage() {
               { date: endDate, start: 0, end: toMin(endTime) + CLEANING_BUFFER_MIN },
             ]
           : [{ date: booking.date, start: toMin(startTime), end: toMin(endTime) + CLEANING_BUFFER_MIN }];
+        // Early setup window — locked BEFORE start; also collides with
+        // the previous booking's cleaning buffer.
+        if (setupQty > 0) {
+          windows.push({
+            date: booking.date,
+            start: Math.max(0, toMin(startTime) - setupQty * 60),
+            end: toMin(startTime),
+          });
+        }
 
         const venueIds = venuesSharingSpace(booking.venueId);
         for (const vid of venueIds) {
@@ -177,9 +189,14 @@ export default function ModifyBookingPage() {
               const bEnd = toMin(b.endTime);
               if (w.start < bEnd && bStart < w.end) {
                 if (cancelled) return;
-                setTimeConflict(locale === 'zh'
-                  ? `撞到其他預訂（${b.startTime}–${b.endTime}），請揀其他時間。`
-                  : `Conflicts with another booking (${b.startTime}–${b.endTime}).`);
+                const isSetupWindow = setupQty > 0 && w.end === toMin(startTime) && w.start < toMin(startTime);
+                setTimeConflict(isSetupWindow && !timeChanged
+                  ? (locale === 'zh'
+                      ? `提早入場佈置時段同上一個預訂撞咗時間（${b.startTime}–${b.endTime}，需預留 1 小時清潔），不能加。`
+                      : `Early setup window conflicts with the previous booking (${b.startTime}–${b.endTime}, 1-hr cleaning buffer required).`)
+                  : (locale === 'zh'
+                      ? `撞到其他預訂（${b.startTime}–${b.endTime}），請揀其他時間。`
+                      : `Conflicts with another booking (${b.startTime}–${b.endTime}).`));
                 return;
               }
             }
@@ -191,7 +208,7 @@ export default function ModifyBookingPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [startTime, endTime, booking, venue, timeChanged, isOvernight, locale]);
+  }, [startTime, endTime, booking, venue, timeChanged, setupQtyChanged, setupQty, isOvernight, locale]);
 
   const FOOD_IDS = new Set(['bbq-standard', 'bbq-premium', 'bbq-grill', 'hotpot-standard', 'hotpot-seafood', 'hotpot-extra-soup']);
 
@@ -233,7 +250,7 @@ export default function ModifyBookingPage() {
 
   async function handleSave() {
     if (!booking || subtotalDiff <= 0 || !newPricing) return;
-    if (timeChanged && timeConflict) return;
+    if (timeConflict) return;
     if (!user) { setError(locale === 'zh' ? '請先登入' : 'Please sign in'); return; }
     setSubmitting(true);
     try {
@@ -260,9 +277,15 @@ export default function ModifyBookingPage() {
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as { error?: string };
         if (data.error === 'SLOT_CONFLICT') {
-          setError(locale === 'zh'
-            ? '你揀嘅時段啱啱俾人訂咗，請返回揀過其他時間。'
-            : 'That time slot was just taken — please pick another time.');
+          const setupAdded = (cart.find((c) => c.id === 'early-setup')?.quantity || 0)
+            > (floor['early-setup'] || 0);
+          setError(setupAdded
+            ? (locale === 'zh'
+                ? '提早入場佈置時段同上一個預訂撞咗時間（上一個預訂完場後需預留 1 小時清潔），未能加入。'
+                : 'The early setup window conflicts with the previous booking (1-hr cleaning buffer required), so it cannot be added.')
+            : (locale === 'zh'
+                ? '你揀嘅時段啱啱俾人訂咗，請返回揀過其他時間。'
+                : 'That time slot was just taken — please pick another time.'));
         } else if (data.error === 'deadline-passed') {
           setError(locale === 'zh'
             ? '距離活動少於 24 小時，已唔可以自助修改，請 WhatsApp 我哋。'
@@ -542,13 +565,13 @@ export default function ModifyBookingPage() {
             )}
             <button
               onClick={handleSave}
-              disabled={subtotalDiff <= 0 || submitting || (timeChanged && !!timeConflict)}
+              disabled={subtotalDiff <= 0 || submitting || !!timeConflict}
               className="w-full py-3 rounded-xl bg-gradient-pink text-white font-bold text-base disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {submitting ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
               {subtotalDiff <= 0
                 ? (locale === 'zh' ? '請先加項目' : 'Add items to continue')
-                : (timeChanged && timeConflict)
+                : timeConflict
                   ? (locale === 'zh' ? '請先解決時間衝突' : 'Resolve time conflict first')
                   : (locale === 'zh' ? '確認並付款' : 'Save & Pay')}
             </button>

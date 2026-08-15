@@ -4,7 +4,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { adminVerifyIdToken } from '@/lib/adminAuth';
 import { getVenueById } from '@/lib/venues';
 import {
-  calculatePricing, calculateDeposit, freeDrinksVenues,
+  calculatePricing, calculateDeposit, freeDrinksVenues, subtractHours,
 } from '@/lib/pricing';
 import { calcPromoDiscount } from '@/lib/promoCodes';
 import { computeGrandTotal, computeBalanceDue, paidBase } from '@/lib/bookingMoney';
@@ -159,6 +159,18 @@ export async function POST(
     }
   }
 
+  // Early setup access (提早入場佈置) — locks hours BEFORE the start.
+  // A change here must go through the slot-rewrite transaction so the
+  // setup window is conflict-checked against the previous booking
+  // (incl. its 1-hr cleaning buffer) before we commit anything.
+  const newSetupHours = Math.max(0, Math.min(3,
+    Math.floor(reqAddOns.find((a) => a.id === 'early-setup')?.quantity || 0)));
+  const oldSetupHours = Math.max(0, Math.floor(floor['early-setup'] || 0));
+  const setupChanged = newSetupHours !== oldSetupHours;
+  if (newSetupHours > 0 && toMin(startTime) - newSetupHours * 60 < 0) {
+    return NextResponse.json({ error: 'EARLY_SETUP_BEFORE_DAY' }, { status: 400 });
+  }
+
   // ── Recompute pricing canonically (GROSS subtotal + promo/points) ──
   const startForHours = new Date(`${booking.date}T${startTime}:00+08:00`).getTime();
   const endForHours = new Date(`${endDate}T${endTime}:00+08:00`).getTime();
@@ -271,16 +283,18 @@ export async function POST(
     ...promoPatch,
   };
 
-  // ── No time change → just patch the booking (schedule untouched) ──
-  if (!timeChanged) {
+  // ── No time/setup change → just patch the booking (schedule untouched) ──
+  if (!timeChanged && !setupChanged) {
     await bookingRef.update(pricingPatch);
     return NextResponse.json({ balanceDue, subtotalDiff: computed.subtotal - oldSubtotal });
   }
 
-  // ── Time change → swap blocked_slots + conflict check atomically ──
+  // ── Time or setup change → swap blocked_slots + conflict check atomically ──
   pricingPatch.startTime = startTime;
   pricingPatch.endTime = endTime;
   pricingPatch.hours = hours;
+  pricingPatch.earlySetupHours = newSetupHours;
+  const setupStart = newSetupHours > 0 ? subtractHours(startTime, newSetupHours) : null;
 
   const [endH, endM] = endTime.split(':').map(Number);
   const bufferEndH = endH + 1;
@@ -298,6 +312,12 @@ export async function POST(
         { date: endDate, start: 0, end: toMin(endTime) },
       ]
     : [{ date: booking.date, start: toMin(startTime), end: toMin(endTime) }];
+  // Setup window collides with the previous booking's cleaning buffer
+  // too — exactly Heidi's rule: previous booking must end early enough
+  // to leave 1 hr cleaning before the setup handover.
+  if (setupStart) {
+    checkWindows.push({ date: booking.date, start: toMin(setupStart), end: toMin(startTime) });
+  }
 
   try {
     await adminDb.runTransaction(async (t) => {
@@ -349,6 +369,9 @@ export async function POST(
       } else {
         addSlot({ venueId: vid, date: booking.date, startTime, endTime, reason: 'booking', bookingId: id });
         addSlot({ venueId: vid, date: booking.date, startTime: endTime, endTime: bufferEnd, reason: 'cleaning', bookingId: id });
+      }
+      if (setupStart) {
+        addSlot({ venueId: vid, date: booking.date, startTime: setupStart, endTime: startTime, reason: 'setup', bookingId: id });
       }
 
       t.update(bookingRef, pricingPatch);
