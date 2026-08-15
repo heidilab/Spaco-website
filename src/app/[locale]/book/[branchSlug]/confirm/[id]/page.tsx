@@ -279,6 +279,10 @@ export default function ConfirmBookingPage() {
    *  restore pricing — the inverse of the auto-add in handleApplyPromo. */
   async function removeAutoAddedDrinks() {
     if (!booking) return;
+    // Package bookings are flat-priced — never recompute per-head here,
+    // it would clobber pkg.price with calculatePricing's per-head math
+    // (#m4Dg9Gb0: $6,800 birthday package overwritten to $2,610).
+    if (booking.packageSlug) return;
     const venue = getVenueById(booking.venueId);
     if (!venue) return;
     const newAddOns = (booking.addOns || []).filter((a) => a.id !== 'drinks');
@@ -322,6 +326,13 @@ export default function ConfirmBookingPage() {
   }
 
   async function handleApplyPromo() {
+    // Package bookings: flat price, drinks already included — promo
+    // codes don't apply, and the free_drinks auto-add path would
+    // clobber the package price with per-head math.
+    if (booking?.packageSlug) {
+      setPromoError(locale === 'zh' ? '套餐訂單不適用優惠碼' : 'Promo codes cannot be applied to package bookings');
+      return;
+    }
     // Re-applying replaces any prior auto-add; reset the flag so a
     // non-free-drinks code doesn't inherit a stale "true".
     setPromoAutoAddedDrinks(false);
@@ -723,7 +734,10 @@ export default function ConfirmBookingPage() {
             </div>
           </div>
 
-          {/* Promo code */}
+          {/* Promo code — hidden for package bookings (flat price, drinks
+           *  already included; the free_drinks auto-add path would clobber
+           *  the package price with per-head math). */}
+          {!booking.packageSlug && (
           <div className="glass-card p-7 space-y-3">
             <div className="flex items-start gap-3">
               <div className="w-10 h-10 rounded-2xl bg-gradient-warm flex items-center justify-center text-white shrink-0">
@@ -778,6 +792,7 @@ export default function ConfirmBookingPage() {
               </>
             )}
           </div>
+          )}
 
           {/* Loyalty point redemption */}
           {pointsBalance > 0 && (
