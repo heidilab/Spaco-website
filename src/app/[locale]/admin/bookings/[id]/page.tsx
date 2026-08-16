@@ -1402,6 +1402,9 @@ export default function AdminBookingDetailPage() {
              *  securityDeposit, deposit, balanceDue) so admin doesn't need
              *  to also manually patch numbers. Package bookings are
              *  excluded — their pricing is flat and follows pkg.price. */}
+            {booking.packageSlug && (
+              <PackageAddOnsEditor booking={booking} locale={locale} />
+            )}
             {!booking.packageSlug && (
               <div className="pt-4 mt-2 border-t border-charcoal/10 space-y-3">
                 <h3 className="font-semibold text-sm flex items-center gap-1.5">
@@ -3519,6 +3522,150 @@ function LockPasscodePanel({ booking, locale, onUpdated }: LockPasscodePanelProp
           {msg.text}
         </p>
       )}
+    </div>
+  );
+}
+
+/** Add-on editor for PACKAGE bookings — the normal editor is disabled
+ *  (flat price, no per-head recompute). Supports early-setup hours +
+ *  catering via /api/admin/package-addons, which prices ADDITIVELY and
+ *  rewrites the setup blocked_slot with a conflict check. */
+function PackageAddOnsEditor({ booking, locale }: { booking: BookingRecord; locale: 'zh' | 'en' }) {
+  const storedSetup = Math.max(0, Math.floor(booking.earlySetupHours
+    ?? booking.addOns?.find((a) => a.id === 'early-setup')?.quantity ?? 0));
+  const storedCatering = booking.addOns?.find((a) => a.id === 'catering')?.options;
+  const [setupHours, setSetupHours] = useState<number>(storedSetup);
+  const [catering, setCatering] = useState<CateringSelection | null>((storedCatering as CateringSelection) ?? null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const setupPrice = earlySetupPriceByVenue[booking.venueId] || 500;
+  const setupDiff = setupPrice * (setupHours - storedSetup);
+  const cateringDiff = (catering ? calcCateringTotal(catering) : 0)
+    - (storedCatering ? calcCateringTotal(storedCatering) : 0);
+  const totalDiff = setupDiff + cateringDiff;
+  const dirty = setupHours !== storedSetup
+    || JSON.stringify(catering ?? null) !== JSON.stringify((storedCatering as CateringSelection) ?? null);
+
+  async function handleSave() {
+    setSaving(true);
+    setMsg(null);
+    try {
+      const res = await adminApiFetch('/api/admin/package-addons', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookingId: booking.id,
+          earlySetupHours: setupHours,
+          catering: catering,
+        }),
+      });
+      const data = await res.json().catch(() => ({})) as { error?: string; addDiff?: number; newBalanceDue?: number };
+      if (!res.ok) {
+        if (data.error === 'SLOT_CONFLICT') {
+          setMsg(locale === 'zh'
+            ? '❌ 提早入場佈置時段同上一個預訂撞咗（需預留 1 小時清潔），加唔到。'
+            : '❌ Early setup window conflicts with the previous booking (1-hr cleaning buffer).');
+        } else {
+          setMsg((locale === 'zh' ? '❌ 儲存失敗：' : '❌ Save failed: ') + (data.error || res.status));
+        }
+        setSaving(false);
+        return;
+      }
+      setMsg(locale === 'zh'
+        ? `✓ 已儲存。差價 HK$${(data.addDiff || 0).toLocaleString()}，新尾數 HK$${(data.newBalanceDue || 0).toLocaleString()}。`
+        : `✓ Saved. Diff HK$${(data.addDiff || 0).toLocaleString()}, new balance HK$${(data.newBalanceDue || 0).toLocaleString()}.`);
+      setTimeout(() => window.location.reload(), 1200);
+    } catch (err) {
+      setMsg((locale === 'zh' ? '❌ 儲存失敗：' : '❌ Save failed: ') + (err instanceof Error ? err.message : 'unknown'));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="pt-4 mt-2 border-t border-charcoal/10 space-y-3">
+      <h3 className="font-semibold text-sm flex items-center gap-1.5">
+        <Package size={14} className="text-accent" />
+        {locale === 'zh' ? '套餐附加服務' : 'Package Add-ons'}
+      </h3>
+      <p className="text-xs text-ink-soft -mt-1">
+        {locale === 'zh'
+          ? '套餐價固定不變；差價會直接加入附加服務小計同尾數。'
+          : 'Flat package price untouched; diffs add onto the add-on subtotal and balance.'}
+      </p>
+
+      {/* Early setup hours */}
+      <div className="flex items-center justify-between rounded-lg border border-charcoal/10 bg-white px-3 py-2">
+        <div>
+          <p className="text-xs font-semibold">{locale === 'zh' ? '提早入場佈置' : 'Early Setup'}</p>
+          <p className="text-[11px] text-ink-soft">${setupPrice.toLocaleString()}/{locale === 'zh' ? '小時' : 'hr'}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => setSetupHours(Math.max(0, setupHours - 1))}
+            disabled={setupHours <= 0}
+            className="w-7 h-7 rounded-full border border-charcoal/15 flex items-center justify-center disabled:opacity-30 text-sm">−</button>
+          <span className="w-10 text-center text-sm font-bold">{setupHours}{locale === 'zh' ? '小時' : 'h'}</span>
+          <button type="button" onClick={() => setSetupHours(Math.min(3, setupHours + 1))}
+            disabled={setupHours >= 3}
+            className="w-7 h-7 rounded-full border border-charcoal/15 flex items-center justify-center disabled:opacity-30 text-sm">+</button>
+        </div>
+      </div>
+
+      {/* Catering */}
+      <div className="flex items-center justify-between rounded-lg border border-charcoal/10 bg-white px-3 py-2">
+        <div>
+          <p className="text-xs font-semibold">{locale === 'zh' ? '美食到會服務' : 'Catering'}</p>
+          <p className="text-[11px] text-ink-soft">
+            {catering
+              ? (locale === 'zh'
+                  ? `已揀 ${(catering.dishCodes || []).length} 盤 · HK$${calcCateringTotal(catering).toLocaleString()}`
+                  : `${(catering.dishCodes || []).length} portions · HK$${calcCateringTotal(catering).toLocaleString()}`)
+              : (locale === 'zh' ? '未有' : 'None')}
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setModalOpen(true)}
+            className={`px-3 py-1.5 rounded-pill text-xs font-bold ${catering ? 'bg-pink text-white' : 'bg-pink/10 text-pink hover:bg-pink/20'}`}
+          >
+            {catering ? (locale === 'zh' ? '編輯' : 'Edit') : (locale === 'zh' ? '揀餐單' : 'Pick menu')}
+          </button>
+        </div>
+      </div>
+
+      {dirty && (
+        <p className="text-xs font-semibold text-ink">
+          {locale === 'zh' ? '差價：' : 'Diff: '}
+          <span className={totalDiff >= 0 ? 'text-emerald-700' : 'text-rose-700'}>
+            {totalDiff >= 0 ? '+' : '−'}HK${Math.abs(totalDiff).toLocaleString()}
+          </span>
+        </p>
+      )}
+      {msg && <p className="text-xs">{msg}</p>}
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={!dirty || saving}
+        className="w-full py-2 rounded-lg bg-gradient-pink text-white text-sm font-bold disabled:opacity-40"
+      >
+        {saving
+          ? (locale === 'zh' ? '儲存緊…' : 'Saving…')
+          : (locale === 'zh' ? '儲存套餐附加服務' : 'Save package add-ons')}
+      </button>
+
+      <CateringPickerModal
+        open={modalOpen}
+        initial={catering ?? undefined}
+        locale={locale}
+        bookingDate={booking.date}
+        bookingStartTime={booking.startTime}
+        bookingEndTime={booking.endTime}
+        onClose={() => setModalOpen(false)}
+        onSave={(sel) => { setCatering(sel); setModalOpen(false); }}
+        onRemove={() => { setCatering(null); setModalOpen(false); }}
+      />
     </div>
   );
 }
