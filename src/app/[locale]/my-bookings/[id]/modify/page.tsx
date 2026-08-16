@@ -22,8 +22,9 @@ import { getBooking, getBlockedSlots } from '@/lib/firestore';
 import { getVenueById, venuesSharingSpace } from '@/lib/venues';
 import {
   addOns as addOnCatalog, calculatePricing, noBBQVenues, freeDrinksVenues,
-  earlySetupPriceByVenue,
+  earlySetupPriceByVenue, calcCateringTotal,
 } from '@/lib/pricing';
+import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
 import { BookingRecord, AddOnOptions } from '@/types';
 import {
   ArrowLeft, Plus, Minus, Check, AlertCircle, Loader2, Info, Clock,
@@ -112,13 +113,19 @@ export default function ModifyBookingPage() {
   const visibleAddOns = useMemo(() => {
     if (!venue) return [];
     return addOnCatalog.filter((a) => {
-      if (isPackage) return a.id === 'early-setup';
+      if (isPackage) return a.id === 'early-setup' || a.id === 'catering';
       if (a.id === 'shisha') return false; // D2 skip
       if ((a.id === 'bbq-standard' || a.id === 'bbq-premium' || a.id === 'bbq-grill') && noBBQVenues.includes(venue.id)) return false;
       if (a.id === 'drinks' && freeDrinksVenues.includes(venue.id)) return false;
       return true;
     });
   }, [venue, isPackage]);
+
+  // Catering picker (package flow) — options-driven, needs the modal.
+  const [cateringModalOpen, setCateringModalOpen] = useState(false);
+  const cartCatering = cart.find((c) => c.id === 'catering');
+  const bookedCatering = booking?.addOns?.find((a) => a.id === 'catering');
+  const cateringSelection = (cartCatering?.options ?? undefined) as Partial<CateringSelection> | undefined;
 
   // Diff calculation — full pricing recalc with new cart, compared
   // to the original. Use the booking's own subtotal as baseline so
@@ -152,8 +159,14 @@ export default function ModifyBookingPage() {
   const pkgSetupDiff = isPackage && venue
     ? Math.max(0, (pkgSetupQty - (floor['early-setup'] || 0)) * (earlySetupPriceByVenue[venue.id] || 500))
     : 0;
+  // Catering diff (package flow) — new total vs what's already booked.
+  const pkgCateringDiff = isPackage
+    ? Math.max(0,
+        (cartCatering ? calcCateringTotal(cartCatering.options || {}) : 0)
+        - (bookedCatering ? calcCateringTotal(bookedCatering.options || {}) : 0))
+    : 0;
   const subtotalDiff = isPackage
-    ? pkgSetupDiff
+    ? pkgSetupDiff + pkgCateringDiff
     : (newPricing && booking ? Math.max(0, newPricing.subtotal - booking.pricing.subtotal) : 0);
   const guestsChanged = adultCount !== adultFloor || childCount !== childFloor;
   const timeChanged = startTime !== startFloor || endTime !== endFloor;
@@ -533,6 +546,46 @@ export default function ModifyBookingPage() {
               const atFloor = isFloor(a.id, qty);
               const isFood = FOOD_IDS.has(a.id);
               const lockedFood = isFood && !canAddFood && qty === floor[a.id];
+              // Catering — options-driven, opens the picker modal instead
+              // of a quantity stepper. Add/expand only (≥48h lead time).
+              if (a.id === 'catering') {
+                const cateringLocked = !canAddFood && !bookedCatering;
+                const cartTotal = cartCatering ? calcCateringTotal(cartCatering.options || {}) : 0;
+                return (
+                  <div key={a.id} className={`glass-card p-5 ${pkgCateringDiff > 0 ? 'border-accent/40 bg-accent/5' : ''} ${cateringLocked ? 'opacity-50' : ''}`}>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold">{a.name[locale]}</p>
+                        <p className="text-xs text-muted mt-1">{a.description?.[locale]}</p>
+                        {cartCatering && (
+                          <p className="text-xs text-pink font-semibold mt-1">
+                            {locale === 'zh'
+                              ? `已揀 ${((cartCatering.options as { dishCodes?: string[] })?.dishCodes || []).length} 盤 · 小計 HK$${cartTotal.toLocaleString()}`
+                              : `${((cartCatering.options as { dishCodes?: string[] })?.dishCodes || []).length} portions · HK$${cartTotal.toLocaleString()}`}
+                          </p>
+                        )}
+                        {cateringLocked && (
+                          <p className="text-[11px] text-amber-700 mt-1">
+                            {locale === 'zh' ? '距離活動少於 48 小時，唔可以後加到會' : 'Cannot add catering within 48 hours of the event'}
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        disabled={cateringLocked}
+                        onClick={() => setCateringModalOpen(true)}
+                        className={`shrink-0 px-3 py-2 rounded-pill text-xs font-bold transition-colors disabled:cursor-not-allowed ${
+                          cartCatering ? 'bg-pink text-white' : 'bg-pink/10 text-pink hover:bg-pink/20'
+                        }`}
+                      >
+                        {cartCatering
+                          ? (locale === 'zh' ? '編輯選擇' : 'Edit')
+                          : (locale === 'zh' ? '揀餐單' : 'Pick menu')}
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
               return (
                 <div key={a.id} className={`glass-card p-5 ${qty > (floor[a.id] || 0) ? 'border-accent/40 bg-accent/5' : ''} ${lockedFood ? 'opacity-50' : ''}`}>
                   <div className="flex items-start justify-between gap-4">
@@ -585,7 +638,7 @@ export default function ModifyBookingPage() {
             </div>
             <div className="flex items-center justify-between mb-3">
               <span className="text-sm text-ink-soft">{locale === 'zh' ? '新小計' : 'New subtotal'}</span>
-              <span className="text-sm font-semibold">HK${(newPricing?.subtotal || 0).toLocaleString()}</span>
+              <span className="text-sm font-semibold">HK${(isPackage ? booking.pricing.subtotal + subtotalDiff : (newPricing?.subtotal || 0)).toLocaleString()}</span>
             </div>
             <div className="flex items-center justify-between mb-4 pt-3 border-t border-white/40">
               <span className="font-bold">{locale === 'zh' ? '需補付' : 'Top-up'}</span>
@@ -614,6 +667,31 @@ export default function ModifyBookingPage() {
           </div>
         </div>
       </div>
+
+      <CateringPickerModal
+        open={cateringModalOpen}
+        initial={cateringSelection}
+        locale={locale}
+        bookingDate={booking.date}
+        bookingStartTime={booking.startTime}
+        bookingEndTime={booking.endTime}
+        onClose={() => setCateringModalOpen(false)}
+        onSave={(sel) => {
+          setCart((prev) => {
+            const others = prev.filter((c) => c.id !== 'catering');
+            return [...others, { id: 'catering', quantity: 1, options: sel }];
+          });
+          setCateringModalOpen(false);
+        }}
+        onRemove={() => {
+          // Add-only: removing is allowed only if catering wasn't
+          // already booked (i.e. it was added in this session).
+          if (!bookedCatering) {
+            setCart((prev) => prev.filter((c) => c.id !== 'catering'));
+          }
+          setCateringModalOpen(false);
+        }}
+      />
     </div>
   );
 }
