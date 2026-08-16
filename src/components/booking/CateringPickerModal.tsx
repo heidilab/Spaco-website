@@ -142,7 +142,12 @@ export default function CateringPickerModal({
     };
     const fmt = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
     const startMin = bookingStartTime ? toMin(bookingStartTime) : 8 * 60;
-    const endMin   = bookingEndTime   ? toMin(bookingEndTime)   : 23 * 60 + 45;
+    let endMin     = bookingEndTime   ? toMin(bookingEndTime)   : 23 * 60 + 45;
+    // Overnight sessions (e.g. 19:00–00:00 or 20:00–02:00): endTime is
+    // on the next day, so its minute value is ≤ startMin and the loop
+    // would produce ZERO options (customer saw an empty "Pick a time").
+    // Deliveries only happen on Day 1, so cap the list at 23:45.
+    if (endMin <= startMin) endMin = 23 * 60 + 45;
     const out: string[] = [];
     for (let m = startMin; m <= endMin; m += 15) out.push(fmt(m));
     return out;
