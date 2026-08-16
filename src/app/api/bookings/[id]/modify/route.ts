@@ -5,7 +5,7 @@ import { adminVerifyIdToken } from '@/lib/adminAuth';
 import { getVenueById } from '@/lib/venues';
 import {
   calculatePricing, calculateDeposit, freeDrinksVenues, subtractHours,
-  earlySetupPriceByVenue,
+  earlySetupPriceByVenue, calcCateringTotal,
 } from '@/lib/pricing';
 import { calcPromoDiscount } from '@/lib/promoCodes';
 import { computeGrandTotal, computeBalanceDue, paidBase } from '@/lib/bookingMoney';
@@ -172,24 +172,46 @@ export async function POST(
     return NextResponse.json({ error: 'EARLY_SETUP_BEFORE_DAY' }, { status: 400 });
   }
 
-  // Package bookings: the ONLY allowed change is adding early-setup
-  // hours. Time / pax / any other add-on change is rejected so the
-  // flat package price is never touched.
+  // Package bookings: the ONLY allowed changes are adding early-setup
+  // hours and adding/expanding the catering add-on. Time / pax / any
+  // other add-on change is rejected so the flat package price is never
+  // touched.
   if (isPackage) {
-    const otherAddOnChanged = reqAddOns.some((a) => a.id !== 'early-setup' && a.quantity !== (floor[a.id] || 0))
-      || Object.keys(floor).some((k) => k !== 'early-setup' && !reqAddOns.find((a) => a.id === k));
+    const pkgAllowedIds = new Set(['early-setup', 'catering']);
+    const otherAddOnChanged = reqAddOns.some((a) => !pkgAllowedIds.has(a.id) && a.quantity !== (floor[a.id] || 0))
+      || Object.keys(floor).some((k) => !pkgAllowedIds.has(k) && !reqAddOns.find((a) => a.id === k));
     if (timeChanged || adultCount !== adultFloor || childCount !== childFloor || otherAddOnChanged) {
       return NextResponse.json({ error: 'package-not-supported' }, { status: 400 });
     }
-    if (!setupChanged) {
+
+    // Catering — add or expand only, priced via calcCateringTotal on
+    // the options payload. Removing it (or shrinking the total) is not
+    // self-service.
+    const oldCat = (booking.addOns || []).find((a) => a.id === 'catering');
+    const newCat = reqAddOns.find((a) => a.id === 'catering');
+    if (oldCat && !newCat) {
+      return NextResponse.json({ error: 'addon-only-increase' }, { status: 400 });
+    }
+    const oldCatTotal = oldCat ? calcCateringTotal(oldCat.options || {}) : 0;
+    const newCatTotal = newCat ? calcCateringTotal(newCat.options || {}) : 0;
+    const cateringDiff = newCatTotal - oldCatTotal;
+    if (cateringDiff < 0) {
+      return NextResponse.json({ error: 'not-an-increase' }, { status: 400 });
+    }
+    // Catering needs supplier lead time (≥2 days), same gate as food.
+    if (cateringDiff > 0 && !canAddFood) {
+      return NextResponse.json({ error: 'food-deadline-passed' }, { status: 400 });
+    }
+
+    if (!setupChanged && cateringDiff === 0) {
       return NextResponse.json({ error: 'nothing-changed' }, { status: 400 });
     }
 
-    // Additive pricing — flat package price untouched, setup diff goes
-    // straight onto addOnTotal / subtotal / balanceDue. Customer pays
-    // the diff via the pay-balance page after saving.
+    // Additive pricing — flat package price untouched, setup + catering
+    // diffs go straight onto addOnTotal / subtotal / balanceDue.
+    // Customer pays the diff via the pay-balance page after saving.
     const setupPrice = earlySetupPriceByVenue[booking.venueId] || 500;
-    const addDiff = setupPrice * (newSetupHours - oldSetupHours);
+    const addDiff = setupPrice * (newSetupHours - oldSetupHours) + cateringDiff;
     const pkgPatch: Record<string, unknown> = {
       addOns: reqAddOns,
       earlySetupHours: newSetupHours,
