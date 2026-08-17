@@ -318,8 +318,19 @@ export function buildBirthdayEmail(params: {
   };
 }
 
+/** CWB lift-replacement works — notice shown on confirmation emails for
+ *  Causeway Bay bookings dated within the works window (inclusive). */
+const CWB_LIFT_NOTICE_START = '2026-08-17';
+const CWB_LIFT_NOTICE_END = '2026-11-16';
+export function cwbLiftNoticeApplies(venueId: string | undefined, date: string): boolean {
+  return venueId === 'cwb' && date >= CWB_LIFT_NOTICE_START && date <= CWB_LIFT_NOTICE_END;
+}
+
 export function buildBookingConfirmationEmail(params: {
   customerName: string;
+  /** Venue id (e.g. 'cwb') — enables venue-specific notices like the
+   *  CWB lift-replacement banner. Optional for backward compat. */
+  venueId?: string;
   venueName: string;
   /** Full street address — surfaced in the booking detail row so the
    *  customer knows exactly where to go. Optional for backward compat. */
@@ -386,6 +397,17 @@ export function buildBookingConfirmationEmail(params: {
          </ul>
        </div>`
     : '';
+  // CWB lift-replacement notice (2026-08-17 → 2026-11-16).
+  const liftNotice = cwbLiftNoticeApplies(params.venueId, params.date)
+    ? `<div style="background: #FEF2F2; border-left: 4px solid #EF4444; border-radius: 12px; padding: 14px 18px; margin: 0 0 18px;">
+         <p style="margin: 0 0 6px; font-weight: 700; color: #991B1B; font-size: 13px;">🛠️ 銅鑼灣店大廈電梯維修通告</p>
+         <p style="margin: 0; font-size: 12px; color: #7F1D1D; line-height: 1.7;">
+           大廈電梯於2026年8月17日至11月16日進行更換工程<br/>
+           因此在此期間，只能乘搭雙數電梯上樓，並行一層樓梯到達我們的party Room<br/>
+           不便之處，敬請原諒
+         </p>
+       </div>`
+    : '';
   // Subject reflects whether this is an update vs first-time confirmation.
   const isUpdate = !!(params.changes && params.changes.length > 0);
   return {
@@ -412,6 +434,7 @@ export function buildBookingConfirmationEmail(params: {
           </div>
 
           ${changesNotice}
+          ${liftNotice}
           ${balanceNotice}
 
           <h3 style="margin: 0 0 12px; font-size: 14px; color: ${EMAIL_INK}; letter-spacing: 0.04em; text-transform: uppercase;">📋 預訂明細</h3>
