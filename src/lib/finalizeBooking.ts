@@ -157,6 +157,7 @@ export async function finalizeConfirmedBooking(
         );
         const tpl = buildBookingConfirmationEmail({
           customerName: profile?.displayName || customerEmail.split('@')[0],
+          venueId: booking.venueId,
           venueName,
           venueAddress: venue?.address.zh,
           date: booking.date,
