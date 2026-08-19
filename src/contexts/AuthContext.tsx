@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { User } from 'firebase/auth';
-import { onAuthChange, getStaffRole } from '@/lib/auth';
+import { onAuthChange, getStaffRole, ensureUserProfile } from '@/lib/auth';
 import { StaffRole, ROLE_PERMISSIONS } from '@/types';
 
 interface AuthContextType {
@@ -34,6 +34,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // is permanently stuck on "Loading…".
       try {
         if (firebaseUser) {
+          // Self-heal missing users/{uid} docs (fire-and-forget).
+          ensureUserProfile(firebaseUser);
           const role = await getStaffRole(firebaseUser.uid);
           setUserRole(role);
         } else {
