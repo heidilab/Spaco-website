@@ -44,6 +44,19 @@ export function onAuthChange(callback: (user: User | null) => void) {
   return onAuthStateChanged(auth, callback);
 }
 
+/** Ensure the users/{uid} profile doc exists — safe to call on every
+ *  auth-state change. Self-heals accounts whose doc creation was
+ *  interrupted at sign-up (e.g. #5JfJu5Ca: Google popup succeeded but
+ *  the page navigated away before the setDoc finished, leaving an auth
+ *  user invisible to member admin). */
+export async function ensureUserProfile(user: User) {
+  try {
+    await upsertUserProfile(user);
+  } catch (err) {
+    console.warn('[Auth] ensureUserProfile failed (non-blocking):', err);
+  }
+}
+
 async function upsertUserProfile(user: User) {
   const userRef = doc(db, 'users', user.uid);
   const snap = await getDoc(userRef);

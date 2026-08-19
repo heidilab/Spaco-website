@@ -41,9 +41,16 @@ export default function AdminMembersPage() {
   const [phoneMsg, setPhoneMsg] = useState<string | null>(null);
   const canAccess = hasPermission('members');
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!canAccess) return;
-    getAllUsers().then((data) => {
+    getAllUsers().catch((err) => {
+      console.error('[members] getAllUsers failed:', err);
+      setLoadError(err instanceof Error ? err.message : String(err));
+      setLoading(false);
+      return [] as MemberData[];
+    }).then((data) => {
       const list = data as MemberData[];
       setMembers(list);
       setFiltered(list);
@@ -72,11 +79,23 @@ export default function AdminMembersPage() {
       return;
     }
     const s = search.toLowerCase();
-    setFiltered(members.filter((m) =>
-      (m.displayName || '').toLowerCase().includes(s) ||
-      (m.email || '').toLowerCase().includes(s) ||
-      (m.phone || '').includes(s)
-    ));
+    // Phone matching is digit-normalized on BOTH sides so typing any
+    // consecutive digits (e.g. middle 4 of the number) matches even
+    // though the stored value has +852 / spaces / dashes.
+    const sDigits = search.replace(/\D/g, '');
+    setFiltered(members.filter((m) => {
+      if ((m.displayName || '').toLowerCase().includes(s)) return true;
+      if ((m.email || '').toLowerCase().includes(s)) return true;
+      if (sDigits.length >= 3) {
+        const phones = [m.phone, (m as { whatsappPhone?: string }).whatsappPhone]
+          .filter(Boolean)
+          .map((p) => String(p).replace(/\D/g, ''));
+        if (phones.some((p) => p.includes(sDigits))) return true;
+      } else {
+        if ((m.phone || '').includes(search)) return true;
+      }
+      return false;
+    }));
   }, [search, members]);
 
   const viewMember = async (member: MemberData) => {
@@ -526,6 +545,11 @@ export default function AdminMembersPage() {
         />
       </div>
 
+      {loadError && (
+        <div className="mb-4 rounded-xl bg-rose-50 border border-rose-200 px-4 py-3 text-sm text-rose-700">
+          {locale === 'zh' ? `載入會員失敗：${loadError}` : `Failed to load members: ${loadError}`}
+        </div>
+      )}
       {loading ? (
         <div className="animate-pulse text-muted">Loading...</div>
       ) : (
