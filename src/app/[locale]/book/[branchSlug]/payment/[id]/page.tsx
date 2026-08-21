@@ -13,6 +13,7 @@ import { motion } from 'framer-motion';
 import AuthModal from '@/components/auth/AuthModal';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
 import { addOns as addOnCatalog } from '@/lib/pricing';
+import { getVisitorId, getFirstTouchSource } from '@/lib/attribution';
 import {
   loadBookingCheckoutDraft, clearBookingCheckoutDraft,
   type BookingCheckoutDraft,
@@ -272,6 +273,10 @@ export default function PaymentMethodPage() {
         ...(draft.marketingChannelOther ? { marketingChannelOther: draft.marketingChannelOther } : {}),
         ...(draft.packageSlug ? { packageSlug: draft.packageSlug } : {}),
         ...(draft.decorationStyle ? { decorationStyle: draft.decorationStyle } : {}),
+        // Traffic attribution — links this booking to the visitor's
+        // journey in the visits collection (admin/traffic report).
+        visitorId: getVisitorId(),
+        ...(getFirstTouchSource() ? { firstTouchSource: getFirstTouchSource() } : {}),
       }),
     });
     if (!createRes.ok) {

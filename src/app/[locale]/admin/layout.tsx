@@ -27,6 +27,7 @@ const allSidebarLinks = [
   { href: '/admin/promo-codes', icon: Tag, label: { zh: '優惠碼', en: 'Promo Codes' }, permission: 'gcal' },
   { href: '/admin/documents', icon: FileText, label: { zh: '單據管理', en: 'Documents' }, permission: 'documents' },
   { href: '/admin/members', icon: Users, label: { zh: '會員管理', en: 'Members' }, permission: 'members' },
+  { href: '/admin/traffic', icon: BarChart3, label: { zh: '流量報表', en: 'Traffic' }, permission: 'members' },
   { href: '/admin/staff', icon: UserCog, label: { zh: '員工管理', en: 'Staff' }, permission: 'staff' },
   { href: '/admin/help/lock-passcode-manual', icon: BookOpen, label: { zh: '門鎖密碼 SOP', en: 'Lock Passcode SOP' }, permission: 'bookings' },
 ];

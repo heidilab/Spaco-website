@@ -325,6 +325,10 @@ export async function POST(req: NextRequest) {
         ...(rest.marketingChannel ? { marketingChannel: rest.marketingChannel } : {}),
         ...(rest.marketingChannelOther ? { marketingChannelOther: rest.marketingChannelOther } : {}),
         ...(rest.packageSlug ? { packageSlug: rest.packageSlug } : {}),
+        ...(typeof rest.visitorId === 'string' && rest.visitorId
+          ? { visitorId: String(rest.visitorId).slice(0, 64) } : {}),
+        ...(typeof rest.firstTouchSource === 'string' && rest.firstTouchSource
+          ? { firstTouchSource: String(rest.firstTouchSource).slice(0, 32) } : {}),
         ...(rest.decorationStyle ? { decorationStyle: rest.decorationStyle } : {}),
         ...(rest.balanceDueDate ? { balanceDueDate: rest.balanceDueDate } : {}),
         createdAt: FieldValue.serverTimestamp(),
