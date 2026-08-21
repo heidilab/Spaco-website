@@ -7,6 +7,7 @@ import { routing } from '@/i18n/routing';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
 import { AuthProvider } from '@/contexts/AuthContext';
+import VisitTracker from '@/components/VisitTracker';
 import { buildMetadata } from '@/lib/seo';
 
 export function generateStaticParams() {
@@ -84,6 +85,7 @@ export default async function LocaleLayout({
         )}
         <NextIntlClientProvider messages={messages}>
           <AuthProvider>
+            <VisitTracker />
             <Header />
             <main>{children}</main>
             <Footer />
