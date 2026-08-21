@@ -6,42 +6,38 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * GET /api/admin/traffic-report?from=YYYY-MM-DD&to=YYYY-MM-DD
+ * GET /api/admin/traffic-report?month=YYYY-MM
  *
- * Date-range traffic + conversion analytics from the visits collection
- * (defaults to the last 30 days):
+ * Monthly traffic + conversion analytics from the visits collection:
  *   • per source: visit count, unique visitors, bookings converted
- *     (attributed to the visitor's FIRST visit source in range),
- *     revenue from those bookings
- *   • journey stats: average visits per converting visitor
+ *     (visitor booked in the same month, attributed to their FIRST
+ *     visit source of that month), revenue from those bookings
+ *   • journey stats: average visits per converting visitor, and the
+ *     distribution of how many times people visited before booking
  */
 export async function GET(req: NextRequest) {
   const gate = await requireAdmin(req, 'bookings');
   if (!gate.ok) return gate.res;
 
-  const todayHk = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
-  const defaultFrom = new Date(Date.now() + 8 * 3600 * 1000 - 29 * 86400 * 1000)
-    .toISOString().slice(0, 10);
-  const from = req.nextUrl.searchParams.get('from') || defaultFrom;
-  const to = req.nextUrl.searchParams.get('to') || todayHk;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) {
-    return NextResponse.json({ error: 'bad range' }, { status: 400 });
+  const month = req.nextUrl.searchParams.get('month')
+    || new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    return NextResponse.json({ error: 'bad month' }, { status: 400 });
   }
-  const rangeStart = new Date(`${from}T00:00:00+08:00`);
-  const rangeEnd = new Date(`${to}T23:59:59.999+08:00`);
 
-  // Visits in range.
+  // Visits this month.
   const visitsSnap = await adminDb.collection('visits')
-    .where('createdAt', '>=', rangeStart)
-    .where('createdAt', '<=', rangeEnd)
-    .get();
+    .where('month', '==', month).get();
   interface V { visitorId: string; userId?: string | null; source: string; createdAt?: FirebaseFirestore.Timestamp }
   const visits = visitsSnap.docs.map((d) => d.data() as V);
 
-  // Bookings created in range (live ones only).
+  // Bookings created this month (live ones only).
+  const monthStart = new Date(`${month}-01T00:00:00+08:00`);
+  const nextMonth = new Date(monthStart);
+  nextMonth.setMonth(nextMonth.getMonth() + 1);
   const bookingsSnap = await adminDb.collection('bookings')
-    .where('createdAt', '>=', rangeStart)
-    .where('createdAt', '<=', rangeEnd)
+    .where('createdAt', '>=', monthStart)
+    .where('createdAt', '<', nextMonth)
     .get();
   const bookings = bookingsSnap.docs
     .map((d) => ({ id: d.id, ...d.data() } as {
@@ -92,7 +88,7 @@ export async function GET(req: NextRequest) {
     const visitorId = b.visitorId
       || (b.userId ? userToVisitor.get(b.userId) : undefined);
     const journey = visitorId ? (byVisitor.get(visitorId) || []) : [];
-    // Attribution: the visitor's FIRST visit source in range; falls
+    // Attribution: the visitor's FIRST visit source this month; falls
     // back to the first-touch source stamped on the booking itself.
     const src = journey.length > 0
       ? journey.sort((a, c) => (a.createdAt?.toMillis?.() || 0) - (c.createdAt?.toMillis?.() || 0))[0].source
@@ -110,8 +106,7 @@ export async function GET(req: NextRequest) {
     : null;
 
   return NextResponse.json({
-    from,
-    to,
+    month,
     totals: {
       visits: visits.length,
       uniqueVisitors: byVisitor.size,
