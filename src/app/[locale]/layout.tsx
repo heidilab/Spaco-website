@@ -8,6 +8,8 @@ import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
 import { AuthProvider } from '@/contexts/AuthContext';
 import VisitTracker from '@/components/VisitTracker';
+import JsonLd from '@/components/seo/JsonLd';
+import { buildOrganizationLd } from '@/lib/jsonLd';
 import { buildMetadata } from '@/lib/seo';
 
 export function generateStaticParams() {
@@ -85,6 +87,11 @@ export default async function LocaleLayout({
         )}
         <NextIntlClientProvider messages={messages}>
           <AuthProvider>
+            {/* Site-wide Organization schema — every page carries at
+             *  least this JSON-LD node so schema coverage is 100%
+             *  (AI-friendliness audit 2026-08). Page-specific nodes
+             *  (LocalBusiness / FAQPage / Article) stack on top. */}
+            <JsonLd data={[buildOrganizationLd(locale as 'zh' | 'en')]} />
             <VisitTracker />
             <Header />
             <main>{children}</main>

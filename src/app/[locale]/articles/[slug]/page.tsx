@@ -103,6 +103,22 @@ export default async function ArticleDetailPage({ params }: { params: Promise<{ 
     <>
       <ArticleView article={safeArticle} locale={locale} />
 
+      {/* Breadcrumb JSON-LD — helps engines place the article in the
+       *  site structure (AI-friendliness audit 2026-08). */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            '@context': 'https://schema.org',
+            '@type': 'BreadcrumbList',
+            itemListElement: [
+              { '@type': 'ListItem', position: 1, name: locale === 'zh' ? '首頁' : 'Home', item: `${SITE_URL}/${locale}` },
+              { '@type': 'ListItem', position: 2, name: locale === 'zh' ? '文章分享' : 'Articles', item: `${SITE_URL}/${locale}/articles` },
+              { '@type': 'ListItem', position: 3, name: title, item: `${SITE_URL}/${locale}/articles/${article.slug}` },
+            ],
+          }),
+        }}
+      />
       {/* Article JSON-LD for SEO */}
       <script
         type="application/ld+json"
