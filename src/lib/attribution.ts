@@ -42,7 +42,23 @@ const SOURCE_LABELS: Record<TrafficSource, { zh: string; en: string }> = {
   other:          { zh: '其他網站', en: 'Other sites' },
 };
 
+const AI_MODEL_NAMES: Record<string, string> = {
+  chatgpt: 'ChatGPT',
+  perplexity: 'Perplexity',
+  gemini: 'Google Gemini',
+  copilot: 'Microsoft Copilot',
+  claude: 'Claude',
+  unknown: '其他 AI',
+};
+
 export function trafficSourceLabel(source: string, locale: 'zh' | 'en' = 'zh'): string {
+  // Report sub-splits AI referrals as 'ai_assistant:<model>'.
+  if (source.startsWith('ai_assistant:')) {
+    const model = source.slice('ai_assistant:'.length);
+    let name = AI_MODEL_NAMES[model] || model;
+    if (name === '其他 AI' && locale === 'en') name = 'Other AI';
+    return locale === 'zh' ? `AI 推薦 (${name})` : `AI referral (${name})`;
+  }
   return SOURCE_LABELS[source as TrafficSource]?.[locale] || source;
 }
 
