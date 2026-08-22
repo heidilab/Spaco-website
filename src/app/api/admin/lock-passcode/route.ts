@@ -21,6 +21,7 @@ import { sendAutomatedEmail } from '@/lib/emailAutomations';
 import { getVenueById } from '@/lib/venues';
 import { adminVerifyIdToken, adminUserHasContentPerm } from '@/lib/adminAuth';
 import type { BookingRecord, UserProfile } from '@/types';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -33,6 +34,8 @@ interface Body {
 }
 
 export async function POST(req: NextRequest) {
+  const _gate = await requireAdmin(req, 'bookings');
+  if (!_gate.ok) return _gate.res;
   // 1. Verify the caller is an authenticated admin.
   const authHeader = req.headers.get('authorization') || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';

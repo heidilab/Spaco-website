@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { computeGrandTotal } from '@/lib/finalizeBooking';
 import type { BookingRecord } from '@/types';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,6 +21,8 @@ export const dynamic = 'force-dynamic';
  * broader admin-auth pass lands in a later batch. Mutates nothing.
  */
 export async function GET(req: NextRequest) {
+  const _gate = await requireAdmin(req, 'bookings');
+  if (!_gate.ok) return _gate.res;
   const auth = req.headers.get('authorization') || '';
   if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
