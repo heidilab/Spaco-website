@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 
 const VALID_SOURCES = new Set([
   'google_ads', 'google_organic', 'instagram', 'facebook',
-  'whatsapp', 'threads', 'xiaohongshu', 'direct', 'other',
+  'whatsapp', 'threads', 'xiaohongshu', 'ai_assistant', 'direct', 'other',
 ]);
 
 /**

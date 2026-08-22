@@ -25,6 +25,7 @@ export type TrafficSource =
   | 'whatsapp'
   | 'threads'
   | 'xiaohongshu'
+  | 'ai_assistant'    // ChatGPT / Perplexity / other AI tools linking out
   | 'direct'          // no referrer, no utm (typed URL / bookmark / most apps)
   | 'other';          // some other site linked to us
 
@@ -36,6 +37,7 @@ const SOURCE_LABELS: Record<TrafficSource, { zh: string; en: string }> = {
   whatsapp:       { zh: 'WhatsApp', en: 'WhatsApp' },
   threads:        { zh: 'Threads', en: 'Threads' },
   xiaohongshu:    { zh: '小紅書', en: 'Xiaohongshu' },
+  ai_assistant:   { zh: 'AI 助手 (ChatGPT 等)', en: 'AI assistants (ChatGPT etc.)' },
   direct:         { zh: '直接進入', en: 'Direct' },
   other:          { zh: '其他網站', en: 'Other sites' },
 };
@@ -80,6 +82,13 @@ export function classifyVisit(href: string, referrer: string): VisitAttribution 
     if (utmSource.includes('whatsapp') || utmSource === 'wa') return { source: 'whatsapp', ...base };
     if (utmSource.includes('threads')) return { source: 'threads', ...base };
     if (utmSource.includes('xiaohongshu') || utmSource === 'xhs' || utmSource.includes('red')) return { source: 'xiaohongshu', ...base };
+    // AI tools stamp their domain as utm_source when linking out
+    // (e.g. utm_source=chatgpt.com — observed 2026-08-22).
+    if (utmSource.includes('chatgpt') || utmSource.includes('openai')
+      || utmSource.includes('perplexity') || utmSource.includes('gemini')
+      || utmSource.includes('copilot') || utmSource.includes('claude')) {
+      return { source: 'ai_assistant', ...base };
+    }
     return { source: 'other', ...base };
   }
 
@@ -93,6 +102,13 @@ export function classifyVisit(href: string, referrer: string): VisitAttribution 
   // 4. Referrer-based classification.
   if (referrerHost) {
     if (referrerHost.includes('instagram')) return { source: 'instagram', ...base };
+    // WhatsApp's link-wrapper domain (l.wl.co) — observed 2026-08-21
+    // carrying a converted booking that was misfiled under "other".
+    if (referrerHost === 'l.wl.co' || referrerHost.includes('wa.me')) return { source: 'whatsapp', ...base };
+    if (referrerHost.includes('chatgpt') || referrerHost.includes('openai')
+      || referrerHost.includes('perplexity') || referrerHost.includes('gemini')) {
+      return { source: 'ai_assistant', ...base };
+    }
     if (referrerHost.includes('facebook') || referrerHost.includes('fb.com')) return { source: 'facebook', ...base };
     if (referrerHost.includes('whatsapp')) return { source: 'whatsapp', ...base };
     if (referrerHost.includes('threads')) return { source: 'threads', ...base };
