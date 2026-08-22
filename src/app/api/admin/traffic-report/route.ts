@@ -35,8 +35,26 @@ export async function GET(req: NextRequest) {
     .where('createdAt', '>=', rangeStart)
     .where('createdAt', '<=', rangeEnd)
     .get();
-  interface V { visitorId: string; userId?: string | null; source: string; createdAt?: FirebaseFirestore.Timestamp }
+  interface V {
+    visitorId: string; userId?: string | null; source: string;
+    utmSource?: string | null; referrerHost?: string | null;
+    createdAt?: FirebaseFirestore.Timestamp;
+  }
   const visits = visitsSnap.docs.map((d) => d.data() as V);
+
+  // ai_assistant visits sub-split by model, derived from the raw
+  // utm_source / referrer the AI tool stamped (e.g. chatgpt.com).
+  const aiModelOf = (v: V): string => {
+    const raw = `${v.utmSource || ''} ${v.referrerHost || ''}`.toLowerCase();
+    if (raw.includes('chatgpt') || raw.includes('openai')) return 'chatgpt';
+    if (raw.includes('perplexity')) return 'perplexity';
+    if (raw.includes('gemini') || raw.includes('bard')) return 'gemini';
+    if (raw.includes('copilot') || raw.includes('bing')) return 'copilot';
+    if (raw.includes('claude') || raw.includes('anthropic')) return 'claude';
+    return 'unknown';
+  };
+  const srcKey = (v: V): string =>
+    v.source === 'ai_assistant' ? `ai_assistant:${aiModelOf(v)}` : v.source;
 
   // Bookings created in range (live ones only).
   const bookingsSnap = await adminDb.collection('bookings')
@@ -76,13 +94,13 @@ export async function GET(req: NextRequest) {
   const bySource: Record<string, SourceRow> = {};
   const row = (s: string) => (bySource[s] ||= { visits: 0, uniqueVisitors: 0, bookings: 0, revenue: 0 });
 
-  for (const v of visits) row(v.source).visits += 1;
+  for (const v of visits) row(srcKey(v)).visits += 1;
   const seenVisitorSource = new Set<string>();
   for (const v of visits) {
-    const key = `${v.visitorId}|${v.source}`;
+    const key = `${v.visitorId}|${srcKey(v)}`;
     if (!seenVisitorSource.has(key)) {
       seenVisitorSource.add(key);
-      row(v.source).uniqueVisitors += 1;
+      row(srcKey(v)).uniqueVisitors += 1;
     }
   }
 
@@ -95,7 +113,7 @@ export async function GET(req: NextRequest) {
     // Attribution: the visitor's FIRST visit source in range; falls
     // back to the first-touch source stamped on the booking itself.
     const src = journey.length > 0
-      ? journey.sort((a, c) => (a.createdAt?.toMillis?.() || 0) - (c.createdAt?.toMillis?.() || 0))[0].source
+      ? srcKey(journey.sort((a, c) => (a.createdAt?.toMillis?.() || 0) - (c.createdAt?.toMillis?.() || 0))[0])
       : (b.firstTouchSource || null);
     if (src) {
       row(src).bookings += 1;

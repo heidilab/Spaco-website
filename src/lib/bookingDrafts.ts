@@ -221,5 +221,9 @@ const SITE_URL =
     : (process.env.NEXT_PUBLIC_APP_URL || 'https://spacohk.com');
 
 export function buildClaimUrl(draftId: string, locale: 'zh' | 'en' = 'zh'): string {
-  return `${SITE_URL}/${locale}/book/claim/${draftId}`;
+  // utm tag: CS booking links are sent via WhatsApp, which usually
+  // strips the referrer (classified as "direct"). The explicit tag
+  // makes the traffic report file these under WhatsApp with a
+  // cs-booking-link campaign so CS-driven conversions are measurable.
+  return `${SITE_URL}/${locale}/book/claim/${draftId}?utm_source=wa&utm_campaign=cs-booking-link`;
 }
