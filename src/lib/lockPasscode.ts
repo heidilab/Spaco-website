@@ -49,18 +49,31 @@ function hkDateTimeToMs(dateYmd: string, timeHm: string): number {
   return Date.UTC(y, m - 1, d, hh, mm, 0) - 8 * 60 * 60 * 1000;
 }
 
-/** Read the venueId → ttlockId map from Firestore (admin sets these). */
+/** Read the venueId → ttlockId map. Venue docs (分店管理 →「連接設定」)
+ *  are the primary source since 2026-08; legacy 系統設定 `ttlock_*`
+ *  entries remain as fallback for ids not yet on a venue doc. */
 export async function getVenueLockMap(): Promise<Record<string, number>> {
-  const cms = await getSiteContent('settings');
   const map: Record<string, number> = {};
-  if (!cms) return map;
-  for (const [k, v] of Object.entries(cms)) {
-    if (!k.startsWith('ttlock_')) continue;
-    const venueId = k.slice('ttlock_'.length);
-    const raw = (v?.zh || v?.en || '').trim();
-    const parsed = parseInt(raw, 10);
-    if (Number.isFinite(parsed) && parsed > 0) map[venueId] = parsed;
-  }
+  // Legacy settings first (lower precedence)…
+  try {
+    const cms = await getSiteContent('settings');
+    if (cms) {
+      for (const [k, v] of Object.entries(cms)) {
+        if (!k.startsWith('ttlock_')) continue;
+        const venueId = k.slice('ttlock_'.length);
+        const parsed = parseInt((v?.zh || v?.en || '').trim(), 10);
+        if (Number.isFinite(parsed) && parsed > 0) map[venueId] = parsed;
+      }
+    }
+  } catch { /* settings unreadable — venue docs still apply */ }
+  // …venue docs override.
+  try {
+    const { loadAllVenues } = await import('./venueRegistry');
+    for (const v of await loadAllVenues()) {
+      const parsed = parseInt(String(v.ttlockLockId || '').trim(), 10);
+      if (Number.isFinite(parsed) && parsed > 0) map[v.id] = parsed;
+    }
+  } catch { /* registry unreachable — legacy map stands */ }
   return map;
 }
 
