@@ -8,12 +8,13 @@ import { signInWithGoogle } from '@/lib/auth';
 import {
   LayoutDashboard, CalendarDays, ListOrdered,
   ChevronLeft, Shield, Image, Users, UserCog, Receipt, FileText, HelpCircle, Search, CalendarClock, Mail, Tag, BarChart3,
-  BookOpen, LogIn, Menu, X, Newspaper,
+  BookOpen, LogIn, Menu, X, Newspaper, Store,
 } from 'lucide-react';
 import AdminPushSetup from '@/components/admin/AdminPushSetup';
 
 const allSidebarLinks = [
   { href: '/admin', icon: LayoutDashboard, label: { zh: '控制中心', en: 'Dashboard' }, permission: null },
+  { href: '/admin/venues', icon: Store, label: { zh: '分店管理', en: 'Venues' }, permission: 'content' },
   { href: '/admin/content', icon: Image, label: { zh: '內容管理', en: 'Content' }, permission: 'content' },
   { href: '/admin/seo', icon: Search, label: { zh: 'SEO 管理', en: 'SEO' }, permission: 'seo' },
   { href: '/admin/faq', icon: HelpCircle, label: { zh: '常見問題管理', en: 'FAQ' }, permission: 'faq' },

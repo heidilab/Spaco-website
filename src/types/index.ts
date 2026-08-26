@@ -19,6 +19,34 @@ export interface Venue {
   };
   minHours: { weekday: number; weekend: number };
   minGuests: { weekday: number; weekend: number };
+
+  // ── Dynamic-venue fields (Firestore venues collection; 分店管理) ──
+  /** false = 落架 — hidden from the site, no new bookings; history kept.
+   *  Absent (legacy/static) = active. */
+  active?: boolean;
+  /** Display order on the homepage collection (ascending). */
+  sortOrder?: number;
+  /** Shared-space group key (e.g. 'sw-physical'). Venues carrying the
+   *  same non-empty group block each other's timeslots — the 上環
+   *  Room A / B / 全層 structure, configurable per venue. */
+  spaceGroup?: string;
+  /** Within a spaceGroup: ids whose bookings block THIS venue. The
+   *  venue itself is always implied. E.g. sw-a → ['sw-ab']. */
+  conflictsWith?: string[];
+  /** Venue capability flags — replaces the hard-coded venue-id lists
+   *  (noBBQVenues / freeDrinksVenues / earlySetupPriceByVenue). */
+  bbqAvailable?: boolean;
+  /** Venue includes unlimited non-alcoholic drinks in the base rate. */
+  drinksIncluded?: boolean;
+  /** 提早入場佈置 per-hour price (HK$). */
+  earlySetupPricePerHour?: number;
+  /** BBQ standard package per-head price override for this venue. */
+  bbqStandardPrice?: number;
+  /** Google Calendar id for the per-venue sync (optional — sync off
+   *  until filled). */
+  gcalCalendarId?: string;
+  /** TTLock lock id for automatic door passcodes (optional). */
+  ttlockLockId?: string;
 }
 
 export interface PricingTier {
