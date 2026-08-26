@@ -7,31 +7,55 @@ import { useAuth } from '@/contexts/AuthContext';
 import { signInWithGoogle } from '@/lib/auth';
 import {
   LayoutDashboard, CalendarDays, ListOrdered,
-  ChevronLeft, Shield, Image, Users, UserCog, Receipt, FileText, HelpCircle, Search, CalendarClock, Mail, Tag, BarChart3,
+  ChevronLeft, ChevronDown, ChevronUp, Shield, Image, Users, UserCog, Receipt, FileText, HelpCircle, Search, CalendarClock, Mail, Tag, BarChart3,
   BookOpen, LogIn, Menu, X, Newspaper, Store,
 } from 'lucide-react';
 import AdminPushSetup from '@/components/admin/AdminPushSetup';
 
-const allSidebarLinks = [
+interface NavChild { href: string; icon: typeof LayoutDashboard; label: { zh: string; en: string }; permission: string | null }
+interface NavItem extends NavChild { children?: NavChild[] }
+
+// Heidi's 2026-08 ordering. "Merged" pages stay at their own URLs but
+// live as sub-items under their parent (collapsible group).
+const allSidebarLinks: NavItem[] = [
   { href: '/admin', icon: LayoutDashboard, label: { zh: '控制中心', en: 'Dashboard' }, permission: null },
-  { href: '/admin/venues', icon: Store, label: { zh: '分店管理', en: 'Venues' }, permission: 'content' },
-  { href: '/admin/content', icon: Image, label: { zh: '內容管理', en: 'Content' }, permission: 'content' },
-  { href: '/admin/seo', icon: Search, label: { zh: 'SEO 管理', en: 'SEO' }, permission: 'seo' },
-  { href: '/admin/faq', icon: HelpCircle, label: { zh: '常見問題管理', en: 'FAQ' }, permission: 'faq' },
-  { href: '/admin/articles', icon: Newspaper, label: { zh: '文章分享', en: 'Articles' }, permission: 'content' },
-  { href: '/admin/receipts', icon: Receipt, label: { zh: '待確認入數紙', en: 'Pending Receipts' }, permission: 'bookings' },
-  { href: '/admin/bookings', icon: ListOrdered, label: { zh: '預訂管理', en: 'Bookings' }, permission: 'bookings' },
+  {
+    href: '/admin/bookings', icon: ListOrdered, label: { zh: '預訂管理', en: 'Bookings' }, permission: 'bookings',
+    children: [
+      { href: '/admin/receipts', icon: Receipt, label: { zh: '待確認入數紙', en: 'Pending Receipts' }, permission: 'bookings' },
+    ],
+  },
   { href: '/admin/calendar', icon: CalendarDays, label: { zh: '總日曆', en: 'Calendar' }, permission: 'calendar' },
+  { href: '/admin/venues', icon: Store, label: { zh: '分店管理', en: 'Venues' }, permission: 'content' },
   { href: '/admin/finance', icon: BarChart3, label: { zh: '財務總覽', en: 'Finance' }, permission: 'documents' },
-  { href: '/admin/calendar-sync', icon: CalendarClock, label: { zh: 'Google 同步', en: 'Google Sync' }, permission: 'gcal' },
-  { href: '/admin/email-automation', icon: Mail, label: { zh: 'Email 自動化', en: 'Email Automation' }, permission: 'gcal' },
-  { href: '/admin/promo-codes', icon: Tag, label: { zh: '優惠碼', en: 'Promo Codes' }, permission: 'gcal' },
   { href: '/admin/documents', icon: FileText, label: { zh: '單據管理', en: 'Documents' }, permission: 'documents' },
+  { href: '/admin/promo-codes', icon: Tag, label: { zh: '優惠碼', en: 'Promo Codes' }, permission: 'gcal' },
+  {
+    href: '/admin/content', icon: Image, label: { zh: '內容管理', en: 'Content' }, permission: 'content',
+    children: [
+      { href: '/admin/seo', icon: Search, label: { zh: 'SEO 管理', en: 'SEO' }, permission: 'seo' },
+      { href: '/admin/faq', icon: HelpCircle, label: { zh: '常見問題管理', en: 'FAQ' }, permission: 'faq' },
+      { href: '/admin/articles', icon: Newspaper, label: { zh: '文章分享', en: 'Articles' }, permission: 'content' },
+    ],
+  },
+  {
+    href: '/admin/traffic', icon: BarChart3, label: { zh: '流量報表', en: 'Traffic' }, permission: 'members',
+    children: [
+      { href: '/admin/utm-links', icon: Tag, label: { zh: '追蹤 Link 產生器', en: 'UTM Links' }, permission: 'members' },
+    ],
+  },
   { href: '/admin/members', icon: Users, label: { zh: '會員管理', en: 'Members' }, permission: 'members' },
-  { href: '/admin/traffic', icon: BarChart3, label: { zh: '流量報表', en: 'Traffic' }, permission: 'members' },
-  { href: '/admin/utm-links', icon: Tag, label: { zh: '追蹤 Link 產生器', en: 'UTM Links' }, permission: 'members' },
   { href: '/admin/staff', icon: UserCog, label: { zh: '員工管理', en: 'Staff' }, permission: 'staff' },
-  { href: '/admin/help/lock-passcode-manual', icon: BookOpen, label: { zh: '門鎖密碼 SOP', en: 'Lock Passcode SOP' }, permission: 'bookings' },
+  {
+    // 系統管理 — umbrella with no page of its own; expands to reveal
+    // the integration/ops tools.
+    href: '#system', icon: Shield, label: { zh: '系統管理', en: 'System' }, permission: 'gcal',
+    children: [
+      { href: '/admin/email-automation', icon: Mail, label: { zh: 'Email 自動化', en: 'Email Automation' }, permission: 'gcal' },
+      { href: '/admin/calendar-sync', icon: CalendarClock, label: { zh: 'Google 同步', en: 'Google Sync' }, permission: 'gcal' },
+      { href: '/admin/help/lock-passcode-manual', icon: BookOpen, label: { zh: '門鎖密碼 SOP', en: 'Lock Passcode SOP' }, permission: 'bookings' },
+    ],
+  },
 ];
 
 /**
@@ -68,6 +92,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [signingIn, setSigningIn] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // Which nav groups are manually expanded (auto-expands on active child).
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
   async function handleGoogleSignIn() {
     setSigningIn(true);
@@ -166,11 +192,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     );
   }
 
-  // Filter sidebar links based on role permissions
-  const visibleLinks = allSidebarLinks.filter((link) => {
-    if (link.permission === null) return true; // Dashboard always visible
-    return hasPermission(link.permission);
-  });
+  // Filter sidebar links based on role permissions. A parent shows if
+  // its own permission passes OR any child's does.
+  const canSee = (perm: string | null) => perm === null || hasPermission(perm);
+  const visibleLinks = allSidebarLinks
+    .map((link) => ({
+      ...link,
+      children: link.children?.filter((c) => canSee(c.permission)),
+    }))
+    .filter((link) => canSee(link.permission) || (link.children && link.children.length > 0));
 
   const roleLabels: Record<string, { zh: string; en: string }> = {
     admin: { zh: '管理員', en: 'Admin' },
@@ -198,21 +228,67 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
       <nav className="flex-1 py-3 overflow-y-auto">
         {visibleLinks.map((link) => {
-          const isActive = pathname === link.href || (link.href !== '/admin' && pathname.startsWith(link.href));
+          const kids = link.children || [];
+          const hasKids = kids.length > 0;
+          const isGroupOnly = link.href.startsWith('#');
+          const childActive = kids.some((c) => pathname === c.href || pathname.startsWith(c.href + '/'));
+          const selfActive = !isGroupOnly
+            && (pathname === link.href || (link.href !== '/admin' && pathname.startsWith(link.href + '/')));
+          const isOpen = expandedGroups[link.href] ?? (childActive || (selfActive && hasKids));
+          const rowCls = (active: boolean) =>
+            `flex items-center gap-3 mx-3 px-4 py-2.5 my-0.5 rounded-2xl text-sm transition-all ${
+              active
+                ? 'bg-gradient-pink text-white font-semibold shadow-glow'
+                : 'text-ink-soft hover:bg-white/60 hover:text-ink'
+            }`;
+          const chevron = hasKids && (
+            <span className="ml-auto">{isOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</span>
+          );
           return (
-            <Link
-              key={link.href}
-              href={link.href}
-              onClick={() => setMobileNavOpen(false)}
-              className={`flex items-center gap-3 mx-3 px-4 py-2.5 my-0.5 rounded-2xl text-sm transition-all ${
-                isActive
-                  ? 'bg-gradient-pink text-white font-semibold shadow-glow'
-                  : 'text-ink-soft hover:bg-white/60 hover:text-ink'
-              }`}
-            >
-              <link.icon size={18} />
-              {link.label[locale]}
-            </Link>
+            <div key={link.href}>
+              {isGroupOnly ? (
+                <button
+                  type="button"
+                  onClick={() => setExpandedGroups((prev) => ({ ...prev, [link.href]: !isOpen }))}
+                  className={`w-[calc(100%-1.5rem)] ${rowCls(childActive)}`}
+                >
+                  <link.icon size={18} />
+                  {link.label[locale]}
+                  {chevron}
+                </button>
+              ) : (
+                <Link
+                  href={link.href}
+                  onClick={() => {
+                    if (hasKids) setExpandedGroups((prev) => ({ ...prev, [link.href]: true }));
+                    setMobileNavOpen(false);
+                  }}
+                  className={rowCls(selfActive && !childActive)}
+                >
+                  <link.icon size={18} />
+                  {link.label[locale]}
+                  {chevron}
+                </Link>
+              )}
+              {hasKids && isOpen && kids.map((c) => {
+                const cActive = pathname === c.href || pathname.startsWith(c.href + '/');
+                return (
+                  <Link
+                    key={c.href}
+                    href={c.href}
+                    onClick={() => setMobileNavOpen(false)}
+                    className={`flex items-center gap-2.5 ml-9 mr-3 px-3.5 py-2 my-0.5 rounded-xl text-[13px] transition-all ${
+                      cActive
+                        ? 'bg-gradient-pink text-white font-semibold shadow-glow'
+                        : 'text-ink-soft hover:bg-white/60 hover:text-ink'
+                    }`}
+                  >
+                    <c.icon size={15} />
+                    {c.label[locale]}
+                  </Link>
+                );
+              })}
+            </div>
           );
         })}
       </nav>
