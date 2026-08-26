@@ -18,6 +18,13 @@ let cache: Venue[] | null = null;
 let cacheAt = 0;
 const TTL_MS = 60 * 1000;
 
+/** Synchronous snapshot — static venues until the first loadAllVenues()
+ *  resolves, then the registry list. For render-time lookups in
+ *  components whose parent already triggered a load. */
+export function venuesSnapshot(): Venue[] {
+  return cache ?? staticVenues.map((v) => ({ ...v, active: true }));
+}
+
 /** All venues (incl. 落架 ones — filter with .active for public UI).
  *  Sorted by sortOrder then name. Falls back to the static array if
  *  Firestore is unreachable or the collection is empty (pre-seed). */

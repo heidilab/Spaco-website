@@ -18,7 +18,9 @@ import {
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { BookingRecord, UserProfile, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
-import { venues } from '@/lib/venues';
+import { venues as staticVenues } from '@/lib/venues';
+import { loadAllVenues, venuesSnapshot } from '@/lib/venueRegistry';
+import type { Venue } from '@/types';
 import { getHoliday } from '@/lib/hkHolidays';
 import { getPackageBySlug } from '@/lib/packages';
 import { getDecorationById } from '@/lib/decorations';
@@ -100,6 +102,10 @@ const statusLabels: Record<string, { zh: string; en: string }> = {
 };
 
 export default function AdminBookingDetailPage() {
+  // Registry-backed venue list (分店管理) — static array is the
+  // first paint; Firestore overrides so new/edited venues appear.
+  const [venues, setVenues] = useState<Venue[]>(staticVenues);
+  useEffect(() => { loadAllVenues().then(setVenues).catch(() => {}); }, []);
   const locale = useLocale() as 'zh' | 'en';
   const params = useParams();
   const router = useRouter();
@@ -2793,7 +2799,7 @@ function OutstandingBalanceSection({
     ? `${origin}/${locale}/book/${booking.branchSlug}/pay-balance/${booking.id}`
     : '';
 
-  const venueName = venues.find((v) => v.id === booking.venueId)?.name[locale] || booking.venueId;
+  const venueName = venuesSnapshot().find((v) => v.id === booking.venueId)?.name[locale] || booking.venueId;
   const message =
     locale === 'zh'
       ? `你好！你嘅 SPACO 預訂 (${venueName} · ${booking.date} ${booking.startTime}) 仲未付尾數 HK$${balance.toLocaleString()}。可以撳呢條連結網上付款：${payUrl}`
@@ -3447,7 +3453,7 @@ function LockPasscodePanel({ booking, locale, onUpdated }: LockPasscodePanelProp
               // so admin just confirms and sends from the WhatsApp client.
               if (!booking.whatsappPhone) return null;
               const venueName =
-                venues.find((v) => v.id === booking.venueId)?.name[locale]
+                venuesSnapshot().find((v) => v.id === booking.venueId)?.name[locale]
                 || booking.venueId;
               const message = locale === 'zh'
                 ? `你好！你嘅 SPACO 預訂 (${venueName} · ${booking.date} ${booking.startTime}) 嘅門鎖密碼係：\n\n🔑 ${existing.passcode}#\n\n請喺活動當日到場時，喺鎖嘅鍵盤輸入呢組密碼即可進場。如有任何問題請隨時 WhatsApp 我哋。`
