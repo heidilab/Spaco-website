@@ -7,7 +7,6 @@ import { useParams } from 'next/navigation';
 import { getVenueBySlug, amenityLabels } from '@/lib/venues';
 import { loadAllVenues } from '@/lib/venueRegistry';
 import type { Venue } from '@/types';
-import { useBranchOverrides } from '@/lib/useBranchOverrides';
 import AmenityGrid from '@/components/branches/AmenityGrid';
 import { getPackagesByVenueId, CATEGORY_LABEL } from '@/lib/packages';
 import { SiteImage } from '@/types';
@@ -44,7 +43,6 @@ export default function BranchPage() {
   const venue = dynVenue ?? staticVenue;
   const [selectedImage, setSelectedImage] = useState<number | null>(null);
   // Pull admin-edited overrides (name / size / description / amenities / games)
-  const { get: getOverride, getList: getOverrideList } = useBranchOverrides();
 
   // Redirect old Sheung Wan single-room URLs to the unified branch page.
   // Done in an effect so SSR still renders something while the client
@@ -92,11 +90,11 @@ export default function BranchPage() {
   // branches with no curated package — section just doesn't render.
   const branchPackages = venue ? getPackagesByVenueId(venue.id) : [];
 
-  // Resolved values: CMS override (if set) → venue.* fallback
-  const displayName = getOverride(venue.id, 'name', locale) || venue.name[locale];
-  const displaySize = getOverride(venue.id, 'size', locale) || venue.size;
-  const displayDescription =
-    getOverride(venue.id, 'description', locale) || venue.description[locale];
+  // Venue doc is the single source (分店管理) — CMS overrides were
+  // migrated onto the venue docs 2026-08.
+  const displayName = venue.name[locale];
+  const displaySize = venue.size;
+  const displayDescription = venue.description[locale];
 
   return (
     <div className="pt-28 relative overflow-hidden">
@@ -215,15 +213,17 @@ export default function BranchPage() {
               <div>
                 <h3 className="font-bold font-display text-ink mb-3">{locale === 'zh' ? '設施' : 'Amenities'}</h3>
                 {(() => {
-                  const override = getOverride(venue.id, 'amenities', locale);
-                  const items = override
-                    ? override.split(/[、,，]/).map((s) => s.trim()).filter(Boolean)
+                  const amenText = venue.amenitiesText?.[locale] || '';
+                  const items = amenText
+                    ? amenText.split(/[、,，\n]/).map((s) => s.trim()).filter(Boolean)
                     : venue.amenities.map((a) => amenityLabels[a]?.[locale] || a);
+                  const toList = (raw?: string) =>
+                    (raw || '').split('\n').map((s) => s.trim()).filter(Boolean);
                   return (
                     <AmenityGrid
                       amenities={items}
-                      switchGames={getOverrideList(venue.id, 'switch_games', locale)}
-                      boardGames={getOverrideList(venue.id, 'board_games', locale)}
+                      switchGames={toList(venue.switchGames?.[locale])}
+                      boardGames={toList(venue.boardGames?.[locale])}
                       locale={locale}
                     />
                   );

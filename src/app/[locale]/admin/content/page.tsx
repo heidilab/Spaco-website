@@ -579,9 +579,15 @@ export default function AdminContentPage() {
         </>
       ) : (
         <>
+          <p className="text-xs text-ink-soft mb-3">
+            {locale === 'zh'
+              ? '📌 分店名稱／面積／描述／設施／遊戲列表已搬去「分店管理」，喺嗰度編輯。'
+              : '📌 Branch info moved to Venues (分店管理).'}
+          </p>
           {/* Text Sub-Tabs */}
           <div className="flex flex-wrap gap-2 mb-6">
-            {textPages.map((page) => (
+            {/* 分店資料 moved to 分店管理 (venue docs) 2026-08 */}
+            {textPages.filter((page) => page.id !== 'branches').map((page) => (
               <button key={page.id} onClick={() => setTextSubTab(page.id)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${textSubTab === page.id ? 'bg-accent text-white' : 'bg-cream text-charcoal/60 hover:bg-charcoal/5'}`}>
                 {page.label[locale]}
               </button>

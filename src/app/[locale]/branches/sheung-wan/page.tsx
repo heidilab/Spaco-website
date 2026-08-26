@@ -5,9 +5,8 @@ import { useTranslations, useLocale } from 'next-intl';
 import { Link } from '@/i18n/routing';
 import { getVenueBySlug, amenityLabels } from '@/lib/venues';
 import { loadAllVenues } from '@/lib/venueRegistry';
-import { useBranchOverrides } from '@/lib/useBranchOverrides';
 import AmenityGrid from '@/components/branches/AmenityGrid';
-import { SiteImage } from '@/types';
+import { SiteImage, Venue } from '@/types';
 import { ArrowRight, ArrowLeft, Users, Maximize, Clock, ChevronLeft, ChevronRight, X, Sparkles, MapPin } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -31,7 +30,6 @@ interface RoomData {
 export default function SheungWanBranchPage() {
   const locale = useLocale() as 'zh' | 'en';
   const t = useTranslations('booking');
-  const { get: getOverride, getList: getOverrideList } = useBranchOverrides();
 
   // Resolve all 3 venue records up front
   const rooms = useMemo<RoomData[] | null>(() => {
@@ -45,6 +43,7 @@ export default function SheungWanBranchPage() {
   }, []);
 
   const [imagesByPrefix, setImagesByPrefix] = useState<Record<string, SiteImage[]>>({});
+  const [regVenues, setRegVenues] = useState<Record<string, Venue>>({});
   const [lightbox, setLightbox] = useState<{ prefix: string; idx: number } | null>(null);
 
   useEffect(() => {
@@ -52,6 +51,9 @@ export default function SheungWanBranchPage() {
     // Photos live on the venue docs (分店管理) — migrated off
     // site_images 2026-08.
     loadAllVenues().then((all) => {
+      const rv: Record<string, Venue> = {};
+      for (const v of all) rv[v.id] = v;
+      setRegVenues(rv);
       const map: Record<string, SiteImage[]> = {};
       for (const r of rooms) {
         // Option C (sw-ab) shares the floor with A + B; skip to avoid
@@ -136,9 +138,10 @@ export default function SheungWanBranchPage() {
             const gallery = imgs.slice(1, 5);
             const moreCount = Math.max(0, imgs.length - 5);
             // CMS overrides → fallback to hardcoded venue.* values
-            const dispName = getOverride(v.id, 'name', locale) || v.name[locale];
-            const dispSize = getOverride(v.id, 'size', locale) || v.size;
-            const dispDesc = getOverride(v.id, 'description', locale) || v.description[locale];
+            const rv = regVenues[v.id] ?? v;
+            const dispName = rv.name[locale];
+            const dispSize = rv.size;
+            const dispDesc = rv.description[locale];
             // Option C (sw-ab) is the same physical floor as A + B combined,
             // so its photos would duplicate the A/B galleries. Render the
             // detail card full-width without an image side.
@@ -260,12 +263,14 @@ export default function SheungWanBranchPage() {
                     {/* Amenities — card grid with icons (Switch + board
                      *  games auto-shown when game lists are populated). */}
                     {(() => {
-                      const override = getOverride(v.id, 'amenities', locale);
-                      const items = override
-                        ? override.split(/[、,，]/).map((s) => s.trim()).filter(Boolean)
-                        : v.amenities.map((a) => amenityLabels[a]?.[locale] || a);
-                      const sw = getOverrideList(v.id, 'switch_games', locale);
-                      const bg = getOverrideList(v.id, 'board_games', locale);
+                      const rv2 = regVenues[v.id] ?? v;
+                      const amenText = rv2.amenitiesText?.[locale] || '';
+                      const items = amenText
+                        ? amenText.split(/[、,，\n]/).map((s) => s.trim()).filter(Boolean)
+                        : rv2.amenities.map((a) => amenityLabels[a]?.[locale] || a);
+                      const toList = (raw?: string) => (raw || '').split('\n').map((s) => s.trim()).filter(Boolean);
+                      const sw = toList(rv2.switchGames?.[locale]);
+                      const bg = toList(rv2.boardGames?.[locale]);
                       if (items.length === 0 && sw.length === 0 && bg.length === 0) return null;
                       return (
                         <div className="mb-5">

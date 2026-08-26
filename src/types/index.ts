@@ -47,6 +47,13 @@ export interface Venue {
   gcalCalendarId?: string;
   /** TTLock lock id for automatic door passcodes (optional). */
   ttlockLockId?: string;
+  /** Free-text facilities list shown on the branch page (one per line).
+   *  Migrated from 內容管理/分店資料 2026-08. */
+  amenitiesText?: { zh?: string; en?: string };
+  /** Switch games list, one per line. */
+  switchGames?: { zh?: string; en?: string };
+  /** Board games list, one per line. */
+  boardGames?: { zh?: string; en?: string };
 }
 
 export interface PricingTier {
