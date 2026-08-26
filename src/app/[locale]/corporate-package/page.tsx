@@ -10,8 +10,9 @@ import {
   ShieldCheck, Sparkles, X, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { CORPORATE_TST_PACKAGE } from '@/lib/packages';
-import { getSiteImages, compareSiteImages } from '@/lib/content';
+
 import { SiteImage } from '@/types';
+import { loadAllVenues } from '@/lib/venueRegistry';
 
 const pkg = CORPORATE_TST_PACKAGE;
 
@@ -76,15 +77,19 @@ export default function CorporatePackagePage() {
 
   const bbq = pkg.addOns?.find((a) => a.id === 'bbq');
 
-  // Pull TST venue gallery from the same Firestore section the branch page
-  // uses (`branch-tst`). Sorted by `order` field, newest admin uploads
-  // automatically appear here too.
+  // TST venue gallery from the venue registry (分店管理 photos).
   const [venueImages, setVenueImages] = useState<SiteImage[]>([]);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   useEffect(() => {
-    getSiteImages('branch-tst').then((imgs) => {
-      setVenueImages([...imgs].sort(compareSiteImages));
+    // TST photos live on the venue doc (分店管理) — migrated off
+    // site_images 2026-08.
+    loadAllVenues().then((all) => {
+      const v = all.find((x) => x.id === 'tst');
+      setVenueImages((v?.images || []).map((url, i) => ({
+        id: `tst-${i}`, key: `tst-${i}`, url, alt: v?.name.zh || 'TST',
+        section: 'venue', order: i, uploadedAt: null,
+      })));
     }).catch(() => { /* gracefully hide section */ });
   }, []);
 

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { Link } from '@/i18n/routing';
 import { getVenueBySlug, amenityLabels } from '@/lib/venues';
-import { getSiteImages, compareSiteImages } from '@/lib/content';
+import { loadAllVenues } from '@/lib/venueRegistry';
 import { useBranchOverrides } from '@/lib/useBranchOverrides';
 import AmenityGrid from '@/components/branches/AmenityGrid';
 import { SiteImage } from '@/types';
@@ -49,19 +49,23 @@ export default function SheungWanBranchPage() {
 
   useEffect(() => {
     if (!rooms) return;
-    Promise.all(
-      rooms.map(async (r) => {
-        // Option C (sw-ab) shares the floor with A + B; skip fetching to
-        // avoid showing the same photos a third time.
-        if (r.imagePrefix === 'sw-ab') return [r.imagePrefix, [] as SiteImage[]] as const;
-        const imgs = await getSiteImages(`branch-${r.imagePrefix}`);
-        return [r.imagePrefix, [...imgs].sort(compareSiteImages)] as const;
-      })
-    ).then((entries) => {
+    // Photos live on the venue docs (分店管理) — migrated off
+    // site_images 2026-08.
+    loadAllVenues().then((all) => {
       const map: Record<string, SiteImage[]> = {};
-      for (const [k, v] of entries) map[k] = v;
+      for (const r of rooms) {
+        // Option C (sw-ab) shares the floor with A + B; skip to avoid
+        // showing the same photos a third time.
+        if (r.imagePrefix === 'sw-ab') { map[r.imagePrefix] = []; continue; }
+        const v = all.find((x) => x.id === r.imagePrefix);
+        map[r.imagePrefix] = (v?.images || []).map((url, i) => ({
+          id: `${r.imagePrefix}-${i}`, key: `${r.imagePrefix}-${i}`, url,
+          alt: v?.name.zh || r.imagePrefix, section: 'venue', order: i,
+          uploadedAt: null,
+        }));
+      }
       setImagesByPrefix(map);
-    });
+    }).catch(() => {});
   }, [rooms]);
 
   if (!rooms) {

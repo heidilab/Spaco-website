@@ -524,7 +524,6 @@ export default function AdminContentPage() {
           <div className="flex gap-2 mb-6">
             {[
               { id: 'homepage' as ImageSubTab, label: { zh: '頁面圖片（首頁・親子・商務）', en: 'Page Images (Home / Family / Corporate)' } },
-              { id: 'branches' as ImageSubTab, label: { zh: '分店相片', en: 'Branch Photos' } },
             ].map((st) => (
               <button key={st.id} onClick={() => setImageSubTab(st.id)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${imageSubTab === st.id ? 'bg-accent text-white' : 'bg-cream text-charcoal/60 hover:bg-charcoal/5'}`}>
                 {st.label[locale]}
@@ -532,6 +531,11 @@ export default function AdminContentPage() {
             ))}
           </div>
 
+          <p className="text-xs text-ink-soft -mt-3 mb-5">
+            {locale === 'zh'
+              ? '📌 分店相片已搬去「分店管理」— 每間分店嘅相片喺嗰度上載／排序／刪除。'
+              : '📌 Branch photos moved to Venues (分店管理) — manage each venue\'s photos there.'}
+          </p>
           {imageSubTab === 'homepage' ? (
             <div className="space-y-8">
               {homepageImageSections.map((section) => (
