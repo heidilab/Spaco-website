@@ -28,18 +28,14 @@ import { isValidHkPhone, formatHkPhone, normalizeHkPhone } from '@/lib/whatsapp'
 import AuthModal from '@/components/auth/AuthModal';
 import { useRouter } from '@/i18n/routing';
 
+/** Venue-resolution wrapper — resolves the venue (static instantly,
+ *  registry override / dynamic-only venues async) BEFORE mounting the
+ *  booking form, so the form component's hook order never changes
+ *  (React #310). */
 export default function BookingPage() {
   const params = useParams();
-  const locale = useLocale() as 'zh' | 'en';
-  const t = useTranslations('booking');
-  const { user } = useAuth();
-  const router = useRouter();
   const slug = params.branchSlug as string;
   const staticVenue = getVenueBySlug(slug);
-  // Registry override — admin edits in 分店管理 (pricing, flags, photos,
-  // room groups) reach this page without a code deploy. Static data is
-  // the instant first paint + fallback; a dynamically-created venue has
-  // no static entry so it starts null and fills in from Firestore.
   const [dynVenue, setDynVenue] = useState<Venue | null>(null);
   const [dynLoaded, setDynLoaded] = useState(false);
   useEffect(() => {
@@ -53,12 +49,22 @@ export default function BookingPage() {
     notFound();
   }
   if (!venue) {
-    // Dynamic-only venue still loading — brief blank state.
     return <div className="pt-28 min-h-screen" />;
   }
   if (venue.active === false) {
     notFound();
   }
+  // key: remount the form if the venue identity changes underneath.
+  return <BookingPageInner key={venue.id} venue={venue} />;
+}
+
+function BookingPageInner({ venue }: { venue: Venue }) {
+  const params = useParams();
+  const locale = useLocale() as 'zh' | 'en';
+  const t = useTranslations('booking');
+  const { user } = useAuth();
+  const router = useRouter();
+  const slug = params.branchSlug as string;
 
   // Booking state.
   // Start time is picked in 15-minute increments (08:00, 08:15, … 23:45).
