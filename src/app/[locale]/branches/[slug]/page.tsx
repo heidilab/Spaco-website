@@ -7,7 +7,6 @@ import { useParams } from 'next/navigation';
 import { getVenueBySlug, amenityLabels } from '@/lib/venues';
 import { loadAllVenues } from '@/lib/venueRegistry';
 import type { Venue } from '@/types';
-import { getSiteImages, compareSiteImages } from '@/lib/content';
 import { useBranchOverrides } from '@/lib/useBranchOverrides';
 import AmenityGrid from '@/components/branches/AmenityGrid';
 import { getPackagesByVenueId, CATEGORY_LABEL } from '@/lib/packages';
@@ -25,14 +24,6 @@ const SW_REDIRECT: Record<string, string> = {
 };
 
 // Map venue slugs to image section prefixes
-const slugToPrefix: Record<string, string> = {
-  'causeway-bay': 'cwb',
-  'wan-chai': 'wc',
-  'sheung-wan-a': 'sw-a',
-  'sheung-wan-b': 'sw-b',
-  'tsim-sha-tsui': 'tst',
-  'sheung-wan-ab': 'sw-ab',
-};
 
 export default function BranchPage() {
   const params = useParams();
@@ -51,7 +42,6 @@ export default function BranchPage() {
       .finally(() => setDynLoaded(true));
   }, [slug]);
   const venue = dynVenue ?? staticVenue;
-  const [venueImages, setVenueImages] = useState<SiteImage[]>([]);
   const [selectedImage, setSelectedImage] = useState<number | null>(null);
   // Pull admin-edited overrides (name / size / description / amenities / games)
   const { get: getOverride, getList: getOverrideList } = useBranchOverrides();
@@ -66,15 +56,6 @@ export default function BranchPage() {
     }
   }, [slug, router]);
 
-  useEffect(() => {
-    const prefix = slugToPrefix[slug];
-    if (prefix) {
-      getSiteImages(`branch-${prefix}`).then((imgs) => {
-        // Sort by `order` field; fallback to legacy key suffix for old data.
-        setVenueImages([...imgs].sort(compareSiteImages));
-      });
-    }
-  }, [slug]);
 
   // While redirecting an SW slug, render a tiny placeholder
   if (SW_REDIRECT[slug]) {
@@ -99,9 +80,7 @@ export default function BranchPage() {
   // upload); site_images (content 管理) wins when present for legacy
   // branches. Synthesize SiteImage shapes so the gallery/lightbox work
   // unchanged.
-  const effectiveImages: SiteImage[] = venueImages.length > 0
-    ? venueImages
-    : (venue.images || []).map((url, i) => ({
+  const effectiveImages: SiteImage[] = (venue.images || []).map((url, i) => ({
         id: `venue-${i}`, key: `venue-${venue.id}-${i}`, url,
         alt: venue.name[locale] || venue.name.zh, section: 'venue', order: i,
         uploadedAt: null,
@@ -433,11 +412,11 @@ export default function BranchPage() {
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={effectiveImages[selectedImage]?.url}
-                alt={venueImages[selectedImage]?.alt || ''}
+                alt={effectiveImages[selectedImage]?.alt || ''}
                 className="max-w-full max-h-[80vh] object-contain rounded-2xl"
               />
               <p className="text-cream/50 text-sm text-center mt-4">
-                {(selectedImage || 0) + 1} / {venueImages.length}
+                {(selectedImage || 0) + 1} / {effectiveImages.length}
               </p>
             </div>
           </motion.div>
