@@ -54,6 +54,14 @@ export interface Venue {
   switchGames?: { zh?: string; en?: string };
   /** Board games list, one per line. */
   boardGames?: { zh?: string; en?: string };
+  /** 分店 grouping key — venues (分拆場地/rooms) sharing this key are
+   *  ONE branch, managed together in 分店管理 and sharing one Google
+   *  Calendar ID + address. Single-space branches: branchKey === id. */
+  branchKey?: string;
+  /** Branch display name (shared across the branch's rooms). */
+  branchName?: { zh: string; en: string };
+  /** Room label within a multi-room branch (e.g. Room A / 全層 A+B). */
+  roomLabel?: { zh?: string; en?: string };
 }
 
 export interface PricingTier {
