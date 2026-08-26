@@ -53,6 +53,53 @@ export function getCalendarIds(): Record<CalendarKey, string | null> {
   };
 }
 
+/** Calendar id for a venue — venue doc (分店管理 →「連接設定」) first,
+ *  legacy env vars as fallback. Dynamic venues therefore sync as soon
+ *  as admin fills their Google Calendar ID field. */
+export async function getCalendarIdForVenue(venueId: string): Promise<string | null> {
+  try {
+    const { getVenueByIdServer } = await import('./venueRegistryServer');
+    const v = await getVenueByIdServer(venueId);
+    if (v?.gcalCalendarId) return v.gcalCalendarId;
+  } catch { /* registry unreachable — fall back to env */ }
+  const calKey = venueIdToCalendarKey(venueId);
+  return calKey ? getCalendarIds()[calKey] : null;
+}
+
+/** Distinct calendars to sync, each with the venue ids it mirrors to.
+ *  Built from venue docs (venues sharing one calendar id group
+ *  together — the SW rooms model); env-based calendars are appended
+ *  for venue ids not covered by a doc. */
+export async function getCalendarGroups(): Promise<Array<{ key: string; calId: string; venueIds: string[] }>> {
+  const byCal = new Map<string, string[]>();
+  const covered = new Set<string>();
+  try {
+    const { loadAllVenuesServer } = await import('./venueRegistryServer');
+    for (const v of await loadAllVenuesServer()) {
+      if (!v.gcalCalendarId) continue;
+      const arr = byCal.get(v.gcalCalendarId) || [];
+      arr.push(v.id);
+      byCal.set(v.gcalCalendarId, arr);
+      covered.add(v.id);
+    }
+  } catch { /* registry unreachable */ }
+  const groups: Array<{ key: string; calId: string; venueIds: string[] }> = [];
+  let i = 0;
+  for (const [calId, venueIds] of Array.from(byCal.entries())) {
+    groups.push({ key: `cal${i++}:${venueIds[0]}`, calId, venueIds });
+  }
+  // Legacy env calendars for anything not covered by venue docs.
+  const envIds = getCalendarIds();
+  for (const [calKey, calId] of Object.entries(envIds) as [CalendarKey, string | null][]) {
+    if (!calId) continue;
+    const remaining = CAL_KEY_TO_VENUE_IDS[calKey].filter((vid) => !covered.has(vid));
+    if (remaining.length > 0 && !byCal.has(calId)) {
+      groups.push({ key: calKey, calId, venueIds: remaining });
+    }
+  }
+  return groups;
+}
+
 // ──────────────────────────────────────────────────────────
 // OAuth client / token storage
 // ──────────────────────────────────────────────────────────
@@ -181,7 +228,7 @@ export async function syncCalendars(redirectUri: string): Promise<SyncResult> {
   oauth2.setCredentials({ refresh_token: stored.refresh_token });
   const cal = google.calendar({ version: 'v3', auth: oauth2 });
 
-  const calendarIds = getCalendarIds();
+  const calendarGroups = await getCalendarGroups();
   const now = new Date();
   const horizon = new Date(now.getTime() + 180 * 24 * 60 * 60 * 1000); // 6 months
 
@@ -204,12 +251,8 @@ export async function syncCalendars(redirectUri: string): Promise<SyncResult> {
   };
   const seenKeys = new Set<string>();
 
-  // Fetch each calendar
-  for (const [calKey, calId] of Object.entries(calendarIds) as [CalendarKey, string | null][]) {
-    if (!calId) {
-      result.errors.push(`No calendar ID configured for ${calKey}`);
-      continue;
-    }
+  // Fetch each calendar (venue-doc groups + legacy env fallback)
+  for (const { key: calKey, calId, venueIds: groupVenueIds } of calendarGroups) {
     let pageToken: string | undefined;
     const events: calendar_v3.Schema$Event[] = [];
     try {
@@ -268,7 +311,7 @@ export async function syncCalendars(redirectUri: string): Promise<SyncResult> {
         continue;
       }
 
-      const venueIds = CAL_KEY_TO_VENUE_IDS[calKey];
+      const venueIds = groupVenueIds;
       // For SW: also expand via venuesSharingSpace defensive guard.
       // Here venueIds is already the full set so just iterate.
       const eventTitle = ev.summary || '';
@@ -449,9 +492,7 @@ export async function pushBookingToCalendar(
 
   const stored = await getStoredToken();
   if (!stored) return null;
-  const calKey = venueIdToCalendarKey(b.venueId);
-  if (!calKey) return null;
-  const calendarId = getCalendarIds()[calKey];
+  const calendarId = await getCalendarIdForVenue(b.venueId);
   if (!calendarId) return null;
 
   const oauth2 = buildOAuthClient(redirectUri);
@@ -494,9 +535,7 @@ export async function updateBookingOnCalendar(
   if (!input.booking.googleEventId) return;
   const stored = await getStoredToken();
   if (!stored) return;
-  const calKey = venueIdToCalendarKey(input.booking.venueId);
-  if (!calKey) return;
-  const calendarId = getCalendarIds()[calKey];
+  const calendarId = await getCalendarIdForVenue(input.booking.venueId);
   if (!calendarId) return;
 
   const oauth2 = buildOAuthClient(redirectUri);
@@ -540,9 +579,7 @@ export async function removeBookingFromCalendar(
   if (!booking.googleEventId) return;
   const stored = await getStoredToken();
   if (!stored) return;
-  const calKey = venueIdToCalendarKey(booking.venueId);
-  if (!calKey) return;
-  const calendarId = getCalendarIds()[calKey];
+  const calendarId = await getCalendarIdForVenue(booking.venueId);
   if (!calendarId) return;
 
   const oauth2 = buildOAuthClient(redirectUri);
@@ -588,9 +625,7 @@ export async function pushEventToCalendar(
 ): Promise<string | null> {
   const stored = await getStoredToken();
   if (!stored) return null;
-  const calKey = venueIdToCalendarKey(input.venueId);
-  if (!calKey) return null;
-  const calendarId = getCalendarIds()[calKey];
+  const calendarId = await getCalendarIdForVenue(input.venueId);
   if (!calendarId) return null;
 
   const oauth2 = buildOAuthClient(redirectUri);
@@ -643,9 +678,7 @@ export async function updatePushedEvent(
 ): Promise<void> {
   const stored = await getStoredToken();
   if (!stored) return;
-  const calKey = venueIdToCalendarKey(args.venueId);
-  if (!calKey) return;
-  const calendarId = getCalendarIds()[calKey];
+  const calendarId = await getCalendarIdForVenue(args.venueId);
   if (!calendarId) return;
 
   const oauth2 = buildOAuthClient(redirectUri);
@@ -694,9 +727,7 @@ export async function deletePushedEvent(
 ): Promise<void> {
   const stored = await getStoredToken();
   if (!stored) return;
-  const calKey = venueIdToCalendarKey(args.venueId);
-  if (!calKey) return;
-  const calendarId = getCalendarIds()[calKey];
+  const calendarId = await getCalendarIdForVenue(args.venueId);
   if (!calendarId) return;
 
   const oauth2 = buildOAuthClient(redirectUri);
