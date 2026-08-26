@@ -120,6 +120,13 @@ service cloud.firestore {
       allow read:  if true;
       allow write: if isAdmin();
     }
+    // ───── Venues (分店管理) ─────
+    // Public read — the whole site renders from these. Staff write via
+    // the /admin/venues manager.
+    match /venues/{id} {
+      allow read:  if true;
+      allow write: if isStaff();
+    }
     match /site_seo/{id} {
       // Public read so generateMetadata (server-side, no auth) can fetch.
       allow read:  if true;
