@@ -6,6 +6,7 @@ import { Link, useRouter } from '@/i18n/routing';
 import { useParams } from 'next/navigation';
 import { getVenueBySlug, amenityLabels } from '@/lib/venues';
 import { loadAllVenues } from '@/lib/venueRegistry';
+import MultiRoomBranch from '@/components/branch/MultiRoomBranch';
 import type { Venue } from '@/types';
 import AmenityGrid from '@/components/branches/AmenityGrid';
 import { getPackagesByVenueId, CATEGORY_LABEL } from '@/lib/packages';
@@ -41,6 +42,17 @@ export default function BranchPage() {
       .finally(() => setDynLoaded(true));
   }, [slug]);
   const venue = dynVenue ?? staticVenue;
+  // Multi-space branch page (上環模式 for new branches): the slug is a
+  // branchKey rather than a single venue slug → render the generic
+  // multi-room page listing every live space of the branch.
+  const [branchRooms, setBranchRooms] = useState<Venue[] | null>(null);
+  const [branchLoaded, setBranchLoaded] = useState(false);
+  useEffect(() => {
+    loadAllVenues().then((list) => {
+      const rms = list.filter((v) => v.branchKey === slug && v.active !== false && !list.some((x) => x.slug === slug));
+      setBranchRooms(rms.length > 1 ? rms.sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99)) : null);
+    }).catch(() => {}).finally(() => setBranchLoaded(true));
+  }, [slug]);
   const [selectedImage, setSelectedImage] = useState<number | null>(null);
   // Pull admin-edited overrides (name / size / description / amenities / games)
 
@@ -64,7 +76,10 @@ export default function BranchPage() {
     );
   }
 
-  if (!staticVenue && dynLoaded && !dynVenue) {
+  if (branchRooms && branchRooms.length > 1) {
+    return <MultiRoomBranch rooms={branchRooms} locale={locale} />;
+  }
+  if (!staticVenue && dynLoaded && branchLoaded && !dynVenue && !branchRooms) {
     notFound();
   }
   if (!venue) {

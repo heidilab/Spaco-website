@@ -8,12 +8,24 @@ import { motion } from 'framer-motion';
 import { Venue } from '@/types';
 import { getSiteImageByKey } from '@/lib/content';
 
+export interface BranchCardGroup {
+  name: { zh: string; en: string };
+  slug: string;
+  roomCount: number;
+  capacityMin: number;
+  capacityMax: number;
+  coverImage?: string;
+}
+
 interface VenueCardProps {
   venue: Venue;
   index: number;
+  /** Present when this card represents a multi-space branch (上環模式)
+   *  — overrides name / link / capacity range. */
+  branchGroup?: BranchCardGroup;
 }
 
-export default function VenueCard({ venue, index }: VenueCardProps) {
+export default function VenueCard({ venue, index, branchGroup }: VenueCardProps) {
   const t = useTranslations('collection');
   const locale = useLocale() as 'zh' | 'en';
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -31,9 +43,13 @@ export default function VenueCard({ venue, index }: VenueCardProps) {
     const cardKey = `card-${branchPrefix}`;
 
     (async () => {
+      // 0) branch-group cover / venue-doc photo (分店管理 uploads)
+      if (branchGroup?.coverImage) { setImageUrl(branchGroup.coverImage); return; }
       // 1) explicit card slot
       const cardImg = await getSiteImageByKey(cardKey).catch(() => null);
       if (cardImg) { setImageUrl(cardImg.url); return; }
+      // 1.5) venue-doc photos
+      if (venue.images?.[0]?.startsWith('http')) { setImageUrl(venue.images[0]); return; }
 
       // 2) cover from branch gallery. sw-ab has no gallery of its own
       //    (shares the floor with sw-a + sw-b) — fall back to sw-a's photos.
@@ -52,22 +68,24 @@ export default function VenueCard({ venue, index }: VenueCardProps) {
       const legacy = await getSiteImageByKey(legacyKey).catch(() => null);
       if (legacy) setImageUrl(legacy.url);
     })();
-  }, [venue.id]);
+  }, [venue.id, venue.images, branchGroup?.coverImage]);
 
-  // All Sheung Wan variants link to the unified branch page
+  // Multi-space branches (branchGroup from the registry) show ONE card
+  // with the branch identity; legacy SW hardcodes remain as fallback
+  // for the static-data first paint.
   const isSheungWan = ['sw-a', 'sw-b', 'sw-ab'].includes(venue.id);
-  const detailHref = isSheungWan
-    ? '/branches/sheung-wan'
-    : `/branches/${venue.slug}`;
-  // When dedupe-displayed, show the branch name instead of the variant name
-  const displayName = isSheungWan
-    ? { zh: '上環海景旗艦店', en: 'Sheung Wan' }[locale]
-    : venue.name[locale];
-  const displaySubtitle = isSheungWan
-    ? { zh: '3 種空間配置', en: '3 room options' }[locale]
-    : venue.subtitle[locale];
-  // SW capacity range = aggregate across all 3 rooms (6 - 100)
-  const capacityRange = isSheungWan ? '6-100' : `${venue.capacity.min}-${venue.capacity.max}`;
+  const detailHref = branchGroup
+    ? `/branches/${branchGroup.slug}`
+    : isSheungWan ? '/branches/sheung-wan' : `/branches/${venue.slug}`;
+  const displayName = branchGroup
+    ? branchGroup.name[locale]
+    : isSheungWan ? ({ zh: '上環海景旗艦店', en: 'Sheung Wan' }[locale]) : venue.name[locale];
+  const displaySubtitle = branchGroup
+    ? (locale === 'zh' ? `${branchGroup.roomCount} 種空間配置` : `${branchGroup.roomCount} room options`)
+    : isSheungWan ? ({ zh: '3 種空間配置', en: '3 room options' }[locale]) : venue.subtitle[locale];
+  const capacityRange = branchGroup
+    ? `${branchGroup.capacityMin}-${branchGroup.capacityMax}`
+    : isSheungWan ? '6-100' : `${venue.capacity.min}-${venue.capacity.max}`;
 
   return (
     <motion.div
