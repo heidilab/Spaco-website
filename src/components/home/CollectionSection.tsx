@@ -6,7 +6,7 @@ import { motion } from 'framer-motion';
 import { Sparkles } from 'lucide-react';
 import FilterBar from './FilterBar';
 import SplitHeading from '@/components/ui/SplitHeading';
-import VenueCard from './VenueCard';
+import VenueCard, { type BranchCardGroup } from './VenueCard';
 import ZeroResultsFallback from './ZeroResultsFallback';
 import { filterVenues, venues as allVenues } from '@/lib/venues';
 import { loadActiveVenues } from '@/lib/venueRegistry';
@@ -42,11 +42,44 @@ export default function CollectionSection() {
   }, []);
   const [filteredVenues, setFilteredVenues] = useState<Venue[] | null>(null);
 
-  // Collapse Sheung Wan A/B/AB → one card (linking to the unified branch page)
-  const displayVenues = useMemo(
-    () => dedupeSheungWan(filteredVenues ?? registryVenues),
-    [filteredVenues, registryVenues],
-  );
+  // Collapse multi-space branches (branchKey groups — 上環模式) into one
+  // card each. Falls back to the SW-only dedupe for the static first
+  // paint (static venues carry no branchKey).
+  const displayVenues = useMemo(() => {
+    const list = filteredVenues ?? registryVenues;
+    const hasKeys = list.some((v) => v.branchKey);
+    if (!hasKeys) return dedupeSheungWan(list).map((v) => ({ venue: v, branchGroup: undefined as BranchCardGroup | undefined }));
+    const byKey = new Map<string, Venue[]>();
+    for (const v of list) {
+      const k = v.branchKey || v.id;
+      byKey.set(k, [...(byKey.get(k) || []), v]);
+    }
+    const out: Array<{ venue: Venue; branchGroup?: BranchCardGroup }> = [];
+    for (const [key, rms] of Array.from(byKey.entries())) {
+      rms.sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
+      if (rms.length === 1) {
+        out.push({ venue: rms[0] });
+      } else {
+        const rep = rms[0];
+        // Aggregate capacity range + total room count from ALL rooms of
+        // this branch in the registry (not just filter survivors).
+        const allRooms = registryVenues.filter((v) => (v.branchKey || v.id) === key);
+        out.push({
+          venue: rep,
+          branchGroup: {
+            name: rep.branchName || rep.name,
+            slug: key,
+            roomCount: allRooms.length,
+            capacityMin: Math.min(...allRooms.map((v) => v.capacity.min)),
+            capacityMax: Math.max(...allRooms.map((v) => v.capacity.max)),
+            coverImage: allRooms.find((v) => v.images?.[0]?.startsWith('http'))?.images[0],
+          },
+        });
+      }
+    }
+    out.sort((a, b) => (a.venue.sortOrder ?? 99) - (b.venue.sortOrder ?? 99));
+    return out;
+  }, [filteredVenues, registryVenues]);
 
   const handleFilterChange = useCallback((newFilters: FilterState) => {
     setFilters(newFilters);
@@ -101,8 +134,8 @@ export default function CollectionSection() {
         {/* Venue Grid or Fallback */}
         {displayVenues.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {displayVenues.map((venue, i) => (
-              <VenueCard key={venue.id} venue={venue} index={i} />
+            {displayVenues.map(({ venue, branchGroup }, i) => (
+              <VenueCard key={branchGroup?.slug || venue.id} venue={venue} branchGroup={branchGroup} index={i} />
             ))}
           </div>
         ) : (
