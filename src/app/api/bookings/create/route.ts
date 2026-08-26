@@ -3,6 +3,7 @@ import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminVerifyIdToken } from '@/lib/adminAuth';
 import { getVenueById } from '@/lib/venues';
+import { getVenueByIdServer, venuesSharingSpaceServer } from '@/lib/venueRegistryServer';
 import { calculatePricing, calculateDeposit, adultEquivalent, freeDrinksVenues, subtractHours } from '@/lib/pricing';
 import { calcPromoDiscount } from '@/lib/promoCodes';
 import { getHoliday } from '@/lib/hkHolidays';
@@ -107,7 +108,11 @@ export async function POST(req: NextRequest) {
 
   // ── SERVER-RECOMPUTE the money fields (override, never reject — a legit
   // booking's client values already match, a tampered one gets corrected).
-  const venue = getVenueById(venueId);
+  // Registry first (admin-managed pricing/flags), static as fallback.
+  const venue = (await getVenueByIdServer(venueId)) ?? getVenueById(venueId);
+  if (venue?.active === false) {
+    return NextResponse.json({ error: 'VENUE_OFFLINE' }, { status: 400 });
+  }
   const guestCount = Math.max(1, Number(rest.guestCount) || 1);
   const childCount = Math.max(0, Number(rest.childCount) || 0);
   const adultCount = Math.max(0, Number(rest.adultCount ?? (guestCount - childCount)));
@@ -202,8 +207,9 @@ export async function POST(req: NextRequest) {
     ? '23:59'
     : `${String(bufferEndH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
 
-  const sharedVenues = venuesSharingSpace(venueId);
-  const lockKey = physicalSpaceLockKey(venueId);
+  const sharedVenues = await venuesSharingSpaceServer(venueId);
+  // Space-group venues contend on one lock doc (dynamic 上環-style groups).
+  const lockKey = venue?.spaceGroup ?? physicalSpaceLockKey(venueId);
 
   // Early setup access (提早入場佈置) — locks N hours BEFORE startTime.
   // The window is conflict-checked like the booking itself, so it also

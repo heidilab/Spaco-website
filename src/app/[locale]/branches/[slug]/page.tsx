@@ -5,6 +5,8 @@ import { useTranslations, useLocale } from 'next-intl';
 import { Link, useRouter } from '@/i18n/routing';
 import { useParams } from 'next/navigation';
 import { getVenueBySlug, amenityLabels } from '@/lib/venues';
+import { loadAllVenues } from '@/lib/venueRegistry';
+import type { Venue } from '@/types';
 import { getSiteImages, compareSiteImages } from '@/lib/content';
 import { useBranchOverrides } from '@/lib/useBranchOverrides';
 import AmenityGrid from '@/components/branches/AmenityGrid';
@@ -38,7 +40,17 @@ export default function BranchPage() {
   const locale = useLocale() as 'zh' | 'en';
   const t = useTranslations('booking');
   const slug = params.slug as string;
-  const venue = getVenueBySlug(slug);
+  const staticVenue = getVenueBySlug(slug);
+  // Registry override — dynamically-created venues (分店管理) have no
+  // static entry; admin edits to existing venues also land here.
+  const [dynVenue, setDynVenue] = useState<Venue | null>(null);
+  const [dynLoaded, setDynLoaded] = useState(false);
+  useEffect(() => {
+    loadAllVenues()
+      .then((list) => setDynVenue(list.find((v) => v.slug === slug) || null))
+      .finally(() => setDynLoaded(true));
+  }, [slug]);
+  const venue = dynVenue ?? staticVenue;
   const [venueImages, setVenueImages] = useState<SiteImage[]>([]);
   const [selectedImage, setSelectedImage] = useState<number | null>(null);
   // Pull admin-edited overrides (name / size / description / amenities / games)
@@ -73,12 +85,29 @@ export default function BranchPage() {
     );
   }
 
+  if (!staticVenue && dynLoaded && !dynVenue) {
+    notFound();
+  }
   if (!venue) {
+    return <div className="pt-28 min-h-screen" />;
+  }
+  if (venue.active === false) {
     notFound();
   }
 
-  const mainImage = venueImages[0] || null;
-  const galleryImages = venueImages.slice(1);
+  // Dynamic venues carry their photos on the venue doc itself (分店管理
+  // upload); site_images (content 管理) wins when present for legacy
+  // branches. Synthesize SiteImage shapes so the gallery/lightbox work
+  // unchanged.
+  const effectiveImages: SiteImage[] = venueImages.length > 0
+    ? venueImages
+    : (venue.images || []).map((url, i) => ({
+        id: `venue-${i}`, key: `venue-${venue.id}-${i}`, url,
+        alt: venue.name[locale] || venue.name.zh, section: 'venue', order: i,
+        uploadedAt: null,
+      }));
+  const mainImage = effectiveImages[0] || null;
+  const galleryImages = effectiveImages.slice(1);
 
   // Packages bookable at this branch (e.g. Mahjong @ Wan Chai). Empty for
   // branches with no curated package — section just doesn't render.
@@ -147,12 +176,12 @@ export default function BranchPage() {
                       <img src={img.url} alt={img.alt || `Photo ${i + 2}`} className="w-full h-full object-cover" />
                     </div>
                   ))}
-                  {venueImages.length > 9 && (
+                  {effectiveImages.length > 9 && (
                     <div
                       className="aspect-square rounded-2xl overflow-hidden cursor-pointer glass-strong flex items-center justify-center hover:bg-white/80 transition-colors"
                       onClick={() => setSelectedImage(9)}
                     >
-                      <span className="text-sm font-bold text-gradient-pink">+{venueImages.length - 9}</span>
+                      <span className="text-sm font-bold text-gradient-pink">+{effectiveImages.length - 9}</span>
                     </div>
                   )}
                 </div>
@@ -376,7 +405,7 @@ export default function BranchPage() {
 
       {/* Lightbox */}
       <AnimatePresence>
-        {selectedImage !== null && venueImages.length > 0 && (
+        {selectedImage !== null && effectiveImages.length > 0 && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -395,7 +424,7 @@ export default function BranchPage() {
             </button>
             <button
               className="absolute right-6 top-1/2 -translate-y-1/2 w-12 h-12 glass-dark rounded-full flex items-center justify-center text-cream hover:bg-pink/30 transition-colors"
-              onClick={(e) => { e.stopPropagation(); setSelectedImage(Math.min(venueImages.length - 1, (selectedImage || 0) + 1)); }}
+              onClick={(e) => { e.stopPropagation(); setSelectedImage(Math.min(effectiveImages.length - 1, (selectedImage || 0) + 1)); }}
             >
               <ChevronRight size={24} />
             </button>
@@ -403,7 +432,7 @@ export default function BranchPage() {
             <div className="max-w-4xl max-h-[80vh] px-16" onClick={(e) => e.stopPropagation()}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={venueImages[selectedImage]?.url}
+                src={effectiveImages[selectedImage]?.url}
                 alt={venueImages[selectedImage]?.alt || ''}
                 className="max-w-full max-h-[80vh] object-contain rounded-2xl"
               />
