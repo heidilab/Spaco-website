@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { Link } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
-import { venues, getVenueBySlug } from '@/lib/venues';
+import { venues as staticVenues, getVenueBySlug } from '@/lib/venues';
+import { loadAllVenues, venuesSnapshot } from '@/lib/venueRegistry';
+import type { Venue } from '@/types';
 import {
   addOns as ALL_ADDONS,
   calculatePricing,
@@ -51,6 +53,10 @@ function addDays(yyyyMmDd: string, n: number): string {
 }
 
 export default function AdminNewBookingPage() {
+  // Registry-backed venue list (分店管理) — static array is the
+  // first paint; Firestore overrides so new/edited venues appear.
+  const [venues, setVenues] = useState<Venue[]>(staticVenues);
+  useEffect(() => { loadAllVenues().then(setVenues).catch(() => {}); }, []);
   const locale = useLocale() as 'zh' | 'en';
   const { user, hasPermission } = useAuth();
 

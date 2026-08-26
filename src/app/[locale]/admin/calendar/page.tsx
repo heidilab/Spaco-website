@@ -13,7 +13,9 @@ import {
   getAllUsers,
 } from '@/lib/firestore';
 import { BookingRecord, BlockedSlot, CalendarEvent } from '@/types';
-import { venues } from '@/lib/venues';
+import { venues as staticVenues } from '@/lib/venues';
+import { loadAllVenues, venuesSnapshot } from '@/lib/venueRegistry';
+import type { Venue } from '@/types';
 import { formatAddOnsForStaff } from '@/lib/pricing';
 import {
   ChevronLeft, ChevronRight, Lock, Calendar, Eye, Truck, Trash2,
@@ -74,6 +76,10 @@ function bookingIdent(b: BookingRecord, userNames?: Record<string, string>): str
 }
 
 export default function AdminCalendarPage() {
+  // Registry-backed venue list (分店管理) — static array is the
+  // first paint; Firestore overrides so new/edited venues appear.
+  const [venues, setVenues] = useState<Venue[]>(staticVenues);
+  useEffect(() => { loadAllVenues().then(setVenues).catch(() => {}); }, []);
   const locale = useLocale() as 'zh' | 'en';
   const [mounted, setMounted] = useState(false);
   const [currentMonth, setCurrentMonth] = useState<string>('');
@@ -771,7 +777,7 @@ function AddModal(props: {
             <select value={addVenue} onChange={(e) => setAddVenue(e.target.value)} className="w-full px-4 py-2.5 rounded-pill bg-white/70 backdrop-blur-md border border-white/80 text-ink">
               {/* When 上環店 filter is active, narrow the picker to the 3 SW
                   sub-rooms so admin chooses A / B / A+B for the manual block. */}
-              {venues
+              {venuesSnapshot()
                 .filter((v) => selectedVenue === SW_GROUP_ID ? isSwGroupVenue(v.id) : true)
                 .map((v) => (
                   <option key={v.id} value={v.id}>{v.name[locale]}</option>
@@ -863,7 +869,7 @@ function DetailsModal({
   onDelete: () => void;
 }) {
   const venueName = (venueId: string) =>
-    venues.find((v) => v.id === venueId)?.name[locale] || venueId;
+    venuesSnapshot().find((v) => v.id === venueId)?.name[locale] || venueId;
 
   return (
     <>
@@ -960,7 +966,7 @@ function GcalDetails({
   locale: 'zh' | 'en';
   onClose: () => void;
 }) {
-  const venueLabel = slot.venueId === 'sw-ab' ? (venues.find((v) => v.id === 'sw-ab')?.name[locale] || 'SW') : venueName(slot.venueId);
+  const venueLabel = slot.venueId === 'sw-ab' ? (venuesSnapshot().find((v) => v.id === 'sw-ab')?.name[locale] || 'SW') : venueName(slot.venueId);
   return (
     <>
       <h3 className="text-lg font-bold font-display mb-1 text-ink flex items-center gap-2">
