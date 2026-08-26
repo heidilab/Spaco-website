@@ -217,6 +217,41 @@ export default function AdminVenuesPage() {
                 </button>
               ))}
             </div>
+            <div>
+              <label className="block text-xs font-semibold text-ink-soft mb-1 mt-2">
+                {locale === 'zh' ? '設施文字列表（分店頁顯示；用「、」或換行分隔；留空則用上面剔選）' : 'Facilities text list (overrides ticks above)'}
+              </label>
+              <textarea value={editing.amenitiesText?.zh || ''} rows={2}
+                onChange={(e) => set({ amenitiesText: { ...editing.amenitiesText, zh: e.target.value } })}
+                placeholder="波波池、桌球枱、麻雀枱、Switch" className="w-full px-3 py-2 rounded-xl border border-charcoal/15 bg-white text-sm" />
+              <textarea value={editing.amenitiesText?.en || ''} rows={2}
+                onChange={(e) => set({ amenitiesText: { ...editing.amenitiesText, en: e.target.value } })}
+                placeholder="Ball pit, Pool table, Mahjong, Switch" className="mt-2 w-full px-3 py-2 rounded-xl border border-charcoal/15 bg-white text-sm" />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-ink-soft mb-1">
+                  {locale === 'zh' ? 'Switch 遊戲（每行一個，中文）' : 'Switch games (one per line, zh)'}
+                </label>
+                <textarea value={editing.switchGames?.zh || ''} rows={3}
+                  onChange={(e) => set({ switchGames: { ...editing.switchGames, zh: e.target.value } })}
+                  className="w-full px-3 py-2 rounded-xl border border-charcoal/15 bg-white text-sm" />
+                <textarea value={editing.switchGames?.en || ''} rows={3}
+                  onChange={(e) => set({ switchGames: { ...editing.switchGames, en: e.target.value } })}
+                  placeholder="English (one per line)" className="mt-2 w-full px-3 py-2 rounded-xl border border-charcoal/15 bg-white text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-ink-soft mb-1">
+                  {locale === 'zh' ? '桌遊（每行一個，中文）' : 'Board games (one per line, zh)'}
+                </label>
+                <textarea value={editing.boardGames?.zh || ''} rows={3}
+                  onChange={(e) => set({ boardGames: { ...editing.boardGames, zh: e.target.value } })}
+                  className="w-full px-3 py-2 rounded-xl border border-charcoal/15 bg-white text-sm" />
+                <textarea value={editing.boardGames?.en || ''} rows={3}
+                  onChange={(e) => set({ boardGames: { ...editing.boardGames, en: e.target.value } })}
+                  placeholder="English (one per line)" className="mt-2 w-full px-3 py-2 rounded-xl border border-charcoal/15 bg-white text-sm" />
+              </div>
+            </div>
             <p className="font-bold text-sm pt-2">{locale === 'zh' ? '適合場合' : 'Vibes'}</p>
             <div className="flex flex-wrap gap-2">
               {Object.entries(vibeLabels).map(([key, lbl]) => (
