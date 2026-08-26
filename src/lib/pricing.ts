@@ -536,7 +536,7 @@ export function calculatePricing(
   for (const selected of selectedAddOns) {
     if (selected.id === 'bbq-standard') {
       // Use venue-specific BBQ standard price; children at half rate.
-      const price = bbqStandardPriceByVenue[venue.id] || 158;
+      const price = venue.bbqStandardPrice ?? bbqStandardPriceByVenue[venue.id] ?? 158;
       const cost = Math.round(price * equiv);
       addOnTotal += cost;
       breakdown.push({
@@ -665,7 +665,7 @@ export function calculatePricing(
 
     if (selected.id === 'early-setup') {
       // Per-hour venue-specific price; quantity = hours of early access.
-      const price = earlySetupPriceByVenue[venue.id] || 500;
+      const price = venue.earlySetupPricePerHour ?? earlySetupPriceByVenue[venue.id] ?? 500;
       const cost = price * selected.quantity;
       addOnTotal += cost;
       breakdown.push({
@@ -680,7 +680,7 @@ export function calculatePricing(
 
     if (selected.id === 'drinks') {
       // Skip if venue includes free drinks (TST)
-      if (freeDrinksVenues.includes(venue.id)) continue;
+      if (venue.drinksIncluded ?? freeDrinksVenues.includes(venue.id)) continue;
       const cost = Math.round(25 * equiv);
       addOnTotal += cost;
       breakdown.push({
@@ -744,8 +744,8 @@ export function calculatePricing(
     });
   }
 
-  // Free drinks note for TST
-  if (freeDrinksVenues.includes(venue.id)) {
+  // Free drinks note for venues with drinks included (e.g. TST)
+  if (venue.drinksIncluded ?? freeDrinksVenues.includes(venue.id)) {
     breakdown.push({
       label: { zh: '無酒精飲品任飲（已包含）', en: 'Non-Alcoholic Drinks (Included)' },
       amount: 0,

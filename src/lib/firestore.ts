@@ -16,6 +16,7 @@ import {
 import { db } from './firebase';
 import { BookingRecord, BlockedSlot, BusinessDocument, DocumentType, DocumentRevision, CalendarEvent, AddOnOptions, PromoCode } from '@/types';
 import { venuesSharingSpace, getVenueById } from './venues';
+import { loadAllVenues, conflictIdsFor } from './venueRegistry';
 import { calculatePricing, calculateDeposit, freeDrinksVenues } from './pricing';
 import { calcPromoDiscount } from './promoCodes';
 import { getHoliday } from './hkHolidays';
@@ -230,7 +231,15 @@ async function assertNoSlotConflict(opts: {
       ]
     : [{ date: opts.date, start: startMin(opts.startTime), end: startMin(opts.endTime) }];
 
-  for (const vid of venuesSharingSpace(opts.venueId)) {
+  // Registry-aware shared-space expansion (falls back to the static
+  // map inside conflictIdsFor when the venue isn't in the registry).
+  let sharedIds: string[];
+  try {
+    sharedIds = conflictIdsFor(opts.venueId, await loadAllVenues());
+  } catch {
+    sharedIds = venuesSharingSpace(opts.venueId);
+  }
+  for (const vid of sharedIds) {
     for (const w of windows) {
       const snap = await getDocs(query(
         collection(db, 'blocked_slots'),

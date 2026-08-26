@@ -1,7 +1,7 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Sparkles } from 'lucide-react';
 import FilterBar from './FilterBar';
@@ -9,6 +9,7 @@ import SplitHeading from '@/components/ui/SplitHeading';
 import VenueCard from './VenueCard';
 import ZeroResultsFallback from './ZeroResultsFallback';
 import { filterVenues, venues as allVenues } from '@/lib/venues';
+import { loadActiveVenues } from '@/lib/venueRegistry';
 import { FilterState, Venue } from '@/types';
 
 // All Sheung Wan variants (A / B / Full Floor) belong to one branch and
@@ -33,15 +34,38 @@ export default function CollectionSection() {
     vibe: null,
     amenities: [],
   });
-  const [filteredVenues, setFilteredVenues] = useState(allVenues);
+  // Registry-backed list — admin 分店管理 additions / 落架 reach the
+  // homepage without a deploy. Static array is the first paint.
+  const [registryVenues, setRegistryVenues] = useState<Venue[]>(allVenues);
+  useEffect(() => {
+    loadActiveVenues().then(setRegistryVenues).catch(() => {});
+  }, []);
+  const [filteredVenues, setFilteredVenues] = useState<Venue[] | null>(null);
 
   // Collapse Sheung Wan A/B/AB → one card (linking to the unified branch page)
-  const displayVenues = useMemo(() => dedupeSheungWan(filteredVenues), [filteredVenues]);
+  const displayVenues = useMemo(
+    () => dedupeSheungWan(filteredVenues ?? registryVenues),
+    [filteredVenues, registryVenues],
+  );
 
   const handleFilterChange = useCallback((newFilters: FilterState) => {
     setFilters(newFilters);
-    setFilteredVenues(filterVenues(newFilters));
-  }, []);
+    // Static filter maps only know the original 6 ids; venues created
+    // dynamically pass through unfiltered (shown in every filter state)
+    // until Phase 3 moves the filter attributes onto the venue doc.
+    const staticMatch = new Set(filterVenues(newFilters).map((v) => v.id));
+    const hasFilter = !!(newFilters.capacity || newFilters.vibe || newFilters.amenities.length);
+    setFilteredVenues(!hasFilter ? null : registryVenues.filter((v) => {
+      const isStaticVenue = allVenues.some((sv) => sv.id === v.id);
+      if (!isStaticVenue) {
+        // Dynamic venue: filter directly on its own attributes.
+        if (newFilters.vibe && !v.vibes.includes(newFilters.vibe)) return false;
+        for (const a of newFilters.amenities) if (!v.amenities.includes(a)) return false;
+        return true;
+      }
+      return staticMatch.has(v.id);
+    }));
+  }, [registryVenues]);
 
   return (
     <section id="collection" className="section-padding relative overflow-hidden">

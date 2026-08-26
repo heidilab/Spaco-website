@@ -6,6 +6,7 @@ import {
   earlySetupPriceByVenue, calcCateringTotal, subtractHours,
 } from '@/lib/pricing';
 import type { BookingRecord, AddOnOptions } from '@/types';
+import { venuesSharingSpaceServer, getVenueByIdServer } from '@/lib/venueRegistryServer';
 
 export const runtime = 'nodejs';
 
@@ -70,7 +71,8 @@ export async function POST(req: NextRequest) {
   if (newSetupHours > 0 && toMin(booking.startTime) - newSetupHours * 60 < 0) {
     return NextResponse.json({ error: 'EARLY_SETUP_BEFORE_DAY' }, { status: 400 });
   }
-  const setupPrice = earlySetupPriceByVenue[booking.venueId] || 500;
+  const setupPrice = (await getVenueByIdServer(booking.venueId))?.earlySetupPricePerHour
+    ?? earlySetupPriceByVenue[booking.venueId] ?? 500;
   const setupDiff = setupPrice * (newSetupHours - oldSetupHours);
   const setupChanged = newSetupHours !== oldSetupHours;
 
@@ -107,8 +109,8 @@ export async function POST(req: NextRequest) {
   };
 
   const setupStart = newSetupHours > 0 ? subtractHours(booking.startTime, newSetupHours) : null;
-  const sharedVenues = venuesSharingSpace(booking.venueId);
-  const lockKey = physicalSpaceLockKey(booking.venueId);
+  const sharedVenues = await venuesSharingSpaceServer(booking.venueId);
+  const lockKey = (await getVenueByIdServer(booking.venueId))?.spaceGroup ?? physicalSpaceLockKey(booking.venueId);
 
   try {
     await adminDb.runTransaction(async (t) => {

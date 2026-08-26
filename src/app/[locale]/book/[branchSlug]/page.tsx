@@ -6,7 +6,8 @@ import { useParams } from 'next/navigation';
 import { useState, useMemo, useEffect } from 'react';
 import { getVenueBySlug } from '@/lib/venues';
 import { addOns, calculatePricing, noBBQVenues, freeDrinksVenues, hotpotVenues, bbqStandardPriceByVenue, bbqStandardMenu, bbqPremiumMenu, hotpotStandardMenu, hotpotSeafoodMenu, hotpotSoupBases, calcShishaPrice, SHISHA_STAFF_SETUP_FEE, SHISHA_MAX_PIPES, earlySetupPriceByVenue, subtractHours } from '@/lib/pricing';
-import type { AddOnOptions } from '@/types';
+import type { AddOnOptions, Venue } from '@/types';
+import { loadAllVenues, conflictIdsFor } from '@/lib/venueRegistry';
 import {
   ArrowLeft, ArrowRight, Calendar, Clock, Users,
   Plus, Minus, AlertCircle, Check, Info, MessageCircle,
@@ -34,9 +35,28 @@ export default function BookingPage() {
   const { user } = useAuth();
   const router = useRouter();
   const slug = params.branchSlug as string;
-  const venue = getVenueBySlug(slug);
+  const staticVenue = getVenueBySlug(slug);
+  // Registry override — admin edits in 分店管理 (pricing, flags, photos,
+  // room groups) reach this page without a code deploy. Static data is
+  // the instant first paint + fallback; a dynamically-created venue has
+  // no static entry so it starts null and fills in from Firestore.
+  const [dynVenue, setDynVenue] = useState<Venue | null>(null);
+  const [dynLoaded, setDynLoaded] = useState(false);
+  useEffect(() => {
+    loadAllVenues()
+      .then((list) => setDynVenue(list.find((v) => v.slug === slug) || null))
+      .finally(() => setDynLoaded(true));
+  }, [slug]);
+  const venue = dynVenue ?? staticVenue;
 
+  if (!staticVenue && dynLoaded && !dynVenue) {
+    notFound();
+  }
   if (!venue) {
+    // Dynamic-only venue still loading — brief blank state.
+    return <div className="pt-28 min-h-screen" />;
+  }
+  if (venue.active === false) {
     notFound();
   }
 
@@ -394,8 +414,11 @@ export default function BookingPage() {
     let cancelled = false;
     (async () => {
       try {
+        const sharedIds = await loadAllVenues()
+          .then((all) => conflictIdsFor(venue.id, all))
+          .catch(() => venuesSharingSpace(venue.id));
         const lists = await Promise.all(
-          venuesSharingSpace(venue.id).map((vid) => getBlockedSlots(vid, selectedDate)),
+          sharedIds.map((vid) => getBlockedSlots(vid, selectedDate)),
         );
         if (!cancelled) setBlockedSlotsForDate(lists.flat());
       } catch {
@@ -474,9 +497,9 @@ export default function BookingPage() {
     if (a.id === 'catering') return false;
     // Hide BBQ packages for venues without BBQ (incl. the new BBQ
     // helper chef — chef is only useful where BBQ is allowed).
-    if ((a.id === 'bbq-standard' || a.id === 'bbq-premium' || a.id === 'bbq-grill' || a.id === 'bbq-helper') && noBBQVenues.includes(venue.id)) return false;
+    if ((a.id === 'bbq-standard' || a.id === 'bbq-premium' || a.id === 'bbq-grill' || a.id === 'bbq-helper') && (venue.bbqAvailable === false || (venue.bbqAvailable === undefined && noBBQVenues.includes(venue.id)))) return false;
     // Hide drinks for venues with free drinks
-    if (a.id === 'drinks' && freeDrinksVenues.includes(venue.id)) return false;
+    if (a.id === 'drinks' && (venue.drinksIncluded ?? freeDrinksVenues.includes(venue.id))) return false;
     return true;
   });
 
@@ -1041,7 +1064,7 @@ export default function BookingPage() {
                 })()}
 
                 {/* BYO Food */}
-                {!noBBQVenues.includes(venue.id) && (
+                {!(venue.bbqAvailable === false || (venue.bbqAvailable === undefined && noBBQVenues.includes(venue.id))) && (
                   <div className={`p-5 rounded-2xl border transition-all ${
                     hasBYOFood ? 'border-accent bg-accent/5' : 'border-charcoal/5'
                   }`}>
@@ -1099,7 +1122,7 @@ export default function BookingPage() {
                  *  hours. Hidden at noBBQ venues (灣仔). Quantity 0-6.
                  *  Min 5hr + ≥ 7 days advance enforced; violations show
                  *  a red hint that blocks Proceed via canProceed. */}
-                {!noBBQVenues.includes(venue.id) && (
+                {!(venue.bbqAvailable === false || (venue.bbqAvailable === undefined && noBBQVenues.includes(venue.id))) && (
                   <div className={`p-5 rounded-2xl border transition-all ${
                     bbqHelperQty > 0 ? 'border-pink bg-pink/5' : 'border-charcoal/5'
                   }`}>
@@ -1242,7 +1265,7 @@ export default function BookingPage() {
                   })}
 
                 {/* TST free drinks note */}
-                {freeDrinksVenues.includes(venue.id) && (
+                {(venue.drinksIncluded ?? freeDrinksVenues.includes(venue.id)) && (
                   <div className="p-4 bg-green-50 rounded-2xl flex items-start gap-3">
                     <Check size={18} className="text-green-500 flex-shrink-0 mt-0.5" />
                     <p className="text-sm text-green-700">
@@ -1258,8 +1281,8 @@ export default function BookingPage() {
                       <p className="font-semibold">{locale === 'zh' ? '提早入場佈置' : 'Early Setup Access'}</p>
                       <p className="text-sm text-muted mt-1">
                         {locale === 'zh'
-                          ? `提早開場俾你佈置場地，每小時 +HK$${earlySetupPriceByVenue[venue.id] || 500}，最多 3 小時。佈置時段會鎖埋喺你嘅預訂入面。`
-                          : `Get in early to decorate — +HK$${earlySetupPriceByVenue[venue.id] || 500}/hr, max 3 hrs. The setup window is reserved with your booking.`}
+                          ? `提早開場俾你佈置場地，每小時 +HK$${venue.earlySetupPricePerHour ?? earlySetupPriceByVenue[venue.id] ?? 500}，最多 3 小時。佈置時段會鎖埋喺你嘅預訂入面。`
+                          : `Get in early to decorate — +HK$${venue.earlySetupPricePerHour ?? earlySetupPriceByVenue[venue.id] ?? 500}/hr, max 3 hrs. The setup window is reserved with your booking.`}
                       </p>
                       {earlySetupQty > 0 && (
                         <p className="text-xs text-amber-700 mt-2">

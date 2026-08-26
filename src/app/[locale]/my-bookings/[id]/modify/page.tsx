@@ -20,6 +20,7 @@ import { useRouter, Link } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
 import { getBooking, getBlockedSlots } from '@/lib/firestore';
 import { getVenueById, venuesSharingSpace } from '@/lib/venues';
+import { loadAllVenues, conflictIdsFor } from '@/lib/venueRegistry';
 import {
   addOns as addOnCatalog, calculatePricing, noBBQVenues, freeDrinksVenues,
   earlySetupPriceByVenue, calcCateringTotal,
@@ -206,7 +207,9 @@ export default function ModifyBookingPage() {
           });
         }
 
-        const venueIds = venuesSharingSpace(booking.venueId);
+        const venueIds = await loadAllVenues()
+          .then((all) => conflictIdsFor(booking.venueId, all))
+          .catch(() => venuesSharingSpace(booking.venueId));
         for (const vid of venueIds) {
           for (const w of windows) {
             const blocks = await getBlockedSlots(vid, w.date);

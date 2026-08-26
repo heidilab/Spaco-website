@@ -3,6 +3,7 @@ import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminVerifyIdToken } from '@/lib/adminAuth';
 import { getVenueById } from '@/lib/venues';
+import { getVenueByIdServer, venuesSharingSpaceServer } from '@/lib/venueRegistryServer';
 import {
   calculatePricing, calculateDeposit, freeDrinksVenues, subtractHours,
   earlySetupPriceByVenue, calcCateringTotal,
@@ -100,7 +101,7 @@ export async function POST(
   // else stays package-not-supported.
   const isPackage = !!booking.packageSlug;
 
-  const venue = getVenueById(booking.venueId);
+  const venue = (await getVenueByIdServer(booking.venueId)) ?? getVenueById(booking.venueId);
   if (!venue) return NextResponse.json({ error: 'venue-not-found' }, { status: 400 });
 
   const startMs = new Date(`${booking.date}T${booking.startTime}:00+08:00`).getTime();
@@ -222,8 +223,8 @@ export async function POST(
     };
     const pkgSetupStart = newSetupHours > 0 ? subtractHours(startTime, newSetupHours) : null;
 
-    const sharedVenuesPkg = venuesSharingSpace(booking.venueId);
-    const lockKeyPkg = physicalSpaceLockKey(booking.venueId);
+    const sharedVenuesPkg = await venuesSharingSpaceServer(booking.venueId);
+    const lockKeyPkg = venue.spaceGroup ?? physicalSpaceLockKey(booking.venueId);
     try {
       await adminDb.runTransaction(async (t) => {
         const lockRef = adminDb.collection('_venue_booking_locks').doc(`${lockKeyPkg}_${booking.date}`);
@@ -410,8 +411,8 @@ export async function POST(
     ? '23:59'
     : `${String(bufferEndH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
 
-  const sharedVenues = venuesSharingSpace(booking.venueId);
-  const lockKey = physicalSpaceLockKey(booking.venueId);
+  const sharedVenues = await venuesSharingSpaceServer(booking.venueId);
+  const lockKey = venue.spaceGroup ?? physicalSpaceLockKey(booking.venueId);
   const dates = endDate !== booking.date ? [booking.date, endDate] : [booking.date];
 
   const checkWindows = isOvernight
