@@ -186,10 +186,22 @@ export async function POST(req: NextRequest) {
   // pricing.deposit − pointsDiscount). The remaining balance is
   // grandTotal(excl. points) − deposit; the KPay webhook reconciles the
   // points against the smaller payment amount so the two agree.
-  const baseCharge = Number(sanitizedPricing?.baseCharge) || 0;
   const addOnTotal = Number(sanitizedPricing?.addOnTotal) || 0;
   const securityDeposit = Number(sanitizedPricing?.securityDeposit) || 0;
-  const grossSubtotal = baseCharge + addOnTotal;
+  // PACKAGE bookings: the stored subtotal (flat package price + extras)
+  // is authoritative — deriving it from baseCharge + addOnTotal is WRONG
+  // because package drafts carry the per-head calculatePricing artifact
+  // in baseCharge (#2026-09-27 CWB: $6,800+$500 package rebuilt as
+  // 15×$50×3h+$500 = $2,750 and the customer underpaid by $4,550).
+  const storedSubtotal = Number(sanitizedPricing?.subtotal) || 0;
+  const grossSubtotal = isPackage && storedSubtotal > 0
+    ? storedSubtotal
+    : (Number(sanitizedPricing?.baseCharge) || 0) + addOnTotal;
+  // Keep baseCharge display-consistent: for packages it's the flat
+  // package portion (subtotal − add-ons), never the per-head figure.
+  const baseCharge = isPackage
+    ? Math.max(0, grossSubtotal - addOnTotal)
+    : Number(sanitizedPricing?.baseCharge) || 0;
   const grandTotalForDeposit = Math.max(0, grossSubtotal - promoDiscount) + securityDeposit;
   const deposit = calculateDeposit(grandTotalForDeposit, date as string);
   const balanceDue = Math.max(0, grandTotalForDeposit - deposit);

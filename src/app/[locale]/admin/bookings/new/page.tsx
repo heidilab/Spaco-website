@@ -400,7 +400,8 @@ export default function AdminNewBookingPage() {
         addOns: selectedAddOnList,
         hasBYOFood,
         pricing: {
-          baseCharge: pricing.baseCharge,
+          // Packages: flat package portion, NOT the per-head artifact
+          baseCharge: selectedPackage ? selectedPackage.price + extraPaxCharge : pricing.baseCharge,
           addOnTotal: pricing.addOnTotal,
           // PRE-promo subtotal (baseCharge + addOnTotal + package extras).
           // This is the convention every other flow uses: venue page
