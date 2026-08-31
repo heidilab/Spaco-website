@@ -283,7 +283,7 @@ export async function POST(
   // ── Recompute pricing canonically (GROSS subtotal + promo/points) ──
   const startForHours = new Date(`${booking.date}T${startTime}:00+08:00`).getTime();
   const endForHours = new Date(`${endDate}T${endTime}:00+08:00`).getTime();
-  const hours = Math.max(1, Math.round((endForHours - startForHours) / 3600000));
+  const hours = Math.max(1, Math.round((((endForHours - startForHours)) / 3600000) * 2) / 2);
 
   const computed = calculatePricing(
     venue, booking.isWeekend, hours, newGuestCount, reqAddOns, childCount,

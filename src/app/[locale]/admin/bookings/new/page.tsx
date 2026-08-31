@@ -687,16 +687,21 @@ export default function AdminNewBookingPage() {
               <div>
                 <label className="text-xs text-ink-soft mb-1 block">{locale === 'zh' ? '時數' : 'Hours'}</label>
                 <div className="flex items-center gap-1">
-                  <button type="button" onClick={() => setHours(Math.max(1, hours - 1))} className="p-2 rounded-lg bg-white/85 border-2 border-charcoal/15"><Minus size={14} /></button>
+                  {/* Half-hour steps — customers book e.g. 12.5h (Heidi 2026-09). */}
+                  <button type="button" onClick={() => setHours(Math.max(1, Math.round((hours - 0.5) * 2) / 2))} className="p-2 rounded-lg bg-white/85 border-2 border-charcoal/15"><Minus size={14} /></button>
                   <input
                     type="number"
                     min={1}
-                    max={12}
+                    max={16}
+                    step={0.5}
                     value={hours}
-                    onChange={(e) => setHours(Math.max(1, parseInt(e.target.value) || 1))}
+                    onChange={(e) => {
+                      const raw = parseFloat(e.target.value);
+                      setHours(Number.isFinite(raw) ? Math.max(1, Math.round(raw * 2) / 2) : 1);
+                    }}
                     className="w-full px-2 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85 text-center"
                   />
-                  <button type="button" onClick={() => setHours(Math.min(12, hours + 1))} className="p-2 rounded-lg bg-white/85 border-2 border-charcoal/15"><Plus size={14} /></button>
+                  <button type="button" onClick={() => setHours(Math.min(16, Math.round((hours + 0.5) * 2) / 2))} className="p-2 rounded-lg bg-white/85 border-2 border-charcoal/15"><Plus size={14} /></button>
                 </div>
               </div>
             </div>
