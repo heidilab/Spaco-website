@@ -12,6 +12,7 @@ import { cancelBooking } from '@/lib/cancelBooking';
 import { BookingRecord } from '@/types';
 import { venues } from '@/lib/venues';
 import { Check, X, Eye, Clock, AlertCircle } from 'lucide-react';
+import { discountedSubtotal } from '@/lib/bookingMoney';
 
 export default function AdminReceiptsPage() {
   const locale = useLocale() as 'zh' | 'en';
@@ -300,9 +301,16 @@ export default function AdminReceiptsPage() {
 
                   <div className="flex items-center gap-4">
                     <div className="text-right">
-                      <p className="text-xl font-bold">HK${booking.pricing.subtotal.toLocaleString()}</p>
+                      {/* 小計 shown POST-promo via the shared money helper —
+                       *  the gross figure confused staff (#2026-09-04 SW-B:
+                       *  \$7,875 gross vs \$7,250 net after DRINK promo).
+                       *  Second line = the amount the customer should have
+                       *  transferred (pricing.deposit), labelled 應付. */}
+                      <p className="text-xl font-bold">
+                        HK${discountedSubtotal(booking.pricing.subtotal, booking.promoDiscount).toLocaleString()}
+                      </p>
                       <p className="text-xs text-muted">
-                        {locale === 'zh' ? '按金' : 'Deposit'}: HK${booking.pricing.deposit.toLocaleString()}
+                        {locale === 'zh' ? '應付' : 'Due'}: HK${booking.pricing.deposit.toLocaleString()}
                       </p>
                     </div>
 
