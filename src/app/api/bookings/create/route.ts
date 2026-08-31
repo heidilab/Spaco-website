@@ -121,7 +121,7 @@ export async function POST(req: NextRequest) {
   const endDayForHours = (endDate && endDate !== date) ? (endDate as string) : (date as string);
   const startMs = new Date(`${date}T${startTime}:00+08:00`).getTime();
   const endMs = new Date(`${endDayForHours}T${endTime}:00+08:00`).getTime();
-  const hours = Math.max(1, Math.round((endMs - startMs) / 3600000));
+  const hours = Math.max(1, Math.round((((endMs - startMs)) / 3600000) * 2) / 2);
 
   // Package bookings are priced by a fixed package, not the venue formula —
   // trust their stored pricing but still lock down the safety fields below.

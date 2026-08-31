@@ -420,7 +420,7 @@ export async function updateBookingDateTime(
   // bookings get the right rental duration.
   const startMs = new Date(`${next.date}T${next.startTime}:00+08:00`).getTime();
   const endMs = new Date(`${endDate}T${next.endTime}:00+08:00`).getTime();
-  const hours = Math.max(1, Math.round((endMs - startMs) / 3600000));
+  const hours = Math.max(1, Math.round((((endMs - startMs)) / 3600000) * 2) / 2);
 
   const patch: Record<string, unknown> = {
     date: next.date,
