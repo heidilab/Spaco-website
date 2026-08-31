@@ -1,5 +1,6 @@
 import {
   signInWithPopup,
+  signInWithRedirect,
   GoogleAuthProvider,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
@@ -14,9 +15,21 @@ import { auth, db } from './firebase';
 const googleProvider = new GoogleAuthProvider();
 
 export async function signInWithGoogle() {
-  const result = await signInWithPopup(auth, googleProvider);
-  await upsertUserProfile(result.user);
-  return result.user;
+  try {
+    const result = await signInWithPopup(auth, googleProvider);
+    await upsertUserProfile(result.user);
+    return result.user;
+  } catch (err) {
+    // Popup blocked (common in in-app browsers / strict settings) —
+    // fall back to full-page redirect. The auth-state listener +
+    // ensureUserProfile pick things up after Google bounces back.
+    const code = (err as { code?: string })?.code || '';
+    if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment') {
+      await signInWithRedirect(auth, googleProvider);
+      return null;
+    }
+    throw err;
+  }
 }
 
 export async function signInWithEmail(email: string, password: string) {
