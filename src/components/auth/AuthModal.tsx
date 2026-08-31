@@ -18,6 +18,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [error, setError] = useState('');
+  const [resetMsg, setResetMsg] = useState('');
   const [loading, setLoading] = useState(false);
 
   const t = {
@@ -31,6 +32,36 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
     noAccount: locale === 'zh' ? '未有帳號？' : "Don't have an account?",
     hasAccount: locale === 'zh' ? '已有帳號？' : 'Already have an account?',
     submit: locale === 'zh' ? (mode === 'login' ? '登入' : '建立帳號') : (mode === 'login' ? 'Log In' : 'Create Account'),
+  };
+
+
+  const handleForgotPassword = async () => {
+    setError('');
+    setResetMsg('');
+    if (!email.trim()) {
+      setError(locale === 'zh' ? '請先喺上面填寫你嘅電郵地址，再撳「忘記密碼」。' : 'Enter your email above first, then tap "Forgot password".');
+      return;
+    }
+    try {
+      setLoading(true);
+      const { sendPasswordResetEmail } = await import('firebase/auth');
+      const { auth } = await import('@/lib/firebase');
+      await sendPasswordResetEmail(auth, email.trim());
+      setResetMsg(locale === 'zh'
+        ? `✓ 重設密碼電郵已發送到 ${email.trim()}，請檢查收件箱（同垃圾郵件箱），跟指示設定新密碼後返嚟登入。`
+        : `✓ Password-reset email sent to ${email.trim()}. Check your inbox (and spam), set a new password, then log in here.`);
+    } catch (err) {
+      const code = (err as { code?: string })?.code || '';
+      if (code === 'auth/user-not-found') {
+        setError(locale === 'zh' ? '呢個電郵未有註冊帳號——請檢查電郵，或者直接建立新帳號。' : 'No account with this email — check the address or create an account.');
+      } else if (code === 'auth/invalid-email') {
+        setError(locale === 'zh' ? '電郵格式唔正確。' : 'Invalid email format.');
+      } else {
+        setError(locale === 'zh' ? '發送失敗，請稍後再試。' : 'Failed to send — please retry.');
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleGoogleLogin = async () => {
@@ -186,6 +217,22 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                   />
                 </div>
 
+                {mode === 'login' && (
+                  <div className="text-right -mt-2">
+                    <button
+                      type="button"
+                      onClick={handleForgotPassword}
+                      disabled={loading}
+                      className="text-xs text-pink hover:underline disabled:opacity-50"
+                    >
+                      {locale === 'zh' ? '忘記密碼？' : 'Forgot password?'}
+                    </button>
+                  </div>
+                )}
+
+                {resetMsg && (
+                  <p className="text-emerald-800 text-sm bg-emerald-50 border border-emerald-200 p-3 rounded-2xl">{resetMsg}</p>
+                )}
                 {error && (
                   <p className="text-rose-700 text-sm bg-rose-100/80 border border-rose-200 p-3 rounded-2xl">{error}</p>
                 )}
@@ -206,6 +253,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                   onClick={() => {
                     setMode(mode === 'login' ? 'register' : 'login');
                     setError('');
+                    setResetMsg('');
                   }}
                   className="text-pink font-semibold hover:underline"
                 >
