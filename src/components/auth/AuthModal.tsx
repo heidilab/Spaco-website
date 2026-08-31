@@ -40,8 +40,18 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
       await signInWithGoogle();
       onClose();
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Login failed';
-      setError(message);
+      const code = (err as { code?: string })?.code || '';
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        // Customer closed the Google window — not an error, invite retry.
+        setError(locale === 'zh'
+          ? 'Google 登入視窗已關閉，請再撳一次「以 Google 帳號登入」完成登入。'
+          : 'The Google sign-in window was closed — tap "Sign in with Google" again to continue.');
+      } else if (code === 'auth/network-request-failed') {
+        setError(locale === 'zh' ? '網絡不穩定，請檢查連線後再試。' : 'Network issue — please check your connection and retry.');
+      } else {
+        const message = err instanceof Error ? err.message : 'Login failed';
+        setError(message);
+      }
     } finally {
       setLoading(false);
     }
