@@ -7,13 +7,13 @@ import { useRouter } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   getBooking, updateBookingRefundDetails, getUserProfile,
-  POINTS_PER_HKD, pointsToHkd,
-} from '@/lib/firestore';
+  POINTS_PER_HKD, pointsToHkd, hasSuccessfulBooking } from '@/lib/firestore';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { getVenueById } from '@/lib/venues';
 import { addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE, calculatePricing, freeDrinksVenues, isWithin2Days } from '@/lib/pricing';
 import { BookingRecord, RefundDetails, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
+import { getMarketingChannelOptions, DEFAULT_CHANNEL_OPTIONS, OTHER_OPTION, type MarketingChannelOption } from '@/lib/marketingChannels';
 import {
   loadBookingCheckoutDraft, saveBookingCheckoutDraft,
   type BookingCheckoutDraft,
@@ -92,11 +92,21 @@ export default function ConfirmBookingPage() {
   const [redeemHkd, setRedeemHkd] = useState<number>(0);
 
   // Marketing channel — required on the customer's FIRST booking.
-  // We treat first-booking as: user profile has no firstBookingChannel
-  // recorded yet AND this is the booking they're about to confirm.
+  // First-time = the user has NO successful (paid) booking yet — Heidi's
+  // rule: registering, clicking links, or abandoning an unpaid claim does
+  // NOT make someone a repeat customer. (The old profile-flag check was
+  // stamped pre-payment, so abandoned first attempts永久 mislabelled
+  // customers as 老會員 and the question never got asked.)
   const [isFirstTime, setIsFirstTime] = useState<boolean>(false);
-  const [marketingChannel, setMarketingChannel] = useState<MarketingChannel | ''>('');
+  const [marketingChannel, setMarketingChannel] = useState<string>('');
   const [marketingOther, setMarketingOther] = useState<string>('');
+  // Channel options — admin-configurable (內容管理 → 系統設定 → 來源渠道選項).
+  const [channelOptions, setChannelOptions] = useState<MarketingChannelOption[]>(
+    [...DEFAULT_CHANNEL_OPTIONS, OTHER_OPTION],
+  );
+  useEffect(() => {
+    getMarketingChannelOptions().then(setChannelOptions).catch(() => {});
+  }, []);
 
   // Promo code state — entered by customer; validated server-side.
   // Once validated, `applied` carries the resolved discount.
@@ -165,13 +175,14 @@ export default function ConfirmBookingPage() {
       getUserProfile(user.uid)
         .then((profile) => {
           if (profile) {
-            const p = profile as { loyaltyPoints?: number; firstBookingChannel?: MarketingChannel };
+            const p = profile as { loyaltyPoints?: number };
             setPointsBalance(p.loyaltyPoints || 0);
-            setIsFirstTime(!p.firstBookingChannel);
-          } else {
-            setIsFirstTime(true);
           }
         })
+        .catch(() => {});
+      // First-time judged by REAL successful bookings, not profile flags.
+      hasSuccessfulBooking(user.uid)
+        .then((ok) => setIsFirstTime(!ok))
         .catch(() => setIsFirstTime(true))
         .finally(() => setLoading(false));
       return;
@@ -182,7 +193,7 @@ export default function ConfirmBookingPage() {
       getBooking(bookingId),
       getUserProfile(user.uid).catch(() => null),
     ])
-      .then(([b, profile]) => {
+      .then(async ([b, profile]) => {
         if (!b) {
           setError(locale === 'zh' ? '找不到預訂記錄' : 'Booking not found');
         } else if (b.userId !== user.uid) {
@@ -211,13 +222,14 @@ export default function ConfirmBookingPage() {
           }
         }
         if (profile) {
-          const p = profile as { loyaltyPoints?: number; firstBookingChannel?: MarketingChannel };
+          const p = profile as { loyaltyPoints?: number };
           setPointsBalance(p.loyaltyPoints || 0);
-          // First-time = no channel recorded on profile yet.
-          setIsFirstTime(!p.firstBookingChannel);
-        } else {
-          // Profile read failed — treat as first-time to be safe (better
-          // to ask twice than miss the data point).
+        }
+        // First-time = no SUCCESSFUL (paid) booking yet. Falls back to
+        // asking on error — better to ask twice than mislabel 老會員.
+        try {
+          setIsFirstTime(!(await hasSuccessfulBooking(user.uid)));
+        } catch {
           setIsFirstTime(true);
         }
       })
@@ -518,12 +530,17 @@ export default function ConfirmBookingPage() {
         if (!existing) {
           throw new Error('Draft expired — please redo your booking.');
         }
-        const marketingValue: MarketingChannel | 'loyalty_member' | undefined =
+        const marketingValue: string | undefined =
           isFirstTime && marketingChannel
             ? marketingChannel
             : !isFirstTime
               ? 'loyalty_member'
               : undefined;
+        // Snapshot the display label for admin-configured (non-built-in)
+        // ids so reports stay readable after the option list changes.
+        const marketingLabel = isFirstTime && marketingChannel
+          ? channelOptions.find((o) => o.id === marketingChannel)?.zh
+          : undefined;
         // Recompute pricing.deposit to reflect the promo discount so
         // /payment/new + Stripe see the right amount.
         const patchedDraft: BookingCheckoutDraft = {
@@ -539,6 +556,7 @@ export default function ConfirmBookingPage() {
           ...(pointsUsed > 0 ? { pointsUsed } : {}),
           ...(clampedRedeem > 0 ? { pointsDiscount: clampedRedeem } : {}),
           ...(marketingValue ? { marketingChannel: marketingValue } : {}),
+          ...(marketingLabel ? { marketingChannelLabel: marketingLabel } : {}),
           ...(isFirstTime && marketingChannel === 'other' && marketingOther.trim()
             ? { marketingChannelOther: marketingOther.trim() }
             : {}),
@@ -586,6 +604,9 @@ export default function ConfirmBookingPage() {
       // repeat customers auto-tag as 'loyalty_member'.
       if (isFirstTime && marketingChannel) {
         bookingPatch.marketingChannel = marketingChannel;
+        // Snapshot the display label for custom (admin-configured) ids.
+        const optLabel = channelOptions.find((o) => o.id === marketingChannel)?.zh;
+        if (optLabel) bookingPatch.marketingChannelLabel = optLabel;
         if (marketingChannel === 'other') {
           bookingPatch.marketingChannelOther = marketingOther.trim();
         }
@@ -941,18 +962,18 @@ export default function ConfirmBookingPage() {
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {(Object.keys(MARKETING_CHANNEL_LABELS) as MarketingChannel[]).map((ch) => (
+                {channelOptions.map((opt) => (
                   <button
-                    key={ch}
+                    key={opt.id}
                     type="button"
-                    onClick={() => setMarketingChannel(ch)}
+                    onClick={() => setMarketingChannel(opt.id)}
                     className={`px-3 py-2.5 rounded-xl border text-sm font-medium transition-all ${
-                      marketingChannel === ch
+                      marketingChannel === opt.id
                         ? 'border-accent bg-accent/10 text-accent'
                         : 'border-charcoal/10 bg-white/60 text-ink hover:border-charcoal/25'
                     }`}
                   >
-                    {MARKETING_CHANNEL_LABELS[ch][locale]}
+                    {opt[locale]}
                   </button>
                 ))}
               </div>

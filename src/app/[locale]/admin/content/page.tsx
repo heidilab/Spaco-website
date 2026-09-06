@@ -11,6 +11,7 @@ import {
 import { translateZhToEn } from '@/lib/translate';
 import { CONTENT_DEFAULTS } from '@/lib/contentDefaults';
 import { SiteImage, SiteContentSection } from '@/types';
+import MarketingChannelEditor from '@/components/admin/MarketingChannelEditor';
 import {
   Upload, Trash2, Save, Image, FileText, Check, Languages, Loader2, GripVertical, Star, Link2,
 } from 'lucide-react';
@@ -618,6 +619,14 @@ export default function AdminContentPage() {
                   </button>
                 </div>
               </div>
+
+              {/* 來源渠道選項 — structured row editor (shows the options
+                * currently in effect, add/edit/remove per item). Replaces
+                * the raw `id | zh | en` textarea, which Heidi found
+                * unusable. Writes the same settings key underneath. */}
+              {currentTextPage.id === 'settings' && (
+                <MarketingChannelEditor locale={locale} />
+              )}
 
               <div className="space-y-6">
                 {currentTextPage.fields.map((field) => (

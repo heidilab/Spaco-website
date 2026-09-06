@@ -3,7 +3,7 @@
 // functions: caller fetches the data, this file does the math.
 
 import type { BookingRecord, MarketingChannel } from '@/types';
-import { addOns as ADDON_CATALOG, bbqStandardPriceByVenue, calcShishaPrice } from './pricing';
+import { addOns as ADDON_CATALOG, bbqStandardPriceByVenue, calcShishaPrice, calcCateringTotal, earlySetupPriceByVenue } from './pricing';
 import { venues } from './venues';
 
 export interface FinanceFilter {
@@ -94,6 +94,30 @@ export function addOnRevenueForBooking(
   const adults = booking.adultCount ?? booking.guestCount;
   const kids = booking.childCount ?? 0;
   const equiv = adults + 0.5 * kids;
+
+  // Custom items (admin free-form rows, id `custom-<ts>-<idx>`): the price
+  // lives on the entry itself. Without this branch the finance page showed
+  // HK$0 for every custom item.
+  if (addOnId.startsWith('custom-')) {
+    return Math.max(0, Math.floor(entry.options?.customPrice ?? 0));
+  }
+  // Catering: derived from tier + dishes + delivery + cutlery, same calc
+  // as checkout. Was falling through to the default 0.
+  if (addOnId === 'catering') {
+    return calcCateringTotal({
+      tierId: entry.options?.tierId,
+      dishCodes: entry.options?.dishCodes,
+      deliveryZoneId: entry.options?.deliveryZoneId,
+      doorstepDelivery: entry.options?.doorstepDelivery,
+      noCutlery: entry.options?.noCutlery,
+      extraCutlerySets: entry.options?.extraCutlerySets,
+      extraFoodTongs: entry.options?.extraFoodTongs,
+    });
+  }
+  if (addOnId === 'early-setup') {
+    const perHour = earlySetupPriceByVenue[booking.venueId] ?? 500;
+    return perHour * (entry.quantity || 1);
+  }
 
   switch (addOnId) {
     case 'bbq-standard': {
@@ -219,10 +243,13 @@ export function aggregateBookings(
     // Add-on bucket.
     for (const a of (b.addOns || [])) {
       const cost = addOnRevenueForBooking(b, a.id);
-      const bucket = addOnMap.get(a.id) || { bookings: 0, revenue: 0 };
+      // All custom-<ts>-<idx> entries roll up to one 自訂項目 row — the raw
+      // ids are per-entry unique and meaningless in a report.
+      const key = a.id.startsWith('custom-') ? 'custom' : a.id;
+      const bucket = addOnMap.get(key) || { bookings: 0, revenue: 0 };
       bucket.bookings += 1;
       bucket.revenue += cost;
-      addOnMap.set(a.id, bucket);
+      addOnMap.set(key, bucket);
     }
 
     // Channel bucket.
@@ -248,9 +275,12 @@ export function aggregateBookings(
   const byAddOn: AddOnRevenue[] = Array.from(addOnMap.entries())
     .map(([id, v]) => {
       const meta = ADDON_CATALOG.find((a) => a.id === id);
+      const fallback = id === 'custom'
+        ? { zh: '自訂項目', en: 'Custom items' }
+        : { zh: id, en: id };
       return {
         id,
-        name: meta?.name || { zh: id, en: id },
+        name: meta?.name || fallback,
         ...v,
       };
     })
