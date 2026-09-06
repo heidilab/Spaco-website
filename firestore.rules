@@ -148,6 +148,15 @@ service cloud.firestore {
     }
 
     // ───── System metadata (last sync time, feature flags, etc.) ─────
+    // Finance Phase 2 — per-branch expense ledger + recurring templates.
+    // Staff-only both ways: customers never see finance data.
+    match /expenses/{id} {
+      allow read, write: if isStaff();
+    }
+    match /expense_templates/{id} {
+      allow read, write: if isStaff();
+    }
+
     match /system/{id} {
       allow read:  if isStaff();
       allow write: if isAdmin();

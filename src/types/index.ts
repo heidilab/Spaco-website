@@ -321,6 +321,10 @@ export interface BookingRecord {
   createdVia?: 'admin-direct';
   /** Staff uid that recorded an admin-direct booking. */
   createdBy?: string;
+  /** Manual override (HK$) for the auto-computed broker/platform
+   *  commission on this booking — 行家 deals are negotiated per booking
+   *  (Heidi 2026-09). Set from the 支出管理 page; wins over the rule. */
+  commissionOverride?: number;
   /** Channel id — a built-in MarketingChannel, 'loyalty_member' (auto
    *  repeat-customer tag), or an admin-configured custom id from
    *  內容管理 → 系統設定 → 來源渠道選項. */
@@ -806,4 +810,50 @@ export interface Article {
   ogImage?: string;
   /** Block search engines from indexing this article. */
   noindex?: boolean;
+}
+
+// ============ Finance Phase 2: expenses ============
+
+export type ExpenseSource = 'manual' | 'recurring';
+
+/** One expense row in a branch-month ledger (支出管理). Auto items
+ *  (commission / KPay fee) are DERIVED live from bookings, not stored —
+ *  only manual + seeded-recurring rows live in this collection. */
+export interface ExpenseRecord {
+  id: string;
+  /** Branch group key — matches finance.ts branchKey (sw variants roll up). */
+  branchKey: string;
+  /** YYYY-MM the expense belongs to (accrual month for the P&L). */
+  month: string;
+  /** YYYY-MM-DD actually paid/incurred (informational). */
+  date: string;
+  item: string;
+  amount: number;
+  note?: string;
+  source: ExpenseSource;
+  /** For recurring rows: the template id they were seeded from. */
+  templateId?: string;
+  createdBy: string;
+  createdAt: unknown;
+}
+
+/** Recurring fixed-expense definition per branch (rent, mgmt fee, …).
+ *  Seeded into each month's ledger once; per-month amounts then editable
+ *  without touching the template. */
+export interface ExpenseTemplate {
+  id: string;
+  branchKey: string;
+  name: string;
+  amount: number;
+  order: number;
+  active: boolean;
+}
+
+/** Per-channel commission rule (Finance Phase 2). */
+export interface CommissionRule {
+  /** Percent, e.g. 10 = 10%. */
+  pct: number;
+  /** 'rent' = commission on venue rental only (行家 rule — food & drinks
+   *  excluded); 'total' = on the full consumption subtotal. */
+  base: 'rent' | 'total';
 }

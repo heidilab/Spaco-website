@@ -210,3 +210,50 @@ export function isSettlementOverflow(booking: MoneyBooking): boolean {
     && !!booking.depositRefund
   );
 }
+
+// ── Broker / platform commission (Finance Phase 2) ─────────────────────
+
+export interface CommissionRuleShape {
+  /** Percent, e.g. 10 = 10%. */
+  pct: number;
+  /** 'rent' = venue rental only (行家 rule — food & drinks excluded);
+   *  'total' = full consumption subtotal (Reubird-style platforms). */
+  base: 'rent' | 'total';
+}
+
+/**
+ * Commission owed on a booking under a channel rule, in HK$.
+ *
+ * Heidi's rules (2026-09): default 10%; 行家 (agent) commission is
+ * charged on the RENT ONLY — food/drinks add-ons are exempt; every
+ * booking may carry a negotiated override (booking.commissionOverride)
+ * which wins outright. Deposit never enters any base (it is refundable).
+ */
+export function commissionForBooking(
+  booking: MoneyBooking & { commissionOverride?: number },
+  rule: CommissionRuleShape | undefined,
+): number {
+  if (typeof booking.commissionOverride === 'number') {
+    return Math.max(0, booking.commissionOverride);
+  }
+  if (!rule || rule.pct <= 0) return 0;
+  const base = rule.base === 'rent'
+    ? Math.max(0, (booking.pricing?.baseCharge || 0) - (booking.promoDiscount || 0) - (booking.pointsDiscount || 0))
+    : netConsumption(booking);
+  return Math.round(base * (rule.pct / 100) * 100) / 100;
+}
+
+/**
+ * Estimated gateway fee for KPay-collected payments (Phase 2). KPay's
+ * cut is settled precisely at month-close via statement upload; until
+ * then estimate pct × base amount for every kpay payment. The customer
+ * card surcharge is EXCLUDED from the base — it already offsets fees.
+ */
+export function estimatedKpayFee(booking: MoneyBooking, pct: number): number {
+  if (!pct || pct <= 0) return 0;
+  const kpayPaid = (booking.payments || []) 
+    .filter((p) => (p as { method?: string }).method === 'kpay')
+    .reduce((s, p) => s + (p.amount || 0), 0);
+  return Math.round(kpayPaid * (pct / 100) * 100) / 100;
+}
+

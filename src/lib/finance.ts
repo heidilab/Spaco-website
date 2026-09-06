@@ -20,13 +20,13 @@ export interface FinanceFilter {
 }
 
 /** Roll a venueId up to its branch group key used by the finance UI. */
-function branchKey(venueId: string): string {
+export function branchKey(venueId: string): string {
   if (venueId.startsWith('sw-')) return 'sw';
   return venueId;
 }
 
 /** Display name for a branch group key. */
-function branchGroupName(key: string): { zh: string; en: string } {
+export function branchGroupName(key: string): { zh: string; en: string } {
   if (key === 'sw') return { zh: '上環海景旗艦店', en: 'Sheung Wan Flagship' };
   if (key === 'cwb') return { zh: '銅鑼灣店', en: 'Causeway Bay' };
   if (key === 'wanchai') return { zh: '灣仔店', en: 'Wan Chai' };

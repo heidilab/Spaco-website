@@ -14,6 +14,7 @@ import {
   grossSubtotal, computeGrandTotal, netConsumption, displayBillTotal, discountedSubtotal,
   paidBase, surchargePaid, paidGateway, computeBalanceDue,
   amountOwed, hasOutstanding, isSettlementOverflow,
+  commissionForBooking, estimatedKpayFee,
 } from './bookingMoney';
 
 describe('points conversion', () => {
@@ -244,5 +245,46 @@ describe('overpayment', () => {
     };
     expect(computeBalanceDue(b)).toBe(0);
     expect(amountOwed(b)).toBe(0);
+  });
+});
+
+describe('commissionForBooking — broker rules (Finance Phase 2)', () => {
+  const broker = {
+    pricing: { baseCharge: 10000, addOnTotal: 3160, securityDeposit: 2000 },
+  };
+
+  it('行家 rule charges RENT ONLY — food/drinks exempt (Heidi 2026-09)', () => {
+    expect(commissionForBooking(broker, { pct: 10, base: 'rent' })).toBe(1000);
+  });
+
+  it('platform rule (Reubird) charges the full consumption subtotal', () => {
+    expect(commissionForBooking(broker, { pct: 10, base: 'total' })).toBe(1316);
+  });
+
+  it('per-booking negotiated override wins outright', () => {
+    expect(commissionForBooking({ ...broker, commissionOverride: 888 }, { pct: 10, base: 'rent' })).toBe(888);
+    expect(commissionForBooking({ ...broker, commissionOverride: 0 }, { pct: 10, base: 'rent' })).toBe(0);
+  });
+
+  it('no rule = no commission (Instagram customers are not brokers)', () => {
+    expect(commissionForBooking(broker, undefined)).toBe(0);
+  });
+
+  it('deposit never enters the base', () => {
+    expect(commissionForBooking({ pricing: { baseCharge: 0, addOnTotal: 0, securityDeposit: 2000 } }, { pct: 10, base: 'total' })).toBe(0);
+  });
+});
+
+describe('estimatedKpayFee', () => {
+  it('estimates pct on KPay base amounts only (surcharge + FPS excluded)', () => {
+    const b = {
+      pricing: { baseCharge: 5000, addOnTotal: 0, securityDeposit: 1000 },
+      payments: [
+        { amount: 3000, cardSurcharge: 45, method: 'kpay' },
+        { amount: 2000, method: 'fps' },
+      ] as never,
+    };
+    expect(estimatedKpayFee(b, 1.5)).toBe(45);
+    expect(estimatedKpayFee(b, 0)).toBe(0);
   });
 });
