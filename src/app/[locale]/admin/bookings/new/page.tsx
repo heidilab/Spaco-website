@@ -262,6 +262,18 @@ export default function AdminNewBookingPage() {
   //                    own deposit field (e.g. corporate-tst = $2k)
   //   grandTotal     = subtotal + securityDeposit
   //   deposit        = full grandTotal if ≤ $10k, else 50% (upfront pay-now)
+  // Headcount-free package (flat price, 不限人頭 — e.g. CWB birthday):
+  // the 人數 card is hidden and counts are pinned so a well-meaning staff
+  // number can't pollute per-pax add-on math or reports (Heidi 2026-09).
+  const isHeadcountFreePackage = !!selectedPackage && selectedPackage.extraPaxPrice == null;
+  useEffect(() => {
+    if (isHeadcountFreePackage) {
+      // Same values the customer package page stores (basePax || 1, no
+      // children) — keeps drafts/bookings consistent across surfaces.
+      setAdultCount(selectedPackage?.basePax || 1);
+      setChildCount(0);
+    }
+  }, [isHeadcountFreePackage, selectedPackage]);
   const extraPaxCharge = (selectedPackage?.basePax != null && selectedPackage?.extraPaxPrice != null)
     ? Math.max(0, guestCount - selectedPackage.basePax) * selectedPackage.extraPaxPrice
     : 0;
@@ -726,7 +738,21 @@ export default function AdminNewBookingPage() {
             )}
           </div>
 
-          {/* Guests — adults + children split */}
+          {/* Guests — adults + children split. Hidden entirely for
+            * headcount-free packages (不限人頭). */}
+          {isHeadcountFreePackage ? (
+          <div className="glass-card p-6">
+            <h3 className="text-base font-bold mb-2 text-ink flex items-center gap-2">
+              <Users size={16} className="text-pink" />
+              {locale === 'zh' ? '人數' : 'Guests'}
+            </h3>
+            <p className="text-sm text-ink-soft">
+              {locale === 'zh'
+                ? '此套餐不限人頭（以場地容納上限為準），無需輸入人數。'
+                : 'This package has unlimited guests (within venue capacity) — no headcount needed.'}
+            </p>
+          </div>
+          ) : (
           <div className="glass-card p-6">
             <h3 className="text-base font-bold mb-4 text-ink flex items-center gap-2">
               <Users size={16} className="text-pink" />
@@ -783,6 +809,7 @@ export default function AdminNewBookingPage() {
               </p>
             )}
           </div>
+          )}
 
           {/* Add-ons */}
           <div className="glass-card p-6">
