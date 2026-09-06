@@ -254,6 +254,9 @@ export default function FinanceOverviewPage() {
       let totalExpenses = 0;
       const catSums = { rent: 0, bbqHotpot: 0, shisha: 0, cater: 0, drinks: 0, extPenalty: 0 };
 
+      // Row spans per multi-row booking — booking-level cells get merged
+      // vertically so one booking reads as ONE block (Heidi 2026-09-07).
+      const bookingSpans: Array<{ r1: number; r2: number }> = [];
       for (const b of bookings) {
         const cats = categoryBreakdown(b);
         const total = b.pricing.subtotal || 0;
@@ -302,6 +305,8 @@ export default function FinanceOverviewPage() {
         if (b.endDate && b.endDate !== b.date) noteParts.push(`過夜→${b.endDate}`);
 
         const rowCount = Math.max(1, txs.length, drItems.length);
+        const startR = aoa.length;
+        if (rowCount > 1) bookingSpans.push({ r1: startR, r2: startR + rowCount - 1 });
         for (let i = 0; i < rowCount; i++) {
           const first = i === 0;
           const t = txs[i];
@@ -371,6 +376,14 @@ export default function FinanceOverviewPage() {
         { s: { r: 1, c: 17 }, e: { r: 4, c: 17 } },  // Returned Deposit
         { s: { r: 1, c: 18 }, e: { r: 4, c: 18 } },  // Remarks
       ];
+      // Merge booking-level cells down each booking's row span (the
+      // transaction cols 10-12 and DR cols 14-15 stay per-row).
+      const BOOKING_LEVEL_COLS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 16, 17, 18];
+      for (const span of bookingSpans) {
+        for (const c of BOOKING_LEVEL_COLS) {
+          ws['!merges']!.push({ s: { r: span.r1, c }, e: { r: span.r2, c } });
+        }
+      }
 
       ws['!cols'] = [
         { wch: 12 }, { wch: 15 }, { wch: 12 },
