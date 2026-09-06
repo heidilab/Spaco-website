@@ -1196,9 +1196,35 @@ export default function AdminBookingDetailPage() {
         <div className="lg:col-span-2 space-y-6">
           {/* Status */}
           <div className="glass-card p-6">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
               <h2 className="font-bold">{locale === 'zh' ? '狀態' : 'Status'}</h2>
-              {statusSaving && <span className="text-xs text-ink-soft">Saving…</span>}
+              <div className="flex items-center gap-2">
+                {statusSaving && <span className="text-xs text-ink-soft">Saving…</span>}
+                {/* Test-booking flag — excluded from every finance report.
+                  * For internal trial bookings (real KPay test charges were
+                  * inflating the Aug-2026 sales record). */}
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const next = !booking.isTest;
+                    if (!window.confirm(next
+                      ? (locale === 'zh' ? '標記為測試單？此單將不會計入任何財務報表。' : 'Mark as TEST? Excluded from all finance reports.')
+                      : (locale === 'zh' ? '取消測試單標記？此單將重新計入財務報表。' : 'Unmark test? Booking counts in finance again.'))) return;
+                    await updateDoc(doc(db, 'bookings', booking.id), { isTest: next, updatedAt: serverTimestamp() });
+                    const fresh = await getBooking(booking.id);
+                    if (fresh) setBooking(fresh);
+                  }}
+                  className={`px-2.5 py-1 rounded-pill text-[11px] font-bold border transition ${
+                    booking.isTest
+                      ? 'bg-amber-100 text-amber-800 border-amber-300'
+                      : 'bg-white/60 text-ink-soft border-charcoal/10 hover:bg-white'
+                  }`}
+                >
+                  🧪 {booking.isTest
+                    ? (locale === 'zh' ? '測試單（不計入財務）' : 'TEST (excluded)')
+                    : (locale === 'zh' ? '標記測試單' : 'Mark as test')}
+                </button>
+              </div>
             </div>
             <div className="flex flex-wrap gap-2">
               {Object.entries(statusLabels).map(([k, l]) => (

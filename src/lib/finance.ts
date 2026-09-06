@@ -165,19 +165,37 @@ function isFutureDate(dateStr: string): boolean {
 
 /** Filter, then aggregate. Cancelled bookings are excluded from revenue
  *  but kept in count if needed (currently we drop them entirely). */
+/**
+ * Should this booking count toward finance totals at all?
+ *
+ * Excludes, in order of the incidents that motivated each rule:
+ *   • cancelled / legacy pending / payment_not_completed — never money
+ *   • admin-flagged TEST bookings (isTest) — real KPay test charges were
+ *     inflating the Aug-2026 CWB sales record by ~$18k
+ *   • GHOST bookings: no real payment logged AND no paid status. These
+ *     are abandoned checkout attempts (old default paymentMethod
+ *     'stripe') that the export used to count as revenue — CWB Aug-2026
+ *     showed $114,037 vs the true $106,166 largely because of these.
+ *
+ * ONE predicate shared by the aggregator, the Excel export and (later)
+ * the monthly close, so the numbers can never disagree again.
+ */
+export function countsForFinance(b: BookingRecord): boolean {
+  if (b.status === 'cancelled' || b.status === 'pending' || b.status === 'payment_not_completed') return false;
+  if (b.isTest) return false;
+  const paid = (b.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+  const paidStatus = b.status === 'confirmed' || b.status === 'completed' || !!b.paymentVerifiedAt;
+  if (paid <= 0 && !paidStatus) return false;
+  return true;
+}
+
 export function aggregateBookings(
   bookings: BookingRecord[],
   filter: FinanceFilter = {},
 ): AggregateResult {
   // Filter pass.
   const filtered = bookings.filter((b) => {
-    // payment_not_completed bookings never generated revenue, same as
-    // cancelled / legacy pending — keep them out of finance totals.
-    if (
-      b.status === 'cancelled'
-      || b.status === 'pending'
-      || b.status === 'payment_not_completed'
-    ) return false;
+    if (!countsForFinance(b)) return false;
     if (filter.from && b.date < filter.from) return false;
     if (filter.to && b.date > filter.to) return false;
     if (filter.branch && filter.branch !== 'all') {

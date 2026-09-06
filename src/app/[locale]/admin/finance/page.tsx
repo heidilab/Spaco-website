@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllBookings } from '@/lib/firestore';
-import { aggregateBookings, FinanceFilter, addOnRevenueForBooking } from '@/lib/finance';
+import { aggregateBookings, FinanceFilter, addOnRevenueForBooking, countsForFinance } from '@/lib/finance';
 import { venues } from '@/lib/venues';
 import {
   BookingRecord, MarketingChannel, MARKETING_CHANNEL_LABELS,
@@ -104,7 +104,10 @@ export default function FinanceOverviewPage() {
    *  bookings rather than the aggregator's summary buckets. */
   function filteredBookings(): BookingRecord[] {
     return allBookings.filter((b) => {
-      if (b.status === 'cancelled' || b.status === 'pending') return false;
+      // Same predicate as the aggregator — excludes cancelled/pending,
+      // test bookings, and unpaid ghost bookings, so the per-booking
+      // sheet always reconciles with the Summary numbers.
+      if (!countsForFinance(b)) return false;
       if (from && b.date < from) return false;
       if (to && b.date > to) return false;
       if (branch !== 'all') {
@@ -130,7 +133,8 @@ export default function FinanceOverviewPage() {
     // 到會 = hotpot / catering bucket (admin's choice based on the template label)
     const cater = addOnRevenueForBooking(b, 'hotpot-standard')
       + addOnRevenueForBooking(b, 'hotpot-seafood')
-      + addOnRevenueForBooking(b, 'hotpot-extra-soup');
+      + addOnRevenueForBooking(b, 'hotpot-extra-soup')
+      + addOnRevenueForBooking(b, 'catering');
     const drinks = addOnRevenueForBooking(b, 'drinks');
     // 加時/罰款 = admin-recorded rental top-ups (post-confirmation
     // extensions) + forfeited security deposit (penalties).
@@ -154,7 +158,11 @@ export default function FinanceOverviewPage() {
     const logged = b.payments || [];
     const loggedAmount = logged.reduce((s, p) => s + (p.amount || 0), 0);
     const totalPaid = b.pricing.deposit || 0;
-    const initial = Math.max(0, totalPaid - loggedAmount);
+    // Synthetic initial row covers LEGACY paid bookings whose deposit
+    // predates the payments[] freeze. Never fabricate one for a booking
+    // with no paid status — that's how unpaid ghosts grew fake FPS rows.
+    const isPaid = b.status === 'confirmed' || b.status === 'completed' || !!b.paymentVerifiedAt;
+    const initial = isPaid ? Math.max(0, totalPaid - loggedAmount) : 0;
     if (initial > 0) {
       tx.push({
         date: b.date,  // use booking date as proxy when createdAt isn't easily extractable here
@@ -221,8 +229,9 @@ export default function FinanceOverviewPage() {
           ? `${b.startTime}-${b.endTime} (+1d)`
           : `${b.startTime}-${b.endTime}`;
         // People — show adult+child split when present.
+        const pplEquiv = (b.adultCount ?? b.guestCount) + 0.5 * (b.childCount ?? 0);
         const pplStr = (b.childCount ?? 0) > 0
-          ? `${b.guestCount} (${b.adultCount ?? b.guestCount}A+${b.childCount}C)`
+          ? `${pplEquiv} (${b.adultCount ?? b.guestCount}A+${b.childCount}C)`
           : `${b.guestCount}`;
         // Source — bilingual map for the marketing channel.
         const src = b.marketingChannel === 'loyalty_member'

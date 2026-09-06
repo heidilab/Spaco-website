@@ -506,6 +506,11 @@ export default function AdminBookingsPage() {
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex flex-col gap-1.5">
+                          {booking.isTest && (
+                            <span className="inline-flex w-fit px-2 py-0.5 rounded-pill text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                              🧪 {locale === 'zh' ? '測試單' : 'TEST'}
+                            </span>
+                          )}
                           <span className={`inline-flex w-fit px-3 py-1 rounded-pill text-xs font-medium border ${statusColors[booking.status] || 'bg-white/60 text-ink-soft border-white/70'}`}>
                             {statusLabels[booking.status]?.[locale] || booking.status}
                           </span>

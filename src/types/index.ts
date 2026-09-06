@@ -307,6 +307,11 @@ export interface BookingRecord {
    *  'loyalty_member' (a sentinel that's not a real MarketingChannel).
    *  Stored on every booking so /admin/finance can break down monthly
    *  acquisition without joining the user table. */
+  /** Admin-flagged test booking — excluded from ALL finance reports
+   *  (aggregation, Excel export, monthly close). Set from the booking
+   *  detail Status card. Heidi 2026-09: 5 paid CWB test bookings were
+   *  inflating the August sales record. */
+  isTest?: boolean;
   /** Channel id — a built-in MarketingChannel, 'loyalty_member' (auto
    *  repeat-customer tag), or an admin-configured custom id from
    *  內容管理 → 系統設定 → 來源渠道選項. */
