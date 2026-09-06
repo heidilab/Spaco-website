@@ -310,14 +310,16 @@ export default function FinanceOverviewPage() {
             first ? withWeekday(b.date) : '',
             first ? timeStr : '',
             first ? pplStr : '',
-            first ? cats.rent : '',
-            first ? cats.bbqHotpot : '',
-            first ? cats.shisha : '',
-            first ? cats.cater : '',
-            first ? cats.drinks : '',
-            first ? cats.extPenalty : '',
+            // Zero categories stay BLANK — a wall of $0 drowns the real
+            // numbers (Heidi 2026-09-07).
+            first && cats.rent ? cats.rent : '',
+            first && cats.bbqHotpot ? cats.bbqHotpot : '',
+            first && cats.shisha ? cats.shisha : '',
+            first && cats.cater ? cats.cater : '',
+            first && cats.drinks ? cats.drinks : '',
+            first && cats.extPenalty ? cats.extPenalty : '',
             first ? total : '',
-            t?.date ? withWeekday(t.date) : '',
+            t?.date || '',
             t ? methodLabel(t.method) : '',
             t?.amount ?? '',
             first ? sumTx : '',
@@ -346,7 +348,7 @@ export default function FinanceOverviewPage() {
       aoa.push([]);
       aoa.push([
         'TOTAL', '', '',
-        catSums.rent, catSums.bbqHotpot, catSums.shisha, catSums.cater, catSums.drinks, catSums.extPenalty, totalSales,
+        catSums.rent || '', catSums.bbqHotpot || '', catSums.shisha || '', catSums.cater || '', catSums.drinks || '', catSums.extPenalty || '', totalSales,
         '', '', '', totalTransactions,
         'Total Expenses', totalExpenses,
         'Total returned deposit', totalRefund, '',
