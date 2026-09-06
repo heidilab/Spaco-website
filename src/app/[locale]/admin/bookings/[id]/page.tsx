@@ -1176,7 +1176,9 @@ export default function AdminBookingDetailPage() {
 
   const memberWa = booking.whatsappPhone || profile?.whatsappPhone;
   const memberPhone = profile?.phone || memberWa;
-  const memberName = profile?.displayName || (locale === 'zh' ? '訪客' : 'Guest');
+  // Offline/broker bookings have no user account — the name lives on the
+  // booking itself (createdVia 'admin-direct').
+  const memberName = profile?.displayName || booking.customerName || (locale === 'zh' ? '訪客' : 'Guest');
   const memberEmail = profile?.email;
 
   return (

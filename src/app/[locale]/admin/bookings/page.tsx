@@ -143,7 +143,7 @@ export default function AdminBookingsPage() {
       // stored whatsappPhone (which usually has the +852 prefix).
       const sDigits = s.replace(/\D/g, '');
       filtered = filtered.filter((b) => {
-        const customerName = (userNames[b.userId] || '').toLowerCase();
+        const customerName = (userNames[b.userId] || b.customerName || '').toLowerCase();
         const phone = (b.whatsappPhone || '').replace(/\D/g, '');
         return b.venueId.toLowerCase().includes(s)
           || b.date.includes(s)
@@ -432,9 +432,9 @@ export default function AdminBookingsPage() {
                          *  userNames map (avoids one Firestore round-trip
                          *  per row). Falls back gracefully when the user
                          *  has no profile yet (still shows venue). */}
-                        {userNames[booking.userId] && (
+                        {(userNames[booking.userId] || booking.customerName) && (
                           <div className="text-[11px] text-ink-soft mt-0.5 truncate max-w-[260px]">
-                            {userNames[booking.userId]}
+                            {userNames[booking.userId] || booking.customerName}
                           </div>
                         )}
                         {/* Add-ons chip — surfaces supplier-orderable items

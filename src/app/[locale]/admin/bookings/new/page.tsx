@@ -24,6 +24,8 @@ import CateringPickerModal, { type CateringSelection } from '@/components/bookin
 import { calcCateringTotal } from '@/lib/pricing';
 import { getHoliday } from '@/lib/hkHolidays';
 import { normalizeHkPhone, isValidHkPhone, formatHkPhone } from '@/lib/whatsapp';
+import { adminApiFetch } from '@/lib/adminApiFetch';
+import { getMarketingChannelOptions, type MarketingChannelOption } from '@/lib/marketingChannels';
 import {
   Calendar, Clock, Users, Plus, Minus, Link as LinkIcon, Copy, Check, ArrowLeft, MessageCircle,
   Loader2, AlertCircle, Tag, Package as PackageIcon, X as XIcon, Calculator,
@@ -119,6 +121,30 @@ export default function AdminNewBookingPage() {
 
   // ── Customer info ───────────────────────────
   const [customerName, setCustomerName] = useState('');
+  // ── Direct (offline) booking mode — Finance Phase 1 ──
+  // 'link' = the classic pay-link draft; 'direct' = record a booking that
+  // already happened offline (broker / walk-in / WhatsApp FPS): creates a
+  // confirmed booking immediately with the received payments logged.
+  const [mode, setMode] = useState<'link' | 'direct'>('link');
+  const [channelOptions, setChannelOptions] = useState<MarketingChannelOption[]>([]);
+  const [directChannel, setDirectChannel] = useState('agent');
+  const [directChannelCustom, setDirectChannelCustom] = useState('');
+  const [directPayments, setDirectPayments] = useState<{ date: string; method: 'fps' | 'bank' | 'cash' | 'kpay' | 'other'; amount: string }[]>(
+    [{ date: new Date().toISOString().slice(0, 10), method: 'fps', amount: '' }],
+  );
+  const [directResult, setDirectResult] = useState<{ bookingId: string; balanceDue: number; paid: number } | null>(null);
+  useEffect(() => {
+    // Broker presets first (Phase-2 commission rules key on these ids),
+    // then whatever Heidi configured in 內容管理 → 系統設定.
+    getMarketingChannelOptions().then((opts) => {
+      const presets: MarketingChannelOption[] = [
+        { id: 'agent', zh: '行家', en: 'Agent (行家)' },
+        { id: 'reubird', zh: 'Reubird', en: 'Reubird' },
+      ];
+      const merged = [...presets, ...opts.filter((o) => !presets.some((x) => x.id === o.id))];
+      setChannelOptions(merged);
+    }).catch(() => {});
+  }, []);
   const [customerWhatsapp, setCustomerWhatsapp] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
   const [notes, setNotes] = useState('');
@@ -392,6 +418,75 @@ export default function AdminNewBookingPage() {
     }
   }
 
+  /** Finance Phase 1 — record an OFFLINE booking directly (broker /
+   *  walk-in / WhatsApp FPS). Same pricing payload as the draft link,
+   *  plus channel + received payments; server creates it as confirmed
+   *  with the money already logged. */
+  const handleDirectSubmit = async () => {
+    if (!canSubmit || !user || !venue || !pricing) return;
+    if (!customerName.trim()) {
+      alert(locale === 'zh' ? '直接落單必須填客人姓名' : 'Customer name is required for direct bookings');
+      return;
+    }
+    const cleanPays = directPayments
+      .map((r) => ({ date: r.date, method: r.method, amount: parseFloat(r.amount) || 0 }))
+      .filter((r) => r.amount > 0 && r.date);
+    const chosen = channelOptions.find((o) => o.id === directChannel);
+    const isCustom = directChannel === '__custom__';
+    if (isCustom && !directChannelCustom.trim()) {
+      alert(locale === 'zh' ? '請填寫自訂渠道名稱' : 'Enter the custom channel name');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await adminApiFetch('/api/admin/booking-direct', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          venueId,
+          branchSlug,
+          date,
+          startTime,
+          endTime,
+          ...(endDate ? { endDate } : {}),
+          hours,
+          guestCount,
+          adultCount,
+          childCount,
+          isWeekend,
+          addOns: selectedAddOnList,
+          hasBYOFood,
+          pricing: {
+            baseCharge: selectedPackage ? selectedPackage.price + extraPaxCharge : pricing.baseCharge,
+            addOnTotal: pricing.addOnTotal,
+            subtotal: subtotalAfterPackage,
+            securityDeposit,
+            deposit,
+          },
+          ...(packageSlug ? { packageSlug } : {}),
+          customerName: customerName.trim(),
+          ...(customerWhatsapp ? { whatsappPhone: normalizeHkPhone(customerWhatsapp) || customerWhatsapp } : {}),
+          ...(customerEmail ? { customerEmail } : {}),
+          ...(notes ? { notes } : {}),
+          marketingChannel: isCustom ? 'other' : directChannel,
+          marketingChannelLabel: isCustom ? directChannelCustom.trim() : (chosen?.zh || directChannel),
+          payments: cleanPays,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        alert(locale === 'zh' ? '❌ 呢個時段已被其他預訂佔用，請改時間。' : 'Slot conflict — pick another time.');
+        return;
+      }
+      if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+      setDirectResult(data as { bookingId: string; balanceDue: number; paid: number });
+    } catch (err) {
+      alert((locale === 'zh' ? '建立失敗：' : 'Create failed: ') + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleSubmit = async () => {
     if (!canSubmit || !user || !venue || !pricing) return;
     setSubmitting(true);
@@ -572,6 +667,49 @@ export default function AdminNewBookingPage() {
   // ───────────────────────────────────────
   // Form view
   // ───────────────────────────────────────
+  if (directResult) {
+    return (
+      <div className="max-w-2xl">
+        <div className="mb-6">
+          <Link href="/admin/bookings" className="inline-flex items-center gap-2 text-sm text-ink-soft hover:text-pink">
+            <ArrowLeft size={16} />
+            {locale === 'zh' ? '返回預訂列表' : 'Back to bookings'}
+          </Link>
+        </div>
+        <div className="glass-card p-7 md:p-8">
+          <div className="w-14 h-14 rounded-2xl bg-gradient-pink flex items-center justify-center text-white shadow-glow mb-5">
+            <Check size={26} />
+          </div>
+          <h1 className="text-xl font-bold mb-2">{locale === 'zh' ? '✓ 線下訂單已建立' : '✓ Offline booking recorded'}</h1>
+          <p className="text-sm text-ink-soft mb-1">
+            {locale === 'zh' ? '已收款' : 'Paid'}: HK${directResult.paid.toLocaleString()}
+            {directResult.balanceDue > 0 && (
+              <span className="text-amber-700 font-semibold">
+                {' '}· {locale === 'zh' ? '尚欠' : 'Owed'} HK${directResult.balanceDue.toLocaleString()}
+              </span>
+            )}
+          </p>
+          <p className="text-xs text-ink-soft mb-5">
+            {locale === 'zh'
+              ? '訂單已確認並鎖起時段，會計入財務報表。Google Calendar 已同步。'
+              : 'Confirmed, slot locked, counted in finance. Google Calendar synced.'}
+          </p>
+          <div className="flex gap-2 flex-wrap">
+            <Link href={`/admin/bookings/${directResult.bookingId}`} className="btn-primary text-sm">
+              {locale === 'zh' ? '打開訂單詳情' : 'Open booking'}
+            </Link>
+            <button
+              onClick={() => { setDirectResult(null); }}
+              className="px-4 py-2 rounded-xl border border-charcoal/15 bg-white text-sm font-medium hover:bg-cream"
+            >
+              {locale === 'zh' ? '再開一張' : 'Record another'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-4xl">
       <div className="mb-6">
@@ -592,6 +730,24 @@ export default function AdminNewBookingPage() {
             ? '幫 WhatsApp 客人預先填好預訂內容，產生條獨立 link 畀佢確認 + 付款。客人撳 link 之後會自動綁定佢個會員 account。'
             : 'Pre-fill a booking for a WhatsApp customer. Generates a unique link they tap to confirm and pay — automatically bound to their member account.'}
         </p>
+      </div>
+
+      {/* Mode toggle — pay-link draft vs direct offline record */}
+      <div className="mb-6 flex gap-2">
+        {([['link', '🔗', locale === 'zh' ? '產生付款連結' : 'Payment link', locale === 'zh' ? '客人自己撳 link 付款' : 'Customer pays via link'],
+           ['direct', '🧾', locale === 'zh' ? '直接落單（線下已收款）' : 'Direct (paid offline)', locale === 'zh' ? '行家 / Walk-in / FPS 已收' : 'Broker / walk-in / FPS received']] as const).map(([m, icon, title, sub]) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => setMode(m)}
+            className={`flex-1 text-left rounded-2xl border-2 p-4 transition ${
+              mode === m ? 'border-pink bg-pink/5 ring-1 ring-pink' : 'border-charcoal/10 bg-white/60 hover:border-charcoal/25'
+            }`}
+          >
+            <p className="font-bold text-sm">{icon} {title}</p>
+            <p className="text-[11px] text-ink-soft mt-0.5">{sub}</p>
+          </button>
+        ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1240,7 +1396,11 @@ export default function AdminNewBookingPage() {
 
           {/* Customer info */}
           <div className="glass-card p-6 space-y-3">
-            <h3 className="text-base font-bold text-ink">{locale === 'zh' ? '客人資料（選填）' : 'Customer info (optional)'}</h3>
+            <h3 className="text-base font-bold text-ink">
+              {mode === 'direct'
+                ? (locale === 'zh' ? '客人資料（姓名必填）' : 'Customer info (name required)')
+                : (locale === 'zh' ? '客人資料（選填）' : 'Customer info (optional)')}
+            </h3>
             <p className="text-xs text-ink-soft -mt-2">
               {locale === 'zh' ? '只係畀 staff 內部記錄。客人撳 link 登入時，佢會用自己嘅電話 / email。' : 'For internal staff record only. Customer enters their own contact when they sign in.'}
             </p>
@@ -1251,6 +1411,82 @@ export default function AdminNewBookingPage() {
             </div>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={locale === 'zh' ? '備註（會喺客人 claim 頁顯示）' : 'Notes (shown on the customer claim page)'} rows={3} className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85 resize-none" />
           </div>
+
+          {/* Direct mode: channel + received payments — the whole point of
+            * recording offline bookings is that channel (行家/Reubird →
+            * Phase-2 commission) and money received land in the system. */}
+          {mode === 'direct' && (
+            <div className="glass-card p-6 space-y-4 border-2 border-pink/20">
+              <div>
+                <h3 className="text-base font-bold text-ink mb-1">{locale === 'zh' ? '來源渠道' : 'Channel'}</h3>
+                <div className="flex gap-2 flex-wrap">
+                  <select
+                    value={directChannel}
+                    onChange={(e) => setDirectChannel(e.target.value)}
+                    className="px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85"
+                  >
+                    {channelOptions.map((o) => (
+                      <option key={o.id} value={o.id}>{o[locale]}</option>
+                    ))}
+                    <option value="loyalty_member">{locale === 'zh' ? '🌟 老會員' : '🌟 Returning'}</option>
+                    <option value="__custom__">{locale === 'zh' ? '自訂…' : 'Custom…'}</option>
+                  </select>
+                  {directChannel === '__custom__' && (
+                    <input
+                      value={directChannelCustom}
+                      onChange={(e) => setDirectChannelCustom(e.target.value)}
+                      placeholder={locale === 'zh' ? '渠道名稱' : 'Channel name'}
+                      className="flex-1 min-w-[140px] px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85"
+                    />
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-base font-bold text-ink">{locale === 'zh' ? '已收款項' : 'Payments received'}</h3>
+                  <button
+                    type="button"
+                    onClick={() => setDirectPayments((prev) => [...prev, { date: new Date().toISOString().slice(0, 10), method: 'fps', amount: '' }])}
+                    className="text-xs text-pink hover:underline flex items-center gap-1"
+                  >
+                    <Plus size={12} /> {locale === 'zh' ? '加一筆' : 'Add'}
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {directPayments.map((r, i) => (
+                    <div key={i} className="grid grid-cols-[130px,110px,1fr,32px] gap-2 items-center">
+                      <input type="date" value={r.date}
+                        onChange={(e) => setDirectPayments((prev) => prev.map((x, idx) => idx === i ? { ...x, date: e.target.value } : x))}
+                        className="px-2.5 py-2 rounded-xl border-2 border-charcoal/15 text-xs bg-white/85" />
+                      <select value={r.method}
+                        onChange={(e) => setDirectPayments((prev) => prev.map((x, idx) => idx === i ? { ...x, method: e.target.value as typeof r.method } : x))}
+                        className="px-2.5 py-2 rounded-xl border-2 border-charcoal/15 text-xs bg-white/85">
+                        <option value="fps">FPS</option>
+                        <option value="bank">{locale === 'zh' ? '銀行' : 'Bank'}</option>
+                        <option value="cash">{locale === 'zh' ? '現金' : 'Cash'}</option>
+                        <option value="kpay">KPay</option>
+                        <option value="other">{locale === 'zh' ? '其他' : 'Other'}</option>
+                      </select>
+                      <input type="number" min={0} value={r.amount} placeholder="HK$"
+                        onChange={(e) => setDirectPayments((prev) => prev.map((x, idx) => idx === i ? { ...x, amount: e.target.value } : x))}
+                        className="px-2.5 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85" />
+                      <button type="button"
+                        onClick={() => setDirectPayments((prev) => prev.filter((_, idx) => idx !== i))}
+                        className="w-8 h-8 rounded-lg bg-rose-50 text-rose-500 flex items-center justify-center">
+                        <Minus size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[11px] text-ink-soft mt-2">
+                  {locale === 'zh'
+                    ? `已收合計 HK$${directPayments.reduce((t, r) => t + (parseFloat(r.amount) || 0), 0).toLocaleString()}（記住連按金都計埋）。收齊 = 訂單即確認；未收齊會顯示尾數。`
+                    : `Total received HK$${directPayments.reduce((t, r) => t + (parseFloat(r.amount) || 0), 0).toLocaleString()} (include the deposit). Full amount = confirmed; shortfall shows as balance.`}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Sticky pricing summary */}
@@ -1335,16 +1571,22 @@ export default function AdminNewBookingPage() {
             )}
 
             <button
-              onClick={handleSubmit}
-              disabled={!canSubmit}
+              onClick={mode === 'direct' ? handleDirectSubmit : handleSubmit}
+              disabled={!canSubmit || (mode === 'direct' && !customerName.trim())}
               className="btn-primary w-full justify-center mt-6 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {submitting ? <Loader2 size={16} className="animate-spin" /> : <LinkIcon size={16} />}
-              {submitting ? (locale === 'zh' ? '建立中…' : 'Creating…') : (locale === 'zh' ? '產生連結' : 'Generate link')}
-              {!submitting && <Clock size={14} className="opacity-70" />}
+              {submitting
+                ? (locale === 'zh' ? '建立中…' : 'Creating…')
+                : mode === 'direct'
+                  ? (locale === 'zh' ? '直接建立訂單' : 'Record booking')
+                  : (locale === 'zh' ? '產生連結' : 'Generate link')}
+              {!submitting && mode === 'link' && <Clock size={14} className="opacity-70" />}
             </button>
             <p className="text-[11px] text-ink-soft mt-2 text-center">
-              {locale === 'zh' ? '連結 8 小時內有效；不設留位，先付款先得' : 'Link valid 8h; no slot hold, first to pay confirms'}
+              {mode === 'direct'
+                ? (locale === 'zh' ? '即時確認 + 鎖時段 + 計入財務報表' : 'Instantly confirmed, slot locked, counted in finance')
+                : (locale === 'zh' ? '連結 8 小時內有效；不設留位，先付款先得' : 'Link valid 8h; no slot hold, first to pay confirms')}
             </p>
           </div>
         </div>

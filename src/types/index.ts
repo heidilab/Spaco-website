@@ -312,6 +312,15 @@ export interface BookingRecord {
    *  detail Status card. Heidi 2026-09: 5 paid CWB test bookings were
    *  inflating the August sales record. */
   isTest?: boolean;
+  /** Offline / broker bookings recorded by staff carry the customer's
+   *  name directly (they have no user account, userId is null). */
+  customerName?: string;
+  customerEmail?: string;
+  /** 'admin-direct' = recorded via the offline-booking form (Finance
+   *  Phase 1); absent = normal customer checkout. */
+  createdVia?: 'admin-direct';
+  /** Staff uid that recorded an admin-direct booking. */
+  createdBy?: string;
   /** Channel id — a built-in MarketingChannel, 'loyalty_member' (auto
    *  repeat-customer tag), or an admin-configured custom id from
    *  內容管理 → 系統設定 → 來源渠道選項. */
