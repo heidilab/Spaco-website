@@ -309,6 +309,13 @@ export async function POST(req: NextRequest) {
         ? rest.pendingExpiresAt
         : Date.now() + 30 * 60 * 1000;
       t.create(bookingRef, {
+        // Any booking created OUTSIDE the production deployment (preview
+        // test site, localhost) is by definition a test booking — both
+        // environments share one Firestore, and unflagged test bookings
+        // polluted the Aug-2026 sales record. VERCEL_ENV is 'production'
+        // only on the real spacohk.com deployment. Admin can still
+        // un-flag via the 🧪 toggle if ever needed.
+        ...(process.env.VERCEL_ENV !== 'production' ? { isTest: true } : {}),
         userId: uid,                    // forced from the verified token
         venueId,
         branchSlug: rest.branchSlug ?? null,
