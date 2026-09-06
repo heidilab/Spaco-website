@@ -9,6 +9,7 @@ import { venues } from '@/lib/venues';
 import {
   BookingRecord, MarketingChannel, MARKETING_CHANNEL_LABELS,
 } from '@/types';
+import { channelDisplayLabel, getMarketingChannelOptions, type MarketingChannelOption } from '@/lib/marketingChannels';
 
 // Branch code used in the Sales Record Excel export.
 function venueCode(venueId: string): string {
@@ -54,6 +55,14 @@ export default function FinanceOverviewPage() {
   const [loading, setLoading] = useState(true);
 
   const [{ from, to }, setRange] = useState(defaultFromTo());
+  // Admin-configured channel options — so aggregated channel ids that
+  // aren't built-ins still render their display label.
+  const [channelLabelById, setChannelLabelById] = useState<Map<string, MarketingChannelOption>>(new Map());
+  useEffect(() => {
+    getMarketingChannelOptions()
+      .then((opts) => setChannelLabelById(new Map(opts.map((o) => [o.id, o]))))
+      .catch(() => {});
+  }, []);
   const [branch, setBranch] = useState<string>('all');
   const [channel, setChannel] = useState<FinanceFilter['channel']>('all');
 
@@ -77,7 +86,7 @@ export default function FinanceOverviewPage() {
   function channelLabel(ch: string): string {
     if (ch === 'loyalty_member') return locale === 'zh' ? '🌟 老會員' : '🌟 Loyalty';
     if (ch === 'unknown') return locale === 'zh' ? '（未填）' : '(unspecified)';
-    return MARKETING_CHANNEL_LABELS[ch as MarketingChannel]?.[locale] || ch;
+    return MARKETING_CHANNEL_LABELS[ch as MarketingChannel]?.[locale] || channelLabelById.get(ch)?.[locale] || ch;
   }
 
   /** Display name for the branch filter — handles the 'sw' group key. */
@@ -219,7 +228,7 @@ export default function FinanceOverviewPage() {
         const src = b.marketingChannel === 'loyalty_member'
           ? 'Loyalty Member'
           : b.marketingChannel
-            ? MARKETING_CHANNEL_LABELS[b.marketingChannel as MarketingChannel]?.zh + (b.marketingChannelOther ? `: ${b.marketingChannelOther}` : '')
+            ? channelDisplayLabel(b, 'zh') + (b.marketingChannelOther ? `: ${b.marketingChannelOther}` : '')
             : '';
         // Returned deposit — only after settlement (depositRefund set)
         const refund = b.depositRefund as { amount?: number } | undefined;
@@ -590,7 +599,7 @@ export default function FinanceOverviewPage() {
         body: result.byChannel.map((r) => {
           const ch = r.channel === 'loyalty_member' ? 'Loyalty Member'
             : r.channel === 'unknown' ? '(unspecified)'
-            : MARKETING_CHANNEL_LABELS[r.channel as MarketingChannel]?.en || r.channel;
+            : MARKETING_CHANNEL_LABELS[r.channel as MarketingChannel]?.en || channelLabelById.get(r.channel)?.en || r.channel;
           return [ch, r.bookings, fmt(r.revenue)];
         }),
         styles: { font: 'helvetica', fontSize: 9, cellPadding: 5, lineColor: [200, 200, 200], lineWidth: 0.5 },
@@ -628,7 +637,7 @@ export default function FinanceOverviewPage() {
         const src = b.marketingChannel === 'loyalty_member'
           ? 'Loyalty'
           : b.marketingChannel
-            ? MARKETING_CHANNEL_LABELS[b.marketingChannel as MarketingChannel]?.en || ''
+            ? channelDisplayLabel(b, 'en')
             : '';
         const refund = b.depositRefund as { amount?: number } | undefined;
         const refundAmt = refund?.amount ?? '';

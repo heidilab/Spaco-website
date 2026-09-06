@@ -341,6 +341,7 @@ export async function POST(req: NextRequest) {
         ...(promoFreeDrinksCost > 0 ? { promoFreeDrinksCost } : {}),
         ...(pointsUsed > 0 ? { pointsUsed, pointsDiscount } : {}),
         ...(rest.marketingChannel ? { marketingChannel: rest.marketingChannel } : {}),
+        ...(rest.marketingChannelLabel ? { marketingChannelLabel: rest.marketingChannelLabel } : {}),
         ...(rest.marketingChannelOther ? { marketingChannelOther: rest.marketingChannelOther } : {}),
         ...(rest.packageSlug ? { packageSlug: rest.packageSlug } : {}),
         ...(typeof rest.visitorId === 'string' && rest.visitorId

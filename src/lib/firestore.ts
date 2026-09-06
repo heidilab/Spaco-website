@@ -136,6 +136,27 @@ export async function getUserBookings(userId: string): Promise<BookingRecord[]> 
   });
 }
 
+/**
+ * TRUE first-booking test — Heidi's rule (2026-09): a customer counts as
+ * first-time until they have at least one SUCCESSFUL booking, i.e. one
+ * that was actually paid (any logged payment, or a status that only a
+ * payment can produce). Registering an account, clicking booking links,
+ * or letting an unpaid claim expire does NOT make someone a repeat
+ * customer. The old check keyed on profile.firstBookingChannel, which
+ * gets stamped at the CONFIRM step — before payment — so an abandoned
+ * first attempt permanently mislabelled the customer as 老會員 and the
+ * marketing-channel question was never asked again.
+ */
+export async function hasSuccessfulBooking(userId: string): Promise<boolean> {
+  const q = query(collection(db, 'bookings'), where('userId', '==', userId));
+  const snap = await getDocs(q);
+  return snap.docs.some((d) => {
+    const b = d.data() as { status?: string; payments?: unknown[] };
+    if ((b.payments?.length ?? 0) > 0) return true;
+    return b.status === 'confirmed' || b.status === 'completed';
+  });
+}
+
 export async function getAllBookings(status?: string): Promise<BookingRecord[]> {
   // We sort client-side so a (status, createdAt) composite index is never
   // required. Without this, hitting any sub-page that filters by status

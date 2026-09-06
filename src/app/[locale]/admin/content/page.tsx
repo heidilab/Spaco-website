@@ -261,6 +261,20 @@ const textPages: { id: TextSubTab; label: { zh: string; en: string }; fields: { 
     id: 'settings',
     label: { zh: '系統設定', en: 'Settings' },
     fields: [
+      // Marketing-channel options offered at 確認預訂「喺邊度得知我哋」.
+      // ONE OPTION PER LINE, format: id | 中文名 | English名 (English
+      // optional). The id is what reports group by — never rename an id
+      // already in use; rename the labels freely. 「其他」 is always added
+      // automatically. Leave EMPTY to use the built-in defaults
+      // (google / instagram / facebook / xiaohongshu / referral).
+      {
+        key: 'marketing_channels',
+        multiline: true,
+        label: {
+          zh: '來源渠道選項（每行一個：id | 中文名 | English）例如 threads | Threads 或 kol-amy | KOL Amy。留空＝預設。「其他」會自動加上。id 用過就唔好改。',
+          en: 'Marketing channel options (one per line: id | zh | en), e.g. "threads | Threads". Blank = defaults. "Other" auto-appended. Never rename a used id.',
+        },
+      },
       // TTLock smart-lock IDs per venue. Read by lockPasscode.ts → getVenueLockMap().
       // Keys MUST be `ttlock_<venueId>`; the value can be entered into either zh/en.
       // Find each lockId by opening the TTLock admin app or calling listLocks().

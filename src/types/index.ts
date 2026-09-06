@@ -186,7 +186,7 @@ export interface UserProfile {
   /** Marketing channel selected at first booking. Persisted on the user
    *  so subsequent bookings auto-tag as "Loyalty Member" without
    *  re-asking. One of MarketingChannel ids. */
-  firstBookingChannel?: MarketingChannel;
+  firstBookingChannel?: MarketingChannel | (string & {});
   /** Free-text detail when firstBookingChannel === 'other'. */
   firstBookingChannelOther?: string;
   createdAt: unknown;
@@ -307,7 +307,13 @@ export interface BookingRecord {
    *  'loyalty_member' (a sentinel that's not a real MarketingChannel).
    *  Stored on every booking so /admin/finance can break down monthly
    *  acquisition without joining the user table. */
-  marketingChannel?: MarketingChannel | 'loyalty_member';
+  /** Channel id — a built-in MarketingChannel, 'loyalty_member' (auto
+   *  repeat-customer tag), or an admin-configured custom id from
+   *  內容管理 → 系統設定 → 來源渠道選項. */
+  marketingChannel?: MarketingChannel | 'loyalty_member' | (string & {});
+  /** Display label snapshotted at checkout for custom channel ids, so
+   *  reports stay readable even after the admin edits the option list. */
+  marketingChannelLabel?: string;
   /** Free-text detail when marketingChannel === 'other'. */
   marketingChannelOther?: string;
   /** Promo code applied at checkout (entered by customer on the

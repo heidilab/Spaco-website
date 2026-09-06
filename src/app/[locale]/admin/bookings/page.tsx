@@ -7,6 +7,7 @@ import { getAllBookings, updateBookingStatus, updateBookingBalance, getAllUsers 
 import { tryGenerateLockPasscode, resendLockPasscode } from '@/lib/lockPasscodeClient';
 import { cancelBooking } from '@/lib/cancelBooking';
 import { BookingRecord, BookingDraft } from '@/types';
+import { channelDisplayLabel } from '@/lib/marketingChannels';
 import { venues } from '@/lib/venues';
 import { formatAddOnsForStaff } from '@/lib/pricing';
 import { MARKETING_CHANNEL_LABELS, MarketingChannel } from '@/types';
@@ -459,7 +460,7 @@ export default function AdminBookingsPage() {
                           }`}>
                             {booking.marketingChannel === 'loyalty_member'
                               ? (locale === 'zh' ? '🌟 老會員' : '🌟 Loyalty Member')
-                              : `📣 ${MARKETING_CHANNEL_LABELS[booking.marketingChannel as MarketingChannel][locale]}${booking.marketingChannelOther ? `: ${booking.marketingChannelOther}` : ''}`}
+                              : `📣 ${channelDisplayLabel(booking, locale)}${booking.marketingChannelOther ? `: ${booking.marketingChannelOther}` : ''}`}
                           </div>
                         )}
                       </td>

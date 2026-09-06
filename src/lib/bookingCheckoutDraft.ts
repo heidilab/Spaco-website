@@ -80,7 +80,9 @@ export interface BookingCheckoutDraft {
   promoFreeDrinksCost?: number;
   pointsUsed?: number;
   pointsDiscount?: number;
-  marketingChannel?: MarketingChannel | 'loyalty_member';
+  marketingChannel?: MarketingChannel | 'loyalty_member' | (string & {});
+  /** Display-label snapshot for admin-configured channel ids. */
+  marketingChannelLabel?: string;
   marketingChannelOther?: string;
   /** Final upfront amount the customer agreed to pay (HK$) — already
    *  net of promo/points. Mirrors the booking record's pricing.deposit

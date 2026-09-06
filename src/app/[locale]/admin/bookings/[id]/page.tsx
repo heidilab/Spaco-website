@@ -18,6 +18,7 @@ import {
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { BookingRecord, UserProfile, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
+import { channelDisplayLabel } from '@/lib/marketingChannels';
 import { venues as staticVenues } from '@/lib/venues';
 import { loadAllVenues, venuesSnapshot } from '@/lib/venueRegistry';
 import type { Venue } from '@/types';
@@ -214,6 +215,13 @@ export default function AdminBookingDetailPage() {
   // Amend-settlement mode (admin role only) — re-opens the deduction form
   // prefilled with the stored settlement so it can be corrected.
   const [amendingSettle, setAmendingSettle] = useState(false);
+
+  // Headcount-free package (flat price, 不限人頭 — e.g. CWB birthday):
+  // pax inputs are hidden in the edit form for these.
+  const isHeadcountFreePackage = !!booking?.packageSlug && (() => {
+    const pkg = getPackageBySlug(booking.packageSlug!);
+    return !!pkg && pkg.extraPaxPrice == null;
+  })();
   const [recoveringPoints, setRecoveringPoints] = useState(false);
 
   useEffect(() => {
@@ -1351,6 +1359,17 @@ export default function AdminBookingDetailPage() {
                   className="w-full px-3 py-2 rounded-lg border border-charcoal/10 bg-white text-sm focus:outline-none focus:border-accent"
                 />
               </Field>
+              {/* Headcount-free packages (e.g. CWB 生日包場 — flat price,
+                * 不限人頭): hide the pax inputs entirely. The number has
+                * zero pricing effect but a well-meaning admin editing it
+                * pollutes reports and per-pax add-on math (Heidi 2026-09). */}
+              {isHeadcountFreePackage ? (
+                <Field label={locale === 'zh' ? '人數' : 'Guests'}>
+                  <p className="px-3 py-2 rounded-lg bg-stone-50 border border-charcoal/10 text-sm text-ink-soft">
+                    {locale === 'zh' ? '此套餐不限人頭，無需輸入' : 'Unlimited guests — not applicable'}
+                  </p>
+                </Field>
+              ) : (<>
               <Field label={locale === 'zh' ? '人數（總）' : 'Guests (total)'}>
                 <input
                   type="number"
@@ -1391,6 +1410,7 @@ export default function AdminBookingDetailPage() {
                   className="w-full px-3 py-2 rounded-lg border border-charcoal/10 bg-white text-sm focus:outline-none focus:border-accent"
                 />
               </Field>
+              </>)}
             </div>
 
             {isOvernight && (
@@ -2287,7 +2307,7 @@ export default function AdminBookingDetailPage() {
                 value={
                   booking.marketingChannel === 'loyalty_member'
                     ? (locale === 'zh' ? '🌟 老會員' : '🌟 Loyalty Member')
-                    : `📣 ${MARKETING_CHANNEL_LABELS[booking.marketingChannel as MarketingChannel][locale]}${booking.marketingChannelOther ? `: ${booking.marketingChannelOther}` : ''}`
+                    : `📣 ${channelDisplayLabel(booking, locale)}${booking.marketingChannelOther ? `: ${booking.marketingChannelOther}` : ''}`
                 }
               />
             )}
