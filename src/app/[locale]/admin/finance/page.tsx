@@ -191,6 +191,13 @@ export default function FinanceOverviewPage() {
     return tx;
   }
 
+  /** `2026-09-04` → `2026-09-04 (五)` — Heidi wants weekdays visible. */
+  function withWeekday(dateStr: string): string {
+    if (!/^\d{4}-\d{2}-\d{2}/.test(dateStr)) return dateStr;
+    const d = new Date(`${dateStr.slice(0, 10)}T00:00:00+08:00`);
+    return `${dateStr} (${'日一二三四五六'[d.getDay()]})`;
+  }
+
   async function handleExportExcel() {
     setExporting(true);
     try {
@@ -300,7 +307,7 @@ export default function FinanceOverviewPage() {
           const t = txs[i];
           const d = drItems[i];
           aoa.push([
-            first ? b.date : '',
+            first ? withWeekday(b.date) : '',
             first ? timeStr : '',
             first ? pplStr : '',
             first ? cats.rent : '',
@@ -310,7 +317,7 @@ export default function FinanceOverviewPage() {
             first ? cats.drinks : '',
             first ? cats.extPenalty : '',
             first ? total : '',
-            t?.date || '',
+            t?.date ? withWeekday(t.date) : '',
             t ? methodLabel(t.method) : '',
             t?.amount ?? '',
             first ? sumTx : '',
@@ -419,6 +426,10 @@ export default function FinanceOverviewPage() {
       ws['!rows'] = ws['!rows'] || [];
       ws['!rows'][0] = { hpt: 28 };
       ws['!rows'][4] = { hpt: 24 };
+      // Money columns get an explicit "$" number format (whole dollars
+      // stay clean, cents show when present); every data cell is centred
+      // — both per Heidi's 2026-09-07 review of the export.
+      const MONEY_COLS = new Set([3, 4, 5, 6, 7, 8, 9, 12, 13, 15, 17]);
       for (let r = HEADER_ROW + 1; r <= lastRow; r++) {
         for (let c = 0; c <= lastCol; c++) {
           const isBlankRow = aoa[r]?.every((v) => v === '' || v === undefined);
@@ -426,10 +437,18 @@ export default function FinanceOverviewPage() {
           const isTotalRow = aoa[r]?.[0] === 'TOTAL' || aoa[r]?.[13] === 'Profit :' || aoa[r]?.[8] === 'Total Sales Amount';
           const style: Record<string, unknown> = {
             font: { sz: 11, bold: !!isTotalRow },
-            alignment: { horizontal: c >= 3 && c <= 15 ? 'right' : 'left', vertical: 'center' },
+            alignment: { horizontal: 'center', vertical: 'center' },
             border,
           };
           if (isTotalRow) style.fill = { patternType: 'solid', fgColor: { rgb: 'F4F4F4' } };
+          const v = aoa[r]?.[c];
+          if (MONEY_COLS.has(c) && typeof v === 'number') {
+            style.numFmt = Number.isInteger(v) ? '"$"#,##0' : '"$"#,##0.00';
+          }
+          // Profit / footer money cells sit outside MONEY_COLS rows too
+          if (typeof v === 'number' && (aoa[r]?.[13] === 'Profit :' || aoa[r]?.[8] === 'Total Sales Amount' || isTotalRow)) {
+            if (c >= 3) style.numFmt = Number.isInteger(v) ? '"$"#,##0' : '"$"#,##0.00';
+          }
           setStyle(r, c, style);
         }
       }
