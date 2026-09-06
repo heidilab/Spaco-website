@@ -51,6 +51,13 @@ export default function ExpensesPage() {
   const [config, setConfig] = useState<FinanceConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [flash, setFlash] = useState<string | null>(null);
+  // Preview/test deployments include 🧪 test bookings (they're the only
+  // bookings that exist there — see countsForFinance). Prod never does.
+  const [isPreviewHost, setIsPreviewHost] = useState(false);
+  useEffect(() => {
+    const h = window.location.hostname;
+    setIsPreviewHost(h !== 'spacohk.com' && h !== 'www.spacohk.com');
+  }, []);
 
   // Manual-row form
   const [newItem, setNewItem] = useState('');
@@ -82,8 +89,10 @@ export default function ExpensesPage() {
       setRows(created > 0 ? await listExpenses(branch, month) : exp);
       setTemplates(tpl);
       setConfig(cfg);
+      const previewHost = typeof window !== 'undefined'
+        && !['spacohk.com', 'www.spacohk.com'].includes(window.location.hostname);
       setBookings(all.filter((b) =>
-        countsForFinance(b)
+        countsForFinance(b, { includeTest: previewHost })
         && b.date.startsWith(month)
         && branchKeyOf(b.venueId) === branch));
     } finally {
@@ -203,6 +212,13 @@ export default function ExpensesPage() {
           className="ml-auto px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85" />
       </div>
 
+      {isPreviewHost && (
+        <div className="mb-3 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
+          🧪 {locale === 'zh'
+            ? '測試環境：此處包含測試單嘅佣金/費用，方便你驗證。正式站只計真訂單。'
+            : 'Test environment: test bookings are included here for verification. Production counts real bookings only.'}
+        </div>
+      )}
       {flash && <div className="mb-3 text-sm text-emerald-700">{flash}</div>}
       {loading ? (
         <p className="text-ink-soft py-10 flex items-center gap-2"><Loader2 size={16} className="animate-spin" /> Loading…</p>
@@ -402,6 +418,12 @@ export default function ExpensesPage() {
                   <span className="text-xs font-semibold text-ink-soft">{locale === 'zh' ? 'Reubird 佣金 %（全單）' : 'Reubird % (total)'}</span>
                   <input type="number" step="0.1" value={config.commissionRules.reubird?.pct ?? 10}
                     onChange={(e) => setConfig({ ...config, commissionRules: { ...config.commissionRules, reubird: { pct: parseFloat(e.target.value) || 0, base: 'total' } } })}
+                    className={`mt-1 w-full ${inputCls}`} />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-semibold text-ink-soft">{locale === 'zh' ? 'Common Room 佣金 %（全單）' : 'Common Room % (total)'}</span>
+                  <input type="number" step="0.1" value={config.commissionRules.commonroom?.pct ?? 10}
+                    onChange={(e) => setConfig({ ...config, commissionRules: { ...config.commissionRules, commonroom: { pct: parseFloat(e.target.value) || 0, base: 'total' } } })}
                     className={`mt-1 w-full ${inputCls}`} />
                 </label>
                 <label className="block">

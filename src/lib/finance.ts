@@ -15,6 +15,8 @@ export interface FinanceFilter {
    *  variants (sw-a, sw-b, sw-ab) since they share the same physical
    *  flagship. Otherwise a venue id (cwb / wanchai / tst). */
   branch?: string;
+  /** Preview-host testing only: count 🧪 test bookings too. */
+  includeTest?: boolean;
   /** Restrict to a marketing channel. 'all' or omitted = all. */
   channel?: MarketingChannel | 'loyalty_member' | 'all';
 }
@@ -180,9 +182,14 @@ function isFutureDate(dateStr: string): boolean {
  * ONE predicate shared by the aggregator, the Excel export and (later)
  * the monthly close, so the numbers can never disagree again.
  */
-export function countsForFinance(b: BookingRecord): boolean {
+export function countsForFinance(b: BookingRecord, opts?: { includeTest?: boolean }): boolean {
   if (b.status === 'cancelled' || b.status === 'pending' || b.status === 'payment_not_completed') return false;
-  if (b.isTest) return false;
+  // Preview deployments auto-stamp every booking isTest, so the TEST
+  // SITE's finance pages opt in to seeing them (with a banner) —
+  // otherwise nothing Heidi creates while testing would ever appear
+  // (#percQzxr: broker booking showed no commission). Production never
+  // passes includeTest.
+  if (b.isTest && !opts?.includeTest) return false;
   const paid = (b.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
   const paidStatus = b.status === 'confirmed' || b.status === 'completed' || !!b.paymentVerifiedAt;
   if (paid <= 0 && !paidStatus) return false;
@@ -195,7 +202,7 @@ export function aggregateBookings(
 ): AggregateResult {
   // Filter pass.
   const filtered = bookings.filter((b) => {
-    if (!countsForFinance(b)) return false;
+    if (!countsForFinance(b, { includeTest: filter.includeTest })) return false;
     if (filter.from && b.date < filter.from) return false;
     if (filter.to && b.date > filter.to) return false;
     if (filter.branch && filter.branch !== 'all') {

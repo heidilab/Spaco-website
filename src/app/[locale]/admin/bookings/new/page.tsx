@@ -140,6 +140,7 @@ export default function AdminNewBookingPage() {
       const presets: MarketingChannelOption[] = [
         { id: 'agent', zh: '行家', en: 'Agent (行家)' },
         { id: 'reubird', zh: 'Reubird', en: 'Reubird' },
+        { id: 'commonroom', zh: 'Common Room', en: 'Common Room' },
       ];
       const merged = [...presets, ...opts.filter((o) => !presets.some((x) => x.id === o.id))];
       setChannelOptions(merged);

@@ -34,8 +34,10 @@ export const DEFAULT_FINANCE_CONFIG: FinanceConfig = {
   commissionRules: {
     // Heidi's rules (2026-09): 行家 10% on RENT ONLY (F&B exempt);
     // Reubird 10% on the full consumption subtotal.
-    agent:   { pct: 10, base: 'rent' },
-    reubird: { pct: 10, base: 'total' },
+    agent:      { pct: 10, base: 'rent' },
+    reubird:    { pct: 10, base: 'total' },
+    // Common Room platform bookings pay 10% too (Heidi 2026-09-06).
+    commonroom: { pct: 10, base: 'total' },
   },
   kpayFeePct: 1.5,
 };

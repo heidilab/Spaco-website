@@ -10,6 +10,8 @@ import {
   BookingRecord, MarketingChannel, MARKETING_CHANNEL_LABELS,
 } from '@/types';
 import { channelDisplayLabel, getMarketingChannelOptions, type MarketingChannelOption } from '@/lib/marketingChannels';
+import { listExpenses, getFinanceConfig } from '@/lib/expenses';
+import { commissionForBooking, estimatedKpayFee } from '@/lib/bookingMoney';
 
 // Branch code used in the Sales Record Excel export.
 function venueCode(venueId: string): string {
@@ -78,9 +80,17 @@ export default function FinanceOverviewPage() {
       .finally(() => setLoading(false));
   }, [canAccess]);
 
+  // Preview/test deployments show test bookings in finance so features
+  // can actually be verified there (every preview-created booking is
+  // auto-stamped isTest). Production hosts never include them.
+  const [isPreviewHost, setIsPreviewHost] = useState(false);
+  useEffect(() => {
+    const h = window.location.hostname;
+    setIsPreviewHost(h !== 'spacohk.com' && h !== 'www.spacohk.com');
+  }, []);
   const result = useMemo(
-    () => aggregateBookings(allBookings, { from, to, branch, channel }),
-    [allBookings, from, to, branch, channel],
+    () => aggregateBookings(allBookings, { from, to, branch, channel, includeTest: isPreviewHost }),
+    [allBookings, from, to, branch, channel, isPreviewHost],
   );
 
   function channelLabel(ch: string): string {
@@ -107,7 +117,7 @@ export default function FinanceOverviewPage() {
       // Same predicate as the aggregator — excludes cancelled/pending,
       // test bookings, and unpaid ghost bookings, so the per-booking
       // sheet always reconciles with the Summary numbers.
-      if (!countsForFinance(b)) return false;
+      if (!countsForFinance(b, { includeTest: isPreviewHost })) return false;
       if (from && b.date < from) return false;
       if (to && b.date > to) return false;
       if (branch !== 'all') {
@@ -453,6 +463,74 @@ export default function FinanceOverviewPage() {
         ['Future Revenue / 未來預訂收入', result.futureRevenue],
         ['Future Bookings / 未來預訂數', result.futureBookingCount],
       ];
+      // Summary is appended AFTER the expenses block below so the
+      // expenses totals it pushes are included in the sheet.
+
+      // ─── SHEET: Expenses (Finance Phase 2) ───
+      // Stored rows (recurring + one-off) for every month × branch the
+      // filter touches, plus commissions / KPay fee estimates derived
+      // from the exported bookings — so the DR side finally ships in the
+      // same workbook as the CR side.
+      try {
+        const cfg = await getFinanceConfig();
+        const monthsInRange: string[] = [];
+        {
+          let cur = from.slice(0, 7);
+          const last = to.slice(0, 7);
+          while (cur <= last && monthsInRange.length < 24) {
+            monthsInRange.push(cur);
+            const [yy, mm] = cur.split('-').map(Number);
+            cur = `${mm === 12 ? yy + 1 : yy}-${String(mm === 12 ? 1 : mm + 1).padStart(2, '0')}`;
+          }
+        }
+        const branchKeys = branch === 'all' ? ['cwb', 'sw', 'tst', 'wanchai'] : [branch];
+        const stored: Array<{ branchKey: string; month: string; date: string; item: string; amount: number; source: string }> = [];
+        for (const bk of branchKeys) {
+          for (const m of monthsInRange) {
+            const rows = await listExpenses(bk, m);
+            stored.push(...rows);
+          }
+        }
+        const expAoa: (string | number)[][] = [
+          ['Expenses / 支出', '', '', '', ''],
+          ['Type / 類別', 'Branch / 分店', 'Date / 日期', 'Item / 項目', 'Amount / 金額'],
+        ];
+        let expTotal = 0;
+        for (const r of stored) {
+          expAoa.push([
+            r.source === 'recurring' ? '固定 Fixed' : '雜項 One-off',
+            branchLabel(r.branchKey), r.date, r.item, r.amount,
+          ]);
+          expTotal += r.amount;
+        }
+        for (const b of bookings) {
+          const rule = cfg.commissionRules[b.marketingChannel || ''];
+          const comm = commissionForBooking(b, rule);
+          if (comm > 0) {
+            expAoa.push(['佣金 Commission', venueCode(b.venueId), b.date,
+              `${channelDisplayLabel(b, 'zh')} · ${b.customerName || (b.id || '').slice(0, 8)}${typeof b.commissionOverride === 'number' ? '（手動）' : rule ? `（${rule.pct}% ${rule.base === 'rent' ? '場租' : '全單'}）` : ''}`,
+              comm]);
+            expTotal += comm;
+          }
+          const fee = estimatedKpayFee(b, cfg.kpayFeePct);
+          if (fee > 0) {
+            expAoa.push(['KPay費(估) Fee est.', venueCode(b.venueId), b.date,
+              `KPay ${cfg.kpayFeePct}%`, fee]);
+            expTotal += fee;
+          }
+        }
+        expAoa.push([]);
+        expAoa.push(['Total Expenses / 總支出', '', '', '', expTotal]);
+        expAoa.push(['Revenue − Expenses / 粗利', '', '', '', result.totalRevenue - expTotal]);
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(expAoa), 'Expenses');
+        // Also surface the two figures on the Summary sheet consumers
+        // scan first.
+        summary.push([]);
+        summary.push(['Total Expenses / 總支出', expTotal]);
+        summary.push(['Revenue − Expenses / 粗利', result.totalRevenue - expTotal]);
+      } catch (err) {
+        console.warn('[finance export] expenses sheet failed (non-fatal):', err);
+      }
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'Summary');
 
       // ─── SHEET 3: Channel breakdown ───
