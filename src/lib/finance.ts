@@ -182,6 +182,37 @@ function isFutureDate(dateStr: string): boolean {
  * ONE predicate shared by the aggregator, the Excel export and (later)
  * the monthly close, so the numbers can never disagree again.
  */
+/**
+ * Sales-category breakdown per booking — the columns of Heidi's Sales
+ * Record sheet (Rent / BBQ·Hotpot / Shisha / 到會 / Drinks / 加時·罰款).
+ * 「BBQ/ Hotpot」 is ONE combined column; 「到會」 is catering only —
+ * her Financial Master's exact semantics. Shared by the finance export
+ * and the Phase 3 month-close page so the two can never disagree.
+ */
+export function salesCategoryBreakdown(b: BookingRecord) {
+  const rent = b.pricing.baseCharge || 0;
+  const shisha = addOnRevenueForBooking(b, 'shisha');
+  const bbqHotpot = addOnRevenueForBooking(b, 'bbq-standard')
+    + addOnRevenueForBooking(b, 'bbq-premium')
+    + addOnRevenueForBooking(b, 'bbq-grill')
+    + addOnRevenueForBooking(b, 'hotpot-standard')
+    + addOnRevenueForBooking(b, 'hotpot-seafood')
+    + addOnRevenueForBooking(b, 'hotpot-extra-soup');
+  const cater = addOnRevenueForBooking(b, 'catering');
+  const drinks = addOnRevenueForBooking(b, 'drinks');
+  // 加時/罰款 = admin-recorded rental top-ups (post-confirmation
+  // extensions) + forfeited security deposit (penalties). New payment
+  // entries split rentalAmount + addOnAmount; legacy entries lumped both
+  // into rentalAmount so addOnAmount may be undefined — sum both.
+  const topUpRental = (b.payments || [])
+    .reduce((s, p) => s + (p.rentalAmount || 0) + (p.addOnAmount || 0), 0);
+  const initialRental = rent + shisha + bbqHotpot + cater + drinks;
+  const extensions = Math.max(0, topUpRental - initialRental);
+  const refund = b.depositRefund as { deductions?: { amount: number }[] } | undefined;
+  const penalty = (refund?.deductions || []).reduce((s, d) => s + (d.amount || 0), 0);
+  return { rent, shisha, bbqHotpot, cater, drinks, extPenalty: extensions + penalty };
+}
+
 export function countsForFinance(b: BookingRecord, opts?: { includeTest?: boolean }): boolean {
   if (b.status === 'cancelled' || b.status === 'pending' || b.status === 'payment_not_completed') return false;
   // Preview deployments auto-stamp every booking isTest, so the TEST

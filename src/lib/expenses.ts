@@ -18,7 +18,7 @@ import {
   query, where, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from './firebase';
-import type { ExpenseRecord, ExpenseTemplate, CommissionRule } from '@/types';
+import type { ExpenseRecord, ExpenseTemplate, CommissionRule, ProfitSplitParty } from '@/types';
 
 // ── Finance config (system/finance_config, admin-write per rules) ──────
 
@@ -28,6 +28,9 @@ export interface FinanceConfig {
   /** Estimated KPay gateway fee % applied to kpay payments until the
    *  monthly statement reconciliation replaces estimates with actuals. */
   kpayFeePct: number;
+  /** Branch key → default profit split. Each month snapshots this into
+   *  its month_close doc, where it stays editable (monthly tweaks). */
+  profitSplits: Record<string, ProfitSplitParty[]>;
 }
 
 export const DEFAULT_FINANCE_CONFIG: FinanceConfig = {
@@ -40,6 +43,13 @@ export const DEFAULT_FINANCE_CONFIG: FinanceConfig = {
     commonroom: { pct: 10, base: 'total' },
   },
   kpayFeePct: 1.5,
+  // Defaults transcribed from her 2026-2027 Financial Master AUG sheets.
+  profitSplits: {
+    cwb:     [{ name: 'Kenneth', pct: 50 }, { name: 'Heidi', pct: 25 }, { name: 'In Account', pct: 25 }],
+    sw:      [{ name: 'Kenneth', pct: 50 }, { name: 'Heidi', pct: 20 }, { name: 'Account', pct: 30 }],
+    tst:     [{ name: 'Kenneth', pct: 30 }, { name: 'Iver', pct: 30 }, { name: 'SPACO', pct: 40 }],
+    wanchai: [{ name: 'Heidi', pct: 50 }, { name: 'Kenneth', pct: 25 }, { name: 'In Account', pct: 25 }],
+  },
 };
 
 export async function getFinanceConfig(): Promise<FinanceConfig> {
@@ -52,6 +62,10 @@ export async function getFinanceConfig(): Promise<FinanceConfig> {
         ? d.commissionRules
         : DEFAULT_FINANCE_CONFIG.commissionRules,
       kpayFeePct: typeof d.kpayFeePct === 'number' ? d.kpayFeePct : DEFAULT_FINANCE_CONFIG.kpayFeePct,
+      profitSplits: {
+        ...DEFAULT_FINANCE_CONFIG.profitSplits,
+        ...(d.profitSplits || {}),
+      },
     };
   } catch {
     return DEFAULT_FINANCE_CONFIG;

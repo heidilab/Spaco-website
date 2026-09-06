@@ -257,3 +257,15 @@ export function estimatedKpayFee(booking: MoneyBooking, pct: number): number {
   return Math.round(kpayPaid * (pct / 100) * 100) / 100;
 }
 
+
+/**
+ * Distribute a monthly profit figure across split parties (Phase 3
+ * month close). Amounts keep the raw ×% precision — her Financial
+ * Master carries unrounded figures like 7243.1725 forward.
+ */
+export function splitAmounts(
+  profit: number,
+  splits: Array<{ name: string; pct: number }>,
+): Array<{ name: string; pct: number; amount: number }> {
+  return splits.map((s) => ({ ...s, amount: profit * (s.pct / 100) }));
+}

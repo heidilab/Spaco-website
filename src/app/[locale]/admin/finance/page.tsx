@@ -4,14 +4,15 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllBookings } from '@/lib/firestore';
-import { aggregateBookings, FinanceFilter, addOnRevenueForBooking, countsForFinance } from '@/lib/finance';
+import { aggregateBookings, FinanceFilter, countsForFinance, salesCategoryBreakdown } from '@/lib/finance';
 import { venues } from '@/lib/venues';
 import {
   BookingRecord, MarketingChannel, MARKETING_CHANNEL_LABELS,
 } from '@/types';
 import { channelDisplayLabel, getMarketingChannelOptions, type MarketingChannelOption } from '@/lib/marketingChannels';
 import { listExpenses, getFinanceConfig } from '@/lib/expenses';
-import { commissionForBooking, estimatedKpayFee } from '@/lib/bookingMoney';
+import { commissionForBooking, estimatedKpayFee, splitAmounts } from '@/lib/bookingMoney';
+import { getMonthClose } from '@/lib/monthClose';
 
 // Branch code used in the Sales Record Excel export.
 function venueCode(venueId: string): string {
@@ -132,36 +133,6 @@ export default function FinanceOverviewPage() {
     }).sort((a, b2) => a.date.localeCompare(b2.date));
   }
 
-  /** Category breakdown per booking — matches the columns in the Sales
-   *  Record template (Rent / Shisha / BBQ / 到會 / Drinks / 加時·罰款). */
-  function categoryBreakdown(b: BookingRecord) {
-    const rent = b.pricing.baseCharge || 0;
-    const shisha = addOnRevenueForBooking(b, 'shisha');
-    // Column semantics follow Heidi's Financial Master exactly:
-    // 「BBQ/ Hotpot」 is ONE combined column; 「到會」 is catering only.
-    const bbqHotpot = addOnRevenueForBooking(b, 'bbq-standard')
-      + addOnRevenueForBooking(b, 'bbq-premium')
-      + addOnRevenueForBooking(b, 'bbq-grill')
-      + addOnRevenueForBooking(b, 'hotpot-standard')
-      + addOnRevenueForBooking(b, 'hotpot-seafood')
-      + addOnRevenueForBooking(b, 'hotpot-extra-soup');
-    const cater = addOnRevenueForBooking(b, 'catering');
-    const drinks = addOnRevenueForBooking(b, 'drinks');
-    // 加時/罰款 = admin-recorded rental top-ups (post-confirmation
-    // extensions) + forfeited security deposit (penalties).
-    // Rental top-ups = venue rental + add-on portions of every logged
-    // payment. New entries (post-2026-05) split these into
-    // rentalAmount + addOnAmount; legacy entries lumped both into
-    // rentalAmount so addOnAmount may be undefined. Sum both.
-    const topUpRental = (b.payments || [])
-      .reduce((s, p) => s + (p.rentalAmount || 0) + (p.addOnAmount || 0), 0);
-    const initialRental = rent + shisha + bbqHotpot + cater + drinks; // baseline
-    const extensions = Math.max(0, topUpRental - initialRental); // only the delta
-    const refund = b.depositRefund as { deductions?: { amount: number }[] } | undefined;
-    const penalty = (refund?.deductions || []).reduce((s, d) => s + (d.amount || 0), 0);
-    return { rent, shisha, bbqHotpot, cater, drinks, extPenalty: extensions + penalty };
-  }
-
   /** Combine the synthetic initial payment with the audit log so each
    *  booking surfaces every transaction as its own row in the export. */
   function transactionsFor(b: BookingRecord): Array<{ date: string; method: string; amount: number; note?: string }> {
@@ -258,7 +229,7 @@ export default function FinanceOverviewPage() {
       // vertically so one booking reads as ONE block (Heidi 2026-09-07).
       const bookingSpans: Array<{ r1: number; r2: number }> = [];
       for (const b of bookings) {
-        const cats = categoryBreakdown(b);
+        const cats = salesCategoryBreakdown(b);
         const total = b.pricing.subtotal || 0;
         const txs = transactionsFor(b);
         const sumTx = txs.reduce((s, t) => s + t.amount, 0);
@@ -360,6 +331,18 @@ export default function FinanceOverviewPage() {
       ]);
       aoa.push(['', '', '', '', '', '', '', '', 'Total Sales Amount', totalSales, '', '', '', '', '', '', '', '', '']);
       aoa.push(['', '', '', '', '', '', '', '', '', '', '', '', '', 'Profit :', profit, '', '', '', '']);
+      // Profit-split rows (Phase 3) — To Kenneth (50%) : … exactly like
+      // her monthly sheet footer. Only for a single-branch export over a
+      // single month: splits differ per branch and are tweaked per month.
+      if (branch !== 'all' && monthsInRange.length === 1) {
+        try {
+          const mc = await getMonthClose(branch, monthsInRange[0]);
+          const splits = mc?.splits?.length ? mc.splits : (cfg.profitSplits[branch] || []);
+          for (const row of splitAmounts(profit, splits)) {
+            aoa.push(['', '', '', '', '', '', '', '', '', '', '', '', '', `To ${row.name} (${row.pct}%) :`, row.amount, '', '', '', '']);
+          }
+        } catch { /* keep exporting without splits */ }
+      }
 
       const ws = XLSX.utils.aoa_to_sheet(aoa);
 
@@ -449,7 +432,7 @@ export default function FinanceOverviewPage() {
         for (let c = 0; c <= lastCol; c++) {
           const isBlankRow = aoa[r]?.every((v) => v === '' || v === undefined);
           if (isBlankRow) continue;
-          const isTotalRow = aoa[r]?.[0] === 'TOTAL' || aoa[r]?.[13] === 'Profit :' || aoa[r]?.[8] === 'Total Sales Amount';
+          const isTotalRow = aoa[r]?.[0] === 'TOTAL' || aoa[r]?.[13] === 'Profit :' || aoa[r]?.[8] === 'Total Sales Amount' || /^To .+%\) :$/.test(String(aoa[r]?.[13] || ''));
           const style: Record<string, unknown> = {
             font: { sz: 11, bold: !!isTotalRow },
             alignment: { horizontal: 'center', vertical: 'center' },
@@ -461,7 +444,7 @@ export default function FinanceOverviewPage() {
             style.numFmt = Number.isInteger(v) ? '"$"#,##0' : '"$"#,##0.00';
           }
           // Profit / footer money cells sit outside MONEY_COLS rows too
-          if (typeof v === 'number' && (aoa[r]?.[13] === 'Profit :' || aoa[r]?.[8] === 'Total Sales Amount' || isTotalRow)) {
+          if (typeof v === 'number' && isTotalRow) {
             if (c >= 3) style.numFmt = Number.isInteger(v) ? '"$"#,##0' : '"$"#,##0.00';
           }
           setStyle(r, c, style);
@@ -667,7 +650,7 @@ export default function FinanceOverviewPage() {
       let totalSales = 0;
       let totalTx = 0;
       for (const b of bookings) {
-        const cats = categoryBreakdown(b);
+        const cats = salesCategoryBreakdown(b);
         const txs = transactionsFor(b);
         const total = b.pricing.subtotal || 0;
         const sumTx = txs.reduce((s, t) => s + t.amount, 0);

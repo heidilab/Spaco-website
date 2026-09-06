@@ -857,3 +857,35 @@ export interface CommissionRule {
    *  excluded); 'total' = on the full consumption subtotal. */
   base: 'rent' | 'total';
 }
+
+/** One party in a branch's monthly profit split (Finance Phase 3),
+ *  e.g. { name: 'Kenneth', pct: 50 }. */
+export interface ProfitSplitParty {
+  name: string;
+  pct: number;
+}
+
+/** Month-close record — one per branch per month (Finance Phase 3).
+ *  Doc id is `${branchKey}_${month}` so closes are naturally unique. */
+export interface MonthCloseRecord {
+  id?: string;
+  branchKey: string;          // cwb | sw | tst | wanchai
+  month: string;              // YYYY-MM
+  /** Split snapshot for THIS month — starts from the branch default in
+   *  finance_config and stays editable until the month is closed. */
+  splits?: ProfitSplitParty[];
+  /** Actual KPay gateway fee from the uploaded monthly statement.
+   *  While null/absent, exports fall back to the estimated fee. */
+  kpayActualFee?: number | null;
+  kpayStatement?: {
+    fileName: string;
+    rowCount: number;
+    gross: number;
+    fee: number;
+    net: number;
+  } | null;
+  status: 'draft' | 'closed';
+  closedAt?: unknown;
+  closedBy?: string;
+  updatedAt?: unknown;
+}

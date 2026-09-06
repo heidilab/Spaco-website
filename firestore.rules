@@ -156,6 +156,11 @@ service cloud.firestore {
     match /expense_templates/{id} {
       allow read, write: if isStaff();
     }
+    // Finance Phase 3 — month-close records (splits snapshot, reconciled
+    // KPay fee, closed flag). Staff-only both ways.
+    match /month_closes/{id} {
+      allow read, write: if isStaff();
+    }
 
     match /system/{id} {
       allow read:  if isStaff();
