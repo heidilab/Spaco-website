@@ -25,7 +25,7 @@ import {
   getFinanceConfig, saveFinanceConfig, type FinanceConfig,
 } from '@/lib/expenses';
 import { commissionForBooking, estimatedKpayFee, discountedSubtotal } from '@/lib/bookingMoney';
-import { channelDisplayLabel } from '@/lib/marketingChannels';
+import { channelDisplayLabel, getMarketingChannelOptions, type MarketingChannelOption } from '@/lib/marketingChannels';
 import type { BookingRecord, ExpenseRecord, ExpenseTemplate } from '@/types';
 import {
   Wallet, Plus, Trash2, Loader2, Check, Settings2, RefreshCw,
@@ -49,6 +49,10 @@ export default function ExpensesPage() {
   const [templates, setTemplates] = useState<ExpenseTemplate[]>([]);
   const [bookings, setBookings] = useState<BookingRecord[]>([]);
   const [config, setConfig] = useState<FinanceConfig | null>(null);
+  const [channelNames, setChannelNames] = useState<Map<string, MarketingChannelOption>>(new Map());
+  useEffect(() => {
+    getMarketingChannelOptions().then((opts) => setChannelNames(new Map(opts.map((o) => [o.id, o])))).catch(() => {});
+  }, []);
   const [loading, setLoading] = useState(true);
   const [flash, setFlash] = useState<string | null>(null);
   // Preview/test deployments include 🧪 test bookings (they're the only
@@ -407,25 +411,45 @@ export default function ExpensesPage() {
           {isAdminRole && config && (
             <div className="glass-card p-6">
               <h2 className="font-bold mb-3 flex items-center gap-2"><Settings2 size={15} /> {locale === 'zh' ? '規則設定（只限 Admin）' : 'Rules (admin only)'}</h2>
+              <p className="text-xs text-ink-soft mb-3">
+                {locale === 'zh'
+                  ? '呢度同「內容管理 → 系統設定 → 來源渠道選項」係同一份佣金數據 — 邊度改都會同步。新增渠道佣金請去渠道選項度剔。'
+                  : 'Same data as 內容管理 → 系統設定 channel options — edit in either place. Add new channel rules there.'}
+              </p>
+              <div className="space-y-2 text-sm mb-3">
+                {Object.entries(config.commissionRules).map(([id, rule]) => {
+                  const preset = ({ agent: '行家', reubird: 'Reubird', commonroom: 'Common Room' } as Record<string, string>)[id];
+                  const label = preset || channelNames.get(id)?.[locale] || id;
+                  return (
+                    <div key={id} className="flex items-center gap-2 flex-wrap">
+                      <span className="w-32 truncate">{label}</span>
+                      <span className="text-[10px] font-mono text-ink-soft w-24 truncate">{id}</span>
+                      <input type="number" step="0.1" min={0} value={rule.pct}
+                        onChange={(e) => setConfig({ ...config, commissionRules: { ...config.commissionRules, [id]: { ...rule, pct: parseFloat(e.target.value) || 0 } } })}
+                        className={`w-20 text-right ${inputCls}`} />
+                      <span className="text-xs text-ink-soft">%</span>
+                      <select value={rule.base}
+                        onChange={(e) => setConfig({ ...config, commissionRules: { ...config.commissionRules, [id]: { ...rule, base: e.target.value as 'rent' | 'total' } } })}
+                        className={inputCls}>
+                        <option value="total">{locale === 'zh' ? '全單' : 'Total'}</option>
+                        <option value="rent">{locale === 'zh' ? '只計場租' : 'Rent only'}</option>
+                      </select>
+                      <button type="button"
+                        onClick={() => {
+                          if (!window.confirm(locale === 'zh' ? `移除「${label}」嘅佣金規則？` : `Remove commission rule for ${label}?`)) return;
+                          const next = { ...config.commissionRules };
+                          delete next[id];
+                          setConfig({ ...config, commissionRules: next });
+                        }}
+                        className="w-7 h-7 rounded-lg hover:bg-rose-50 text-rose-400 flex items-center justify-center"><Trash2 size={12} /></button>
+                    </div>
+                  );
+                })}
+                {Object.keys(config.commissionRules).length === 0 && (
+                  <p className="text-xs text-ink-soft italic">{locale === 'zh' ? '未有佣金規則。' : 'No rules.'}</p>
+                )}
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-                <label className="block">
-                  <span className="text-xs font-semibold text-ink-soft">{locale === 'zh' ? '行家佣金 %（只計場租）' : 'Agent % (rent only)'}</span>
-                  <input type="number" step="0.1" value={config.commissionRules.agent?.pct ?? 10}
-                    onChange={(e) => setConfig({ ...config, commissionRules: { ...config.commissionRules, agent: { pct: parseFloat(e.target.value) || 0, base: 'rent' } } })}
-                    className={`mt-1 w-full ${inputCls}`} />
-                </label>
-                <label className="block">
-                  <span className="text-xs font-semibold text-ink-soft">{locale === 'zh' ? 'Reubird 佣金 %（全單）' : 'Reubird % (total)'}</span>
-                  <input type="number" step="0.1" value={config.commissionRules.reubird?.pct ?? 10}
-                    onChange={(e) => setConfig({ ...config, commissionRules: { ...config.commissionRules, reubird: { pct: parseFloat(e.target.value) || 0, base: 'total' } } })}
-                    className={`mt-1 w-full ${inputCls}`} />
-                </label>
-                <label className="block">
-                  <span className="text-xs font-semibold text-ink-soft">{locale === 'zh' ? 'Common Room 佣金 %（全單）' : 'Common Room % (total)'}</span>
-                  <input type="number" step="0.1" value={config.commissionRules.commonroom?.pct ?? 10}
-                    onChange={(e) => setConfig({ ...config, commissionRules: { ...config.commissionRules, commonroom: { pct: parseFloat(e.target.value) || 0, base: 'total' } } })}
-                    className={`mt-1 w-full ${inputCls}`} />
-                </label>
                 <label className="block">
                   <span className="text-xs font-semibold text-ink-soft">{locale === 'zh' ? 'KPay 費估算 %' : 'KPay fee est. %'}</span>
                   <input type="number" step="0.1" value={config.kpayFeePct}

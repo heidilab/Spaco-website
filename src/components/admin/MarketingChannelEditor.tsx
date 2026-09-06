@@ -1,16 +1,19 @@
 'use client';
 
 // Structured editor for the 來源渠道選項 (marketing-channel options)
-// customers pick from at 確認預訂「喺邊度得知我哋」.
+// customers pick from at 確認預訂「喺邊度得知我哋」 — plus, per Heidi's
+// 2026-09 spec, the COMMISSION settings for every channel live here too:
+// tick 需要佣金 on a row, give it a %, and the same rule appears in
+// 支出管理's rules panel (both read/write system/finance_config, so the
+// two screens can never disagree).
 //
-// Heidi's feedback (2026-09): the raw one-line-per-option textarea was
-// not usable — the editor must SHOW the options currently in effect
-// (including the built-in defaults when nothing is configured yet) and
-// let her add / edit / remove items row by row.
+// Broker/platform channels (行家 / Reubird / Common Room) are not
+// customer-facing options — they're picked in 後台直接落單 — but their
+// commission rules are managed here in a fixed section below the
+// editable rows.
 //
-// Storage stays the same line format (`id | 中文 | English`) in
-// site_content/settings → marketing_channels, so parseChannelConfig and
-// every consumer are untouched — this component is purely a nicer pen.
+// Channel-list storage stays the same line format (`id | 中文 | English`)
+// in site_content/settings → marketing_channels.
 
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -18,15 +21,25 @@ import { updateSiteContent } from '@/lib/content';
 import {
   getMarketingChannelOptions, OTHER_OPTION, type MarketingChannelOption,
 } from '@/lib/marketingChannels';
+import {
+  getFinanceConfig, saveFinanceConfig, type FinanceConfig,
+} from '@/lib/expenses';
+import type { CommissionRule } from '@/types';
 import { Megaphone, Plus, Trash2, Loader2, Check, RotateCcw } from 'lucide-react';
 
 interface Row extends MarketingChannelOption {
-  /** True for rows added this session — id not yet frozen. */
   isNew?: boolean;
 }
 
-/** Stable id for a new row: ascii names slugify (threads → threads);
- *  anything else gets a short random id. Existing ids NEVER change. */
+/** Broker/platform presets — commission editable here, names fixed. */
+const BROKER_PRESETS: { id: string; zh: string; en: string; defaultBase: CommissionRule['base'] }[] = [
+  { id: 'agent', zh: '行家', en: 'Agent', defaultBase: 'rent' },
+  { id: 'reubird', zh: 'Reubird', en: 'Reubird', defaultBase: 'total' },
+  { id: 'commonroom', zh: 'Common Room', en: 'Common Room', defaultBase: 'total' },
+];
+
+interface CommDraft { enabled: boolean; pct: string; base: CommissionRule['base'] }
+
 function makeId(zh: string, taken: Set<string>): string {
   const slug = zh.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   let candidate = /^[a-z0-9-]{2,30}$/.test(slug) ? slug : `ch-${Date.now().toString(36)}`;
@@ -39,6 +52,8 @@ function makeId(zh: string, taken: Set<string>): string {
 export default function MarketingChannelEditor({ locale }: { locale: 'zh' | 'en' }) {
   const { user } = useAuth();
   const [rows, setRows] = useState<Row[]>([]);
+  const [config, setConfig] = useState<FinanceConfig | null>(null);
+  const [comm, setComm] = useState<Record<string, CommDraft>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -47,8 +62,20 @@ export default function MarketingChannelEditor({ locale }: { locale: 'zh' | 'en'
   async function load() {
     setLoading(true);
     try {
-      const opts = await getMarketingChannelOptions();
+      const [opts, cfg] = await Promise.all([getMarketingChannelOptions(), getFinanceConfig()]);
       setRows(opts.filter((o) => o.id !== 'other'));
+      setConfig(cfg);
+      // Commission drafts for every known id (options + presets).
+      const drafts: Record<string, CommDraft> = {};
+      const seed = (id: string, defaultBase: CommissionRule['base']) => {
+        const rule = cfg.commissionRules[id];
+        drafts[id] = rule
+          ? { enabled: true, pct: String(rule.pct), base: rule.base }
+          : { enabled: false, pct: '10', base: defaultBase };
+      };
+      for (const o of opts) if (o.id !== 'other') seed(o.id, 'total');
+      for (const p of BROKER_PRESETS) seed(p.id, p.defaultBase);
+      setComm(drafts);
     } finally {
       setLoading(false);
     }
@@ -64,25 +91,85 @@ export default function MarketingChannelEditor({ locale }: { locale: 'zh' | 'en'
   function addRow() {
     setRows((prev) => [...prev, { id: '', zh: '', en: '', isNew: true }]);
   }
+  function setCommFor(id: string, patch: Partial<CommDraft>) {
+    setComm((prev) => ({ ...prev, [id]: { ...(prev[id] || { enabled: false, pct: '10', base: 'total' }), ...patch } }));
+  }
 
-  async function save(rowsToSave: Row[]) {
+  /** Commission control cluster shared by option rows and preset rows. */
+  function CommControls({ id }: { id: string }) {
+    const d = comm[id] || { enabled: false, pct: '10', base: 'total' as const };
+    return (
+      <div className="flex items-center gap-1.5 shrink-0">
+        <label className="flex items-center gap-1 text-[11px] text-ink-soft whitespace-nowrap cursor-pointer">
+          <input
+            type="checkbox"
+            checked={d.enabled}
+            onChange={(e) => setCommFor(id, { enabled: e.target.checked })}
+            className="w-3.5 h-3.5 accent-pink-500"
+          />
+          {locale === 'zh' ? '佣金' : 'Comm.'}
+        </label>
+        {d.enabled && (
+          <>
+            <input
+              type="number" step="0.1" min={0}
+              value={d.pct}
+              onChange={(e) => setCommFor(id, { pct: e.target.value })}
+              className="w-14 px-1.5 py-1 rounded-lg border border-charcoal/15 text-xs bg-white text-right"
+            />
+            <span className="text-[11px] text-ink-soft">%</span>
+            <select
+              value={d.base}
+              onChange={(e) => setCommFor(id, { base: e.target.value as CommissionRule['base'] })}
+              className="px-1.5 py-1 rounded-lg border border-charcoal/15 text-[11px] bg-white"
+            >
+              <option value="total">{locale === 'zh' ? '全單' : 'Total'}</option>
+              <option value="rent">{locale === 'zh' ? '只計場租' : 'Rent only'}</option>
+            </select>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  async function save() {
+    if (!config) return;
     setError(null);
     setSaving(true);
     try {
-      const taken = new Set(rowsToSave.map((r) => r.id).filter(Boolean));
-      const finalRows = rowsToSave
+      // 1. Channel option list → site_content (same line format as before).
+      const taken = new Set(rows.map((r) => r.id).filter(Boolean));
+      const idByIndex: string[] = [];
+      const finalRows = rows
         .filter((r) => r.zh.trim() || r.en.trim())
         .map((r) => {
           const zh = r.zh.trim() || r.en.trim();
           const en = r.en.trim() || zh;
           const id = r.id || makeId(en || zh, taken);
           taken.add(id);
+          idByIndex.push(id);
           return { id, zh, en };
         });
       const text = finalRows.map((r) => `${r.id} | ${r.zh} | ${r.en}`).join('\n');
       await updateSiteContent('settings', {
         marketing_channels: { zh: text, en: text },
       }, user?.email || 'admin');
+
+      // 2. Commission rules → system/finance_config. The map is rebuilt
+      //    from whatever is TICKED (options + broker presets), so both
+      //    this screen and 支出管理 always show the same rules.
+      const rules: Record<string, CommissionRule> = {};
+      const applyDraft = (id: string) => {
+        const d = comm[id];
+        if (d?.enabled) {
+          const pct = parseFloat(d.pct);
+          if (Number.isFinite(pct) && pct > 0) rules[id] = { pct, base: d.base };
+        }
+      };
+      for (const r of finalRows) applyDraft(r.id);
+      for (const p of BROKER_PRESETS) applyDraft(p.id);
+      await saveFinanceConfig({ ...config, commissionRules: rules });
+
       await load();
       setSavedFlash(true);
       setTimeout(() => setSavedFlash(false), 1800);
@@ -99,12 +186,12 @@ export default function MarketingChannelEditor({ locale }: { locale: 'zh' | 'en'
         <div>
           <h3 className="font-bold flex items-center gap-2">
             <Megaphone size={16} className="text-pink" />
-            {locale === 'zh' ? '來源渠道選項' : 'Marketing channel options'}
+            {locale === 'zh' ? '來源渠道選項 + 佣金' : 'Marketing channels + commission'}
           </h3>
           <p className="text-xs text-ink-soft mt-1 max-w-2xl leading-relaxed">
             {locale === 'zh'
-              ? '客人第一次成功預訂前，確認頁會問「喺邊度得知我哋」— 下面就係佢哋見到嘅選項。可以隨時改名、新增、刪除；「其他」選項會自動包含，唔使加。刪除選項唔影響舊訂單嘅記錄。'
-              : 'First-time customers pick from these options at checkout. Edit / add / remove freely; "Other" is always included automatically. Removing an option never affects past bookings.'}
+              ? '客人第一次成功預訂前會被問「喺邊度得知我哋」。每個渠道可以剔「佣金」並設定 %（只計場租＝食品飲品豁免）。佣金設定同「支出管理 → 規則設定」係同一份數據，兩邊改都得。'
+              : 'First-time customers pick from these. Tick 佣金 to set a commission % per channel (rent-only = F&B exempt). Same data as the Expenses rules panel — edit in either place.'}
           </p>
         </div>
       </div>
@@ -114,78 +201,80 @@ export default function MarketingChannelEditor({ locale }: { locale: 'zh' | 'en'
       ) : (
         <>
           <div className="mt-3 space-y-2">
-            {/* Header row */}
-            <div className="grid grid-cols-[1fr,1fr,90px,32px] gap-2 px-1">
-              <span className="text-[11px] font-semibold text-ink-soft uppercase tracking-wider">{locale === 'zh' ? '中文顯示名' : 'Chinese label'}</span>
-              <span className="text-[11px] font-semibold text-ink-soft uppercase tracking-wider">{locale === 'zh' ? '英文顯示名' : 'English label'}</span>
-              <span className="text-[11px] font-semibold text-ink-soft uppercase tracking-wider" title={locale === 'zh' ? '報表分組用，系統自動產生' : 'Report grouping key, auto-generated'}>ID</span>
+            <div className="grid grid-cols-[1fr,1fr,70px,minmax(180px,auto),32px] gap-2 px-1">
+              <span className="text-[11px] font-semibold text-ink-soft uppercase tracking-wider">{locale === 'zh' ? '中文顯示名' : 'Chinese'}</span>
+              <span className="text-[11px] font-semibold text-ink-soft uppercase tracking-wider">{locale === 'zh' ? '英文顯示名' : 'English'}</span>
+              <span className="text-[11px] font-semibold text-ink-soft uppercase tracking-wider">ID</span>
+              <span className="text-[11px] font-semibold text-ink-soft uppercase tracking-wider">{locale === 'zh' ? '佣金設定' : 'Commission'}</span>
               <span />
             </div>
             {rows.map((r, i) => (
-              <div key={r.id || `new-${i}`} className="grid grid-cols-[1fr,1fr,90px,32px] gap-2 items-center">
-                <input
-                  value={r.zh}
-                  onChange={(e) => updateRow(i, 'zh', e.target.value)}
+              <div key={r.id || `new-${i}`} className="grid grid-cols-[1fr,1fr,70px,minmax(180px,auto),32px] gap-2 items-center">
+                <input value={r.zh} onChange={(e) => updateRow(i, 'zh', e.target.value)}
                   placeholder={locale === 'zh' ? '例：小紅書' : 'e.g. 小紅書'}
-                  className="px-3 py-2 rounded-xl border-2 border-charcoal/15 bg-white text-sm"
-                />
-                <input
-                  value={r.en}
-                  onChange={(e) => updateRow(i, 'en', e.target.value)}
-                  placeholder={locale === 'zh' ? '例：RED（留空＝同中文）' : 'e.g. RED (blank = same as zh)'}
-                  className="px-3 py-2 rounded-xl border-2 border-charcoal/15 bg-white text-sm"
-                />
+                  className="px-3 py-2 rounded-xl border-2 border-charcoal/15 bg-white text-sm" />
+                <input value={r.en} onChange={(e) => updateRow(i, 'en', e.target.value)}
+                  placeholder={locale === 'zh' ? '留空＝同中文' : 'blank = same'}
+                  className="px-3 py-2 rounded-xl border-2 border-charcoal/15 bg-white text-sm" />
                 <span className="text-[10px] font-mono text-ink-soft truncate" title={r.id}>
-                  {r.id || (locale === 'zh' ? '儲存後產生' : 'auto on save')}
+                  {r.id || (locale === 'zh' ? '自動' : 'auto')}
                 </span>
-                <button
-                  type="button"
-                  onClick={() => removeRow(i)}
-                  className="w-8 h-8 rounded-lg hover:bg-rose-50 text-rose-400 hover:text-rose-600 flex items-center justify-center"
-                  title={locale === 'zh' ? '刪除' : 'Remove'}
-                >
+                {r.id
+                  ? <CommControls id={r.id} />
+                  : <span className="text-[10px] text-ink-soft">{locale === 'zh' ? '儲存後可設佣金' : 'Save first'}</span>}
+                <button type="button" onClick={() => removeRow(i)}
+                  className="w-8 h-8 rounded-lg hover:bg-rose-50 text-rose-400 hover:text-rose-600 flex items-center justify-center">
                   <Trash2 size={14} />
                 </button>
               </div>
             ))}
-            {/* The fixed 其他 row */}
-            <div className="grid grid-cols-[1fr,1fr,90px,32px] gap-2 items-center opacity-60">
+            {/* Fixed 其他 row */}
+            <div className="grid grid-cols-[1fr,1fr,70px,minmax(180px,auto),32px] gap-2 items-center opacity-60">
               <span className="px-3 py-2 rounded-xl border-2 border-dashed border-charcoal/10 bg-stone-50 text-sm">{OTHER_OPTION.zh}</span>
               <span className="px-3 py-2 rounded-xl border-2 border-dashed border-charcoal/10 bg-stone-50 text-sm">{OTHER_OPTION.en}</span>
               <span className="text-[10px] font-mono text-ink-soft">other</span>
-              <span className="text-[10px] text-ink-soft" title={locale === 'zh' ? '自動包含，客人揀「其他」要填文字說明' : 'Always included; customers picking Other must type details'}>🔒</span>
+              <span className="text-[10px] text-ink-soft">{locale === 'zh' ? '自動包含' : 'auto'}</span>
+              <span className="text-[10px] text-ink-soft">🔒</span>
+            </div>
+          </div>
+
+          {/* Broker / platform presets — commission only */}
+          <div className="mt-4 rounded-xl border border-charcoal/10 bg-white/50 p-3">
+            <p className="text-[11px] font-semibold text-ink-soft uppercase tracking-wider mb-2">
+              {locale === 'zh' ? '平台／行家渠道（只喺後台「直接落單」用，客人唔會見到）' : 'Broker / platform channels (admin direct bookings only)'}
+            </p>
+            <div className="space-y-1.5">
+              {BROKER_PRESETS.map((p) => (
+                <div key={p.id} className="flex items-center gap-3 text-sm">
+                  <span className="w-32">{p.zh}</span>
+                  <span className="text-[10px] font-mono text-ink-soft w-24">{p.id}</span>
+                  <CommControls id={p.id} />
+                </div>
+              ))}
             </div>
           </div>
 
           <div className="flex items-center gap-2 mt-4 flex-wrap">
-            <button
-              type="button"
-              onClick={addRow}
-              className="px-3 py-2 rounded-xl border border-charcoal/15 bg-white text-xs font-semibold hover:bg-cream flex items-center gap-1.5"
-            >
+            <button type="button" onClick={addRow}
+              className="px-3 py-2 rounded-xl border border-charcoal/15 bg-white text-xs font-semibold hover:bg-cream flex items-center gap-1.5">
               <Plus size={13} /> {locale === 'zh' ? '新增選項' : 'Add option'}
             </button>
-            <button
-              type="button"
-              onClick={() => save(rows)}
-              disabled={saving}
-              className="btn-primary text-xs flex items-center gap-1.5 disabled:opacity-50"
-            >
+            <button type="button" onClick={save} disabled={saving}
+              className="btn-primary text-xs flex items-center gap-1.5 disabled:opacity-50">
               {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-              {locale === 'zh' ? '儲存渠道選項' : 'Save options'}
+              {locale === 'zh' ? '儲存渠道 + 佣金設定' : 'Save channels + commission'}
             </button>
             <button
               type="button"
               onClick={async () => {
-                if (!window.confirm(locale === 'zh' ? '恢復預設選項（Google / Instagram / Facebook / 小紅書 / 朋友介紹）？' : 'Restore the default options?')) return;
+                if (!window.confirm(locale === 'zh' ? '恢復預設選項（Google / Instagram / Facebook / 小紅書 / 朋友介紹）？佣金規則不變。' : 'Restore the default options? Commission rules unchanged.')) return;
                 await updateSiteContent('settings', { marketing_channels: { zh: '', en: '' } }, user?.email || 'admin');
                 await load();
               }}
-              className="px-3 py-2 rounded-xl text-xs text-ink-soft hover:text-ink flex items-center gap-1"
-            >
-              <RotateCcw size={12} /> {locale === 'zh' ? '恢復預設' : 'Restore defaults'}
+              className="px-3 py-2 rounded-xl text-xs text-ink-soft hover:text-ink flex items-center gap-1">
+              <RotateCcw size={12} /> {locale === 'zh' ? '恢復預設' : 'Defaults'}
             </button>
-            {savedFlash && <span className="text-xs text-emerald-600 font-semibold">✓ {locale === 'zh' ? '已儲存，即時生效' : 'Saved — live immediately'}</span>}
+            {savedFlash && <span className="text-xs text-emerald-600 font-semibold">✓ {locale === 'zh' ? '已儲存，兩邊即時生效' : 'Saved'}</span>}
           </div>
           {error && <p className="text-xs text-rose-600 mt-2">{error}</p>}
         </>

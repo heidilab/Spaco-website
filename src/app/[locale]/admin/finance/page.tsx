@@ -137,14 +137,15 @@ export default function FinanceOverviewPage() {
   function categoryBreakdown(b: BookingRecord) {
     const rent = b.pricing.baseCharge || 0;
     const shisha = addOnRevenueForBooking(b, 'shisha');
-    const bbq = addOnRevenueForBooking(b, 'bbq-standard')
+    // Column semantics follow Heidi's Financial Master exactly:
+    // 「BBQ/ Hotpot」 is ONE combined column; 「到會」 is catering only.
+    const bbqHotpot = addOnRevenueForBooking(b, 'bbq-standard')
       + addOnRevenueForBooking(b, 'bbq-premium')
-      + addOnRevenueForBooking(b, 'bbq-grill');
-    // 到會 = hotpot / catering bucket (admin's choice based on the template label)
-    const cater = addOnRevenueForBooking(b, 'hotpot-standard')
+      + addOnRevenueForBooking(b, 'bbq-grill')
+      + addOnRevenueForBooking(b, 'hotpot-standard')
       + addOnRevenueForBooking(b, 'hotpot-seafood')
-      + addOnRevenueForBooking(b, 'hotpot-extra-soup')
-      + addOnRevenueForBooking(b, 'catering');
+      + addOnRevenueForBooking(b, 'hotpot-extra-soup');
+    const cater = addOnRevenueForBooking(b, 'catering');
     const drinks = addOnRevenueForBooking(b, 'drinks');
     // 加時/罰款 = admin-recorded rental top-ups (post-confirmation
     // extensions) + forfeited security deposit (penalties).
@@ -154,11 +155,11 @@ export default function FinanceOverviewPage() {
     // rentalAmount so addOnAmount may be undefined. Sum both.
     const topUpRental = (b.payments || [])
       .reduce((s, p) => s + (p.rentalAmount || 0) + (p.addOnAmount || 0), 0);
-    const initialRental = rent + shisha + bbq + cater + drinks; // baseline rental
+    const initialRental = rent + shisha + bbqHotpot + cater + drinks; // baseline
     const extensions = Math.max(0, topUpRental - initialRental); // only the delta
     const refund = b.depositRefund as { deductions?: { amount: number }[] } | undefined;
     const penalty = (refund?.deductions || []).reduce((s, d) => s + (d.amount || 0), 0);
-    return { rent, shisha, bbq, cater, drinks, extPenalty: extensions + penalty };
+    return { rent, shisha, bbqHotpot, cater, drinks, extPenalty: extensions + penalty };
   }
 
   /** Combine the synthetic initial payment with the audit log so each
@@ -201,30 +202,50 @@ export default function FinanceOverviewPage() {
       const { month, year } = rangeMonthYear(from);
       const titleText = ` ${month}- ${year}  Sales Record`;
 
-      // ─── SHEET 1: Sales Record (matches user's template) ───
-      const aoa: (string | number)[][] = [];
+      // ─── SHEET 1: her Financial Master monthly layout, 19 columns ───
+      // A Date | B Time | C ppl | D Rent | E BBQ/Hotpot | F Shisha |
+      // G 到會 | H Drinks | I 加時/罰款 | J Total | K TxDate | L Method |
+      // M Amount | N TxTotal | O Vendor | P Amount | Q Source |
+      // R Returned Deposit | S Remarks — CR+DR on ONE sheet, exactly like
+      // the (CWB)2026-2027 Financial Master reference file.
+      const cfg = await getFinanceConfig();
+      const monthsInRange: string[] = [];
+      {
+        let cur = from.slice(0, 7);
+        const last = to.slice(0, 7);
+        while (cur <= last && monthsInRange.length < 24) {
+          monthsInRange.push(cur);
+          const [yy, mm] = cur.split('-').map(Number);
+          cur = `${mm === 12 ? yy + 1 : yy}-${String(mm === 12 ? 1 : mm + 1).padStart(2, '0')}`;
+        }
+      }
+      const branchKeys = branch === 'all' ? ['cwb', 'sw', 'tst', 'wanchai'] : [branch];
+      const storedExpenses: Array<{ branchKey: string; item: string; amount: number; source: string }> = [];
+      for (const bk of branchKeys) {
+        for (const m of monthsInRange) {
+          try { storedExpenses.push(...await listExpenses(bk, m)); } catch { /* keep exporting */ }
+        }
+      }
 
-      // Row 0 — title spanning cols B..T (1..19)
-      aoa.push(['', titleText, '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']);
-      // Row 1 — CR / DR / Source / Returned Deposit / Remarks
-      aoa.push(['CR', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'DR', '', 'Source', 'Returned Deposit', 'Remarks', '']);
-      // Row 2 — Booking Details / Expenses
-      aoa.push(['Booking Details', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'Expenses', '', '', '', '', '']);
-      // Row 3 — sub-headers
-      aoa.push(['', '', '', '', 'Sales', '', '', '', '', '', '', 'Transaction', '', '', '', '', '', '', '', '', '']);
-      // Row 4 — column headers
+      const aoa: (string | number)[][] = [];
+      aoa.push(['', `${month}-${year} (${branchLabel(branch)}) Sales Record`]);
+      aoa.push(['CR', '', '', '', '', '', '', '', '', '', '', '', '', '', 'DR', '', 'Source', 'Returned Deposit', 'Remarks']);
+      aoa.push(['Booking Details', '', '', '', '', '', '', '', '', '', '', '', '', '', 'Expenses', '', '', '', '']);
+      aoa.push(['', '', '', 'Sales', '', '', '', '', '', '', 'Transaction', '', '', '', '', '', '', '', '']);
       aoa.push([
-        'Branches', 'Date', 'Time', 'ppl',
-        'Rent', 'Shisha', 'BBQ', '到會', 'Drinks', '加時/罰款', 'Total',
-        'Date', 'Payment Methods', 'Amount', 'Total',
+        'Date', 'Time', 'ppl',
+        'Rent', 'BBQ/ Hotpot', 'Shisha', '到會', 'Drinks', '加時/罰款', 'Total',
+        'Date', 'Payment Method', 'Amount', 'Total',
         'Vendor', 'Amount',
-        '', '', '', '',
+        '', '', '',
       ]);
 
       const bookings = filteredBookings();
       let totalSales = 0;
       let totalTransactions = 0;
       let totalRefund = 0;
+      let totalExpenses = 0;
+      const catSums = { rent: 0, bbqHotpot: 0, shisha: 0, cater: 0, drinks: 0, extPenalty: 0 };
 
       for (const b of bookings) {
         const cats = categoryBreakdown(b);
@@ -233,183 +254,161 @@ export default function FinanceOverviewPage() {
         const sumTx = txs.reduce((s, t) => s + t.amount, 0);
         totalSales += total;
         totalTransactions += sumTx;
+        catSums.rent += cats.rent; catSums.bbqHotpot += cats.bbqHotpot;
+        catSums.shisha += cats.shisha; catSums.cater += cats.cater;
+        catSums.drinks += cats.drinks; catSums.extPenalty += cats.extPenalty;
 
-        // Time display — include next-day marker for overnight bookings.
+        // Per-booking DR items — commission + estimated KPay fee, exactly
+        // the rows Heidi typed by hand into the Vendor/Amount columns.
+        const drItems: Array<{ vendor: string; amount: number }> = [];
+        const rule = cfg.commissionRules[b.marketingChannel || ''];
+        const comm = commissionForBooking(b, rule);
+        if (comm > 0) {
+          drItems.push({ vendor: channelDisplayLabel(b, 'zh'), amount: comm });
+          totalExpenses += comm;
+        }
+        const fee = estimatedKpayFee(b, cfg.kpayFeePct);
+        if (fee > 0) {
+          drItems.push({ vendor: 'Kpay', amount: fee });
+          totalExpenses += fee;
+        }
+
         const timeStr = b.endDate && b.endDate !== b.date
           ? `${b.startTime}-${b.endTime} (+1d)`
           : `${b.startTime}-${b.endTime}`;
-        // People — show adult+child split when present.
         const pplEquiv = (b.adultCount ?? b.guestCount) + 0.5 * (b.childCount ?? 0);
         const pplStr = (b.childCount ?? 0) > 0
           ? `${pplEquiv} (${b.adultCount ?? b.guestCount}A+${b.childCount}C)`
           : `${b.guestCount}`;
-        // Source — bilingual map for the marketing channel.
         const src = b.marketingChannel === 'loyalty_member'
           ? 'Loyalty Member'
           : b.marketingChannel
             ? channelDisplayLabel(b, 'zh') + (b.marketingChannelOther ? `: ${b.marketingChannelOther}` : '')
             : '';
-        // Returned deposit — only after settlement (depositRefund set)
         const refund = b.depositRefund as { amount?: number } | undefined;
         const refundAmt = refund?.amount ?? '';
         if (typeof refundAmt === 'number') totalRefund += refundAmt;
-        // Remarks — booking id short + payment notes joined
         const noteParts: string[] = [];
+        if (branch === 'all') noteParts.push(venueCode(b.venueId));
         noteParts.push(`#${b.id.slice(0, 8)}`);
         for (const p of (b.payments || [])) if (p.note) noteParts.push(`「${p.note}」`);
         if (b.endDate && b.endDate !== b.date) noteParts.push(`過夜→${b.endDate}`);
 
-        // One row per transaction; sales / expenses cols only on first row.
-        const rowCount = Math.max(1, txs.length);
+        const rowCount = Math.max(1, txs.length, drItems.length);
         for (let i = 0; i < rowCount; i++) {
           const first = i === 0;
           const t = txs[i];
+          const d = drItems[i];
           aoa.push([
-            first ? venueCode(b.venueId) : '',
             first ? b.date : '',
             first ? timeStr : '',
             first ? pplStr : '',
-            // Sales — only on first transaction row
             first ? cats.rent : '',
+            first ? cats.bbqHotpot : '',
             first ? cats.shisha : '',
-            first ? cats.bbq : '',
             first ? cats.cater : '',
             first ? cats.drinks : '',
             first ? cats.extPenalty : '',
             first ? total : '',
-            // Transaction (per row)
             t?.date || '',
             t ? methodLabel(t.method) : '',
             t?.amount ?? '',
-            // Total transactions only on last row
-            i === rowCount - 1 ? sumTx : '',
-            // Expenses cols — blank (not tracked yet)
-            '',
-            '',
-            // Right cols only on first row
+            first ? sumTx : '',
+            d?.vendor || '',
+            d?.amount ?? '',
             first ? src : '',
             first ? refundAmt : '',
             first ? noteParts.join(' ') : (t?.note || ''),
-            '',
           ]);
         }
       }
 
-      // Totals row at bottom
+      // Monthly stored expenses (recurring + one-off) — appended below the
+      // bookings in the Vendor/Amount columns, same as her sheet's tail.
+      for (const e of storedExpenses) {
+        const vendor = branch === 'all'
+          ? `[${venueCode(e.branchKey === 'sw' ? 'sw-a' : e.branchKey)}] ${e.item}`
+          : e.item;
+        aoa.push(['', '', '', '', '', '', '', '', '', '', '', '', '', '', vendor, e.amount, '', '', '']);
+        totalExpenses += e.amount;
+      }
+
+      // Footer — mirrors her layout: category sums row with Total
+      // Expenses + Total returned deposit, then Total Sales, then Profit.
+      const profit = totalSales - totalExpenses;
       aoa.push([]);
       aoa.push([
-        'TOTAL', '', '', '',
-        '', '', '', '', '', '', totalSales,
+        'TOTAL', '', '',
+        catSums.rent, catSums.bbqHotpot, catSums.shisha, catSums.cater, catSums.drinks, catSums.extPenalty, totalSales,
         '', '', '', totalTransactions,
-        '', '',
-        '', totalRefund, '', '',
+        'Total Expenses', totalExpenses,
+        'Total returned deposit', totalRefund, '',
       ]);
+      aoa.push(['', '', '', '', '', '', '', '', 'Total Sales Amount', totalSales, '', '', '', '', '', '', '', '', '']);
+      aoa.push(['', '', '', '', '', '', '', '', '', '', '', '', '', 'Profit :', profit, '', '', '', '']);
 
       const ws = XLSX.utils.aoa_to_sheet(aoa);
 
-      // Header merges to match the template
       ws['!merges'] = [
-        // Title spans B1..U1 (cols 1..20 inclusive)
-        { s: { r: 0, c: 1 }, e: { r: 0, c: 20 } },
-        // CR header spans A2..K2 (cols 0..10)
-        { s: { r: 1, c: 0 }, e: { r: 1, c: 10 } },
-        // Booking Details spans A3..K3
-        { s: { r: 2, c: 0 }, e: { r: 2, c: 10 } },
-        // First 4 cols of row 3 (Branches/Date/Time/ppl group header — empty)
-        { s: { r: 3, c: 0 }, e: { r: 3, c: 3 } },
-        // Sales (cols E..K)
-        { s: { r: 3, c: 4 }, e: { r: 3, c: 10 } },
-        // Transaction (cols L..O)
-        { s: { r: 3, c: 11 }, e: { r: 3, c: 14 } },
-        // DR (cols P..Q at row 2)
-        { s: { r: 1, c: 15 }, e: { r: 1, c: 16 } },
-        // Expenses (cols P..Q at row 3)
-        { s: { r: 2, c: 15 }, e: { r: 2, c: 16 } },
-        // Source spans R2..R5 (col 17, rows 1..4)
-        { s: { r: 1, c: 17 }, e: { r: 4, c: 17 } },
-        // Returned Deposit spans S2..S5 (col 18)
-        { s: { r: 1, c: 18 }, e: { r: 4, c: 18 } },
-        // Remarks spans T2..T5 (col 19)
-        { s: { r: 1, c: 19 }, e: { r: 4, c: 19 } },
+        { s: { r: 0, c: 1 }, e: { r: 0, c: 18 } },   // title
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 13 } },   // CR band
+        { s: { r: 2, c: 0 }, e: { r: 2, c: 13 } },   // Booking Details
+        { s: { r: 3, c: 0 }, e: { r: 3, c: 2 } },    // (Date/Time/ppl group)
+        { s: { r: 3, c: 3 }, e: { r: 3, c: 9 } },    // Sales
+        { s: { r: 3, c: 10 }, e: { r: 3, c: 13 } },  // Transaction
+        { s: { r: 1, c: 14 }, e: { r: 1, c: 15 } },  // DR
+        { s: { r: 2, c: 14 }, e: { r: 2, c: 15 } },  // Expenses
+        { s: { r: 1, c: 16 }, e: { r: 4, c: 16 } },  // Source
+        { s: { r: 1, c: 17 }, e: { r: 4, c: 17 } },  // Returned Deposit
+        { s: { r: 1, c: 18 }, e: { r: 4, c: 18 } },  // Remarks
       ];
 
-      // Column widths — based on content density
       ws['!cols'] = [
-        { wch: 10 }, // Branches
-        { wch: 12 }, // Date
-        { wch: 14 }, // Time
-        { wch: 12 }, // ppl
-        { wch: 10 }, // Rent
-        { wch: 10 }, // Shisha
-        { wch: 10 }, // BBQ
-        { wch: 10 }, // 到會
-        { wch: 10 }, // Drinks
-        { wch: 12 }, // 加時/罰款
-        { wch: 12 }, // Total
-        { wch: 12 }, // Tx Date
-        { wch: 14 }, // Method
-        { wch: 12 }, // Amount
-        { wch: 12 }, // Total
-        { wch: 12 }, // Vendor
-        { wch: 10 }, // Amount
-        { wch: 22 }, // Source
-        { wch: 14 }, // Returned Deposit
-        { wch: 36 }, // Remarks
+        { wch: 12 }, { wch: 15 }, { wch: 12 },
+        { wch: 10 }, { wch: 11 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 11 }, { wch: 11 },
+        { wch: 12 }, { wch: 14 }, { wch: 11 }, { wch: 11 },
+        { wch: 18 }, { wch: 11 },
+        { wch: 20 }, { wch: 15 }, { wch: 34 },
       ];
 
       // ─── STYLE PASS ───
-      // Apply borders to every cell + section-specific colors to the
-      // header rows 0–4. xlsx-js-style needs each styled cell to exist
-      // (even if blank) and have an `s` property.
       const thin = { style: 'thin', color: { rgb: '999999' } };
       const border = { top: thin, bottom: thin, left: thin, right: thin };
+      const PINK = 'FFE0EA';
+      const PINK_LIGHT = 'FFF0F5';
+      const ORANGE = 'FFE0CC';
+      const PURPLE = 'EADBFD';
+      const GREEN = 'D9F2E6';
+      const GRAY = 'EAEAEA';
+      const BLUE = 'D9EAFE';
+      const TITLE_BG = 'FF6B9D';
+      const COL_HEADER_BG = 'F4F4F4';
 
-      // Section color palette for the 5-row header band.
-      const PINK = 'FFE0EA';        // CR / Booking Details band
-      const PINK_LIGHT = 'FFF0F5';  // Sales sub-band
-      const ORANGE = 'FFE0CC';      // DR / Expenses band
-      const PURPLE = 'EADBFD';      // Source col
-      const GREEN = 'D9F2E6';       // Returned Deposit col
-      const GRAY = 'EAEAEA';        // Remarks col
-      const BLUE = 'D9EAFE';        // Transaction sub-band
-      const TITLE_BG = 'FF6B9D';    // Title row (brand pink)
-      const COL_HEADER_BG = 'F4F4F4'; // Row 5 column headers
-
-      const HEADER_ROW = 4;         // 0-indexed: row index 4 == the column-name row
-      const lastCol = 20;           // we use cols A..U (0..20)
+      const HEADER_ROW = 4;
+      const lastCol = 18;
       const lastRow = aoa.length - 1;
 
-      // Helper to set or create a cell with style.
-      const setStyle = (r: number, c: number, s: object) => {
+      const setStyle = (r: number, c: number, st: object) => {
         const ref = XLSX.utils.encode_cell({ r, c });
         if (!ws[ref]) ws[ref] = { t: 's', v: '' };
-        ws[ref].s = { ...(ws[ref].s || {}), ...s };
+        ws[ref].s = { ...(ws[ref].s || {}), ...st };
       };
-
-      // Pick the fill color for a header cell based on its (row, col).
       const headerFill = (r: number, c: number): string | null => {
         if (r === 0) return TITLE_BG;
         if (r === HEADER_ROW) return COL_HEADER_BG;
-        // Rows 1–3 — section bands.
-        if (c >= 0 && c <= 10) return r === 3 ? PINK_LIGHT : PINK;       // CR / Booking Details / Sales
-        if (c === 11 || (c >= 11 && c <= 14)) return r === 3 ? BLUE : null; // Transaction (only on row 3)
-        if (c === 15 || c === 16) return ORANGE;                          // DR / Expenses / Vendor / Amount
-        if (c === 17) return PURPLE;                                      // Source
-        if (c === 18) return GREEN;                                       // Returned Deposit
-        if (c === 19) return GRAY;                                        // Remarks
+        if (c <= 9) return r === 3 ? PINK_LIGHT : PINK;
+        if (c >= 10 && c <= 13) return r === 3 ? BLUE : null;
+        if (c === 14 || c === 15) return ORANGE;
+        if (c === 16) return PURPLE;
+        if (c === 17) return GREEN;
+        if (c === 18) return GRAY;
         return null;
       };
-
-      // Style header rows (0..4) — bold, centered, colored fill, border.
       for (let r = 0; r <= HEADER_ROW; r++) {
         for (let c = 0; c <= lastCol; c++) {
           const fill = headerFill(r, c);
           const style: Record<string, unknown> = {
-            font: {
-              bold: true,
-              sz: r === 0 ? 16 : 11,
-              color: { rgb: r === 0 ? 'FFFFFF' : '1A1A1A' },
-            },
+            font: { bold: true, sz: r === 0 ? 16 : 11, color: { rgb: r === 0 ? 'FFFFFF' : '1A1A1A' } },
             alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
             border,
           };
@@ -417,39 +416,30 @@ export default function FinanceOverviewPage() {
           setStyle(r, c, style);
         }
       }
-
-      // Title row — bump height so the bigger font breathes.
       ws['!rows'] = ws['!rows'] || [];
       ws['!rows'][0] = { hpt: 28 };
       ws['!rows'][4] = { hpt: 24 };
-
-      // Style data rows (5..lastRow) — border only, default font.
       for (let r = HEADER_ROW + 1; r <= lastRow; r++) {
         for (let c = 0; c <= lastCol; c++) {
           const isBlankRow = aoa[r]?.every((v) => v === '' || v === undefined);
-          // Skip the spacer blank row that separates data and TOTAL.
           if (isBlankRow) continue;
-          // Detect the TOTAL row by its first cell.
-          const isTotalRow = aoa[r]?.[0] === 'TOTAL';
+          const isTotalRow = aoa[r]?.[0] === 'TOTAL' || aoa[r]?.[13] === 'Profit :' || aoa[r]?.[8] === 'Total Sales Amount';
           const style: Record<string, unknown> = {
             font: { sz: 11, bold: !!isTotalRow },
-            alignment: {
-              horizontal: c >= 4 && c <= 16 ? 'right' : 'left',
-              vertical: 'center',
-            },
+            alignment: { horizontal: c >= 3 && c <= 15 ? 'right' : 'left', vertical: 'center' },
             border,
           };
-          if (isTotalRow) {
-            style.fill = { patternType: 'solid', fgColor: { rgb: 'F4F4F4' } };
-          }
+          if (isTotalRow) style.fill = { patternType: 'solid', fgColor: { rgb: 'F4F4F4' } };
           setStyle(r, c, style);
         }
       }
 
       XLSX.utils.book_append_sheet(wb, ws, `${month}-${year}`);
 
-      // ─── SHEET 2: Summary (carry over from earlier) ───
-      const summary = [
+      // ─── SHEET 2: Summary ───
+      // Expenses + profit now live ON sheet 1 (her single-sheet format);
+      // the Summary sheet mirrors the headline totals.
+      const summary: (string | number)[][] = [
         ['Filter / 篩選', ''],
         ['Date / 日期', `${from} → ${to}`],
         ['Branch / 分店', branchLabel(branch)],
@@ -463,74 +453,9 @@ export default function FinanceOverviewPage() {
         ['Future Revenue / 未來預訂收入', result.futureRevenue],
         ['Future Bookings / 未來預訂數', result.futureBookingCount],
       ];
-      // Summary is appended AFTER the expenses block below so the
-      // expenses totals it pushes are included in the sheet.
-
-      // ─── SHEET: Expenses (Finance Phase 2) ───
-      // Stored rows (recurring + one-off) for every month × branch the
-      // filter touches, plus commissions / KPay fee estimates derived
-      // from the exported bookings — so the DR side finally ships in the
-      // same workbook as the CR side.
-      try {
-        const cfg = await getFinanceConfig();
-        const monthsInRange: string[] = [];
-        {
-          let cur = from.slice(0, 7);
-          const last = to.slice(0, 7);
-          while (cur <= last && monthsInRange.length < 24) {
-            monthsInRange.push(cur);
-            const [yy, mm] = cur.split('-').map(Number);
-            cur = `${mm === 12 ? yy + 1 : yy}-${String(mm === 12 ? 1 : mm + 1).padStart(2, '0')}`;
-          }
-        }
-        const branchKeys = branch === 'all' ? ['cwb', 'sw', 'tst', 'wanchai'] : [branch];
-        const stored: Array<{ branchKey: string; month: string; date: string; item: string; amount: number; source: string }> = [];
-        for (const bk of branchKeys) {
-          for (const m of monthsInRange) {
-            const rows = await listExpenses(bk, m);
-            stored.push(...rows);
-          }
-        }
-        const expAoa: (string | number)[][] = [
-          ['Expenses / 支出', '', '', '', ''],
-          ['Type / 類別', 'Branch / 分店', 'Date / 日期', 'Item / 項目', 'Amount / 金額'],
-        ];
-        let expTotal = 0;
-        for (const r of stored) {
-          expAoa.push([
-            r.source === 'recurring' ? '固定 Fixed' : '雜項 One-off',
-            branchLabel(r.branchKey), r.date, r.item, r.amount,
-          ]);
-          expTotal += r.amount;
-        }
-        for (const b of bookings) {
-          const rule = cfg.commissionRules[b.marketingChannel || ''];
-          const comm = commissionForBooking(b, rule);
-          if (comm > 0) {
-            expAoa.push(['佣金 Commission', venueCode(b.venueId), b.date,
-              `${channelDisplayLabel(b, 'zh')} · ${b.customerName || (b.id || '').slice(0, 8)}${typeof b.commissionOverride === 'number' ? '（手動）' : rule ? `（${rule.pct}% ${rule.base === 'rent' ? '場租' : '全單'}）` : ''}`,
-              comm]);
-            expTotal += comm;
-          }
-          const fee = estimatedKpayFee(b, cfg.kpayFeePct);
-          if (fee > 0) {
-            expAoa.push(['KPay費(估) Fee est.', venueCode(b.venueId), b.date,
-              `KPay ${cfg.kpayFeePct}%`, fee]);
-            expTotal += fee;
-          }
-        }
-        expAoa.push([]);
-        expAoa.push(['Total Expenses / 總支出', '', '', '', expTotal]);
-        expAoa.push(['Revenue − Expenses / 粗利', '', '', '', result.totalRevenue - expTotal]);
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(expAoa), 'Expenses');
-        // Also surface the two figures on the Summary sheet consumers
-        // scan first.
-        summary.push([]);
-        summary.push(['Total Expenses / 總支出', expTotal]);
-        summary.push(['Revenue − Expenses / 粗利', result.totalRevenue - expTotal]);
-      } catch (err) {
-        console.warn('[finance export] expenses sheet failed (non-fatal):', err);
-      }
+      summary.push([]);
+      summary.push(['Total Expenses / 總支出', totalExpenses]);
+      summary.push(['Profit / 利潤', profit]);
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'Summary');
 
       // ─── SHEET 3: Channel breakdown ───
@@ -740,7 +665,7 @@ export default function FinanceOverviewPage() {
             first ? pplStr : '',
             first ? (cats.rent || '') : '',
             first ? (cats.shisha || '') : '',
-            first ? (cats.bbq || '') : '',
+            first ? (cats.bbqHotpot || '') : '',
             first ? (cats.cater || '') : '',
             first ? (cats.drinks || '') : '',
             first ? (cats.extPenalty || '') : '',

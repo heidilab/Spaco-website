@@ -28,9 +28,13 @@ const allSidebarLinks: NavItem[] = [
   },
   { href: '/admin/calendar', icon: CalendarDays, label: { zh: '總日曆', en: 'Calendar' }, permission: 'calendar' },
   { href: '/admin/venues', icon: Store, label: { zh: '分店管理', en: 'Venues' }, permission: 'content' },
-  { href: '/admin/finance', icon: BarChart3, label: { zh: '財務總覽', en: 'Finance' }, permission: 'documents' },
-  { href: '/admin/expenses', icon: Wallet, label: { zh: '支出管理', en: 'Expenses' }, permission: 'documents' },
-  { href: '/admin/documents', icon: FileText, label: { zh: '單據管理', en: 'Documents' }, permission: 'documents' },
+  {
+    href: '/admin/finance', icon: BarChart3, label: { zh: '財務總覽', en: 'Finance' }, permission: 'documents',
+    children: [
+      { href: '/admin/expenses', icon: Wallet, label: { zh: '支出管理', en: 'Expenses' }, permission: 'documents' },
+      { href: '/admin/documents', icon: FileText, label: { zh: '單據管理', en: 'Documents' }, permission: 'documents' },
+    ],
+  },
   { href: '/admin/promo-codes', icon: Tag, label: { zh: '優惠碼', en: 'Promo Codes' }, permission: 'gcal' },
   {
     href: '/admin/content', icon: Image, label: { zh: '內容管理', en: 'Content' }, permission: 'content',
