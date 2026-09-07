@@ -865,18 +865,17 @@ export interface BonusTier {
   bonus: number;
 }
 
-/** Per-branch bonus setup: tiers + the CS teammates to notify. */
+/** Per-branch bonus setup. Notification recipients are NOT stored here:
+ *  the cron emails every current admin + CS account live via
+ *  getStaffNotificationRecipients(), so 員工管理 stays the single
+ *  roster (Heidi 2026-09-07). */
 export interface BranchBonusConfig {
   tiers: BonusTier[];
-  /** CS emails notified on 80%-progress and tier-achieved events. */
-  csEmails: string[];
 }
 
 /** system/bonus_config — admin-write, staff-read (Firestore rules). */
 export interface BonusConfig {
   branches: Record<string, BranchBonusConfig>;
-  /** Admins CC'd on every bonus notification. */
-  adminEmails: string[];
 }
 
 /** One party in a branch's monthly profit split (Finance Phase 3),

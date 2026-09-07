@@ -96,18 +96,7 @@ export default function BonusPage() {
   // ── Settings edits (drafts held locally, saved as one doc) ──
   function updateBranchTiers(bk: string, tiers: BonusTier[]) {
     if (!cfg) return;
-    setCfg({
-      ...cfg,
-      branches: { ...cfg.branches, [bk]: { tiers, csEmails: cfg.branches[bk]?.csEmails || [] } },
-    });
-  }
-  function updateBranchEmails(bk: string, raw: string) {
-    if (!cfg) return;
-    const csEmails = raw.split(/[,;\s]+/).map((e) => e.trim()).filter(Boolean);
-    setCfg({
-      ...cfg,
-      branches: { ...cfg.branches, [bk]: { tiers: cfg.branches[bk]?.tiers || [], csEmails } },
-    });
+    setCfg({ ...cfg, branches: { ...cfg.branches, [bk]: { tiers } } });
   }
   async function handleSave() {
     if (!cfg) return;
@@ -115,10 +104,8 @@ export default function BonusPage() {
     try {
       // Drop empty tiers so the cron never sees target-0 rows.
       const cleaned: BonusConfig = {
-        adminEmails: cfg.adminEmails.map((e) => e.trim()).filter(Boolean),
         branches: Object.fromEntries(Object.entries(cfg.branches).map(([bk, b]) => [bk, {
           tiers: sortedTiers((b.tiers || []).filter((t) => t.target > 0 && t.bonus > 0)),
-          csEmails: (b.csEmails || []).filter((e) => e.includes('@')),
         }])),
       };
       await saveBonusConfig(cleaned);
@@ -176,7 +163,7 @@ export default function BonusPage() {
             <div className="bg-white rounded-xl border p-5 space-y-5">
               <h2 className="font-semibold">{zh ? '目標與通知設定' : 'Targets & Notifications'}</h2>
               {BRANCHES.map((bk) => {
-                const b = cfg.branches[bk] || { tiers: [], csEmails: [] };
+                const b = cfg.branches[bk] || { tiers: [] };
                 return (
                   <div key={bk} className="border rounded-lg p-4 space-y-3">
                     <div className="font-medium">{BRANCH_LABELS[bk][locale]}</div>
@@ -206,31 +193,14 @@ export default function BonusPage() {
                     >
                       <Plus className="w-4 h-4" />{zh ? '加一層目標' : 'Add tier'}
                     </button>
-                    <div className="text-sm">
-                      <label className="text-gray-500 block mb-1">
-                        {zh ? 'CS 通知 Email（可多個，用逗號分隔）' : 'CS emails (comma-separated)'}
-                      </label>
-                      <input
-                        defaultValue={b.csEmails.join(', ')}
-                        onBlur={(e) => updateBranchEmails(bk, e.target.value)}
-                        placeholder="cs1@example.com, cs2@example.com"
-                        className="border rounded px-2 py-1.5 w-full"
-                      />
-                    </div>
                   </div>
                 );
               })}
-              <div className="text-sm">
-                <label className="text-gray-500 block mb-1">
-                  {zh ? 'Admin 通知 Email（所有分店嘅通知都會 CC）' : 'Admin emails (CC on every alert)'}
-                </label>
-                <input
-                  defaultValue={cfg.adminEmails.join(', ')}
-                  onBlur={(e) => setCfg({ ...cfg, adminEmails: e.target.value.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean) })}
-                  placeholder="admin@example.com"
-                  className="border rounded px-2 py-1.5 w-full"
-                />
-              </div>
+              <p className="text-xs text-gray-400">
+                {zh
+                  ? '📧 通知會自動發送俾員工管理入面所有 Admin 同 CS 帳戶，唔使喺度另外設定。'
+                  : '📧 Alerts go automatically to every Admin and CS account in Staff Management.'}
+              </p>
               <button onClick={handleSave} disabled={saving} className="btn-primary text-sm disabled:opacity-40">
                 {saving ? <Loader2 className="w-4 h-4 animate-spin inline" /> : (zh ? '儲存設定' : 'Save')}
               </button>

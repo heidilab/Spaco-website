@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { sendEmail, buildBonusProgressEmail, buildBonusAchievedEmail } from '@/lib/email';
+import { getStaffNotificationRecipients } from '@/lib/emailAutomations';
 import { countsForFinance, branchKey as branchKeyOf } from '@/lib/finance';
 import { evaluateBonus, sortedTiers } from '@/lib/bonusMath';
 import type { BookingRecord, BonusConfig } from '@/types';
@@ -52,6 +53,10 @@ export async function GET(request: NextRequest) {
   const BRANCH_NAMES: Record<string, string> = {
     cwb: '銅鑼灣店', sw: '上環店', tst: '尖沙咀店', wanchai: '灣仔店',
   };
+  // Recipients come from the live staff roster (admin + cs accounts in
+  // 員工管理) — nothing to configure on the bonus page (Heidi 2026-09-07).
+  const recipients = await getStaffNotificationRecipients();
+  if (recipients.length === 0) return NextResponse.json({ ok: true, skipped: 'no recipients' });
   const sent: string[] = [];
 
   for (const [bk, branchCfg] of branchEntries) {
@@ -65,12 +70,6 @@ export async function GET(request: NextRequest) {
     const state = (alertSnap.data() || {}) as { sent80?: number[]; sentAchieved?: number[] };
     const sent80 = new Set(state.sent80 || []);
     const sentAchieved = new Set(state.sentAchieved || []);
-    const recipients = Array.from(new Set([
-      ...(branchCfg.csEmails || []),
-      ...(cfg.adminEmails || []),
-    ].map((e) => e.trim()).filter((e) => e.includes('@'))));
-    if (recipients.length === 0) continue;
-
     let dirty = false;
 
     // Tier-achieved congratulations (one per tier, ever).

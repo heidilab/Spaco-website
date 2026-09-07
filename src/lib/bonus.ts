@@ -9,7 +9,6 @@ import type { BonusConfig } from '@/types';
 
 export const EMPTY_BONUS_CONFIG: BonusConfig = {
   branches: {},
-  adminEmails: [],
 };
 
 export async function getBonusConfig(): Promise<BonusConfig> {
@@ -17,10 +16,7 @@ export async function getBonusConfig(): Promise<BonusConfig> {
     const snap = await getDoc(doc(db, 'system', 'bonus_config'));
     if (!snap.exists()) return EMPTY_BONUS_CONFIG;
     const d = snap.data() as Partial<BonusConfig>;
-    return {
-      branches: d.branches || {},
-      adminEmails: d.adminEmails || [],
-    };
+    return { branches: d.branches || {} };
   } catch {
     return EMPTY_BONUS_CONFIG;
   }
