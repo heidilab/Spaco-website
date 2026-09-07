@@ -11,7 +11,7 @@ import {
   BookOpen, LogIn, Menu, X, Newspaper, Store,
 } from 'lucide-react';
 import AdminPushSetup from '@/components/admin/AdminPushSetup';
-import { Wallet, CalendarCheck } from 'lucide-react';
+import { Wallet, CalendarCheck, Award } from 'lucide-react';
 
 interface NavChild { href: string; icon: typeof LayoutDashboard; label: { zh: string; en: string }; permission: string | null }
 interface NavItem extends NavChild { children?: NavChild[] }
@@ -33,6 +33,7 @@ const allSidebarLinks: NavItem[] = [
     children: [
       { href: '/admin/expenses', icon: Wallet, label: { zh: '支出管理', en: 'Expenses' }, permission: 'documents' },
       { href: '/admin/month-close', icon: CalendarCheck, label: { zh: '月結', en: 'Month Close' }, permission: 'documents' },
+      { href: '/admin/bonus', icon: Award, label: { zh: 'CS 獎金', en: 'CS Bonus' }, permission: 'documents' },
       { href: '/admin/documents', icon: FileText, label: { zh: '單據管理', en: 'Documents' }, permission: 'documents' },
     ],
   },

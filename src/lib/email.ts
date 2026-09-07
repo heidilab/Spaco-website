@@ -11,7 +11,7 @@ import {
 } from './cateringMenu';
 
 interface EmailParams {
-  to: string;
+  to: string | string[];
   subject: string;
   html: string;
 }
@@ -68,7 +68,7 @@ export async function sendEmail({ to, subject, html }: EmailParams) {
     },
     body: JSON.stringify({
       from: `SPACO <${fromEmail}>`,
-      to: [to],
+      to: Array.isArray(to) ? to : [to],
       // Reply-To so customer replies reach a real inbox; gives the
       // email a "this is a real business, here's a way to reach us"
       // signal to spam filters too.
@@ -1096,6 +1096,89 @@ export function buildBalanceDueReminderEmail(params: {
           </a>
         </div>
 
+        ${emailFooter()}
+      </div>
+    `,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// CS sales-bonus notifications (獎金) — sent by /api/cron/bonus-check
+// to the branch's CS list + admins.
+// ─────────────────────────────────────────────────────────────
+
+/** 80%-progress nudge: the branch is closing in on its next tier. */
+export function buildBonusProgressEmail(params: {
+  branchName: string;
+  month: string;          // e.g. 2026-09
+  sales: number;
+  target: number;
+  bonus: number;
+  progressPct: number;
+}) {
+  const fmt = (n: number) => `$${n.toLocaleString('en-HK')}`;
+  const remaining = Math.max(0, params.target - params.sales);
+  return {
+    subject: `🔥 ${params.branchName}就嚟達標喇！仲差 ${fmt(remaining)} 就有獎金`,
+    html: `
+      <div style="font-family: ${EMAIL_FONT}; max-width: 600px; margin: 0 auto; background: ${EMAIL_BG}; padding: 40px 20px;">
+        ${emailHeader('獎金進度 · BONUS PROGRESS')}
+        <div style="background: white; padding: 32px; border-radius: 20px; margin-bottom: 16px;">
+          <p style="margin: 0 0 16px; font-size: 16px; color: ${EMAIL_INK};"><strong>${params.branchName}</strong> 加油！💪</p>
+          <p style="margin: 0 0 16px; color: #666; line-height: 1.7;">
+            ${params.month} 月度營業額已經去到 <strong>${fmt(params.sales)}</strong>，
+            達到目標 ${fmt(params.target)} 嘅 <strong>${params.progressPct.toFixed(0)}%</strong>！
+          </p>
+          <div style="background: #f3f4f6; border-radius: 999px; height: 14px; overflow: hidden; margin: 16px 0;">
+            <div style="background: linear-gradient(90deg, ${EMAIL_PINK}, #ff8fb3); width: ${Math.min(100, params.progressPct).toFixed(0)}%; height: 14px;"></div>
+          </div>
+          <div style="background: #FFF0F5; border-radius: 14px; padding: 18px 20px; margin: 20px 0;">
+            <p style="margin: 0; color: #444; font-size: 14px; line-height: 1.8;">
+              仲差 <strong style="color: ${EMAIL_PINK};">${fmt(remaining)}</strong> 就可以攞到
+              <strong style="color: ${EMAIL_PINK};">${fmt(params.bonus)}</strong> 獎金 — 繼續努力！🚀
+            </p>
+          </div>
+        </div>
+        ${emailFooter()}
+      </div>
+    `,
+  };
+}
+
+/** Tier-achieved congratulation: the bonus is secured. */
+export function buildBonusAchievedEmail(params: {
+  branchName: string;
+  month: string;
+  sales: number;
+  target: number;
+  bonus: number;
+  /** Total bonus accumulated this month across achieved tiers. */
+  totalBonus: number;
+  /** Next tier target, when one exists — keeps the momentum going. */
+  nextTarget?: number;
+}) {
+  const fmt = (n: number) => `$${n.toLocaleString('en-HK')}`;
+  return {
+    subject: `🎉 恭喜！${params.branchName}達標喇 — 獎金 ${fmt(params.bonus)} 到手`,
+    html: `
+      <div style="font-family: ${EMAIL_FONT}; max-width: 600px; margin: 0 auto; background: ${EMAIL_BG}; padding: 40px 20px;">
+        ${emailHeader('目標達成 · TARGET ACHIEVED')}
+        <div style="background: white; padding: 32px; border-radius: 20px; margin-bottom: 16px;">
+          <p style="margin: 0 0 16px; font-size: 16px; color: ${EMAIL_INK};">🎊 恭喜 <strong>${params.branchName}</strong> 全體同事！</p>
+          <p style="margin: 0 0 16px; color: #666; line-height: 1.7;">
+            ${params.month} 月度營業額 <strong>${fmt(params.sales)}</strong> 已經衝破目標 ${fmt(params.target)}，
+            今個月嘅獎金 <strong style="color: ${EMAIL_PINK};">${fmt(params.bonus)}</strong> 袋袋平安！
+          </p>
+          <div style="background: #FFF0F5; border-radius: 14px; padding: 18px 20px; margin: 20px 0; text-align: center;">
+            <p style="margin: 0 0 4px; font-size: 13px; color: ${EMAIL_PINK}; font-weight: 700; letter-spacing: 0.05em;">本月累計獎金</p>
+            <p style="margin: 0; font-size: 28px; font-weight: 800; color: ${EMAIL_INK};">${fmt(params.totalBonus)}</p>
+          </div>
+          ${params.nextTarget ? `
+          <p style="margin: 0; color: #666; line-height: 1.7;">
+            下一層目標係 <strong>${fmt(params.nextTarget)}</strong> — 乘勝追擊，仲有得加碼！🔥
+          </p>` : `
+          <p style="margin: 0; color: #666; line-height: 1.7;">今個月所有目標已經全部達成 — 勁！🏆</p>`}
+        </div>
         ${emailFooter()}
       </div>
     `,

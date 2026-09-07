@@ -858,6 +858,27 @@ export interface CommissionRule {
   base: 'rent' | 'total';
 }
 
+/** One sales-bonus tier (CS 獎金): reach `target` monthly sales →
+ *  earn `bonus`. Tiers are cumulative and evaluated ascending. */
+export interface BonusTier {
+  target: number;
+  bonus: number;
+}
+
+/** Per-branch bonus setup: tiers + the CS teammates to notify. */
+export interface BranchBonusConfig {
+  tiers: BonusTier[];
+  /** CS emails notified on 80%-progress and tier-achieved events. */
+  csEmails: string[];
+}
+
+/** system/bonus_config — admin-write, staff-read (Firestore rules). */
+export interface BonusConfig {
+  branches: Record<string, BranchBonusConfig>;
+  /** Admins CC'd on every bonus notification. */
+  adminEmails: string[];
+}
+
 /** One party in a branch's monthly profit split (Finance Phase 3),
  *  e.g. { name: 'Kenneth', pct: 50 }. */
 export interface ProfitSplitParty {
