@@ -40,7 +40,8 @@ function currentMonth(): string {
 export default function ExpensesPage() {
   const locale = useLocale() as 'zh' | 'en';
   const { user, hasPermission } = useAuth();
-  const canAccess = hasPermission('documents');
+  // Admin-only since 2026-09-07 — CS must not see expenses/close data.
+  const canAccess = hasPermission('staff');
   const isAdminRole = hasPermission('staff');
 
   const [branch, setBranch] = useState('cwb');

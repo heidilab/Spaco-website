@@ -40,7 +40,7 @@ export default function UtmLinkGeneratorPage() {
   const [campaign, setCampaign] = useState('');
   const [copied, setCopied] = useState(false);
 
-  if (!hasPermission('members')) {
+  if (!hasPermission('staff')) { // admin-only (Heidi 2026-09-07)
     return <div className="p-8 text-ink-soft">{locale === 'zh' ? '冇權限' : 'No permission'}</div>;
   }
 

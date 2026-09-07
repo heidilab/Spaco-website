@@ -39,7 +39,7 @@ export default function AdminTrafficPage() {
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const canAccess = hasPermission('members');
+  const canAccess = hasPermission('staff'); // admin-only (Heidi 2026-09-07)
 
   useEffect(() => {
     if (!canAccess) return;

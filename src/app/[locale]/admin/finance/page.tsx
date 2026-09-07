@@ -53,6 +53,8 @@ export default function FinanceOverviewPage() {
   const locale = useLocale() as 'zh' | 'en';
   const { hasPermission } = useAuth();
   const canAccess = hasPermission('documents');
+  // CS is view-only here: no filters, no exports (Heidi 2026-09-07).
+  const isAdminRole = hasPermission('staff');
 
   const [allBookings, setAllBookings] = useState<BookingRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -777,6 +779,7 @@ export default function FinanceOverviewPage() {
               : 'Filter by date / branch / acquisition channel. Includes future-booked revenue. Export to Excel / PDF.'}
           </p>
         </div>
+        {isAdminRole && (
         <div className="flex gap-2">
           <button onClick={handleExportExcel} disabled={exporting || loading} className="btn-primary flex items-center gap-2 disabled:opacity-40">
             {exporting ? <Loader2 size={14} className="animate-spin" /> : <FileSpreadsheet size={14} />}
@@ -787,9 +790,11 @@ export default function FinanceOverviewPage() {
             PDF
           </button>
         </div>
+        )}
       </div>
 
-      {/* Filters */}
+      {/* Filters — admin-only; CS sees the fixed default view */}
+      {isAdminRole && (
       <div className="glass-card p-5 mb-6">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div>
@@ -877,6 +882,7 @@ export default function FinanceOverviewPage() {
           ))}
         </div>
       </div>
+      )}
 
       {loading ? (
         <div className="glass-card p-10 text-center text-ink-soft">

@@ -31,8 +31,8 @@ const allSidebarLinks: NavItem[] = [
   {
     href: '/admin/finance', icon: BarChart3, label: { zh: '財務總覽', en: 'Finance' }, permission: 'documents',
     children: [
-      { href: '/admin/expenses', icon: Wallet, label: { zh: '支出管理', en: 'Expenses' }, permission: 'documents' },
-      { href: '/admin/month-close', icon: CalendarCheck, label: { zh: '月結', en: 'Month Close' }, permission: 'documents' },
+      { href: '/admin/expenses', icon: Wallet, label: { zh: '支出管理', en: 'Expenses' }, permission: 'staff' },
+      { href: '/admin/month-close', icon: CalendarCheck, label: { zh: '月結', en: 'Month Close' }, permission: 'staff' },
       { href: '/admin/bonus', icon: Award, label: { zh: 'CS 獎金', en: 'CS Bonus' }, permission: 'documents' },
       { href: '/admin/documents', icon: FileText, label: { zh: '單據管理', en: 'Documents' }, permission: 'documents' },
     ],
@@ -47,9 +47,9 @@ const allSidebarLinks: NavItem[] = [
     ],
   },
   {
-    href: '/admin/traffic', icon: BarChart3, label: { zh: '流量報表', en: 'Traffic' }, permission: 'members',
+    href: '/admin/traffic', icon: BarChart3, label: { zh: '流量報表', en: 'Traffic' }, permission: 'staff',
     children: [
-      { href: '/admin/utm-links', icon: Tag, label: { zh: '追蹤 Link 產生器', en: 'UTM Links' }, permission: 'members' },
+      { href: '/admin/utm-links', icon: Tag, label: { zh: '追蹤 Link 產生器', en: 'UTM Links' }, permission: 'staff' },
     ],
   },
   { href: '/admin/members', icon: Users, label: { zh: '會員管理', en: 'Members' }, permission: 'members' },
