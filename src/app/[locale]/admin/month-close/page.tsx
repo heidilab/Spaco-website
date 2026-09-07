@@ -70,6 +70,7 @@ interface MonthNumbers {
   sales: number;
   stored: number;
   commissions: number;
+  commissionByChannel: Record<string, number>;
   kpayFee: number;      // actual when reconciled, else estimate
   kpayIsActual: boolean;
   expenses: number;
@@ -159,6 +160,7 @@ export default function MonthClosePage() {
     let sales = 0, commissions = 0, kpayEst = 0;
     const channelSales: Record<string, number> = {};
     const channelCounts: Record<string, number> = {};
+    const commissionByChannel: Record<string, number> = {};
     for (const b of rows) {
       const total = b.pricing.subtotal || 0;
       sales += total;
@@ -166,7 +168,12 @@ export default function MonthClosePage() {
       cats.rent += c.rent; cats.bbqHotpot += c.bbqHotpot; cats.shisha += c.shisha;
       cats.cater += c.cater; cats.drinks += c.drinks; cats.extPenalty += c.extPenalty;
       if (config) {
-        commissions += commissionForBooking(b, config.commissionRules[b.marketingChannel || '']);
+        const comm = commissionForBooking(b, config.commissionRules[b.marketingChannel || '']);
+        commissions += comm;
+        if (comm > 0) {
+          const cch = b.marketingChannel || 'unknown';
+          commissionByChannel[cch] = (commissionByChannel[cch] || 0) + comm;
+        }
         kpayEst += estimatedKpayFee(b, config.kpayFeePct);
       }
       const ch = b.marketingChannel || 'unknown';
@@ -179,7 +186,7 @@ export default function MonthClosePage() {
     const stored = fyExpenses[m] || 0;
     const expenses = stored + commissions + kpayFee;
     return {
-      sales, stored, commissions, kpayFee, kpayIsActual,
+      sales, stored, commissions, commissionByChannel, kpayFee, kpayIsActual,
       expenses, profit: sales - expenses, count: rows.length,
       channelSales, channelCounts, cats,
     };
@@ -294,10 +301,36 @@ export default function MonthClosePage() {
       const [fyStartY] = months[0].split('-');
       const bl = BRANCH_LABELS[branch]?.en || branch.toUpperCase();
       const aoa: (string | number)[][] = [];
+
+      // Style bookkeeping — every cell's number format is recorded
+      // EXPLICITLY as rows are pushed. A previous column-position
+      // heuristic leaked '%' formats from the overview table into the
+      // JUL column of the tables below it (Heidi 2026-09-07).
+      const fmts = new Map<string, 'money' | 'pct' | 'int'>();
+      const headerRows = new Set<number>();
+      const totalRows = new Set<number>();
+      const tableRanges: Array<{ r1: number; r2: number; c2: number }> = [];
+      const merges: Array<{ s: { r: number; c: number }; e: { r: number; c: number } }> = [];
+      const mark = (r: number, cols: number[], f: 'money' | 'pct' | 'int') => {
+        for (const c of cols) fmts.set(`${r}:${c}`, f);
+      };
+
+      // ── Table 1: FY overview ──
       aoa.push([`${fyStartY}-${Number(fyStartY) + 1} Financial Year (${bl})`]);
       aoa.push([]);
+      const t1Start = aoa.length;
+      headerRows.add(aoa.length);
       aoa.push(['', 'Total Sales', 'Total Expenses', 'Profit', 'GP', 'Number of Booking', 'Average sales of each booking', 'Reubird', '', '行家', '', 'CommonRoom', '']);
+      headerRows.add(aoa.length);
       aoa.push(['', '', '', '', '', '', '', 'Sales', '%', 'Sales', '%', 'Sales', '%']);
+      // channel bands span two columns; left columns span both header rows
+      merges.push(
+        { s: { r: t1Start, c: 7 }, e: { r: t1Start, c: 8 } },
+        { s: { r: t1Start, c: 9 }, e: { r: t1Start, c: 10 } },
+        { s: { r: t1Start, c: 11 }, e: { r: t1Start, c: 12 } },
+        ...[0, 1, 2, 3, 4, 5, 6].map((c) => ({ s: { r: t1Start, c }, e: { r: t1Start + 1, c } })),
+      );
+      const MONEY = 'money' as const, PCT = 'pct' as const, INT = 'int' as const;
       const tot = { sales: 0, expenses: 0, profit: 0, count: 0, reubird: 0, agent: 0, commonroom: 0 };
       for (const { m, n } of fy) {
         const reubird = n.channelSales['reubird'] || 0;
@@ -305,6 +338,8 @@ export default function MonthClosePage() {
         const commonroom = n.channelSales['commonroom'] || 0;
         tot.sales += n.sales; tot.expenses += n.expenses; tot.profit += n.profit; tot.count += n.count;
         tot.reubird += reubird; tot.agent += agent; tot.commonroom += commonroom;
+        const r = aoa.length;
+        mark(r, [1, 2, 3, 6, 7, 9, 11], MONEY); mark(r, [4, 8, 10, 12], PCT); mark(r, [5], INT);
         aoa.push([
           monthLabel(m),
           n.sales || '', n.expenses || '', n.profit || '',
@@ -315,73 +350,151 @@ export default function MonthClosePage() {
           commonroom || '', n.sales ? commonroom / n.sales : '',
         ]);
       }
-      aoa.push([
-        'Total :', tot.sales, tot.expenses, tot.profit,
-        tot.sales ? tot.profit / tot.sales : '',
-        tot.count, tot.count ? tot.sales / tot.count : '',
-        tot.reubird, tot.sales ? tot.reubird / tot.sales : '',
-        tot.agent, tot.sales ? tot.agent / tot.sales : '',
-        tot.commonroom, tot.sales ? tot.commonroom / tot.sales : '',
-      ]);
+      {
+        const r = aoa.length;
+        totalRows.add(r);
+        mark(r, [1, 2, 3, 6, 7, 9, 11], MONEY); mark(r, [4, 8, 10, 12], PCT); mark(r, [5], INT);
+        aoa.push([
+          'Total :', tot.sales, tot.expenses, tot.profit,
+          tot.sales ? tot.profit / tot.sales : '',
+          tot.count, tot.count ? tot.sales / tot.count : '',
+          tot.reubird, tot.sales ? tot.reubird / tot.sales : '',
+          tot.agent, tot.sales ? tot.agent / tot.sales : '',
+          tot.commonroom, tot.sales ? tot.commonroom / tot.sales : '',
+        ]);
+      }
+      tableRanges.push({ r1: t1Start, r2: aoa.length - 1, c2: 12 });
 
-      // Split payouts per month — one column block per party.
+      // ── Table 2: profit-split payouts per month ──
       aoa.push([]);
       const partyNames = Array.from(new Set(fy.flatMap(({ m }) => {
         const c = fyCloses[m];
         const sp = c?.splits?.length ? c.splits : (config?.profitSplits[branch] || []);
         return sp.map((p) => p.name);
       })));
+      const t2Start = aoa.length;
+      headerRows.add(aoa.length);
       aoa.push(['Profit Split', ...partyNames]);
+      const partyTotals = partyNames.map(() => 0);
       for (const { m, n } of fy) {
         const c = fyCloses[m];
         const sp = c?.splits?.length ? c!.splits! : (config?.profitSplits[branch] || []);
         const rowAmounts = splitAmounts(n.profit, sp);
+        const r = aoa.length;
+        mark(r, partyNames.map((_, i) => i + 1), MONEY);
         aoa.push([
           monthLabel(m),
-          ...partyNames.map((name) => {
+          ...partyNames.map((name, i) => {
             const hit = rowAmounts.find((x) => x.name === name);
-            return hit && n.sales ? hit.amount : '';
+            if (!hit || !n.sales) return '';
+            partyTotals[i] += hit.amount;
+            return hit.amount;
           }),
         ]);
       }
+      {
+        const r = aoa.length;
+        totalRows.add(r);
+        mark(r, partyNames.map((_, i) => i + 1), MONEY);
+        aoa.push(['Total :', ...partyTotals]);
+      }
+      tableRanges.push({ r1: t2Start, r2: aoa.length - 1, c2: partyNames.length });
 
-      // Sales income proportion — category rows × month columns.
+      // ── Table 3: commission paid per channel per month (行家 /
+      // Reubird / CommonRoom …) — the section her Master keeps at H24. ──
       aoa.push([]);
+      const COMM_LABELS: Record<string, string> = { reubird: 'Reubird', agent: '行家', commonroom: 'CommonRoom' };
+      const commChannels = Array.from(new Set([
+        ...Object.keys(config?.commissionRules || {}),
+        ...fy.flatMap(({ n }) => Object.keys(n.commissionByChannel)),
+      ]));
+      const t3Start = aoa.length;
+      headerRows.add(aoa.length);
+      aoa.push(['Commission 佣金', ...commChannels.map((c) => COMM_LABELS[c] || c), 'Total']);
+      const commTotals = commChannels.map(() => 0);
+      let commGrand = 0;
+      for (const { m, n } of fy) {
+        const r = aoa.length;
+        mark(r, [...commChannels.map((_, i) => i + 1), commChannels.length + 1], MONEY);
+        let rowSum = 0;
+        const cells = commChannels.map((c, i) => {
+          const v = n.commissionByChannel[c] || 0;
+          commTotals[i] += v; rowSum += v;
+          return v || '';
+        });
+        commGrand += rowSum;
+        aoa.push([monthLabel(m), ...cells, rowSum || '']);
+      }
+      {
+        const r = aoa.length;
+        totalRows.add(r);
+        mark(r, [...commChannels.map((_, i) => i + 1), commChannels.length + 1], MONEY);
+        aoa.push(['Total :', ...commTotals, commGrand]);
+      }
+      tableRanges.push({ r1: t3Start, r2: aoa.length - 1, c2: commChannels.length + 1 });
+
+      // ── Table 4: sales income proportion (category × month) ──
+      aoa.push([]);
+      const t4Start = aoa.length;
+      headerRows.add(aoa.length);
       aoa.push([`${bl} Sales Income Proportion`, ...months.map(monthLabel)]);
       const catKeys: Array<[keyof MonthNumbers['cats'], string]> = [
         ['rent', 'Rent'], ['bbqHotpot', 'BBQ/Hotpot'], ['shisha', 'Shisha'],
         ['cater', '到會'], ['drinks', 'Drinks'], ['extPenalty', '加時/罰款'],
       ];
       for (const [k, label] of catKeys) {
+        const r = aoa.length;
+        mark(r, months.map((_, i) => i + 1), MONEY);
         aoa.push([label, ...fy.map(({ n }) => n.cats[k] || '')]);
       }
+      tableRanges.push({ r1: t4Start, r2: aoa.length - 1, c2: months.length });
 
-      // Guest sources — channel booking counts × months.
+      // ── Table 5: guest sources (booking counts × month) ──
       aoa.push([]);
       const chIds = Array.from(new Set(fy.flatMap(({ n }) => Object.keys(n.channelCounts))));
+      const t5Start = aoa.length;
+      headerRows.add(aoa.length);
       aoa.push([`${bl} Guest Sources`, ...months.map(monthLabel)]);
       for (const ch of chIds) {
+        const r = aoa.length;
+        mark(r, months.map((_, i) => i + 1), INT);
         aoa.push([ch, ...fy.map(({ n }) => n.channelCounts[ch] || '')]);
       }
+      tableRanges.push({ r1: t5Start, r2: aoa.length - 1, c2: months.length });
+
+      // Pad every row to 13 columns so blank cells exist for borders.
+      const WIDTH = 13;
+      for (const row of aoa) while (row.length < WIDTH) row.push('');
 
       const ws = XLSX.utils.aoa_to_sheet(aoa);
-      ws['!cols'] = [{ wch: 14 }, ...Array.from({ length: 13 }, () => ({ wch: 12 }))];
-      // Light styling: bold title + header rows, $ formats on money cells.
+      ws['!merges'] = merges;
+      ws['!cols'] = [{ wch: 22 }, ...Array.from({ length: WIDTH - 1 }, () => ({ wch: 13 }))];
+
+      const thin = { style: 'thin', color: { rgb: 'B7B7B7' } };
+      const inTable = (r: number, c: number) =>
+        tableRanges.some((t) => r >= t.r1 && r <= t.r2 && c <= t.c2);
       const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
       for (let r = range.s.r; r <= range.e.r; r++) {
         for (let c = range.s.c; c <= range.e.c; c++) {
           const addr = XLSX.utils.encode_cell({ r, c });
           const cell = ws[addr];
           if (!cell) continue;
-          cell.s = {
-            font: { bold: r === 0 || r === 2 || r === 3 || String(aoa[r]?.[0] || '').startsWith('Total') },
-            alignment: { horizontal: 'center', vertical: 'center' },
+          const isHeader = headerRows.has(r);
+          const isTotal = totalRows.has(r);
+          const style: Record<string, unknown> = {
+            alignment: { horizontal: c === 0 && r >= 1 && !isHeader ? 'left' : 'center', vertical: 'center' },
+            font: { bold: r === 0 || isHeader || isTotal, sz: r === 0 ? 14 : 11 },
           };
+          if (inTable(r, c)) style.border = { top: thin, bottom: thin, left: thin, right: thin };
+          if (isHeader) (style as { fill?: unknown }).fill = { fgColor: { rgb: 'D9E1F2' } };
+          if (isTotal) (style as { fill?: unknown }).fill = { fgColor: { rgb: 'FFF2CC' } };
           if (typeof cell.v === 'number') {
-            const isPct = aoa[3]?.[c] === '%' || aoa[2]?.[c] === 'GP';
-            if (isPct) cell.s.numFmt = '0.0%';
-            else if (cell.v > 200) cell.s.numFmt = Number.isInteger(cell.v) ? '"$"#,##0' : '"$"#,##0.00';
+            const f = fmts.get(`${r}:${c}`);
+            if (f === 'pct') (style as { numFmt?: string }).numFmt = '0.0%';
+            else if (f === 'int') (style as { numFmt?: string }).numFmt = '#,##0';
+            else if (f === 'money') (style as { numFmt?: string }).numFmt = Number.isInteger(cell.v) ? '"$"#,##0' : '"$"#,##0.00';
           }
+          cell.s = style;
         }
       }
       XLSX.utils.book_append_sheet(wb, ws, 'Master');
