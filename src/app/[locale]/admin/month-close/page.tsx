@@ -23,7 +23,7 @@ import { branchKey as branchKeyOf, countsForFinance, salesCategoryBreakdown } fr
 import { listExpenses, getFinanceConfig, saveFinanceConfig, type FinanceConfig } from '@/lib/expenses';
 import { commissionForBooking, estimatedKpayFee, splitAmounts } from '@/lib/bookingMoney';
 import { getMonthClose, saveMonthClose } from '@/lib/monthClose';
-import { parseKpayStatement, type KpayStatementSummary } from '@/lib/kpayStatement';
+import { parseKpayStatement, bookingIdPrefixFromOrderRef, type KpayStatementSummary, type KpayStatementTxn } from '@/lib/kpayStatement';
 import type { BookingRecord, MonthCloseRecord, ProfitSplitParty } from '@/types';
 import {
   CalendarCheck, Loader2, Lock, Unlock, Upload, Plus, Trash2,
@@ -105,7 +105,17 @@ export default function MonthClosePage() {
   // Splits being edited for THIS month.
   const [splits, setSplits] = useState<ProfitSplitParty[]>([]);
   // KPay statement upload preview (before applying).
-  const [stmtPreview, setStmtPreview] = useState<(KpayStatementSummary & { fileName: string }) | null>(null);
+  interface StmtPreview {
+    summary: KpayStatementSummary;
+    fileName: string;
+    /** Per-branch fee split matched via booking ids in 外部訂單號. */
+    byBranch: Record<string, { count: number; gross: number; fee: number }>;
+    unmatched: KpayStatementTxn[];
+    /** True when no per-txn rows were found — the whole fee then goes to
+     *  the currently selected branch (old single-branch behavior). */
+    singleBranch: boolean;
+  }
+  const [stmtPreview, setStmtPreview] = useState<StmtPreview | null>(null);
   const [stmtError, setStmtError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
 
@@ -236,7 +246,31 @@ export default function MonthClosePage() {
           : 'Could not recognize this statement format.');
         return;
       }
-      setStmtPreview({ ...summary, fileName: file.name });
+      // The ONLINE merchant account covers ALL branches, so the fee is
+      // split per branch by matching each row's 外部訂單號
+      // (`B<bookingId12>_P<epoch>`) back to its booking (Heidi's pick,
+      // 2026-09-07). Without per-txn rows, everything lands on the
+      // currently selected branch as before.
+      const byBranch: Record<string, { count: number; gross: number; fee: number }> = {};
+      const unmatched: KpayStatementTxn[] = [];
+      const txs = summary.transactions || [];
+      for (const t of txs) {
+        const prefix = bookingIdPrefixFromOrderRef(t.orderRef);
+        const bk = prefix ? allBookings.find((b) => b.id.startsWith(prefix)) : undefined;
+        if (!bk) { unmatched.push(t); continue; }
+        const key = branchKeyOf(bk.venueId);
+        const slot = byBranch[key] || (byBranch[key] = { count: 0, gross: 0, fee: 0 });
+        slot.count++; slot.gross += t.amount; slot.fee += t.fee;
+      }
+      const singleBranch = txs.length === 0;
+      if (singleBranch) {
+        byBranch[branch] = { count: summary.rowCount, gross: summary.gross, fee: summary.fee };
+      }
+      for (const slot of Object.values(byBranch)) {
+        slot.gross = Math.round(slot.gross * 100) / 100;
+        slot.fee = Math.round(slot.fee * 100) / 100;
+      }
+      setStmtPreview({ summary, fileName: file.name, byBranch, unmatched, singleBranch });
     } catch {
       setStmtError(locale === 'zh' ? '讀取檔案失敗' : 'Failed to read file');
     }
@@ -244,18 +278,21 @@ export default function MonthClosePage() {
 
   async function applyStatement() {
     if (!stmtPreview) return;
-    await saveMonthClose(branch, month, {
-      kpayActualFee: stmtPreview.fee,
-      kpayStatement: {
-        fileName: stmtPreview.fileName,
-        rowCount: stmtPreview.rowCount,
-        gross: stmtPreview.gross,
-        fee: stmtPreview.fee,
-        net: stmtPreview.net,
-      },
-    });
+    for (const [bk, slot] of Object.entries(stmtPreview.byBranch)) {
+      if (slot.fee <= 0) continue;
+      await saveMonthClose(bk, month, {
+        kpayActualFee: slot.fee,
+        kpayStatement: {
+          fileName: stmtPreview.fileName,
+          rowCount: slot.count,
+          gross: slot.gross,
+          fee: slot.fee,
+          net: Math.round((slot.gross - slot.fee) * 100) / 100,
+        },
+      });
+    }
     setStmtPreview(null);
-    say(locale === 'zh' ? '已套用實際 KPay 手續費' : 'Actual KPay fee applied');
+    say(locale === 'zh' ? '已套用實際 KPay 手續費（已拆分到各分店）' : 'Actual KPay fees applied per branch');
     load();
   }
 
@@ -708,16 +745,66 @@ export default function MonthClosePage() {
                   <div className="border rounded-lg p-3 bg-gray-50 space-y-2">
                     <div className="font-medium">{stmtPreview.fileName}</div>
                     <div className="text-xs text-gray-600">
-                      {stmtPreview.rowCount} {zh ? '筆交易' : 'transactions'} ·
-                      {' '}{zh ? '總額' : 'Gross'} ${fmt(stmtPreview.gross)} ·
-                      {' '}<b>{zh ? '手續費' : 'Fee'} ${fmt(stmtPreview.fee)}</b> ·
-                      {' '}{zh ? '淨結算' : 'Net'} ${fmt(stmtPreview.net)}
+                      {stmtPreview.summary.rowCount} {zh ? '筆交易' : 'transactions'} ·
+                      {' '}{zh ? '總額' : 'Gross'} ${fmt(stmtPreview.summary.gross)} ·
+                      {' '}<b>{zh ? '手續費' : 'Fee'} ${fmt(stmtPreview.summary.fee)}</b> ·
+                      {' '}{zh ? '淨結算' : 'Net'} ${fmt(stmtPreview.summary.net)}
                     </div>
+                    {stmtPreview.summary.statementMonth && stmtPreview.summary.statementMonth !== month && (
+                      <div className="text-xs text-red-600 font-medium">
+                        ⚠️ {zh
+                          ? `呢份 statement 係 ${monthLabel(stmtPreview.summary.statementMonth)}，但你而家揀緊 ${monthLabel(month)} — 套用前請確認月份啱。`
+                          : `Statement is for ${monthLabel(stmtPreview.summary.statementMonth)} but ${monthLabel(month)} is selected.`}
+                      </div>
+                    )}
+                    {stmtPreview.singleBranch ? (
+                      <div className="text-xs text-amber-600">
+                        {zh
+                          ? `呢份檔案冇逐筆明細，成筆手續費會入落 ${BRANCH_LABELS[branch][locale]}。`
+                          : `No per-transaction rows — the whole fee goes to ${BRANCH_LABELS[branch][locale]}.`}
+                      </div>
+                    ) : (
+                      <table className="text-xs w-full max-w-md">
+                        <thead>
+                          <tr className="text-gray-500 border-b">
+                            <th className="text-left py-1">{zh ? '分店' : 'Branch'}</th>
+                            <th className="text-right">{zh ? '筆數' : 'Txns'}</th>
+                            <th className="text-right">{zh ? '金額' : 'Gross'}</th>
+                            <th className="text-right">{zh ? '手續費' : 'Fee'}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(stmtPreview.byBranch).map(([bk, slot]) => (
+                            <tr key={bk} className="border-b last:border-0">
+                              <td className="py-1">{BRANCH_LABELS[bk]?.[locale] || bk}</td>
+                              <td className="text-right">{slot.count}</td>
+                              <td className="text-right">${fmt(slot.gross)}</td>
+                              <td className="text-right font-semibold">${fmt(slot.fee)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                    {stmtPreview.unmatched.length > 0 && (
+                      <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+                        ⚠️ {zh
+                          ? `${stmtPreview.unmatched.length} 筆交易對唔到訂單（唔會自動套用，請人手覆核）：`
+                          : `${stmtPreview.unmatched.length} transactions could not be matched to bookings (not applied):`}
+                        <ul className="mt-1 space-y-0.5">
+                          {stmtPreview.unmatched.slice(0, 8).map((t, i) => (
+                            <li key={i} className="font-mono">{t.orderRef || '—'} · ${fmt(t.amount)} ({zh ? '費' : 'fee'} ${fmt(t.fee)})</li>
+                          ))}
+                          {stmtPreview.unmatched.length > 8 && <li>… +{stmtPreview.unmatched.length - 8}</li>}
+                        </ul>
+                      </div>
+                    )}
                     <div className="text-xs text-gray-400">
-                      {zh ? '認到嘅欄位' : 'Matched columns'}: {[stmtPreview.matched.gross, stmtPreview.matched.fee, stmtPreview.matched.net].filter(Boolean).join(' / ') || '—'}
+                      {zh ? '認到嘅欄位' : 'Matched columns'}: {[stmtPreview.summary.matched.gross, stmtPreview.summary.matched.fee, stmtPreview.summary.matched.net].filter(Boolean).join(' / ') || '—'}
                     </div>
                     <button onClick={applyStatement} className="btn-primary text-sm">
-                      {zh ? '確認套用' : 'Apply'}
+                      {stmtPreview.singleBranch
+                        ? (zh ? '確認套用' : 'Apply')
+                        : (zh ? '確認套用（自動拆分到各分店）' : 'Apply (split per branch)')}
                     </button>
                   </div>
                 )}

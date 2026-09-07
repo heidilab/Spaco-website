@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseKpayStatement } from './kpayStatement';
+import { parseKpayStatement, bookingIdPrefixFromOrderRef } from './kpayStatement';
 import { splitAmounts } from './bookingMoney';
 
 describe('parseKpayStatement — real KPay layout (AUG-2026 statement)', () => {
@@ -53,6 +53,30 @@ describe('parseKpayStatement — real KPay layout (AUG-2026 statement)', () => {
   it('never mistakes 16-digit order ids for money', () => {
     const s = parseKpayStatement(realShape as unknown[][])!;
     expect(s.gross).toBeLessThan(1e6);
+  });
+
+  it('extracts per-transaction rows with 外部訂單號 for branch splitting', () => {
+    const s = parseKpayStatement(realShape as unknown[][])!;
+    expect(s.transactions).toHaveLength(3);
+    expect(s.transactions![0]).toEqual({ orderRef: 'B4qK_P1', amount: 9250, fee: 138.75 });
+  });
+
+  it('reads the statement month from the merchant block', () => {
+    const s = parseKpayStatement(realShape as unknown[][])!;
+    expect(s.statementMonth).toBe('2026-08');
+  });
+});
+
+describe('bookingIdPrefixFromOrderRef', () => {
+  it('extracts the booking-id prefix from our outTradeNo format', () => {
+    expect(bookingIdPrefixFromOrderRef('B4qKhjuR566Uk_P1788171615')).toBe('4qKhjuR566Uk');
+    expect(bookingIdPrefixFromOrderRef('Bq9GPkkSueXQt_B1788035900')).toBe('q9GPkkSueXQt');
+    expect(bookingIdPrefixFromOrderRef('RabcDEF123456_1788000000')).toBe('abcDEF123456');
+  });
+  it('returns null for refs that are not ours', () => {
+    expect(bookingIdPrefixFromOrderRef('2026083118202200001')).toBeNull();
+    expect(bookingIdPrefixFromOrderRef('')).toBeNull();
+    expect(bookingIdPrefixFromOrderRef('hello world')).toBeNull();
   });
 });
 
