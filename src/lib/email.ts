@@ -565,7 +565,11 @@ export function buildLockPasscodeEmail(params: {
   /** Cloudinary URL to a per-branch lock usage guide image. Rendered just
    *  before the warning block. Optional — omit when no guide is configured. */
   lockGuideImageUrl?: string;
+  /** Keypad confirm key — '#' on every lock except Wan Chai's 🔔.
+   *  Callers pass lockConfirmKey(venueId); defaults to '#'. */
+  confirmKey?: string;
 }) {
+  const confirmKey = params.confirmKey || '#';
   return {
     subject: `🔑 SPACO 場地門鎖密碼 — ${params.venueName} (${params.date})`,
     html: `
@@ -581,7 +585,7 @@ export function buildLockPasscodeEmail(params: {
           <div style="background: linear-gradient(135deg, ${EMAIL_PINK} 0%, ${EMAIL_PEACH} 100%); color: white; padding: 26px 20px; border-radius: 18px; text-align: center; margin-bottom: 22px;">
             <p style="margin: 0 0 8px; font-size: 11px; opacity: 0.9; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 700;">門鎖密碼 Passcode</p>
             <p style="margin: 0; font-size: 38px; font-weight: 800; letter-spacing: 0.18em; font-family: 'Courier New', monospace;">
-              ${params.passcode}#
+              ${params.passcode}${confirmKey}
             </p>
           </div>
 
@@ -604,6 +608,7 @@ export function buildLockPasscodeEmail(params: {
         <div style="background: #FFF7E6; border-left: 4px solid #F59E0B; border-radius: 14px; padding: 16px 20px; margin-bottom: 16px;">
           <p style="margin: 0 0 8px; font-weight: 700; color: #92400E; font-size: 14px;">⚠️ 重要提醒</p>
           <ul style="margin: 0; padding-left: 18px; color: #78350F; font-size: 13px; line-height: 1.7;">
+            <li>輸入密碼後，撳「<strong>${confirmKey}</strong>」掣確認開鎖</li>
             <li><strong>🚫 唔好觸摸圓形指模掣</strong> — 系統冇登記你嘅指模，掂咗指模掣之後再入密碼會被當錯誤密碼。請<strong>直接撳數字鍵</strong>輸入密碼。</li>
             <li>密碼會喺活動結束時間自動失效</li>
             <li>請勿將密碼公開或轉發畀非預約名單上嘅人</li>

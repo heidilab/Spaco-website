@@ -17,6 +17,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { processBookingForLockAccess, revokeBookingPasscode, setManualPasscode, getLockGuideUrlForVenue } from '@/lib/lockPasscode';
 import { buildLockPasscodeEmail } from '@/lib/email';
+import { lockConfirmKey } from '@/lib/lockConfirmKey';
 import { sendAutomatedEmail } from '@/lib/emailAutomations';
 import { getVenueById } from '@/lib/venues';
 import { adminVerifyIdToken, adminUserHasContentPerm } from '@/lib/adminAuth';
@@ -112,6 +113,7 @@ export async function POST(req: NextRequest) {
         endTime:      b.endTime,
         endDate:      b.endDate,
         passcode:     b.lockPasscode.passcode,
+        confirmKey:   lockConfirmKey(b.venueId),
         validFromMs:  b.lockPasscode.validFrom,
         validToMs:    b.lockPasscode.validTo,
         whatsappLink: 'https://wa.me/85292823060',

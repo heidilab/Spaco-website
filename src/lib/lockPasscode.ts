@@ -23,6 +23,7 @@ import { addKeyboardPasscode, deleteKeyboardPasscode, isTTLockConfigured } from 
 import { getVenueById } from './venues';
 import { getSiteContent } from './content';
 import { buildLockPasscodeEmail, buildBalanceDueReminderEmail } from './email';
+import { lockConfirmKey } from './lockConfirmKey';
 import { sendAutomatedEmail } from './emailAutomations';
 import type { BookingRecord, UserProfile } from '@/types';
 
@@ -296,6 +297,7 @@ export async function processBookingForLockAccess(bookingId: string): Promise<Pr
         endTime:      b.endTime,
         endDate:      b.endDate,
         passcode,
+        confirmKey:   lockConfirmKey(b.venueId),
         validFromMs:  validFrom,
         validToMs:    validTo,
         whatsappLink: 'https://wa.me/85292823060',
@@ -408,6 +410,7 @@ export async function setManualPasscode(
     endTime:      b.endTime,
     endDate:      b.endDate,
     passcode,
+    confirmKey:   lockConfirmKey(b.venueId),
     validFromMs:  validFrom,
     validToMs:    validTo,
     whatsappLink: 'https://wa.me/85292823060',

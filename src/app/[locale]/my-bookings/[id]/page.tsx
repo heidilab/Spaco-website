@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useParams } from 'next/navigation';
 import { Link } from '@/i18n/routing';
+import { formatPasscode } from '@/lib/lockConfirmKey';
 import { useAuth } from '@/contexts/AuthContext';
 import { getBooking } from '@/lib/firestore';
 import { getVenueById } from '@/lib/venues';
@@ -300,7 +301,7 @@ export default function MyBookingDetailPage() {
                 <h2 className="font-bold">{locale === 'zh' ? '門鎖密碼' : 'Door Passcode'}</h2>
               </div>
               <p className="text-3xl font-bold font-mono tracking-widest text-emerald-700 mb-2">
-                {booking.lockPasscode.passcode}#
+                {formatPasscode(booking.lockPasscode.passcode, booking.venueId)}
               </p>
               <p className="text-xs text-emerald-700">
                 {locale === 'zh'
