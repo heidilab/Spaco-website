@@ -507,11 +507,17 @@ export function calculatePricing(
   /** Optional adult/child split. If omitted, the entire `guests` count
    *  is treated as adults (legacy bookings) and full price applies. */
   childCount: number = 0,
+  /** 特別日子 per-head holiday surcharge (peak days). Charged once per
+   *  head (adult full / child half, like all per-head pricing), NOT per
+   *  hour. Folded into baseCharge so finance rent categories, deposits
+   *  and commission bases all see it without special-casing. */
+  peakSurchargePerHead: number = 0,
 ): PricingCalculation {
   const tier = isWeekend ? venue.pricing.weekend : venue.pricing.weekday;
   const adults = Math.max(0, guests - childCount);
   const equiv = adultEquivalent(adults, childCount);
-  const baseCharge = Math.round(tier.perHead * equiv * hours);
+  const peakSurcharge = peakSurchargePerHead > 0 ? Math.round(peakSurchargePerHead * equiv) : 0;
+  const baseCharge = Math.round(tier.perHead * equiv * hours) + peakSurcharge;
   const guestLabel = childCount > 0
     ? `${adults}成人 + ${childCount}小童`
     : `${guests}人`;
@@ -524,9 +530,18 @@ export function calculatePricing(
         zh: `場地費 (${guestLabel} x ${hours}小時 x $${tier.perHead})`,
         en: `Venue (${guestLabelEn} x ${hours}hrs x $${tier.perHead})`,
       },
-      amount: baseCharge,
+      amount: baseCharge - peakSurcharge,
     },
   ];
+  if (peakSurcharge > 0) {
+    breakdown.push({
+      label: {
+        zh: `🎉 特別日子附加費 (${guestLabel} x $${peakSurchargePerHead})`,
+        en: `Special-day surcharge (${guestLabelEn} x $${peakSurchargePerHead})`,
+      },
+      amount: peakSurcharge,
+    });
+  }
 
   let addOnTotal = 0;
   const hasBBQPackage = selectedAddOns.some(

@@ -127,6 +127,12 @@ service cloud.firestore {
       allow read:  if true;
       allow write: if isStaff();
     }
+    // 特別日子/旺季 per-date surcharge + minimums — customers' booking UI
+    // must read these to badge dates, so reads are public.
+    match /peak_days/{date} {
+      allow read:  if true;
+      allow write: if isStaff();
+    }
     match /site_seo/{id} {
       // Public read so generateMetadata (server-side, no auth) can fetch.
       allow read:  if true;

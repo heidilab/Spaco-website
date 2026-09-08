@@ -858,6 +858,30 @@ export interface CommissionRule {
   base: 'rent' | 'total';
 }
 
+/** Peak-day (特別日子/旺季) rule — all fields optional so a date can
+ *  set any combination of surcharge and minimums. */
+export interface PeakDayRule {
+  /** Holiday surcharge per head (adult full, child half — the same
+   *  adult-equivalent convention as all per-head pricing). */
+  surchargePerHead?: number;
+  /** Overrides the venue's minimum guests when HIGHER. */
+  minHeadcount?: number;
+  /** Overrides the venue's minimum booking hours when HIGHER. */
+  minHours?: number;
+}
+
+/** peak_days/{YYYY-MM-DD} — public read (customer booking UI needs it),
+ *  admin write. `all` applies to every branch; `branches` overrides
+ *  per branch key (cwb/sw/tst/wanchai). */
+export interface PeakDayConfig {
+  date: string;
+  all?: PeakDayRule | null;
+  branches?: Record<string, PeakDayRule>;
+  /** Optional label shown to customers, e.g. 聖誕節. */
+  note?: string;
+  updatedAt?: unknown;
+}
+
 /** One sales-bonus tier (CS 獎金): reach `target` monthly sales →
  *  earn `bonus`. Tiers are cumulative and evaluated ascending. */
 export interface BonusTier {
