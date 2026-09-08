@@ -191,7 +191,7 @@ export default function AdminNewBookingPage() {
   // which can roll back to UTC and miss the holiday by one day) — so
   // e.g. 2026-06-30 correctly resolves to 2026-07-01 (HKSAR Day,
   // public holiday) and lands on the weekend tier.
-  const isWeekend = useMemo(() => {
+  const calendarWeekend = useMemo(() => {
     if (!date) return false;
     const day = new Date(`${date}T00:00:00`).getDay();
     if (day === 5 || day === 6) return true;
@@ -289,6 +289,8 @@ export default function AdminNewBookingPage() {
   }, [selectedPackage, venueId, hours]);
 
   const peakRule = venue ? resolvePeakRule(peakCfg, venue.id) : null;
+  // 特別日子剔咗「假日價」→ 平日照計週末 tier。
+  const isWeekend = calendarWeekend || peakRule?.forceWeekendRate === true;
   const pricing = venue
     ? calculatePricing(venue, isWeekend, hours, guestCount, selectedAddOnList, childCount, peakRule?.surchargePerHead || 0)
     : null;

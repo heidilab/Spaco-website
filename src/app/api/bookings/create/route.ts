@@ -119,9 +119,10 @@ export async function POST(req: NextRequest) {
   const childCount = Math.max(0, Number(rest.childCount) || 0);
   const adultCount = Math.max(0, Number(rest.adultCount ?? (guestCount - childCount)));
   const addOns = Array.isArray(rest.addOns) ? rest.addOns : [];
-  const isWeekend = serverIsWeekend(date as string);
-  // 特別日子 (peak day) rule — surcharge + raised minimums per date/branch.
+  // 特別日子 (peak day) rule — surcharge + raised minimums per date/branch;
+  // forceWeekendRate charges a weekday at the weekend tier.
   const peakRule = resolvePeakRule(await getPeakDayAdmin(date as string), venueId);
+  const isWeekend = serverIsWeekend(date as string) || peakRule?.forceWeekendRate === true;
   const endDayForHours = (endDate && endDate !== date) ? (endDate as string) : (date as string);
   const startMs = new Date(`${date}T${startTime}:00+08:00`).getTime();
   const endMs = new Date(`${endDayForHours}T${endTime}:00+08:00`).getTime();

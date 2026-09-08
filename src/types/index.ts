@@ -868,6 +868,9 @@ export interface PeakDayRule {
   minHeadcount?: number;
   /** Overrides the venue's minimum booking hours when HIGHER. */
   minHours?: number;
+  /** Charge this date at the WEEKEND tier (e.g. $58/head/hr instead of
+   *  the weekday $50) even when the calendar says weekday. */
+  forceWeekendRate?: boolean;
 }
 
 /** peak_days/{YYYY-MM-DD} — public read (customer booking UI needs it),

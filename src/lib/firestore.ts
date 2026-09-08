@@ -518,7 +518,7 @@ export async function updateBookingDateTime(
         return `${y}-${m}-${dd}`;
       })();
       const eveHoliday = getHoliday(nextDayStr);
-      const isWeekend =
+      let isWeekend =
         day === 5
         || day === 6
         || holiday?.type === 'public'
@@ -534,6 +534,10 @@ export async function updateBookingDateTime(
         : (booking.childCount ?? 0);
       const addOns = next.addOns ?? booking.addOns ?? [];
       const peakRule = resolvePeakRule(await getPeakDay(next.date), targetVenueId);
+      if (peakRule?.forceWeekendRate && !isWeekend) {
+        isWeekend = true;
+        patch.isWeekend = true;
+      }
       const computed = calculatePricing(
         venueForPricing,
         isWeekend,

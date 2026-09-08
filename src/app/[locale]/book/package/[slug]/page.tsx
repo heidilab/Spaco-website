@@ -295,7 +295,7 @@ export default function PackageBookingPage() {
         guestCount,
         adultCount: guestCount,
         childCount: 0,
-        isWeekend,
+        isWeekend: isWeekend || !!peakRule?.forceWeekendRate,
         addOns: bookingAddOns,
         hasBYOFood: false,
         pricing: {

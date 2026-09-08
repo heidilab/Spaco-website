@@ -418,6 +418,7 @@ export default function AdminBookingDetailPage() {
       const eveHoliday = getHoliday(nextDayStr);
       liveIsWeekend = day === 5 || day === 6 || holiday?.type === 'public' || eveHoliday?.type === 'public';
     }
+    if (resolvePeakRule(editPeakCfg, venueId)?.forceWeekendRate) liveIsWeekend = true;
     try {
       const live = calculatePricing(
         liveVenue,

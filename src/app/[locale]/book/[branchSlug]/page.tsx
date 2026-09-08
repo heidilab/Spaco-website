@@ -140,7 +140,7 @@ function BookingPageInner({ venue }: { venue: Venue }) {
   // Date arithmetic uses `${date}T00:00:00` (LOCAL midnight) + local
   // component reassembly to avoid the toISOString-rolls-back-to-UTC
   // bug that previously made some HKT dates miss the eve check.
-  const isWeekend = useMemo(() => {
+  const calendarWeekend = useMemo(() => {
     if (!selectedDate) return false;
     const day = new Date(`${selectedDate}T00:00:00`).getDay();
     if (day === 5 || day === 6) return true;
@@ -151,6 +151,8 @@ function BookingPageInner({ venue }: { venue: Venue }) {
     if (getHoliday(nextStr)?.type === 'public') return true;
     return false;
   }, [selectedDate]);
+  // 特別日子剔咗「假日價」→ 平日照計週末 tier（$58/位/小時 嗰級）。
+  const isWeekend = calendarWeekend || !!peakRule?.forceWeekendRate;
 
   // For UI labelling — distinguish the actual reason for peak pricing
   const peakReason = useMemo(() => {
@@ -631,6 +633,13 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                             : ` — +$${peakRule.surchargePerHead}/person holiday surcharge applies`)
                           : ''}
                       </p>
+                      {peakRule.forceWeekendRate && !calendarWeekend && (
+                        <p className="text-xs text-rose-600 mt-0.5">
+                          {locale === 'zh'
+                            ? `⭐ 呢日以週末/假日價計費（$${venue.pricing.weekend.perHead}/位/小時）`
+                            : `⭐ Weekend rate applies on this date ($${venue.pricing.weekend.perHead}/head/hr)`}
+                        </p>
+                      )}
                       {(peakRule.minHeadcount || peakRule.minHours) && (
                         <p className="text-xs text-rose-600 mt-0.5">
                           {locale === 'zh'

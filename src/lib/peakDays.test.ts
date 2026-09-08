@@ -62,3 +62,13 @@ describe('calculatePricing peak surcharge', () => {
     expect(noPeak.breakdown.some((b) => b.label.zh.includes('特別日子'))).toBe(false);
   });
 });
+
+describe('forceWeekendRate', () => {
+  it('merges branch ?? all and counts as an active rule on its own', () => {
+    const cfg = { date: '2026-12-15', all: { forceWeekendRate: true } };
+    expect(resolvePeakRule(cfg, 'tst')?.forceWeekendRate).toBe(true);
+    const cfg2 = { date: '2026-12-15', branches: { cwb: { forceWeekendRate: true } } };
+    expect(resolvePeakRule(cfg2, 'cwb')?.forceWeekendRate).toBe(true);
+    expect(resolvePeakRule(cfg2, 'tst')).toBeNull();
+  });
+});

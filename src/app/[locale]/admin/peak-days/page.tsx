@@ -26,10 +26,10 @@ const BRANCH_LABELS: Record<string, { zh: string; en: string }> = {
 };
 
 /** Editor draft: string inputs (blank = unset) per scope. */
-type RuleDraft = { surchargePerHead: string; minHeadcount: string; minHours: string };
+type RuleDraft = { surchargePerHead: string; minHeadcount: string; minHours: string; forceWeekendRate: boolean };
 type Draft = { note: string; all: RuleDraft; branches: Record<string, RuleDraft> };
 
-const emptyRule = (): RuleDraft => ({ surchargePerHead: '', minHeadcount: '', minHours: '' });
+const emptyRule = (): RuleDraft => ({ surchargePerHead: '', minHeadcount: '', minHours: '', forceWeekendRate: false });
 const emptyDraft = (): Draft => ({
   note: '',
   all: emptyRule(),
@@ -41,6 +41,7 @@ function ruleToDraft(r?: PeakDayRule | null): RuleDraft {
     surchargePerHead: r?.surchargePerHead ? String(r.surchargePerHead) : '',
     minHeadcount: r?.minHeadcount ? String(r.minHeadcount) : '',
     minHours: r?.minHours ? String(r.minHours) : '',
+    forceWeekendRate: r?.forceWeekendRate === true,
   };
 }
 
@@ -49,6 +50,7 @@ function draftToRule(d: RuleDraft): PeakDayRule | null {
   if (Number(d.surchargePerHead) > 0) rule.surchargePerHead = Number(d.surchargePerHead);
   if (Number(d.minHeadcount) > 0) rule.minHeadcount = Number(d.minHeadcount);
   if (Number(d.minHours) > 0) rule.minHours = Number(d.minHours);
+  if (d.forceWeekendRate) rule.forceWeekendRate = true;
   return Object.keys(rule).length ? rule : null;
 }
 
@@ -202,7 +204,10 @@ export default function PeakDaysPage() {
   function badge(cfg: PeakDayConfig): string {
     const s = cfg.all?.surchargePerHead
       || Math.max(0, ...Object.values(cfg.branches || {}).map((r) => r.surchargePerHead || 0));
-    return s > 0 ? `+$${s}` : '⚙️';
+    if (s > 0) return `+$${s}`;
+    const forced = cfg.all?.forceWeekendRate
+      || Object.values(cfg.branches || {}).some((r) => r.forceWeekendRate);
+    return forced ? '⭐' : '⚙️';
   }
 
   if (!canAccess) {
@@ -234,6 +239,17 @@ export default function PeakDaysPage() {
           placeholder={scope === 'all' ? '—' : (zh ? '跟全部' : 'inherit')}
           className="border rounded px-2 py-1 w-full text-sm text-right" />
       </div>
+      <label className="col-span-3 flex items-center gap-2 text-sm cursor-pointer select-none mt-1">
+        <input type="checkbox" checked={d.forceWeekendRate}
+          onChange={(e) => set({ ...d, forceWeekendRate: e.target.checked })}
+          className="w-4 h-4 accent-rose-500" />
+        <span>
+          {zh ? '呢日以週末/假日價計費' : 'Charge weekend rate on this date'}
+          <span className="text-xs text-gray-400 ml-1">
+            {zh ? '（平日 $50/位/小時 → 假日 $58/位/小時 嗰級）' : '(weekday tier → weekend tier, e.g. $50 → $58/head/hr)'}
+          </span>
+        </span>
+      </label>
     </div>
   );
 

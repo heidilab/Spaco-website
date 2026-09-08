@@ -18,10 +18,12 @@ export function resolvePeakRule(cfg: PeakDayConfig | null | undefined, venueId: 
     surchargePerHead: branch?.surchargePerHead ?? cfg.all?.surchargePerHead,
     minHeadcount: branch?.minHeadcount ?? cfg.all?.minHeadcount,
     minHours: branch?.minHours ?? cfg.all?.minHours,
+    forceWeekendRate: branch?.forceWeekendRate ?? cfg.all?.forceWeekendRate,
   };
   const any = (merged.surchargePerHead || 0) > 0
     || (merged.minHeadcount || 0) > 0
-    || (merged.minHours || 0) > 0;
+    || (merged.minHours || 0) > 0
+    || merged.forceWeekendRate === true;
   return any ? merged : null;
 }
 
