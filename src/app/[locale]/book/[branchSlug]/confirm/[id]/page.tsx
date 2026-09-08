@@ -11,6 +11,8 @@ import {
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { getVenueById } from '@/lib/venues';
+import { getPeakDay } from '@/lib/peakDays';
+import { resolvePeakRule } from '@/lib/peakDayRules';
 import { addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE, calculatePricing, freeDrinksVenues, isWithin2Days } from '@/lib/pricing';
 import { BookingRecord, RefundDetails, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
 import { getMarketingChannelOptions, DEFAULT_CHANNEL_OPTIONS, OTHER_OPTION, type MarketingChannelOption } from '@/lib/marketingChannels';
@@ -298,8 +300,12 @@ export default function ConfirmBookingPage() {
     const venue = getVenueById(booking.venueId);
     if (!venue) return;
     const newAddOns = (booking.addOns || []).filter((a) => a.id !== 'drinks');
+    // Keep the 特別日子 surcharge inside baseCharge when repricing —
+    // dropping the 7th arg here would silently strip it.
+    const peakRule = resolvePeakRule(await getPeakDay(booking.date), booking.venueId);
     const newPricing = calculatePricing(
       venue, booking.isWeekend, booking.hours, booking.guestCount, newAddOns, booking.childCount,
+      peakRule?.surchargePerHead || 0,
     );
     if (isDraft) {
       const draft = loadBookingCheckoutDraft();
@@ -431,6 +437,7 @@ export default function ConfirmBookingPage() {
         const venue = getVenueById(booking.venueId);
         if (venue) {
           const newAddOns = [...(booking.addOns || []), { id: 'drinks', quantity: 1 }];
+          const peakRule = resolvePeakRule(await getPeakDay(booking.date), booking.venueId);
           const newPricing = calculatePricing(
             venue,
             booking.isWeekend,
@@ -438,6 +445,7 @@ export default function ConfirmBookingPage() {
             booking.guestCount,
             newAddOns,
             booking.childCount,
+            peakRule?.surchargePerHead || 0,
           );
           if (isDraft) {
             // Draft mode — patch the sessionStorage draft and local state

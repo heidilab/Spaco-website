@@ -6,7 +6,9 @@ import { useParams } from 'next/navigation';
 import { useState, useMemo, useEffect } from 'react';
 import { getVenueBySlug } from '@/lib/venues';
 import { addOns, calculatePricing, noBBQVenues, freeDrinksVenues, hotpotVenues, bbqStandardPriceByVenue, bbqStandardMenu, bbqPremiumMenu, hotpotStandardMenu, hotpotSeafoodMenu, hotpotSoupBases, calcShishaPrice, SHISHA_STAFF_SETUP_FEE, SHISHA_MAX_PIPES, earlySetupPriceByVenue, subtractHours } from '@/lib/pricing';
-import type { AddOnOptions, Venue } from '@/types';
+import type { AddOnOptions, Venue, PeakDayConfig } from '@/types';
+import { getPeakDay } from '@/lib/peakDays';
+import { resolvePeakRule, effectiveMinGuests, effectiveMinHours } from '@/lib/peakDayRules';
 import { loadAllVenues, conflictIdsFor } from '@/lib/venueRegistry';
 import {
   ArrowLeft, ArrowRight, Calendar, Clock, Users,
@@ -87,6 +89,16 @@ function BookingPageInner({ venue }: { venue: Venue }) {
   const guestCount = adultCount + childCount;
   const adultEquiv = adultCount + 0.5 * childCount;
   const [selectedAddOns, setSelectedAddOns] = useState<{ id: string; quantity: number; options?: AddOnOptions }[]>([]);
+  // 特別日子 (admin-configured peak day) for the selected date — per-head
+  // surcharge + possibly raised minimums, resolved for THIS venue.
+  const [peakCfg, setPeakCfg] = useState<PeakDayConfig | null>(null);
+  useEffect(() => {
+    if (!selectedDate) { setPeakCfg(null); return; }
+    let stale = false;
+    getPeakDay(selectedDate).then((c) => { if (!stale) setPeakCfg(c); });
+    return () => { stale = true; };
+  }, [selectedDate]);
+  const peakRule = useMemo(() => resolvePeakRule(peakCfg, venue.id), [peakCfg, venue]);
   const [hasBYOFood, setHasBYOFood] = useState(false);
   const [, setShowGrillWarning] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
@@ -184,9 +196,10 @@ function BookingPageInner({ venue }: { venue: Venue }) {
     setHasBYOFood(false);
   }, [tooSoonForExtras, needsAdvanceIds]);
 
-  // Auto-adjust guest count when date changes
-  const minGuests = isWeekend ? venue.minGuests.weekend : venue.minGuests.weekday;
-  const minHours = isWeekend ? venue.minHours.weekend : venue.minHours.weekday;
+  // Auto-adjust guest count when date changes. Peak days may RAISE the
+  // venue's minimums (never lower them).
+  const minGuests = effectiveMinGuests(isWeekend ? venue.minGuests.weekend : venue.minGuests.weekday, peakRule);
+  const minHours = effectiveMinHours(isWeekend ? venue.minHours.weekend : venue.minHours.weekday, peakRule);
 
   // When date changes (and weekday/weekend tier with it), bump adult count
   // up so adult-equivalent meets the new minimum. Children count unchanged.
@@ -252,8 +265,8 @@ function BookingPageInner({ venue }: { venue: Venue }) {
 
   // Pricing calculation
   const pricing = useMemo(() => {
-    return calculatePricing(venue, isWeekend, Math.max(hours, minHours), guestCount, selectedAddOns, childCount);
-  }, [venue, isWeekend, hours, minHours, guestCount, childCount, selectedAddOns]);
+    return calculatePricing(venue, isWeekend, Math.max(hours, minHours), guestCount, selectedAddOns, childCount, peakRule?.surchargePerHead || 0);
+  }, [venue, isWeekend, hours, minHours, guestCount, childCount, selectedAddOns, peakRule]);
 
   // Add-on toggle
   const toggleAddOn = (id: string) => {
@@ -573,6 +586,7 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                 {t('selectDate')}
               </h2>
               <HolidayDatePicker
+                peakVenueId={venue.id}
                 value={selectedDate}
                 onChange={setSelectedDate}
                 minDate={minDate}
@@ -607,6 +621,25 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                   <p className="text-ink-soft">
                     {locale === 'zh' ? `最少預訂 ${minHours} 小時，最少 ${minGuests} 人` : `Min. ${minHours} hours, min. ${minGuests} guests`}
                   </p>
+                  {peakRule && (
+                    <div className="mt-2 rounded-xl border-2 border-rose-300 bg-rose-50 px-4 py-3">
+                      <p className="text-sm font-bold text-rose-700">
+                        🎉 {peakCfg?.note || (locale === 'zh' ? '特別日子' : 'Special day')}
+                        {peakRule.surchargePerHead
+                          ? (locale === 'zh'
+                            ? ` — 呢日每位需加 $${peakRule.surchargePerHead} 節日附加費`
+                            : ` — +$${peakRule.surchargePerHead}/person holiday surcharge applies`)
+                          : ''}
+                      </p>
+                      {(peakRule.minHeadcount || peakRule.minHours) && (
+                        <p className="text-xs text-rose-600 mt-0.5">
+                          {locale === 'zh'
+                            ? `此日子要求：最少 ${minGuests} 人、最少 ${minHours} 小時`
+                            : `This date requires min. ${minGuests} guests / ${minHours} hours`}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

@@ -5,6 +5,9 @@ import { useLocale } from 'next-intl';
 import { useParams } from 'next/navigation';
 import { Link } from '@/i18n/routing';
 import { formatPasscode } from '@/lib/lockConfirmKey';
+import { getPeakDay } from '@/lib/peakDays';
+import { resolvePeakRule } from '@/lib/peakDayRules';
+import type { PeakDayConfig } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { getBooking } from '@/lib/firestore';
 import { getVenueById } from '@/lib/venues';
@@ -48,6 +51,13 @@ export default function MyBookingDetailPage() {
   const { user, loading: authLoading } = useAuth();
 
   const [booking, setBooking] = useState<BookingRecord | null>(null);
+  const [peakCfg, setPeakCfg] = useState<PeakDayConfig | null>(null);
+  useEffect(() => {
+    if (!booking?.date) { setPeakCfg(null); return; }
+    let stale = false;
+    getPeakDay(booking.date).then((c) => { if (!stale) setPeakCfg(c); });
+    return () => { stale = true; };
+  }, [booking?.date]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -188,6 +198,7 @@ export default function MyBookingDetailPage() {
                     booking.guestCount,
                     booking.addOns,
                     booking.childCount ?? 0,
+                    resolvePeakRule(peakCfg, booking.venueId)?.surchargePerHead || 0,
                   ).breakdown.slice(1) // drop "場地費" — already accounted for in subtotal line below
                 : [];
               return (

@@ -6,7 +6,9 @@ import { Link } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
 import { venues as staticVenues, getVenueBySlug } from '@/lib/venues';
 import { loadAllVenues, venuesSnapshot } from '@/lib/venueRegistry';
-import type { Venue } from '@/types';
+import type { Venue, PeakDayConfig } from '@/types';
+import { getPeakDay } from '@/lib/peakDays';
+import { resolvePeakRule } from '@/lib/peakDayRules';
 import {
   addOns as ALL_ADDONS,
   calculatePricing,
@@ -65,6 +67,14 @@ export default function AdminNewBookingPage() {
   // ── Booking content ───────────────────────────
   const [venueId, setVenueId] = useState<string>('cwb');
   const [date, setDate] = useState<string>('');
+  // 特別日子 (peak day) — surcharge auto-included; minimums advisory.
+  const [peakCfg, setPeakCfg] = useState<PeakDayConfig | null>(null);
+  useEffect(() => {
+    if (!date) { setPeakCfg(null); return; }
+    let stale = false;
+    getPeakDay(date).then((c) => { if (!stale) setPeakCfg(c); });
+    return () => { stale = true; };
+  }, [date]);
   const [startTime, setStartTime] = useState<string>('14:00');
   const [hours, setHours] = useState<number>(4);
   const [adultCount, setAdultCount] = useState<number>(15);
@@ -278,8 +288,9 @@ export default function AdminNewBookingPage() {
     if (hours !== selectedPackage.durationHours) setHours(selectedPackage.durationHours);
   }, [selectedPackage, venueId, hours]);
 
+  const peakRule = venue ? resolvePeakRule(peakCfg, venue.id) : null;
   const pricing = venue
-    ? calculatePricing(venue, isWeekend, hours, guestCount, selectedAddOnList, childCount)
+    ? calculatePricing(venue, isWeekend, hours, guestCount, selectedAddOnList, childCount, peakRule?.surchargePerHead || 0)
     : null;
 
   // Mirror the customer-facing pricing flow exactly so admin-issued
@@ -879,6 +890,19 @@ export default function AdminNewBookingPage() {
                 {locale === 'zh' ? '時段：' : 'Session: '}<span className="font-bold text-ink">{startTime}–{endTime}{endDate ? (locale === 'zh' ? `（翌日 ${endDate}）` : ` (next day ${endDate})`) : ''}</span>
                 {isWeekend && <span className="ml-2 chip text-[10px]">{locale === 'zh' ? '週末/假日價 $58/位/h' : 'Weekend rate $58/pax/h'}</span>}
               </p>
+            )}
+            {peakRule && (
+              <div className="rounded-xl border-2 border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                🎉 <b>{peakCfg?.note || (locale === 'zh' ? '特別日子' : 'Special day')}</b>
+                {peakRule.surchargePerHead
+                  ? (locale === 'zh' ? ` — 每位 +$${peakRule.surchargePerHead} 附加費（已自動計入價錢）` : ` — +$${peakRule.surchargePerHead}/head surcharge (auto-included)`)
+                  : ''}
+                {(peakRule.minHeadcount || peakRule.minHours)
+                  ? (locale === 'zh'
+                    ? `｜要求：${peakRule.minHeadcount ? `最少 ${peakRule.minHeadcount} 人` : ''}${peakRule.minHeadcount && peakRule.minHours ? '、' : ''}${peakRule.minHours ? `最少 ${peakRule.minHours} 小時` : ''}`
+                    : ` | min ${peakRule.minHeadcount || '-'} guests / ${peakRule.minHours || '-'} hrs`)
+                  : ''}
+              </div>
             )}
             {/* Surface WHY this date is on weekend rate — esp. for the
              *  non-obvious cases like 2026-06-30 (Tue, eve of HKSAR Day)

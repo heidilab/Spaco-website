@@ -2,6 +2,9 @@
 
 import { adminApiFetch } from '@/lib/adminApiFetch';
 import { formatPasscode, lockConfirmKey } from '@/lib/lockConfirmKey';
+import { getPeakDay } from '@/lib/peakDays';
+import { resolvePeakRule } from '@/lib/peakDayRules';
+import type { PeakDayConfig } from '@/types';
 import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useParams, useRouter } from 'next/navigation';
@@ -122,6 +125,22 @@ export default function AdminBookingDetailPage() {
 
   // Editable fields
   const [date, setDate] = useState('');
+  // 特別日子 (peak day) rules — one for the EDITED date (live subtotal
+  // preview) and one for the stored booking date (display/deposit hint).
+  const [editPeakCfg, setEditPeakCfg] = useState<PeakDayConfig | null>(null);
+  useEffect(() => {
+    if (!date) { setEditPeakCfg(null); return; }
+    let stale = false;
+    getPeakDay(date).then((c) => { if (!stale) setEditPeakCfg(c); });
+    return () => { stale = true; };
+  }, [date]);
+  const [bookingPeakCfg, setBookingPeakCfg] = useState<PeakDayConfig | null>(null);
+  useEffect(() => {
+    if (!booking?.date) { setBookingPeakCfg(null); return; }
+    let stale = false;
+    getPeakDay(booking.date).then((c) => { if (!stale) setBookingPeakCfg(c); });
+    return () => { stale = true; };
+  }, [booking?.date]);
   const [endDate, setEndDate] = useState('');
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
@@ -407,6 +426,7 @@ export default function AdminBookingDetailPage() {
         guestCount,
         liveAddOns,
         childCount,
+        resolvePeakRule(editPeakCfg, venueId)?.surchargePerHead || 0,
       );
       // Display the effective (post-promo) subtotal — see hydrate
       // comment above. Storage stays pre-promo. Promo recomputes for
@@ -430,7 +450,7 @@ export default function AdminBookingDetailPage() {
   }, [
     addOnQty, customAddOns, shishaOptions, guestCount, childCount, venueId,
     date, startTime, endTime, endDate,
-    bookingForFormula,
+    bookingForFormula, editPeakCfg,
   ]);
 
   if (!canAccess) {
@@ -1906,6 +1926,7 @@ export default function AdminBookingDetailPage() {
                         guestCount,
                         liveAddOns,
                         childCount,
+                        resolvePeakRule(bookingPeakCfg, booking.venueId)?.surchargePerHead || 0,
                       );
                       suggestedSubtotalGross = live.subtotal;
                       // Effective subtotal = formula − promo. The
@@ -2119,6 +2140,7 @@ export default function AdminBookingDetailPage() {
                     booking.guestCount,
                     booking.addOns,
                     booking.childCount ?? 0,
+                    resolvePeakRule(bookingPeakCfg, booking.venueId)?.surchargePerHead || 0,
                   ).breakdown.slice(1) // drop venue rental — already in 小計 below
                 : [];
               return (

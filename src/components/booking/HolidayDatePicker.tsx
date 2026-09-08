@@ -4,6 +4,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { getHolidaysForMonth, getHoliday } from '@/lib/hkHolidays';
+import { listPeakDays } from '@/lib/peakDays';
+import { resolvePeakRule } from '@/lib/peakDayRules';
+import type { PeakDayConfig } from '@/types';
 
 interface HolidayDatePickerProps {
   /** Currently-selected date in ISO `YYYY-MM-DD`, or empty string */
@@ -12,6 +15,10 @@ interface HolidayDatePickerProps {
   /** Earliest selectable date (ISO). Days before are disabled. */
   minDate?: string;
   locale: 'zh' | 'en';
+  /** When set, admin-configured 特別日子 for this venue are badged 🎉
+   *  with the per-head surcharge in the tooltip. The picker fetches the
+   *  visible month's peak_days itself. */
+  peakVenueId?: string;
 }
 
 /**
@@ -30,6 +37,7 @@ export default function HolidayDatePicker({
   onChange,
   minDate,
   locale,
+  peakVenueId,
 }: HolidayDatePickerProps) {
   const [mounted, setMounted] = useState(false);
   // Calendar's currently-displayed month, ISO 'YYYY-MM'
@@ -61,6 +69,17 @@ export default function HolidayDatePicker({
     if (!month) return new Map();
     return getHolidaysForMonth(month);
   }, [month]);
+
+  // Admin-configured 特別日子 for the visible month (surcharge days).
+  const [peakDays, setPeakDays] = useState<Record<string, PeakDayConfig>>({});
+  useEffect(() => {
+    if (!month || !peakVenueId) return;
+    const [y, m] = month.split('-').map(Number);
+    const last = new Date(y, m, 0).getDate();
+    listPeakDays(`${month}-01`, `${month}-${String(last).padStart(2, '0')}`)
+      .then(setPeakDays)
+      .catch(() => setPeakDays({}));
+  }, [month, peakVenueId]);
 
   // Build the days array for the month grid (with leading/trailing empties)
   const days = useMemo(() => {
@@ -164,6 +183,7 @@ export default function HolidayDatePicker({
           const isFestival = holiday?.type === 'festival';
           const eve = eveHoliday(iso);
           const isHolidayEve = eve?.type === 'public';
+          const peakRule = peakVenueId ? resolvePeakRule(peakDays[iso], peakVenueId) : null;
           const dow = new Date(iso).getDay();
           const isFriOrSat = dow === 5 || dow === 6;
           const isToday = iso === todayStr;
@@ -201,7 +221,9 @@ export default function HolidayDatePicker({
               onClick={() => !disabled && onChange(iso)}
               disabled={disabled}
               title={
-                holiday
+                peakRule?.surchargePerHead
+                  ? `${peakDays[iso]?.note || (locale === 'zh' ? '特別日子' : 'Special day')} · ${locale === 'zh' ? `每位 +$${peakRule.surchargePerHead} 附加費` : `+$${peakRule.surchargePerHead}/head surcharge`}`
+                  : holiday
                   ? holiday.name[locale]
                   : isHolidayEve && eve
                   ? `${locale === 'zh' ? '假期前夕：明日為' : 'Eve of '}${eve.name[locale]}`
@@ -210,6 +232,9 @@ export default function HolidayDatePicker({
               className={`relative aspect-square rounded-xl text-sm flex flex-col items-center justify-center transition-all ${cls} ${ringCls}`}
             >
               <span>{day}</span>
+              {peakRule && !disabled && (
+                <span className="absolute top-0 right-0.5 text-[9px] leading-none">🎉</span>
+              )}
               {dotCls && (
                 <span className={`absolute bottom-1 w-1.5 h-1.5 rounded-full ${dotCls}`} />
               )}
@@ -232,6 +257,11 @@ export default function HolidayDatePicker({
           <span className="w-3 h-3 rounded bg-pink/10" />
           {locale === 'zh' ? '週五/六' : 'Fri / Sat'}
         </span>
+        {peakVenueId && Object.keys(peakDays).length > 0 && (
+          <span className="inline-flex items-center gap-1.5">
+            🎉 {locale === 'zh' ? '特別日子（有附加費）' : 'Special day (surcharge)'}
+          </span>
+        )}
         <span className="inline-flex items-center gap-1.5 ml-auto text-pink font-medium">
           {locale === 'zh' ? '⭐ 上述日子按高峰價' : '⭐ Peak rate applies'}
         </span>

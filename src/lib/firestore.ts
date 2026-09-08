@@ -18,6 +18,8 @@ import { BookingRecord, BlockedSlot, BusinessDocument, DocumentType, DocumentRev
 import { venuesSharingSpace, getVenueById } from './venues';
 import { loadAllVenues, conflictIdsFor } from './venueRegistry';
 import { calculatePricing, calculateDeposit, freeDrinksVenues } from './pricing';
+import { getPeakDay } from './peakDays';
+import { resolvePeakRule } from './peakDayRules';
 import { calcPromoDiscount } from './promoCodes';
 import { getHoliday } from './hkHolidays';
 
@@ -531,6 +533,7 @@ export async function updateBookingDateTime(
         ? next.childCount
         : (booking.childCount ?? 0);
       const addOns = next.addOns ?? booking.addOns ?? [];
+      const peakRule = resolvePeakRule(await getPeakDay(next.date), targetVenueId);
       const computed = calculatePricing(
         venueForPricing,
         isWeekend,
@@ -538,6 +541,7 @@ export async function updateBookingDateTime(
         guests,
         addOns,
         children,
+        peakRule?.surchargePerHead || 0,
       );
 
       // Preserve any promo discount the customer had applied. We re-apply

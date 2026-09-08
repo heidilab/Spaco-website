@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getPeakDayAdmin } from '@/lib/peakDaysAdmin';
+import { resolvePeakRule, effectiveMinGuests, effectiveMinHours } from '@/lib/peakDayRules';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminVerifyIdToken } from '@/lib/adminAuth';
@@ -118,6 +120,8 @@ export async function POST(req: NextRequest) {
   const adultCount = Math.max(0, Number(rest.adultCount ?? (guestCount - childCount)));
   const addOns = Array.isArray(rest.addOns) ? rest.addOns : [];
   const isWeekend = serverIsWeekend(date as string);
+  // 特別日子 (peak day) rule — surcharge + raised minimums per date/branch.
+  const peakRule = resolvePeakRule(await getPeakDayAdmin(date as string), venueId);
   const endDayForHours = (endDate && endDate !== date) ? (endDate as string) : (date as string);
   const startMs = new Date(`${date}T${startTime}:00+08:00`).getTime();
   const endMs = new Date(`${endDayForHours}T${endTime}:00+08:00`).getTime();
@@ -133,7 +137,17 @@ export async function POST(req: NextRequest) {
   let promoCodeId: string | null = null;
 
   if (!isPackage && venue) {
-    const computed = calculatePricing(venue, isWeekend, hours, guestCount, addOns, childCount);
+    // Peak floors are hard rules for customer bookings — reject clearly
+    // so the client can show why (the UI enforces them upfront too).
+    const tierKey = isWeekend ? 'weekend' : 'weekday';
+    const equivForMin = adultEquivalent(Math.max(0, guestCount - childCount), childCount);
+    if (equivForMin < effectiveMinGuests(venue.minGuests[tierKey], peakRule)) {
+      return NextResponse.json({ error: 'PEAK_MIN_GUESTS', min: effectiveMinGuests(venue.minGuests[tierKey], peakRule) }, { status: 400 });
+    }
+    if (hours < effectiveMinHours(venue.minHours[tierKey], peakRule)) {
+      return NextResponse.json({ error: 'PEAK_MIN_HOURS', min: effectiveMinHours(venue.minHours[tierKey], peakRule) }, { status: 400 });
+    }
+    const computed = calculatePricing(venue, isWeekend, hours, guestCount, addOns, childCount, peakRule?.surchargePerHead || 0);
     // Revalidate the promo server-side (window / venue / min-subtotal /
     // usage limits all enforced inside calcPromoDiscount).
     if (rest.promoCodeId) {

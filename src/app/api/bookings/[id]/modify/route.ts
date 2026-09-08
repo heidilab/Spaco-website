@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getPeakDayAdmin } from '@/lib/peakDaysAdmin';
+import { resolvePeakRule } from '@/lib/peakDayRules';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminVerifyIdToken } from '@/lib/adminAuth';
@@ -285,8 +287,10 @@ export async function POST(
   const endForHours = new Date(`${endDate}T${endTime}:00+08:00`).getTime();
   const hours = Math.max(1, Math.round((((endForHours - startForHours)) / 3600000) * 2) / 2);
 
+  const peakRule = resolvePeakRule(await getPeakDayAdmin(booking.date), booking.venueId);
   const computed = calculatePricing(
     venue, booking.isWeekend, hours, newGuestCount, reqAddOns, childCount,
+    peakRule?.surchargePerHead || 0,
   );
 
   // Recompute the promo against the NEW pax / subtotal by reloading the

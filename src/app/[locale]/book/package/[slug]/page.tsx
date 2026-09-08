@@ -17,6 +17,9 @@ import { getPackageBySlug, CATEGORY_LABEL } from '@/lib/packages';
 import { calculateDeposit } from '@/lib/pricing';
 import { saveBookingCheckoutDraft } from '@/lib/bookingCheckoutDraft';
 import HolidayDatePicker from '@/components/booking/HolidayDatePicker';
+import { getPeakDay } from '@/lib/peakDays';
+import { resolvePeakRule } from '@/lib/peakDayRules';
+import type { PeakDayConfig } from '@/types';
 import AuthModal from '@/components/auth/AuthModal';
 import {
   isValidHkPhone, formatHkPhone, normalizeHkPhone,
@@ -192,10 +195,25 @@ export default function PackageBookingPage() {
     }, 0);
   }, [pkg.addOns, addOnGuests]);
 
+  // ===== 特別日子 (peak day) — per-head surcharge + raised pax floor =====
+  const [peakCfg, setPeakCfg] = useState<PeakDayConfig | null>(null);
+  useEffect(() => {
+    if (!selectedDate) { setPeakCfg(null); return; }
+    let stale = false;
+    getPeakDay(selectedDate).then((c) => { if (!stale) setPeakCfg(c); });
+    return () => { stale = true; };
+  }, [selectedDate]);
+  const peakRule = useMemo(() => resolvePeakRule(peakCfg, pkg.venueId), [peakCfg, pkg.venueId]);
+  // Package pax floor may be raised by the peak day's minimum headcount.
+  const paxFloor = Math.max(pkg.basePax || 1, peakRule?.minHeadcount || 0);
+
   // ===== Guest count (extra-pax surcharge) =====
   // Defaults to the package's basePax (e.g. 4 for the mahjong table).
   // Each guest above basePax is charged the package's extraPaxPrice.
   const [guestCount, setGuestCount] = useState<number>(pkg.basePax || 1);
+  useEffect(() => {
+    setGuestCount((g) => Math.max(g, paxFloor));
+  }, [paxFloor]);
   const extraPaxCharge = useMemo(() => {
     if (pkg.basePax == null || pkg.extraPaxPrice == null) return 0;
     return Math.max(0, guestCount - pkg.basePax) * pkg.extraPaxPrice;
@@ -209,7 +227,8 @@ export default function PackageBookingPage() {
   //   securityDeposit = package's fixed refundable deposit
   //   grandTotal = subtotal + securityDeposit
   //   upfrontDeposit = grandTotal if ≤ $10k else 50%  (matches à-la-carte rule)
-  const baseCharge = pkg.price + extraPaxCharge;
+  const peakSurcharge = peakRule?.surchargePerHead ? Math.round(peakRule.surchargePerHead * guestCount) : 0;
+  const baseCharge = pkg.price + extraPaxCharge + peakSurcharge;
   const subtotal = baseCharge + addOnTotal;
   const securityDeposit = pkg.deposit;
   const grandTotal = subtotal + securityDeposit;
@@ -359,7 +378,25 @@ export default function PackageBookingPage() {
                 onChange={setSelectedDate}
                 minDate={minDate}
                 locale={locale}
+                peakVenueId={pkg.venueId}
               />
+              {peakRule && selectedDate && (
+                <div className="mt-3 rounded-xl border-2 border-rose-300 bg-rose-50 px-4 py-3">
+                  <p className="text-sm font-bold text-rose-700">
+                    🎉 {peakCfg?.note || (locale === 'zh' ? '特別日子' : 'Special day')}
+                    {peakRule.surchargePerHead
+                      ? (locale === 'zh'
+                        ? ` — 呢日每位需加 $${peakRule.surchargePerHead} 節日附加費`
+                        : ` — +$${peakRule.surchargePerHead}/person holiday surcharge applies`)
+                      : ''}
+                  </p>
+                  {peakRule.minHeadcount ? (
+                    <p className="text-xs text-rose-600 mt-0.5">
+                      {locale === 'zh' ? `此日子最少 ${paxFloor} 人` : `Min. ${paxFloor} guests on this date`}
+                    </p>
+                  ) : null}
+                </div>
+              )}
               {pkg.minAdvanceDays && (
                 <p className="mt-3 text-xs text-ink-soft">
                   {locale === 'zh'
@@ -440,7 +477,7 @@ export default function PackageBookingPage() {
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
-                    onClick={() => setGuestCount(Math.max(pkg.basePax || 1, guestCount - 1))}
+                    onClick={() => setGuestCount(Math.max(paxFloor, guestCount - 1))}
                     className="p-2 rounded-xl bg-white/80 border border-white/90"
                     aria-label="Decrease"
                   >
@@ -450,7 +487,7 @@ export default function PackageBookingPage() {
                     type="number"
                     min={pkg.basePax}
                     value={guestCount}
-                    onChange={(e) => setGuestCount(Math.max(pkg.basePax || 1, parseInt(e.target.value) || pkg.basePax || 1))}
+                    onChange={(e) => setGuestCount(Math.max(paxFloor, parseInt(e.target.value) || paxFloor))}
                     className="w-20 px-3 py-2 rounded-xl bg-white/80 border border-white/90 text-ink text-sm font-bold text-center"
                   />
                   <button
@@ -728,6 +765,16 @@ export default function PackageBookingPage() {
                         : `+${guestCount - pkg.basePax} pax × $${pkg.extraPaxPrice}`}
                     </span>
                     <span className="font-medium text-ink">HK${extraPaxCharge.toLocaleString()}</span>
+                  </div>
+                )}
+                {peakSurcharge > 0 && peakRule?.surchargePerHead != null && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-rose-600 font-medium">
+                      {locale === 'zh'
+                        ? `🎉 特別日子附加費 (${guestCount}人 × $${peakRule.surchargePerHead})`
+                        : `🎉 Special-day surcharge (${guestCount} × $${peakRule.surchargePerHead})`}
+                    </span>
+                    <span className="font-medium text-rose-600">HK${peakSurcharge.toLocaleString()}</span>
                   </div>
                 )}
                 <div className="flex justify-between text-sm">

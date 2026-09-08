@@ -533,15 +533,6 @@ export function calculatePricing(
       amount: baseCharge - peakSurcharge,
     },
   ];
-  if (peakSurcharge > 0) {
-    breakdown.push({
-      label: {
-        zh: `🎉 特別日子附加費 (${guestLabel} x $${peakSurchargePerHead})`,
-        en: `Special-day surcharge (${guestLabelEn} x $${peakSurchargePerHead})`,
-      },
-      amount: peakSurcharge,
-    });
-  }
 
   let addOnTotal = 0;
   const hasBBQPackage = selectedAddOns.some(
@@ -764,6 +755,19 @@ export function calculatePricing(
     breakdown.push({
       label: { zh: '無酒精飲品任飲（已包含）', en: 'Non-Alcoholic Drinks (Included)' },
       amount: 0,
+    });
+  }
+
+  // Peak surcharge appended LAST so surfaces that index-align
+  // breakdown.slice(1) with the addOns array stay aligned (they already
+  // tolerate trailing note rows like the waived BBQ fee).
+  if (peakSurcharge > 0) {
+    breakdown.push({
+      label: {
+        zh: `🎉 特別日子附加費 (${guestLabel} x $${peakSurchargePerHead})`,
+        en: `Special-day surcharge (${guestLabelEn} x $${peakSurchargePerHead})`,
+      },
+      amount: peakSurcharge,
     });
   }
 

@@ -19,6 +19,9 @@ import { useParams } from 'next/navigation';
 import { useRouter, Link } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
 import { getBooking, getBlockedSlots } from '@/lib/firestore';
+import { getPeakDay } from '@/lib/peakDays';
+import { resolvePeakRule } from '@/lib/peakDayRules';
+import type { PeakDayConfig } from '@/types';
 import { getVenueById, venuesSharingSpace } from '@/lib/venues';
 import { loadAllVenues, conflictIdsFor } from '@/lib/venueRegistry';
 import {
@@ -47,6 +50,13 @@ export default function ModifyBookingPage() {
   const { user, loading: authLoading } = useAuth();
 
   const [booking, setBooking] = useState<BookingRecord | null>(null);
+  const [peakCfg, setPeakCfg] = useState<PeakDayConfig | null>(null);
+  useEffect(() => {
+    if (!booking?.date) { setPeakCfg(null); return; }
+    let stale = false;
+    getPeakDay(booking.date).then((c) => { if (!stale) setPeakCfg(c); });
+    return () => { stale = true; };
+  }, [booking?.date]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -150,8 +160,9 @@ export default function ModifyBookingPage() {
       newGuestCount,
       cart,
       childCount,
+      resolvePeakRule(peakCfg, booking.venueId)?.surchargePerHead || 0,
     );
-  }, [venue, booking, cart, newGuestCount, childCount, newHours]);
+  }, [venue, booking, cart, newGuestCount, childCount, newHours, peakCfg]);
 
   // Package bookings: diff is ADDITIVE (setup hrs × venue rate) — the
   // per-head calculatePricing result must never touch a flat package
