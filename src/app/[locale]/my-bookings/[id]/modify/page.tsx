@@ -161,6 +161,7 @@ export default function ModifyBookingPage() {
       cart,
       childCount,
       resolvePeakRule(peakCfg, booking.venueId)?.surchargePerHead || 0,
+      booking.peakSurchargeOverride,
     );
   }, [venue, booking, cart, newGuestCount, childCount, newHours, peakCfg]);
 

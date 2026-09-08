@@ -72,3 +72,21 @@ describe('forceWeekendRate', () => {
     expect(resolvePeakRule(cfg2, 'tst')).toBeNull();
   });
 });
+
+describe('peakSurchargeOverride (CS-adjusted total)', () => {
+  it('replaces the rule-derived amount outright', () => {
+    const v = venues.find((x) => x.id === 'cwb')!;
+    const adjusted = calculatePricing(v, false, 4, 15, [], 0, 150, 1500);
+    const ruled = calculatePricing(v, false, 4, 15, [], 0, 150);
+    expect(ruled.subtotal - adjusted.subtotal).toBe(2250 - 1500);
+    const line = adjusted.breakdown.find((b) => b.label.zh.includes('特別日子'));
+    expect(line?.amount).toBe(1500);
+    expect(line?.label.zh).toContain('已調整');
+  });
+  it('override 0 removes the surcharge entirely', () => {
+    const v = venues.find((x) => x.id === 'cwb')!;
+    const zero = calculatePricing(v, false, 4, 15, [], 0, 150, 0);
+    const none = calculatePricing(v, false, 4, 15, [], 0, 0);
+    expect(zero.subtotal).toBe(none.subtotal);
+  });
+});

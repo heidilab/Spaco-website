@@ -546,6 +546,7 @@ export async function updateBookingDateTime(
         addOns,
         children,
         peakRule?.surchargePerHead || 0,
+        booking.peakSurchargeOverride,
       );
 
       // Preserve any promo discount the customer had applied. We re-apply

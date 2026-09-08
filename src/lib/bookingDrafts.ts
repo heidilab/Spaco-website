@@ -138,6 +138,7 @@ export async function claimBookingDraft(
       addOns: draft.addOns,
       hasBYOFood: draft.hasBYOFood,
       pricing: draft.pricing,
+      ...(typeof draft.peakSurchargeOverride === 'number' ? { peakSurchargeOverride: draft.peakSurchargeOverride } : {}),
       status: 'awaiting_payment',
       paymentMethod: null,
       receiptUrl: null,

@@ -512,11 +512,17 @@ export function calculatePricing(
    *  hour. Folded into baseCharge so finance rent categories, deposits
    *  and commission bases all see it without special-casing. */
   peakSurchargePerHead: number = 0,
+  /** CS-adjusted TOTAL surcharge for this booking (admin link flow —
+   *  e.g. a WhatsApp-negotiated discount). When a number, it replaces
+   *  the rule-derived amount outright; null/undefined follows the rule. */
+  peakSurchargeOverride?: number | null,
 ): PricingCalculation {
   const tier = isWeekend ? venue.pricing.weekend : venue.pricing.weekday;
   const adults = Math.max(0, guests - childCount);
   const equiv = adultEquivalent(adults, childCount);
-  const peakSurcharge = peakSurchargePerHead > 0 ? Math.round(peakSurchargePerHead * equiv) : 0;
+  const peakSurcharge = typeof peakSurchargeOverride === 'number'
+    ? Math.max(0, Math.round(peakSurchargeOverride))
+    : peakSurchargePerHead > 0 ? Math.round(peakSurchargePerHead * equiv) : 0;
   const baseCharge = Math.round(tier.perHead * equiv * hours) + peakSurcharge;
   const guestLabel = childCount > 0
     ? `${adults}成人 + ${childCount}小童`
@@ -762,10 +768,11 @@ export function calculatePricing(
   // breakdown.slice(1) with the addOns array stay aligned (they already
   // tolerate trailing note rows like the waived BBQ fee).
   if (peakSurcharge > 0) {
+    const adjusted = typeof peakSurchargeOverride === 'number';
     breakdown.push({
       label: {
-        zh: `🎉 特別日子附加費 (${guestLabel} x $${peakSurchargePerHead})`,
-        en: `Special-day surcharge (${guestLabelEn} x $${peakSurchargePerHead})`,
+        zh: adjusted ? '🎉 特別日子附加費（已調整）' : `🎉 特別日子附加費 (${guestLabel} x $${peakSurchargePerHead})`,
+        en: adjusted ? 'Special-day surcharge (adjusted)' : `Special-day surcharge (${guestLabelEn} x $${peakSurchargePerHead})`,
       },
       amount: peakSurcharge,
     });

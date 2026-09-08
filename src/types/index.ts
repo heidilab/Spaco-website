@@ -325,6 +325,9 @@ export interface BookingRecord {
    *  commission on this booking — 行家 deals are negotiated per booking
    *  (Heidi 2026-09). Set from the 支出管理 page; wins over the rule. */
   commissionOverride?: number;
+  /** CS-adjusted TOTAL 特別日子附加費 (admin link/direct flow). null or
+   *  absent = follow the peak_days rule on recomputes. */
+  peakSurchargeOverride?: number | null;
   /** Channel id — a built-in MarketingChannel, 'loyalty_member' (auto
    *  repeat-customer tag), or an admin-configured custom id from
    *  內容管理 → 系統設定 → 來源渠道選項. */
@@ -531,6 +534,9 @@ export interface BookingDraft {
   notes?: string;
 
   // Optional staff-preset extras — carried through to the booking on claim.
+  /** CS-adjusted TOTAL 特別日子附加費. Copied onto the booking on claim
+   *  so later recomputes keep the negotiated amount. */
+  peakSurchargeOverride?: number | null;
   /** Promo code already validated by staff. The claim flow copies it
    *  straight onto the booking so the customer doesn't have to re-enter. */
   promoCode?: string;

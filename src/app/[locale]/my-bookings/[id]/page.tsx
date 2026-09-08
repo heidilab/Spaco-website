@@ -199,6 +199,7 @@ export default function MyBookingDetailPage() {
                     booking.addOns,
                     booking.childCount ?? 0,
                     resolvePeakRule(peakCfg, booking.venueId)?.surchargePerHead || 0,
+                    booking.peakSurchargeOverride,
                   ).breakdown.slice(1) // drop "場地費" — already accounted for in subtotal line below
                 : [];
               return (

@@ -428,6 +428,7 @@ export default function AdminBookingDetailPage() {
         liveAddOns,
         childCount,
         resolvePeakRule(editPeakCfg, venueId)?.surchargePerHead || 0,
+        bookingForFormula?.peakSurchargeOverride,
       );
       // Display the effective (post-promo) subtotal — see hydrate
       // comment above. Storage stays pre-promo. Promo recomputes for
@@ -1928,6 +1929,7 @@ export default function AdminBookingDetailPage() {
                         liveAddOns,
                         childCount,
                         resolvePeakRule(bookingPeakCfg, booking.venueId)?.surchargePerHead || 0,
+                        booking.peakSurchargeOverride,
                       );
                       suggestedSubtotalGross = live.subtotal;
                       // Effective subtotal = formula − promo. The
@@ -2142,6 +2144,7 @@ export default function AdminBookingDetailPage() {
                     booking.addOns,
                     booking.childCount ?? 0,
                     resolvePeakRule(bookingPeakCfg, booking.venueId)?.surchargePerHead || 0,
+                    booking.peakSurchargeOverride,
                   ).breakdown.slice(1) // drop venue rental — already in 小計 below
                 : [];
               return (

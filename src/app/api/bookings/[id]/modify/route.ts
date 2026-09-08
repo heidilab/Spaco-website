@@ -290,7 +290,7 @@ export async function POST(
   const peakRule = resolvePeakRule(await getPeakDayAdmin(booking.date), booking.venueId);
   const computed = calculatePricing(
     venue, booking.isWeekend, hours, newGuestCount, reqAddOns, childCount,
-    peakRule?.surchargePerHead || 0,
+    peakRule?.surchargePerHead || 0, booking.peakSurchargeOverride,
   );
 
   // Recompute the promo against the NEW pax / subtotal by reloading the

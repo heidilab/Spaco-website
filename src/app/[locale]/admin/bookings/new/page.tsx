@@ -289,10 +289,17 @@ export default function AdminNewBookingPage() {
   }, [selectedPackage, venueId, hours]);
 
   const peakRule = venue ? resolvePeakRule(peakCfg, venue.id) : null;
+  // CS may adjust the surcharge TOTAL before sending the link (e.g. a
+  // WhatsApp-negotiated discount). '' = follow the rule (default).
+  const [peakOverrideStr, setPeakOverrideStr] = useState('');
+  useEffect(() => { setPeakOverrideStr(''); }, [date, venueId]);
+  const peakOverride = peakOverrideStr.trim() !== '' && Number.isFinite(Number(peakOverrideStr))
+    ? Math.max(0, Number(peakOverrideStr))
+    : null;
   // 特別日子剔咗「假日價」→ 平日照計週末 tier。
   const isWeekend = calendarWeekend || peakRule?.forceWeekendRate === true;
   const pricing = venue
-    ? calculatePricing(venue, isWeekend, hours, guestCount, selectedAddOnList, childCount, peakRule?.surchargePerHead || 0)
+    ? calculatePricing(venue, isWeekend, hours, guestCount, selectedAddOnList, childCount, peakRule?.surchargePerHead || 0, peakOverride)
     : null;
 
   // Mirror the customer-facing pricing flow exactly so admin-issued
@@ -470,6 +477,7 @@ export default function AdminNewBookingPage() {
           isWeekend,
           addOns: selectedAddOnList,
           hasBYOFood,
+          ...(peakOverride !== null ? { peakSurchargeOverride: peakOverride } : {}),
           pricing: {
             baseCharge: selectedPackage ? selectedPackage.price + extraPaxCharge : pricing.baseCharge,
             addOnTotal: pricing.addOnTotal,
@@ -520,6 +528,7 @@ export default function AdminNewBookingPage() {
         isWeekend,
         addOns: selectedAddOnList,
         hasBYOFood,
+        ...(peakOverride !== null ? { peakSurchargeOverride: peakOverride } : {}),
         pricing: {
           // Packages: flat package portion, NOT the per-head artifact
           baseCharge: selectedPackage ? selectedPackage.price + extraPaxCharge : pricing.baseCharge,
@@ -894,16 +903,42 @@ export default function AdminNewBookingPage() {
               </p>
             )}
             {peakRule && (
-              <div className="rounded-xl border-2 border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                🎉 <b>{peakCfg?.note || (locale === 'zh' ? '特別日子' : 'Special day')}</b>
-                {peakRule.surchargePerHead
-                  ? (locale === 'zh' ? ` — 每位 +$${peakRule.surchargePerHead} 附加費（已自動計入價錢）` : ` — +$${peakRule.surchargePerHead}/head surcharge (auto-included)`)
-                  : ''}
-                {(peakRule.minHeadcount || peakRule.minHours)
-                  ? (locale === 'zh'
-                    ? `｜要求：${peakRule.minHeadcount ? `最少 ${peakRule.minHeadcount} 人` : ''}${peakRule.minHeadcount && peakRule.minHours ? '、' : ''}${peakRule.minHours ? `最少 ${peakRule.minHours} 小時` : ''}`
-                    : ` | min ${peakRule.minHeadcount || '-'} guests / ${peakRule.minHours || '-'} hrs`)
-                  : ''}
+              <div className="rounded-xl border-2 border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-700 space-y-1.5">
+                <div>
+                  🎉 <b>{peakCfg?.note || (locale === 'zh' ? '特別日子' : 'Special day')}</b>
+                  {peakRule.surchargePerHead
+                    ? (locale === 'zh' ? ` — 每位 +$${peakRule.surchargePerHead} 附加費（已自動計入價錢）` : ` — +$${peakRule.surchargePerHead}/head surcharge (auto-included)`)
+                    : ''}
+                  {(peakRule.minHeadcount || peakRule.minHours)
+                    ? (locale === 'zh'
+                      ? `｜要求：${peakRule.minHeadcount ? `最少 ${peakRule.minHeadcount} 人` : ''}${peakRule.minHeadcount && peakRule.minHours ? '、' : ''}${peakRule.minHours ? `最少 ${peakRule.minHours} 小時` : ''}`
+                      : ` | min ${peakRule.minHeadcount || '-'} guests / ${peakRule.minHours || '-'} hrs`)
+                    : ''}
+                </div>
+                {(peakRule.surchargePerHead || 0) > 0 && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <label className="font-semibold">
+                      {locale === 'zh' ? '附加費金額 $' : 'Surcharge $'}
+                    </label>
+                    <input
+                      type="number" min={0}
+                      value={peakOverrideStr}
+                      onChange={(e) => setPeakOverrideStr(e.target.value)}
+                      placeholder={String(Math.round((peakRule.surchargePerHead || 0) * (adultCount + 0.5 * childCount)))}
+                      className="w-28 px-2 py-1 rounded-lg border border-rose-300 bg-white text-right text-sm"
+                    />
+                    {peakOverride !== null ? (
+                      <>
+                        <span className="text-rose-600 font-bold">{locale === 'zh' ? '（已手動調整）' : '(adjusted)'}</span>
+                        <button type="button" onClick={() => setPeakOverrideStr('')} className="underline">
+                          {locale === 'zh' ? '重設為預設' : 'Reset to default'}
+                        </button>
+                      </>
+                    ) : (
+                      <span className="text-rose-400">{locale === 'zh' ? '留空 = 跟規則自動計' : 'blank = rule amount'}</span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
             {/* Surface WHY this date is on weekend rate — esp. for the

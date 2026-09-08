@@ -305,7 +305,7 @@ export default function ConfirmBookingPage() {
     const peakRule = resolvePeakRule(await getPeakDay(booking.date), booking.venueId);
     const newPricing = calculatePricing(
       venue, booking.isWeekend, booking.hours, booking.guestCount, newAddOns, booking.childCount,
-      peakRule?.surchargePerHead || 0,
+      peakRule?.surchargePerHead || 0, booking.peakSurchargeOverride,
     );
     if (isDraft) {
       const draft = loadBookingCheckoutDraft();
@@ -445,7 +445,7 @@ export default function ConfirmBookingPage() {
             booking.guestCount,
             newAddOns,
             booking.childCount,
-            peakRule?.surchargePerHead || 0,
+            peakRule?.surchargePerHead || 0, booking.peakSurchargeOverride,
           );
           if (isDraft) {
             // Draft mode — patch the sessionStorage draft and local state
