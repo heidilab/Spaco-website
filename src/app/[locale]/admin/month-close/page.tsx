@@ -21,7 +21,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getAllBookings } from '@/lib/firestore';
 import { branchKey as branchKeyOf, countsForFinance, salesCategoryBreakdown } from '@/lib/finance';
 import { listExpenses, getFinanceConfig, saveFinanceConfig, type FinanceConfig } from '@/lib/expenses';
-import { commissionForBooking, estimatedKpayFee, splitAmounts } from '@/lib/bookingMoney';
+import { commissionForBooking, estimatedKpayFee, splitAmounts, adminDiscountAmount } from '@/lib/bookingMoney';
 import { getMonthClose, saveMonthClose } from '@/lib/monthClose';
 import { parseKpayStatement, bookingIdPrefixFromOrderRef, type KpayStatementSummary, type KpayStatementTxn } from '@/lib/kpayStatement';
 import type { BookingRecord, MonthCloseRecord, ProfitSplitParty } from '@/types';
@@ -71,6 +71,8 @@ interface MonthNumbers {
   stored: number;
   commissions: number;
   commissionByChannel: Record<string, number>;
+  /** 折扣優惠/賠償 given on the month's bookings — an expense. */
+  discounts: number;
   kpayFee: number;      // actual when reconciled, else estimate
   kpayIsActual: boolean;
   expenses: number;
@@ -168,7 +170,7 @@ export default function MonthClosePage() {
       && b.date.startsWith(m)
       && branchKeyOf(b.venueId) === branch);
     const cats = { rent: 0, bbqHotpot: 0, shisha: 0, cater: 0, drinks: 0, extPenalty: 0 };
-    let sales = 0, commissions = 0, kpayEst = 0;
+    let sales = 0, commissions = 0, kpayEst = 0, discounts = 0;
     const channelSales: Record<string, number> = {};
     const channelCounts: Record<string, number> = {};
     const commissionByChannel: Record<string, number> = {};
@@ -187,6 +189,7 @@ export default function MonthClosePage() {
         }
         kpayEst += estimatedKpayFee(b, config.kpayFeePct);
       }
+      discounts += adminDiscountAmount(b);
       const ch = b.marketingChannel || 'unknown';
       channelSales[ch] = (channelSales[ch] || 0) + total;
       channelCounts[ch] = (channelCounts[ch] || 0) + 1;
@@ -195,9 +198,9 @@ export default function MonthClosePage() {
     const kpayIsActual = typeof close?.kpayActualFee === 'number';
     const kpayFee = kpayIsActual ? (close!.kpayActualFee as number) : kpayEst;
     const stored = fyExpenses[m] || 0;
-    const expenses = stored + commissions + kpayFee;
+    const expenses = stored + commissions + kpayFee + discounts;
     return {
-      sales, stored, commissions, commissionByChannel, kpayFee, kpayIsActual,
+      sales, stored, commissions, commissionByChannel, discounts, kpayFee, kpayIsActual,
       expenses, profit: sales - expenses, count: rows.length,
       channelSales, channelCounts, cats,
     };
@@ -629,7 +632,7 @@ export default function MonthClosePage() {
                 <div className="text-gray-500">{zh ? '總支出' : 'Total Expenses'}</div>
                 <div className="text-xl font-bold">${fmt(cur.expenses)}</div>
                 <div className="text-xs text-gray-400">
-                  {zh ? '固定/雜項' : 'Stored'} ${fmt(cur.stored)} · {zh ? '佣金' : 'Comm'} ${fmt(cur.commissions)} · KPay ${fmt(cur.kpayFee)}{cur.kpayIsActual ? (zh ? '（實際）' : ' (actual)') : (zh ? '（估算）' : ' (est.)')}
+                  {zh ? '固定/雜項' : 'Stored'} ${fmt(cur.stored)} · {zh ? '佣金' : 'Comm'} ${fmt(cur.commissions)} · KPay ${fmt(cur.kpayFee)}{cur.kpayIsActual ? (zh ? '（實際）' : ' (actual)') : (zh ? '（估算）' : ' (est.)')}{cur.discounts > 0 ? ` · ${zh ? '折扣/賠償' : 'Discounts'} $${fmt(cur.discounts)}` : ''}
                 </div>
               </div>
               <div className="bg-gray-50 rounded-lg p-3">

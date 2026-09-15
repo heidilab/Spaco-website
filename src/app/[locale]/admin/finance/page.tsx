@@ -11,7 +11,7 @@ import {
 } from '@/types';
 import { channelDisplayLabel, getMarketingChannelOptions, type MarketingChannelOption } from '@/lib/marketingChannels';
 import { listExpenses, getFinanceConfig } from '@/lib/expenses';
-import { commissionForBooking, estimatedKpayFee, splitAmounts } from '@/lib/bookingMoney';
+import { commissionForBooking, estimatedKpayFee, splitAmounts, adminDiscountAmount } from '@/lib/bookingMoney';
 import { getMonthClose } from '@/lib/monthClose';
 
 // Branch code used in the Sales Record Excel export.
@@ -140,7 +140,9 @@ export default function FinanceOverviewPage() {
   function transactionsFor(b: BookingRecord): Array<{ date: string; method: string; amount: number; note?: string }> {
     const tx: Array<{ date: string; method: string; amount: number; note?: string }> = [];
     const logged = b.payments || [];
-    const loggedAmount = logged.reduce((s, p) => s + (p.amount || 0), 0);
+    // Synthetic-initial derivation counts only money IN — a refund
+    // entry must not resurrect a phantom initial-payment row.
+    const loggedAmount = logged.reduce((s, p) => s + Math.max(0, p.amount || 0), 0);
     const totalPaid = b.pricing.deposit || 0;
     // Synthetic initial row covers LEGACY paid bookings whose deposit
     // predates the payments[] freeze. Never fabricate one for a booking
@@ -159,7 +161,13 @@ export default function FinanceOverviewPage() {
       const dateStr = typeof p.recordedAt === 'string'
         ? p.recordedAt.slice(0, 10)
         : '';
-      tx.push({ date: dateStr, method: p.method, amount: p.amount || 0, note: p.note || undefined });
+      const isRefund = (p.amount || 0) < 0;
+      tx.push({
+        date: dateStr,
+        method: isRefund ? `退款(${p.method})` : p.method,
+        amount: p.amount || 0,
+        note: p.note || undefined,
+      });
     }
     return tx;
   }
@@ -254,6 +262,14 @@ export default function FinanceOverviewPage() {
         if (fee > 0) {
           drItems.push({ vendor: 'Kpay', amount: fee });
           totalExpenses += fee;
+        }
+        // 折扣優惠/賠償 recorded as a DR expense line so the sales
+        // categories stay GROSS while Profit reflects the giveaway
+        // (Heidi 2026-09-16: refunds/discounts must show in reports).
+        const disc = adminDiscountAmount(b);
+        if (disc > 0) {
+          drItems.push({ vendor: `折扣優惠${b.adminDiscount?.note ? `（${b.adminDiscount.note}）` : ''}`, amount: disc });
+          totalExpenses += disc;
         }
 
         const timeStr = b.endDate && b.endDate !== b.date
