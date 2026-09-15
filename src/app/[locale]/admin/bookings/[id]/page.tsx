@@ -197,6 +197,10 @@ export default function AdminBookingDetailPage() {
   const [discValue, setDiscValue] = useState('');
   const [discNote, setDiscNote] = useState('');
   const [discSaving, setDiscSaving] = useState(false);
+  /** The 折扣優惠 amount currently deducted from the 消費小計 input —
+   *  MUST be added back identically when converting to gross, or the
+   *  stored subtotal drifts (subtotalOverride replaces gross outright). */
+  const [inputDiscountUsed, setInputDiscountUsed] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [statusValue, setStatusValue] = useState('');
@@ -264,6 +268,7 @@ export default function AdminBookingDetailPage() {
         }
         setBooking(b);
         setDate(b.date);
+      setInputDiscountUsed(adminDiscountAmount(b));
       setDiscType(b.adminDiscount?.type || 'percent');
       setDiscScope(b.adminDiscount?.scope || 'all');
       setDiscValue(b.adminDiscount?.value ? String(b.adminDiscount.value) : '');
@@ -452,7 +457,14 @@ export default function AdminBookingDetailPage() {
         liveAddOns,
         liveVenueId: venueId,
       });
-      const effective = Math.max(0, live.subtotal - livePromo);
+      // 折扣優惠 recomputed against the LIVE pricing (a rent-scope %
+      // must follow the edited rent, not the stored one).
+      const liveDiscount = adminDiscountAmount({
+        pricing: { baseCharge: live.baseCharge, addOnTotal: live.addOnTotal, subtotal: live.subtotal, deposit: 0 },
+        adminDiscount: bookingForFormula.adminDiscount,
+      });
+      const effective = Math.max(0, live.subtotal - livePromo - liveDiscount);
+      setInputDiscountUsed(liveDiscount);
       setSubtotalOverride(String(effective));
     } catch { /* venue mismatch — keep current value */ }
     // We intentionally omit setSubtotalOverride from deps — it's a
@@ -559,15 +571,16 @@ export default function AdminBookingDetailPage() {
   }
 
   const subtotalOverrideEffective = parseFloat(subtotalOverride);
-  const storedEffectiveSubtotal = (booking.pricing.subtotal ?? 0) - (booking.promoDiscount || 0);
+  const storedEffectiveSubtotal = Math.max(0,
+    (booking.pricing.subtotal ?? 0) - (booking.promoDiscount || 0) - adminDiscountAmount(booking));
   const subtotalDirty =
     Number.isFinite(subtotalOverrideEffective)
     && subtotalOverrideEffective !== storedEffectiveSubtotal;
   // What we actually pass to lib/firestore.ts — the gross subtotal
-  // including the promo amount (since promoDiscount is preserved
-  // separately on the booking record).
+  // including the promo + 折扣優惠 amounts (both are preserved
+  // separately on the booking record and re-deducted at display time).
   const subtotalOverrideNum = Number.isFinite(subtotalOverrideEffective)
-    ? subtotalOverrideEffective + (booking.promoDiscount || 0)
+    ? subtotalOverrideEffective + (booking.promoDiscount || 0) + inputDiscountUsed
     : NaN;
   const dirty =
     date !== booking.date ||
@@ -1976,10 +1989,14 @@ export default function AdminBookingDetailPage() {
                         booking.peakSurchargeOverride,
                       );
                       suggestedSubtotalGross = live.subtotal;
-                      // Effective subtotal = formula − promo. The
-                      // input + reset button + hint all show this
-                      // post-promo number per Heidi's spec.
-                      suggestedSubtotal = Math.max(0, live.subtotal - livePromoDiscount);
+                      // Effective subtotal = formula − promo − 折扣優惠.
+                      // The input + reset button + hint all show this
+                      // fully-deducted number per Heidi's spec.
+                      const liveDisc = adminDiscountAmount({
+                        pricing: { baseCharge: live.baseCharge, addOnTotal: live.addOnTotal, subtotal: live.subtotal, deposit: 0 },
+                        adminDiscount: booking.adminDiscount,
+                      });
+                      suggestedSubtotal = Math.max(0, live.subtotal - livePromoDiscount - liveDisc);
                       suggestedTier = live.securityDeposit;
                     } catch { /* venue mismatch — skip suggestion */ }
                   }
@@ -2082,11 +2099,17 @@ export default function AdminBookingDetailPage() {
                           </div>
                           <p className="text-[11px] text-ink-soft mt-1 leading-relaxed">
                             {locale === 'zh'
-                              ? `已扣減優惠碼後嘅金額（會員積分以此為基礎）。`
+                              ? `已扣減優惠碼同折扣優惠後嘅金額（會員積分以此為基礎）。`
                                 + (suggestedSubtotalGross > 0
                                   ? ` 公式：venue × 人 × 鐘頭 + add-ons = HK$${suggestedSubtotalGross.toLocaleString()}`
                                     + (livePromoDiscount > 0
-                                      ? ` − 優惠碼${booking.promoCode ? ` ${booking.promoCode}` : ''} HK$${livePromoDiscount.toLocaleString()} = HK$${suggestedSubtotal.toLocaleString()}`
+                                      ? ` − 優惠碼${booking.promoCode ? ` ${booking.promoCode}` : ''} HK$${livePromoDiscount.toLocaleString()}`
+                                      : '')
+                                    + (adminDiscountAmount(booking) > 0
+                                      ? ` − 折扣優惠 HK$${adminDiscountAmount(booking).toLocaleString()}`
+                                      : '')
+                                    + ((livePromoDiscount > 0 || adminDiscountAmount(booking) > 0)
+                                      ? ` = HK$${suggestedSubtotal.toLocaleString()}`
                                       : '')
                                     + '。'
                                   : ' 尚未能計算。')
