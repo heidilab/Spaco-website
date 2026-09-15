@@ -35,6 +35,7 @@ export async function POST(req: NextRequest) {
       amount?: number;
       method?: 'fps' | 'bank' | 'cash' | 'other';
       note?: string;
+      paidDate?: string;
       recordedBy?: string;
     };
     const { bookingId } = body;
