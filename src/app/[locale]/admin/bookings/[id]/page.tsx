@@ -1530,7 +1530,7 @@ export default function AdminBookingDetailPage() {
                 </h3>
                 <p className="text-xs text-ink-soft -mt-1">
                   {locale === 'zh'
-                    ? '改動會即時重新計算場租 / 附加服務小計 / 可退按金 / 應付 / 尾數，並寫入預訂。'
+                    ? '改動會即時重新計算下面嘅「消費小計」預覽 — 要撳底部「儲存修改」先會正式寫入預訂（上面「預訂資料」嗰張卡顯示嘅係已儲存嘅版本）。'
                     : 'Changes re-run pricing (rental / add-on subtotal / refundable / due / balance) on save.'}
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
