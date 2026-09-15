@@ -422,13 +422,16 @@ export default function PaymentHistory({
             if (p.kind === 'initial') return locale === 'zh' ? '首期付款' : 'Initial';
             if (p.kind === 'balance') return locale === 'zh' ? '尾數付款' : 'Balance';
             if (p.kind === 'topup') return locale === 'zh' ? '補加付款' : 'Top-up';
+            if (p.kind === 'refund' || (p as { isRefund?: boolean }).isRefund) return locale === 'zh' ? '↩️ 退款' : '↩️ Refund';
             return null;
           })();
           const kpayOrderNo = (p as { kpayOrderNo?: string }).kpayOrderNo;
           return (
             <li key={i} className="border-l-2 border-pink/40 pl-3 py-1.5">
               <div className="flex items-baseline justify-between gap-2">
-                <span className="font-mono font-bold text-sm">HK${p.amount.toLocaleString()}</span>
+                <span className={`font-mono font-bold text-sm ${p.amount < 0 ? 'text-rose-600' : ''}`}>
+                  {p.amount < 0 ? `−HK$${Math.abs(p.amount).toLocaleString()}` : `HK$${p.amount.toLocaleString()}`}
+                </span>
                 <span className="text-ink-soft">{METHOD_LABELS[p.method]?.[locale] || p.method}</span>
               </div>
               {/* Per-entry bucket breakdown intentionally omitted per

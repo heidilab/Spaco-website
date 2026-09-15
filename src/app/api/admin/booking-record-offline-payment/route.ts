@@ -36,6 +36,9 @@ export async function POST(req: NextRequest) {
       method?: 'fps' | 'bank' | 'cash' | 'other';
       note?: string;
       paidDate?: string;
+      /** true = money OUT to the customer (退款/賠償) — stored as a
+       *  NEGATIVE payments[] entry so 已收/尾數/finance all net off. */
+      isRefund?: boolean;
       recordedBy?: string;
     };
     const { bookingId } = body;
@@ -70,7 +73,10 @@ export async function POST(req: NextRequest) {
     // subtracts promo/points itself, so it's correct either way.
     const grandTotal = computeGrandTotal(booking);
     const loggedSum = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
-    const newBalanceDue = Math.max(0, grandTotal - loggedSum - total);
+    // Refunds are money OUT — flip the sign once here and every formula
+    // below nets correctly.
+    const signedTotal = body.isRefund ? -Math.abs(total) : total;
+    const newBalanceDue = Math.max(0, grandTotal - loggedSum - signedTotal);
 
     // Status advancement (mirrors booking-edit-followup):
     // only from upstream states; never downgrade confirmed/completed.
@@ -88,18 +94,23 @@ export async function POST(req: NextRequest) {
     const settledWithOverflow =
       booking.status === 'confirmed' && !!booking.depositRefund;
     let nextStatus = booking.status;
-    if (settledWithOverflow && newBalanceDue === 0) {
-      nextStatus = 'completed';
-    } else if (upstreamStates.has(booking.status)) {
-      nextStatus = newBalanceDue === 0 ? 'confirmed' : 'awaiting_payment';
+    // Refunds never advance/downgrade status — they only log money out.
+    if (!body.isRefund) {
+      if (settledWithOverflow && newBalanceDue === 0) {
+        nextStatus = 'completed';
+      } else if (upstreamStates.has(booking.status)) {
+        nextStatus = newBalanceDue === 0 ? 'confirmed' : 'awaiting_payment';
+      }
     }
 
-    const entryKind: 'initial' | 'balance' | 'topup' =
-      loggedSum === 0
-        ? 'initial'
-        : newBalanceDue === 0
-          ? 'balance'
-          : 'topup';
+    const entryKind: 'initial' | 'balance' | 'topup' | 'refund' =
+      body.isRefund
+        ? 'refund'
+        : loggedSum === 0
+          ? 'initial'
+          : newBalanceDue === 0
+            ? 'balance'
+            : 'topup';
 
     const update: Record<string, unknown> = {
       payments: FieldValue.arrayUnion({
@@ -109,9 +120,10 @@ export async function POST(req: NextRequest) {
         rentalAmount: 0,
         addOnAmount: 0,
         depositAmount: 0,
-        amount: total,
+        amount: signedTotal,
         method: body.method || 'fps',
         kind: entryKind,
+        ...(body.isRefund ? { isRefund: true } : {}),
         note: body.note?.trim() || null,
         recordedBy: body.recordedBy || 'admin',
         // Admin can back-date to the day the customer ACTUALLY paid
@@ -126,7 +138,7 @@ export async function POST(req: NextRequest) {
       balanceDue: newBalanceDue,
       status: nextStatus,
       updatedAt: FieldValue.serverTimestamp(),
-      ...(newBalanceDue === 0 && !booking.balancePaidAt
+      ...(!body.isRefund && newBalanceDue === 0 && !booking.balancePaidAt
         ? { balancePaidAt: FieldValue.serverTimestamp() }
         : {}),
       ...(nextStatus === 'confirmed' && booking.status !== 'confirmed'

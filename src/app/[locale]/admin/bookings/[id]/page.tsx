@@ -229,6 +229,8 @@ export default function AdminBookingDetailPage() {
   // 付款日期 — defaults to today; admin back-dates when the customer
   // actually paid earlier (finance exports use this date).
   const [payDate, setPayDate] = useState<string>('');
+  // 收款 or 退款 (money out — e.g. 投訴賠償, Heidi 2026-09-16 #fa5Npw6y)
+  const [payMode, setPayMode] = useState<'receive' | 'refund'>('receive');
   const [followupBusy, setFollowupBusy] = useState(false);
   const [followupMsg, setFollowupMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
@@ -1087,6 +1089,7 @@ export default function AdminBookingDetailPage() {
           method: payMethod,
           note: payNote.trim() || undefined,
           paidDate: payDate || undefined,
+          isRefund: payMode === 'refund',
           recordedBy: user.uid,
         }),
       });
@@ -1101,9 +1104,12 @@ export default function AdminBookingDetailPage() {
       }).catch((err) => console.warn('[offline-pay gcal sync] failed:', err));
       setFollowupMsg({
         kind: 'ok',
-        text: locale === 'zh' ? '✓ 已記錄付款' : '✓ Payment recorded',
+        text: payMode === 'refund'
+          ? (locale === 'zh' ? '✓ 已記錄退款' : '✓ Refund recorded')
+          : (locale === 'zh' ? '✓ 已記錄付款' : '✓ Payment recorded'),
       });
       setPayDate('');
+      setPayMode('receive');
       const fresh = await getBooking(booking.id);
       if (fresh) setBooking(fresh);
       // If this settled the balance, try to generate the door passcode now
@@ -2697,12 +2703,26 @@ export default function AdminBookingDetailPage() {
         <div className="fixed inset-0 z-50 bg-charcoal/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-glass-lg max-w-md w-full p-6">
             <h3 className="font-bold text-lg mb-1">
-              {locale === 'zh' ? '已於線下付款' : 'Offline payment'}
+              {payMode === 'refund'
+                ? (locale === 'zh' ? '記錄退款' : 'Record refund')
+                : (locale === 'zh' ? '已於線下付款' : 'Offline payment')}
             </h3>
+            <div className="flex gap-2 mb-3">
+              {([['receive', locale === 'zh' ? '💰 收款' : '💰 Received'], ['refund', locale === 'zh' ? '↩️ 退款俾客人' : '↩️ Refund']] as const).map(([v, label]) => (
+                <button key={v} type="button" onClick={() => setPayMode(v)}
+                  className={`px-3 py-1.5 rounded-pill text-sm font-bold border-2 ${payMode === v ? (v === 'refund' ? 'border-rose-500 bg-rose-50 text-rose-700' : 'border-pink bg-pink/10 text-pink') : 'border-charcoal/15 bg-white text-ink-soft'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
             <p className="text-sm text-ink-soft mb-4">
-              {locale === 'zh'
-                ? '輸入客人實際俾過嘅金額。只會記入付款記錄，唔會改變張單嘅應付金額。'
-                : 'Enter the amount the customer actually paid offline. Only logs to payments[]; does not change the bill total.'}
+              {payMode === 'refund'
+                ? (locale === 'zh'
+                  ? '輸入實際退咗俾客人嘅金額（例如投訴賠償）。會以負數記入付款記錄，「已收總額」同財務報表會自動扣減。'
+                  : 'Enter the amount actually refunded to the customer. Logged as a negative payment; received totals and finance net off automatically.')
+                : (locale === 'zh'
+                  ? '輸入客人實際俾過嘅金額。只會記入付款記錄，唔會改變張單嘅應付金額。'
+                  : 'Enter the amount the customer actually paid offline. Only logs to payments[]; does not change the bill total.')}
             </p>
 
             <div className="space-y-3 mb-4">
@@ -2728,7 +2748,7 @@ export default function AdminBookingDetailPage() {
 
               <div>
                 <label className="block text-xs font-semibold text-ink-soft mb-1">
-                  {locale === 'zh' ? '付款日期' : 'Payment date'}
+                  {payMode === 'refund' ? (locale === 'zh' ? '退款日期' : 'Refund date') : (locale === 'zh' ? '付款日期' : 'Payment date')}
                 </label>
                 <input
                   type="date"
@@ -2804,7 +2824,7 @@ export default function AdminBookingDetailPage() {
                 {followupBusy ? '…' : (
                   <>
                     <Check size={14} />
-                    {locale === 'zh' ? '記錄付款' : 'Record payment'}
+                    {payMode === 'refund' ? (locale === 'zh' ? '記錄退款' : 'Record refund') : (locale === 'zh' ? '記錄付款' : 'Record payment')}
                   </>
                 )}
               </button>
