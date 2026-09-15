@@ -19,7 +19,7 @@ import { venuesSharingSpace, getVenueById } from './venues';
 import { loadAllVenues, conflictIdsFor } from './venueRegistry';
 import { calculatePricing, calculateDeposit, freeDrinksVenues } from './pricing';
 import { getPeakDay } from './peakDays';
-import { adminDiscountAmount } from './bookingMoney';
+import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { resolvePeakRule } from './peakDayRules';
 import { calcPromoDiscount } from './promoCodes';
 import { getHoliday } from './hkHolidays';
