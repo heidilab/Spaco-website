@@ -42,6 +42,11 @@ const GUARDED = [
     mustImport: ['computeGrandTotal'],
   },
   {
+    file: 'lib/firestore.ts',
+    incident: '#TQdbWBlI — updateBookingDateTime balanceDue ignored 折扣優惠 (stored 11,500 vs real 9,750)',
+    mustImport: ['adminDiscountAmount'],
+  },
+  {
     file: 'app/api/bookings/[id]/modify/route.ts',
     incident: 'customer self-modify recomputes the bill',
     mustImport: ['computeGrandTotal', 'computeBalanceDue'],

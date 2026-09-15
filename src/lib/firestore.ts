@@ -19,6 +19,7 @@ import { venuesSharingSpace, getVenueById } from './venues';
 import { loadAllVenues, conflictIdsFor } from './venueRegistry';
 import { calculatePricing, calculateDeposit, freeDrinksVenues } from './pricing';
 import { getPeakDay } from './peakDays';
+import { adminDiscountAmount } from './bookingMoney';
 import { resolvePeakRule } from './peakDayRules';
 import { calcPromoDiscount } from './promoCodes';
 import { getHoliday } from './hkHolidays';
@@ -695,8 +696,16 @@ export async function updateBookingDateTime(
       // and admin never disagree. Previously this subtracted promo only
       // (via effectiveSubtotal) and ignored pointsDiscount, and stored a
       // POST-promo subtotal — the root cause of the recurring drift.
+      // 折扣優惠 (adminDiscount) joins promo + points as a deduction —
+      // computed against the NEW pricing so a rent-scope % follows the
+      // edited rent. Missing this left stored balanceDue discount-blind
+      // (#TQdbWBlI showed 11,500 vs the real 9,750).
+      const adminDisc = adminDiscountAmount({
+        pricing: { baseCharge: newBaseCharge, addOnTotal: newAddOnTotal, subtotal: baseSubtotal, deposit: 0 },
+        adminDiscount: booking.adminDiscount,
+      });
       const effectiveGrandTotal =
-        Math.max(0, baseSubtotal - promoDiscount - pointsDiscount) + stickyDeposit;
+        Math.max(0, baseSubtotal - promoDiscount - pointsDiscount - adminDisc) + stickyDeposit;
       const effectiveDeposit = calculateDeposit(effectiveGrandTotal, next.date);
 
       // How much the customer has already paid against this booking.
