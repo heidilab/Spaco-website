@@ -67,6 +67,12 @@ export interface MoneyBooking {
   balanceDue?: number;
   payments?: Array<{ amount?: number; cardSurcharge?: number }>;
   depositRefund?: unknown;
+  adminDiscount?: {
+    type: 'percent' | 'cash';
+    value: number;
+    scope: 'all' | 'rent';
+    note?: string;
+  } | null;
 }
 
 // ── Core totals ────────────────────────────────────────────────────────
@@ -105,8 +111,28 @@ export function netConsumption(booking: MoneyBooking): number {
     0,
     grossSubtotal(booking.pricing)
       - (booking.promoDiscount || 0)
-      - (booking.pointsDiscount || 0),
+      - (booking.pointsDiscount || 0)
+      - adminDiscountAmount(booking),
   );
+}
+
+/**
+ * Admin-granted per-booking discount (折扣優惠, Heidi 2026-09-15) —
+ * percent or flat cash, scoped to the whole bill or the RENT portion
+ * only (F&B add-ons keep full price on 'rent' deals). Deposit never
+ * enters the base. Capped so the discount can't exceed its base.
+ */
+export function adminDiscountAmount(booking: MoneyBooking): number {
+  const d = booking.adminDiscount;
+  if (!d || !(d.value > 0)) return 0;
+  const gross = grossSubtotal(booking.pricing);
+  const base = d.scope === 'rent'
+    ? Math.min(booking.pricing?.baseCharge || 0, gross)
+    : gross;
+  const amount = d.type === 'percent'
+    ? Math.round(base * (Math.min(100, d.value) / 100))
+    : Math.round(d.value);
+  return Math.max(0, Math.min(amount, base));
 }
 
 /**

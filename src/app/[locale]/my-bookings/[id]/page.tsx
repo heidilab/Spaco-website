@@ -15,7 +15,7 @@ import {
   addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE,
   calculatePricing,
 } from '@/lib/pricing';
-import { displayBillTotal, paidGateway, surchargePaid } from '@/lib/bookingMoney';
+import { displayBillTotal, paidGateway, surchargePaid, adminDiscountAmount } from '@/lib/bookingMoney';
 import { generateWhatsAppLink } from '@/lib/email';
 import PaymentHistory from '@/components/booking/PaymentHistory';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
@@ -260,6 +260,12 @@ export default function MyBookingDetailPage() {
               <span className="text-ink-soft">{locale === 'zh' ? '小計' : 'Subtotal'}</span>
               <span>HK${booking.pricing.subtotal.toLocaleString()}</span>
             </div>
+            {adminDiscountAmount(booking) > 0 && (
+              <div className="flex justify-between text-sm text-emerald-600">
+                <span className="flex items-center gap-1.5">🎁 {locale === 'zh' ? '折扣優惠' : 'Discount'}{booking.adminDiscount?.note ? `（${booking.adminDiscount.note}）` : ''}</span>
+                <span>−HK${adminDiscountAmount(booking).toLocaleString()}</span>
+              </div>
+            )}
             {booking.promoCode && (booking.promoDiscount ?? 0) > 0 && (
               <div className="flex justify-between text-emerald-700">
                 <span className="flex items-center gap-1.5"><Tag size={12} />{locale === 'zh' ? '優惠碼' : 'Promo'} <span className="font-mono text-xs">{booking.promoCode}</span></span>

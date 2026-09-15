@@ -39,7 +39,7 @@ import {
   freeDrinksVenues,
   earlySetupPriceByVenue,
 } from '@/lib/pricing';
-import { amountOwed, paidBase, isSettlementOverflow, computeGrandTotal, netConsumption, discountedSubtotal } from '@/lib/bookingMoney';
+import { amountOwed, paidBase, isSettlementOverflow, computeGrandTotal, netConsumption, discountedSubtotal, computeBalanceDue, adminDiscountAmount } from '@/lib/bookingMoney';
 
 /**
  * Live-preview recompute of free_drinks promo amount when admin
@@ -191,6 +191,12 @@ export default function AdminBookingDetailPage() {
   // or repairing data corruption — e.g. #WYtymQm7 where the formula
   // gives $2,700 but Heidi knows the real consumption was $1,700.
   const [subtotalOverride, setSubtotalOverride] = useState<string>('');
+  // ── 折扣優惠 (admin per-booking discount, Heidi 2026-09-15) ──
+  const [discType, setDiscType] = useState<'percent' | 'cash'>('percent');
+  const [discScope, setDiscScope] = useState<'all' | 'rent'>('all');
+  const [discValue, setDiscValue] = useState('');
+  const [discNote, setDiscNote] = useState('');
+  const [discSaving, setDiscSaving] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [statusValue, setStatusValue] = useState('');
@@ -258,6 +264,10 @@ export default function AdminBookingDetailPage() {
         }
         setBooking(b);
         setDate(b.date);
+      setDiscType(b.adminDiscount?.type || 'percent');
+      setDiscScope(b.adminDiscount?.scope || 'all');
+      setDiscValue(b.adminDiscount?.value ? String(b.adminDiscount.value) : '');
+      setDiscNote(b.adminDiscount?.note || '');
         setEndDate(b.endDate || b.date);
         setStartTime(b.startTime);
         setEndTime(b.endTime);
@@ -518,6 +528,36 @@ export default function AdminBookingDetailPage() {
   // compare against the stored effective value for dirty detection,
   // and add promoDiscount back when sending to the backend so the
   // schema's pricing.subtotal stays the pre-promo gross.
+  /** Save / clear the admin discount and re-store balanceDue so the
+   *  amountOwed = max(computed, stored) rule sees the reduction. */
+  async function handleSaveDiscount() {
+    if (!booking) return;
+    setDiscSaving(true);
+    try {
+      const v = Math.max(0, Number(discValue) || 0);
+      const nextDiscount = v > 0
+        ? { type: discType, value: v, scope: discScope, ...(discNote.trim() ? { note: discNote.trim() } : {}) }
+        : null;
+      const nextBooking = { ...booking, adminDiscount: nextDiscount };
+      const newBalance = computeBalanceDue(nextBooking);
+      await updateDoc(doc(db, 'bookings', booking.id), {
+        adminDiscount: nextDiscount,
+        balanceDue: newBalance,
+        updatedAt: serverTimestamp(),
+      });
+      setBooking({ ...nextBooking, balanceDue: newBalance } as BookingRecord);
+      alert(locale === 'zh'
+        ? (nextDiscount
+          ? `已儲存折扣優惠 −HK$${adminDiscountAmount(nextBooking).toLocaleString()}，尚欠金額已更新`
+          : '已清除折扣優惠')
+        : 'Discount saved');
+    } catch (err) {
+      alert((locale === 'zh' ? '儲存失敗：' : 'Save failed: ') + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setDiscSaving(false);
+    }
+  }
+
   const subtotalOverrideEffective = parseFloat(subtotalOverride);
   const storedEffectiveSubtotal = (booking.pricing.subtotal ?? 0) - (booking.promoDiscount || 0);
   const subtotalDirty =
@@ -1945,6 +1985,63 @@ export default function AdminBookingDetailPage() {
 
                   return (
                     <div className="mt-3 pt-3 border-t border-charcoal/10 space-y-3">
+                      {/* 折扣優惠 — admin-granted per-booking discount */}
+                      <div className="rounded-xl border-2 border-emerald-200 bg-emerald-50/50 p-3 space-y-2">
+                        <p className="text-xs font-bold text-emerald-800">
+                          🎁 {locale === 'zh' ? '折扣優惠（額外俾客人嘅 offer）' : 'Discount (extra offer)'}
+                          {booking.adminDiscount && (
+                            <span className="ml-2 font-semibold">
+                              {locale === 'zh' ? '現時' : 'Now'}: −HK${adminDiscountAmount(booking).toLocaleString()}
+                            </span>
+                          )}
+                        </p>
+                        <div className="flex items-center gap-2 flex-wrap text-xs">
+                          {([['percent', '%'], ['cash', locale === 'zh' ? '減 $' : '$ off']] as const).map(([v, label]) => (
+                            <button key={v} type="button" onClick={() => setDiscType(v)}
+                              className={`px-2.5 py-1.5 rounded-pill font-semibold border-2 ${discType === v ? 'border-emerald-500 bg-emerald-100 text-emerald-800' : 'border-charcoal/15 bg-white text-ink-soft'}`}>
+                              {label}
+                            </button>
+                          ))}
+                          <input
+                            type="number" min={0}
+                            value={discValue}
+                            onChange={(e) => setDiscValue(e.target.value)}
+                            placeholder={discType === 'percent' ? '10' : '500'}
+                            className="w-24 px-2 py-1.5 rounded-lg border-2 border-charcoal/15 bg-white text-right"
+                          />
+                          <span className="text-ink-soft">{discType === 'percent' ? '%' : 'HK$'}</span>
+                          {([['all', locale === 'zh' ? '全單' : 'Whole bill'], ['rent', locale === 'zh' ? '只限場租' : 'Rent only']] as const).map(([v, label]) => (
+                            <button key={v} type="button" onClick={() => setDiscScope(v)}
+                              className={`px-2.5 py-1.5 rounded-pill font-semibold border-2 ${discScope === v ? 'border-emerald-500 bg-emerald-100 text-emerald-800' : 'border-charcoal/15 bg-white text-ink-soft'}`}>
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            value={discNote}
+                            onChange={(e) => setDiscNote(e.target.value)}
+                            placeholder={locale === 'zh' ? '備注（例如：滿 30 人優惠）' : 'Note (e.g. 30-pax deal)'}
+                            className="flex-1 px-2 py-1.5 rounded-lg border-2 border-charcoal/15 bg-white text-xs"
+                          />
+                          <button type="button" onClick={handleSaveDiscount} disabled={discSaving}
+                            className="px-3 py-1.5 rounded-pill bg-emerald-600 text-white text-xs font-bold disabled:opacity-40">
+                            {discSaving ? '…' : (locale === 'zh' ? '儲存折扣' : 'Save')}
+                          </button>
+                          {booking.adminDiscount && (
+                            <button type="button" disabled={discSaving}
+                              onClick={() => { setDiscValue(''); setDiscNote(''); }}
+                              className="text-xs text-ink-soft underline">
+                              {locale === 'zh' ? '清空後撳儲存即移除' : 'Blank + save to remove'}
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-emerald-700">
+                          {locale === 'zh'
+                            ? '只限場租 = 折扣淨係計場租部分，BBQ/飲品/到會照原價。儲存後尚欠金額即時更新，客人版面同收據都會顯示折扣行。'
+                            : 'Rent-only discounts the rental portion; F&B keeps full price. Balance due updates immediately.'}
+                        </p>
+                      </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="text-xs font-semibold text-ink-soft flex items-center gap-1.5">
@@ -2200,6 +2297,13 @@ export default function AdminBookingDetailPage() {
              * Previously this used `subtotal + securityDeposit`, which
              * inflated 尚欠 by the promo amount for every PRE-promo
              * booking (#asQzC4PU showed phantom HK\$500 outstanding). */}
+            {adminDiscountAmount(booking) > 0 && (
+              <Row
+                label={locale === 'zh' ? '🎁 折扣優惠' : '🎁 Discount'}
+                value={`−HK$${adminDiscountAmount(booking).toLocaleString()}${booking.adminDiscount?.note ? `（${booking.adminDiscount.note}）` : ''}`}
+                highlight="emerald"
+              />
+            )}
             {(booking.promoCode && (booking.promoDiscount ?? 0) > 0) && (() => {
               // For free_drinks promos, detect if promoDiscount is out of
               // sync with the current pax (e.g. after customer modified).

@@ -419,6 +419,18 @@ export default function AdminDocumentsPage() {
         });
       }
 
+      // Item — admin-granted 折扣優惠 as a negative line so the receipt
+      // total matches what the customer actually pays.
+      const discAmt = adminDiscountAmount(b);
+      if (discAmt > 0) {
+        items.push({
+          description: `Discount 折扣優惠${b.adminDiscount?.note ? `（${b.adminDiscount.note}）` : ''}`,
+          quantity: 1,
+          unitPrice: -discAmt,
+          amount: -discAmt,
+        });
+      }
+
       // Item — Refundable security deposit (按金).
       // `pricing.deposit` is the UPFRONT payment (full / 50%), NOT the
       // refundable deposit. The refundable amount is `securityDeposit` —

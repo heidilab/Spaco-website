@@ -15,6 +15,7 @@ import {
   paidBase, surchargePaid, paidGateway, computeBalanceDue,
   amountOwed, hasOutstanding, isSettlementOverflow,
   commissionForBooking, estimatedKpayFee,
+  adminDiscountAmount,
 } from './bookingMoney';
 
 describe('points conversion', () => {
@@ -286,5 +287,30 @@ describe('estimatedKpayFee', () => {
     };
     expect(estimatedKpayFee(b, 1.5)).toBe(45);
     expect(estimatedKpayFee(b, 0)).toBe(0);
+  });
+});
+
+describe('adminDiscountAmount (折扣優惠)', () => {
+  const base = { pricing: { baseCharge: 4000, addOnTotal: 2000, deposit: 0, subtotal: 6000, securityDeposit: 2000 } };
+  it('percent on whole bill', () => {
+    const b = { ...base, adminDiscount: { type: 'percent' as const, value: 10, scope: 'all' as const } };
+    expect(adminDiscountAmount(b)).toBe(600);
+    expect(netConsumption(b)).toBe(5400);
+  });
+  it('percent on rent only ignores add-ons', () => {
+    const b = { ...base, adminDiscount: { type: 'percent' as const, value: 10, scope: 'rent' as const } };
+    expect(adminDiscountAmount(b)).toBe(400);
+  });
+  it('cash capped at its base', () => {
+    const b = { ...base, adminDiscount: { type: 'cash' as const, value: 99999, scope: 'rent' as const } };
+    expect(adminDiscountAmount(b)).toBe(4000);
+  });
+  it('stacks with promo and points in netConsumption', () => {
+    const b = { ...base, promoDiscount: 500, pointsDiscount: 100, adminDiscount: { type: 'cash' as const, value: 400, scope: 'all' as const } };
+    expect(netConsumption(b)).toBe(5000);
+  });
+  it('absent/null discount is a no-op', () => {
+    expect(adminDiscountAmount(base)).toBe(0);
+    expect(adminDiscountAmount({ ...base, adminDiscount: null })).toBe(0);
   });
 });

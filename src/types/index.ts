@@ -328,6 +328,15 @@ export interface BookingRecord {
   /** CS-adjusted TOTAL 特別日子附加費 (admin link/direct flow). null or
    *  absent = follow the peak_days rule on recomputes. */
   peakSurchargeOverride?: number | null;
+  /** Admin-granted per-booking discount (e.g. headcount-milestone deal
+   *  promised on WhatsApp). Deducted like a promo in bookingMoney's
+   *  netConsumption — 'rent' scope caps the base at the rental portion. */
+  adminDiscount?: {
+    type: 'percent' | 'cash';
+    value: number;
+    scope: 'all' | 'rent';
+    note?: string;
+  } | null;
   /** Channel id — a built-in MarketingChannel, 'loyalty_member' (auto
    *  repeat-customer tag), or an admin-configured custom id from
    *  內容管理 → 系統設定 → 來源渠道選項. */
