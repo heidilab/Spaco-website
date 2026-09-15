@@ -2538,6 +2538,26 @@ export default function AdminBookingDetailPage() {
               if (fresh) setBooking(fresh);
             }}
           />
+          {/* Standalone payment/refund entry points — ALWAYS visible.
+           *  The 未付尾數 card (below) only renders when balance > 0,
+           *  which left fully-paid bookings with no way to record a
+           *  refund (投訴賠償 on #fa5Npw6y, Heidi 2026-09-16). */}
+          <div className="flex gap-2 -mt-2">
+            <button
+              type="button"
+              onClick={() => { setPayMode('receive'); setShowPaymentModal(true); }}
+              className="px-3 py-1.5 rounded-pill bg-emerald-500/10 text-emerald-700 text-xs font-bold hover:bg-emerald-500/20"
+            >
+              💰 {locale === 'zh' ? '記錄線下收款' : 'Record offline payment'}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setPayMode('refund'); setShowPaymentModal(true); }}
+              className="px-3 py-1.5 rounded-pill bg-rose-500/10 text-rose-700 text-xs font-bold hover:bg-rose-500/20"
+            >
+              ↩️ {locale === 'zh' ? '記錄退款俾客人' : 'Record refund'}
+            </button>
+          </div>
 
           {/* Outstanding balance — visible whenever the booking has a
            *  non-zero balanceDue (typically post-edit when admin added an
