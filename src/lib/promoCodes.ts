@@ -140,6 +140,11 @@ export function calcPromoDiscount(
   code: PromoCode,
   ctx: {
     subtotal: number;
+    /** Venue-rental portion of the bill (pricing.baseCharge, incl. any
+     *  peak surcharge). Basis for percentScope === 'rent' codes. When a
+     *  caller can't supply it, rent-scoped % falls back to the full
+     *  subtotal (never overcharges the discount base's cap below). */
+    baseCharge?: number;
     /** Adult-equivalent (1 adult + 0.5 × children). Used for per_pax. */
     adultEquiv: number;
     /** Cost of the drinks add-on already in the cart (0 if none). Used
@@ -176,7 +181,12 @@ export function calcPromoDiscount(
   switch (code.type) {
     case 'percent': {
       const pct = Math.max(0, Math.min(100, code.percent || 0));
-      amount = Math.round((pct / 100) * ctx.subtotal);
+      // 'rent' scope discounts the venue-rental portion only — food &
+      // drinks add-ons keep full price.
+      const base = code.percentScope === 'rent'
+        ? Math.min(ctx.baseCharge ?? ctx.subtotal, ctx.subtotal)
+        : ctx.subtotal;
+      amount = Math.round((pct / 100) * base);
       break;
     }
     case 'cash': {

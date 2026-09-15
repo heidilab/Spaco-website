@@ -273,10 +273,13 @@ export default function AdminDocumentsPage() {
 
     try {
       // Fetch the freshest user profile (cached map may be stale)
+      // Admin-direct bookings carry userId: null — never call
+      // getUserProfile(null) (it throws synchronously and crashed the
+      // whole page when importing such a booking, 2026-09-12).
       const profile =
-        (await getUserProfile(b.userId).catch(() => null)) ||
-        usersById[b.userId] ||
-        {};
+        (b.userId ? await getUserProfile(b.userId).catch(() => null) : null) ||
+        (b.userId ? usersById[b.userId] : null) ||
+        (b.customerName ? { displayName: b.customerName, email: b.customerEmail || '' } : {});
 
       const venue = venues.find((v) => v.id === b.venueId);
       const venueName = venue?.name[locale] || b.venueId;
@@ -1005,9 +1008,9 @@ export default function AdminDocumentsPage() {
                               </div>
                               {linked && (
                                 <div className="text-xs text-ink-soft mt-0.5 truncate">
-                                  {usersById[linked.userId]?.displayName ||
-                                    usersById[linked.userId]?.email ||
-                                    `User: ${linked.userId.slice(0, 8)}`}
+                                  {(linked.userId && (usersById[linked.userId]?.displayName || usersById[linked.userId]?.email))
+                                    || linked.customerName
+                                    || (linked.userId ? `User: ${linked.userId.slice(0, 8)}` : (locale === 'zh' ? '（後台直接開單）' : '(admin-direct)'))}
                                   {' · '}
                                   HK${linked.pricing.subtotal.toLocaleString()}
                                   {' + '}
@@ -1483,7 +1486,7 @@ export default function AdminDocumentsPage() {
                                 <div className="flex items-center gap-1.5 truncate">
                                   <Users size={12} className="text-lavender flex-shrink-0" />
                                   <span className="truncate">
-                                    {profile?.displayName || profile?.email || `(uid ${b.userId.slice(0, 6)})`}
+                                    {profile?.displayName || profile?.email || b.customerName || (b.userId ? `(uid ${b.userId.slice(0, 6)})` : (locale === 'zh' ? '（後台直接開單）' : '(admin-direct)'))}
                                     {' · '}
                                     {b.guestCount} pax
                                   </span>

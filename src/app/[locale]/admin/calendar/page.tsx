@@ -22,6 +22,7 @@ import {
   ExternalLink, Plus, X, Package,
 } from 'lucide-react';
 import { getHolidaysForMonth, Holiday } from '@/lib/hkHolidays';
+import { useAuth } from '@/contexts/AuthContext';
 
 // 15-minute increments, 10:00–23:45 — schedule entries (site visits /
 // deliveries) rarely land on the hour, so the pickers need minutes
@@ -81,6 +82,10 @@ export default function AdminCalendarPage() {
   const [venues, setVenues] = useState<Venue[]>(staticVenues);
   useEffect(() => { loadAllVenues().then(setVenues).catch(() => {}); }, []);
   const locale = useLocale() as 'zh' | 'en';
+  // 🧪 test bookings are fake: only ADMIN role sees them (tagged) on the
+  // master calendar — CS/cleaner/marketing never do (Heidi 2026-09-15).
+  const { hasPermission } = useAuth();
+  const canSeeTest = hasPermission('staff');
   const [mounted, setMounted] = useState(false);
   const [currentMonth, setCurrentMonth] = useState<string>('');
   const [todayStr, setTodayStr] = useState<string>('');
@@ -211,7 +216,8 @@ export default function AdminCalendarPage() {
         .filter((b) =>
           b.date === date
           && b.status !== 'cancelled'
-          && b.status !== 'payment_not_completed',
+          && b.status !== 'payment_not_completed'
+          && (!b.isTest || canSeeTest),
         )
         .forEach((b) => items.push({ kind: 'booking', sortTime: b.startTime, data: b }));
 
@@ -244,7 +250,7 @@ export default function AdminCalendarPage() {
 
       return items.sort((a, b) => a.sortTime.localeCompare(b.sortTime));
     };
-  }, [bookings, blockedSlots, calendarEvents]);
+  }, [bookings, blockedSlots, calendarEvents, canSeeTest]);
 
   const navigateMonth = (delta: number) => {
     if (!currentMonth) return;

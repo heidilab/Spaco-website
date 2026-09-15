@@ -329,6 +329,7 @@ export async function POST(
           pcForRescale,
           {
             subtotal: computed.subtotal,
+            baseCharge: computed.baseCharge,
             adultEquiv: promoAdultEquiv,
             drinksCost: promoDrinksCost,
             venueId: booking.venueId,

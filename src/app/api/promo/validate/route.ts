@@ -12,6 +12,8 @@ export const runtime = 'nodejs';
 // reason why the code can't be used.
 
 interface ValidateBody {
+  /** Venue-rental portion — basis for rent-scoped % codes. */
+  baseCharge?: number;
   code?: string;
   subtotal?: number;
   adultEquiv?: number;
@@ -50,7 +52,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Window check + minSubtotal check + venue scope are all inside calcPromoDiscount.
-    const discount = calcPromoDiscount(code, { subtotal, adultEquiv, drinksCost, venueId: body.venueId });
+    const baseCharge = typeof body.baseCharge === 'number' ? Math.max(0, body.baseCharge) : undefined;
+    const discount = calcPromoDiscount(code, { subtotal, baseCharge, adultEquiv, drinksCost, venueId: body.venueId });
     if (!discount) {
       // Determine specific reason for clearer UI message.
       const todayStr = new Date().toISOString().slice(0, 10);

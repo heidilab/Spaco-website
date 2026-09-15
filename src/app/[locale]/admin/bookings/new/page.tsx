@@ -392,6 +392,8 @@ export default function AdminNewBookingPage() {
         body: JSON.stringify({
           code,
           subtotal: subtotalAfterPackage,
+          // rent-scope % codes discount the rental portion only
+          baseCharge: selectedPackage ? selectedPackage.price + extraPaxCharge : (pricing?.baseCharge ?? 0),
           adultEquiv: adultEquiv || 1,
           drinksCost: drinksInCart ? Math.round(25 * adultEquiv) : projectedDrinksCost,
           venueId,

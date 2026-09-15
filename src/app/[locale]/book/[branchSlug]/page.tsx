@@ -1653,7 +1653,7 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                 {whatsappPhone && !isWhatsappValid && (
                   <p className="text-xs text-red-400 mt-2 flex items-center gap-1">
                     <AlertCircle size={12} />
-                    {locale === 'zh' ? '請輸入有效嘅香港電話號碼（8 位數字）' : 'Please enter a valid HK phone number (8 digits)'}
+                    {locale === 'zh' ? '香港客戶：直接輸入 8 位電話號碼（唔使加 852）｜其他國家：請輸入「+」+ 國家區號 + 電話號碼' : 'HK: enter your 8-digit number (no 852 needed) | Other countries: enter “+”, country code and phone number'}
                   </p>
                 )}
                 {isWhatsappValid && whatsappReady && (

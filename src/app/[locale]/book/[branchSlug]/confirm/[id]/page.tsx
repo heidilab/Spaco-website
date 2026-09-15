@@ -388,6 +388,7 @@ export default function ConfirmBookingPage() {
         body: JSON.stringify({
           code,
           subtotal: booking?.pricing.subtotal,
+          baseCharge: booking?.pricing.baseCharge,
           adultEquiv: adultEquiv || 1,
           drinksCost: projectedDrinksCost,
           userId: user?.uid,

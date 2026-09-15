@@ -609,6 +609,10 @@ export interface PromoCode {
   type: PromoCodeType;
   /** For 'percent': discount percent 0-100. e.g. 12 means 12% off. */
   percent?: number;
+  /** For 'percent': what the % applies to. 'all' (default) = the whole
+   *  bill; 'rent' = venue rental only — BBQ/drinks/catering add-ons are
+   *  NOT discounted (Heidi 2026-09-15: rent-only deals are common). */
+  percentScope?: 'all' | 'rent';
   /** For 'cash' + 'per_pax': HK$ amount. */
   amount?: number;
   /** For 'cash': customer's subtotal must be ≥ this to qualify. 0/null = no min. */

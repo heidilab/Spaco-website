@@ -19,6 +19,10 @@
     {
       "path": "/api/cron/bonus-check",
       "schedule": "0 1,7,13 * * *"
+    },
+    {
+      "path": "/api/cron/test-booking-hygiene",
+      "schedule": "30 2 * * *"
     }
   ]
 }

@@ -137,18 +137,34 @@ export async function POST(req: NextRequest) {
   let promoCode: string | null = null;
   let promoCodeId: string | null = null;
 
+  // Admin-issued links (claimed drafts) are CS-negotiated deals: they
+  // BYPASS all minimum-guest/hour floors, and any surcharge adjustment
+  // the CS made is read from the DRAFT doc (authoritative, not the
+  // client body). Blocking a customer paying a CS link with
+  // PEAK_MIN_GUESTS was a bug (Heidi 2026-09-15).
+  const isAdminLink = !!draftId;
+  let draftSurchargeOverride: number | null = null;
+  if (isAdminLink) {
+    try {
+      const dSnap = await adminDb.collection('booking_drafts').doc(String(draftId)).get();
+      const dv = dSnap.data()?.peakSurchargeOverride;
+      if (typeof dv === 'number') draftSurchargeOverride = Math.max(0, dv);
+    } catch { /* draft unreadable — fall back to rule surcharge */ }
+  }
+
   if (!isPackage && venue) {
-    // Peak floors are hard rules for customer bookings — reject clearly
-    // so the client can show why (the UI enforces them upfront too).
-    const tierKey = isWeekend ? 'weekend' : 'weekday';
-    const equivForMin = adultEquivalent(Math.max(0, guestCount - childCount), childCount);
-    if (equivForMin < effectiveMinGuests(venue.minGuests[tierKey], peakRule)) {
-      return NextResponse.json({ error: 'PEAK_MIN_GUESTS', min: effectiveMinGuests(venue.minGuests[tierKey], peakRule) }, { status: 400 });
+    // Peak floors are hard rules for customer self-bookings only.
+    if (!isAdminLink) {
+      const tierKey = isWeekend ? 'weekend' : 'weekday';
+      const equivForMin = adultEquivalent(Math.max(0, guestCount - childCount), childCount);
+      if (equivForMin < effectiveMinGuests(venue.minGuests[tierKey], peakRule)) {
+        return NextResponse.json({ error: 'PEAK_MIN_GUESTS', min: effectiveMinGuests(venue.minGuests[tierKey], peakRule) }, { status: 400 });
+      }
+      if (hours < effectiveMinHours(venue.minHours[tierKey], peakRule)) {
+        return NextResponse.json({ error: 'PEAK_MIN_HOURS', min: effectiveMinHours(venue.minHours[tierKey], peakRule) }, { status: 400 });
+      }
     }
-    if (hours < effectiveMinHours(venue.minHours[tierKey], peakRule)) {
-      return NextResponse.json({ error: 'PEAK_MIN_HOURS', min: effectiveMinHours(venue.minHours[tierKey], peakRule) }, { status: 400 });
-    }
-    const computed = calculatePricing(venue, isWeekend, hours, guestCount, addOns, childCount, peakRule?.surchargePerHead || 0);
+    const computed = calculatePricing(venue, isWeekend, hours, guestCount, addOns, childCount, peakRule?.surchargePerHead || 0, draftSurchargeOverride);
     // Revalidate the promo server-side (window / venue / min-subtotal /
     // usage limits all enforced inside calcPromoDiscount).
     if (rest.promoCodeId) {
@@ -158,7 +174,7 @@ export async function POST(req: NextRequest) {
           const pc = { id: pcSnap.id, ...pcSnap.data() } as PromoCode;
           const equiv = adultEquivalent(Math.max(0, guestCount - childCount), childCount);
           const drinksCost = freeDrinksVenues.includes(venueId) ? 0 : Math.round(25 * equiv);
-          const d = calcPromoDiscount(pc, { subtotal: computed.subtotal, adultEquiv: equiv, drinksCost, venueId });
+          const d = calcPromoDiscount(pc, { subtotal: computed.subtotal, baseCharge: computed.baseCharge, adultEquiv: equiv, drinksCost, venueId });
           const withinTotal = pc.totalUsageLimit == null || pc.totalUsageCount < pc.totalUsageLimit;
           if (d && d.amount > 0 && pc.enabled !== false && withinTotal) {
             promoDiscount = Math.min(d.amount, computed.subtotal);
@@ -305,7 +321,9 @@ export async function POST(req: NextRequest) {
       // ── 4. Conflict check ──────────────────────────────────────────────
       for (const w of checkWindows) {
         for (const docSnap of blockedDocs) {
-          const bData = docSnap.data() as { date: string; startTime: string; endTime: string };
+          const bData = docSnap.data() as { date: string; startTime: string; endTime: string; isTest?: boolean };
+          // Test bookings never occupy real timeslots on production.
+          if (bData.isTest && process.env.VERCEL_ENV === 'production') continue;
           if (bData.date !== w.date) continue;
           const bStart = toMin(bData.startTime);
           const bEnd = toMin(bData.endTime);
@@ -348,6 +366,7 @@ export async function POST(req: NextRequest) {
         hasBYOFood: !!rest.hasBYOFood,
         ...(earlySetupHours > 0 ? { earlySetupHours } : {}),
         pricing: sanitizedPricing,      // server-recomputed
+        ...(draftSurchargeOverride !== null ? { peakSurchargeOverride: draftSurchargeOverride } : {}),
         status: 'awaiting_payment',     // forced — never client 'confirmed'
         paymentMethod: rest.paymentMethod ?? null,
         receiptUrl: rest.receiptUrl ?? null,
@@ -377,8 +396,11 @@ export async function POST(req: NextRequest) {
       });
 
       // ── 6. Create blocked_slots ────────────────────────────────────────
+      // Test bookings' slots carry isTest so PRODUCTION conflict checks
+      // and calendars can ignore them (test site still honours them).
+      const slotTestStamp = process.env.VERCEL_ENV !== 'production' ? { isTest: true } : {};
       const addSlot = (data: Record<string, unknown>) =>
-        t.create(adminDb.collection('blocked_slots').doc(), data);
+        t.create(adminDb.collection('blocked_slots').doc(), { ...data, ...slotTestStamp });
 
       if (overnight) {
         addSlot({ venueId, date, startTime, endTime: '23:59', reason: 'booking', bookingId });

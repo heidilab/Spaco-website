@@ -127,7 +127,9 @@ export async function POST(req: NextRequest) {
       }
       for (const w of checkWindows) {
         for (const docSnap of blockedDocs) {
-          const bd = docSnap.data() as { date: string; startTime: string; endTime: string };
+          const bd = docSnap.data() as { date: string; startTime: string; endTime: string; isTest?: boolean };
+          // Test bookings never occupy real timeslots on production.
+          if (bd.isTest && process.env.VERCEL_ENV === 'production') continue;
           if (bd.date !== w.date) continue;
           if (w.start < toMin(bd.endTime) && toMin(bd.startTime) < w.end) {
             throw new Error('SLOT_CONFLICT');
@@ -179,8 +181,9 @@ export async function POST(req: NextRequest) {
         updatedAt: FieldValue.serverTimestamp(),
       });
 
+      const slotTestStamp = process.env.VERCEL_ENV !== 'production' ? { isTest: true } : {};
       const addSlot = (data: Record<string, unknown>) =>
-        t.create(adminDb.collection('blocked_slots').doc(), data);
+        t.create(adminDb.collection('blocked_slots').doc(), { ...data, ...slotTestStamp });
       if (overnight) {
         addSlot({ venueId, date, startTime, endTime: '23:59', reason: 'booking', bookingId });
         addSlot({ venueId, date: resolvedEndDate, startTime: '00:00', endTime, reason: 'booking', bookingId });

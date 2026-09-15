@@ -440,7 +440,7 @@ export default function ClaimBookingPage() {
                 {whatsappPhone && !isValidHkPhone(whatsappPhone) && (
                   <p className="text-xs text-rose-600 mb-3 flex items-center gap-1">
                     <AlertCircle size={12} />
-                    {locale === 'zh' ? '請輸入 8 位香港電話號碼' : 'Enter a valid 8-digit HK number'}
+                    {locale === 'zh' ? '香港客戶：直接輸入 8 位電話號碼（唔使加 852）｜其他國家：請輸入「+」+ 國家區號 + 電話號碼' : 'HK: enter your 8-digit number (no 852 needed) | Other countries: enter “+”, country code and phone number'}
                   </p>
                 )}
                 {savedWhatsappPhone && isValidHkPhone(whatsappPhone) && (

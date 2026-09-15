@@ -27,6 +27,7 @@ interface FormState {
   description: string;
   venueIds: string[];
   freeDrinks: boolean;
+  percentScope: 'all' | 'rent';
 }
 
 const EMPTY_FORM: FormState = {
@@ -43,6 +44,7 @@ const EMPTY_FORM: FormState = {
   description: '',
   venueIds: [],
   freeDrinks: false,
+  percentScope: 'all',
 };
 
 const TYPE_LABELS: Record<PromoCodeType, { zh: string; en: string; hint: { zh: string; en: string } }> = {
@@ -103,6 +105,7 @@ export default function PromoCodesPage() {
       description: c.description || '',
       venueIds: c.venueIds || [],
       freeDrinks: !!c.freeDrinks,
+      percentScope: c.percentScope === 'rent' ? 'rent' : 'all',
     });
     setEditingId(c.id);
   }
@@ -142,7 +145,10 @@ export default function PromoCodesPage() {
         freeDrinks: form.freeDrinks,
         venueIds: form.venueIds,
       };
-      if (form.type === 'percent') data.percent = Number(form.percent);
+      if (form.type === 'percent') {
+        data.percent = Number(form.percent);
+        data.percentScope = form.percentScope;
+      }
       if (form.type === 'cash' || form.type === 'per_pax') data.amount = Number(form.amount);
       if (minSubtotalVal != null) data.minSubtotal = minSubtotalVal;
       const desc = form.description.trim();
@@ -261,15 +267,30 @@ export default function PromoCodesPage() {
             </Field>
 
             {form.type === 'percent' && (
-              <Field label={locale === 'zh' ? '折扣 %' : 'Percent'}>
-                <input
-                  type="number" min={0} max={100}
-                  value={form.percent}
-                  onChange={(e) => setForm({ ...form, percent: e.target.value })}
-                  placeholder="12"
-                  className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85"
-                />
-              </Field>
+              <>
+                <Field label={locale === 'zh' ? '折扣 %' : 'Percent'}>
+                  <input
+                    type="number" min={0} max={100}
+                    value={form.percent}
+                    onChange={(e) => setForm({ ...form, percent: e.target.value })}
+                    placeholder="12"
+                    className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85"
+                  />
+                </Field>
+                <Field label={locale === 'zh' ? '折扣範圍' : 'Discount scope'}>
+                  <div className="flex gap-2">
+                    {([['all', locale === 'zh' ? '全單（連加購項目）' : 'Whole bill'], ['rent', locale === 'zh' ? '只限場租（BBQ/飲品/到會照原價）' : 'Rent only']] as const).map(([v, label]) => (
+                      <button
+                        key={v} type="button"
+                        onClick={() => setForm({ ...form, percentScope: v })}
+                        className={`px-3 py-2 rounded-xl text-xs font-semibold border-2 flex-1 ${form.percentScope === v ? 'border-pink bg-pink/10 text-pink' : 'border-charcoal/15 bg-white/85 text-ink-soft'}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+              </>
             )}
 
             {(form.type === 'cash' || form.type === 'per_pax') && (
@@ -524,7 +545,9 @@ function Field({ label, children, fullWidth }: { label: React.ReactNode; childre
 function summarise(c: PromoCode, locale: 'zh' | 'en'): string {
   switch (c.type) {
     case 'percent':
-      return locale === 'zh' ? `減 ${c.percent ?? 0}%` : `${c.percent ?? 0}% off`;
+      return locale === 'zh'
+        ? `減 ${c.percent ?? 0}%${c.percentScope === 'rent' ? '（只限場租）' : ''}`
+        : `${c.percent ?? 0}% off${c.percentScope === 'rent' ? ' (rent only)' : ''}`;
     case 'cash':
       return locale === 'zh'
         ? `減 HK$${(c.amount ?? 0).toLocaleString()}${c.minSubtotal ? `（滿 HK$${c.minSubtotal.toLocaleString()}）` : ''}`

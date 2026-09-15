@@ -32,6 +32,10 @@ export async function POST(req: NextRequest) {
     if (!booking) {
       return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
     }
+    // 🧪 test bookings must never reach the real Google Calendar.
+    if ((booking as { isTest?: boolean }).isTest) {
+      return NextResponse.json({ ok: true, skipped: 'test-booking' });
+    }
 
     // Auto-fill customerName from the user profile if not provided. This is
     // the common case when admin clicks "Push to Google Calendar" without

@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
-import { getBookingsForDate, getAllBookings } from '@/lib/firestore';
+import { getBookingsForDate } from '@/lib/firestore';
+import { getCountFromServer, getAggregateFromServer, sum, query, collection, where } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import { BookingRecord } from '@/types';
 import { venues } from '@/lib/venues';
 import { CalendarDays, Clock, Users, TrendingUp } from 'lucide-react';
@@ -10,27 +12,33 @@ import { CalendarDays, Clock, Users, TrendingUp } from 'lucide-react';
 export default function AdminDashboard() {
   const locale = useLocale() as 'zh' | 'en';
   const [todayBookings, setTodayBookings] = useState<BookingRecord[]>([]);
-  const [allBookings, setAllBookings] = useState<BookingRecord[]>([]);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [confirmedCount, setConfirmedCount] = useState(0);
+  const [totalRevenue, setTotalRevenue] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  // Compute today on the client only (avoids SSR / client time mismatch)
+  // Compute today on the client only (avoids SSR / client time mismatch).
+  // Stats come from SERVER-SIDE aggregates — the old getAllBookings()
+  // downloaded the entire bookings collection on every admin entry,
+  // which is why the dashboard crawled on mobile (Heidi 2026-09-15).
   useEffect(() => {
     const today = new Date().toISOString().split('T')[0];
+    const bookingsCol = collection(db, 'bookings');
     Promise.all([
       getBookingsForDate(today),
-      getAllBookings(),
-    ]).then(([todayData, allData]) => {
+      getCountFromServer(query(bookingsCol, where('status', 'in', ['pending', 'awaiting_payment']))),
+      getCountFromServer(query(bookingsCol, where('status', '==', 'confirmed'))),
+      getAggregateFromServer(query(bookingsCol, where('status', 'in', ['confirmed', 'completed'])), {
+        revenue: sum('pricing.subtotal'),
+      }),
+    ]).then(([todayData, pending, confirmed, agg]) => {
       setTodayBookings(todayData);
-      setAllBookings(allData);
+      setPendingCount(pending.data().count);
+      setConfirmedCount(confirmed.data().count);
+      setTotalRevenue(agg.data().revenue || 0);
       setLoading(false);
     }).catch(() => setLoading(false));
   }, []);
-
-  const pendingCount = allBookings.filter((b) => b.status === 'pending' || b.status === 'awaiting_payment').length;
-  const confirmedCount = allBookings.filter((b) => b.status === 'confirmed').length;
-  const totalRevenue = allBookings
-    .filter((b) => b.status === 'confirmed' || b.status === 'completed')
-    .reduce((sum, b) => sum + (b.pricing?.subtotal || 0), 0);
 
   const stats = [
     {

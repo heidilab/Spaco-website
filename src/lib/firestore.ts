@@ -607,6 +607,7 @@ export async function updateBookingDateTime(
                 subtotal: typeof next.subtotalOverride === 'number'
                   ? Math.max(0, next.subtotalOverride)
                   : computed.subtotal,
+                baseCharge: computed.baseCharge,
                 adultEquiv: promoAdultEquiv,
                 drinksCost: promoDrinksCost,
                 venueId: targetVenueId,
@@ -809,6 +810,15 @@ export async function createSharedBlockedSlot(
   return await createBlockedSlot(data);
 }
 
+/** On the PRODUCTION site, blocked slots from 🧪 test bookings are
+ *  invisible — they must never grey out real availability. The test
+ *  site keeps them so booking flows behave realistically there. */
+function hideTestSlots(slots: BlockedSlot[]): BlockedSlot[] {
+  const isProdHost = typeof window !== 'undefined'
+    && ['spacohk.com', 'www.spacohk.com'].includes(window.location.hostname);
+  return isProdHost ? slots.filter((s) => !(s as { isTest?: boolean }).isTest) : slots;
+}
+
 export async function getBlockedSlots(
   venueId: string,
   date: string
@@ -819,7 +829,7 @@ export async function getBlockedSlots(
     where('date', '==', date)
   );
   const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as BlockedSlot));
+  return hideTestSlots(snap.docs.map((d) => ({ id: d.id, ...d.data() } as BlockedSlot)));
 }
 
 export async function getBlockedSlotsForMonth(
@@ -836,9 +846,9 @@ export async function getBlockedSlotsForMonth(
     where('date', '<=', endDate)
   );
   const snap = await getDocs(q);
-  return snap.docs
+  return hideTestSlots(snap.docs
     .map((d) => ({ id: d.id, ...d.data() } as BlockedSlot))
-    .filter((s) => s.venueId === venueId);
+    .filter((s) => s.venueId === venueId));
 }
 
 export async function deleteBlockedSlot(id: string) {
