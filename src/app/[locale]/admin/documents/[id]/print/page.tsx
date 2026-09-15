@@ -65,10 +65,10 @@ export default function DocumentPrintPage() {
       ]);
       const JsPDF = jsPDFModule.default;
 
-      // Render helper — optionally hides the .pdf-tail (notes onward)
-      // or everything EXCEPT the tail, so an overflowing document
-      // splits cleanly at 附註 instead of mid-sentence.
-      const render = (mode: 'full' | 'head' | 'tail') => html2canvas(el, {
+      // ONE-PAGE GUARANTEE (Heidi 2026-09-16): compact the notes/terms
+      // typography first, then uniformly shrink the whole sheet if it
+      // still exceeds A4 — every document downloads as a single page.
+      const canvas = await html2canvas(el, {
         scale: 2,                  // crisp text
         backgroundColor: '#ffffff',
         useCORS: true,
@@ -80,57 +80,35 @@ export default function DocumentPrintPage() {
             cloned.style.boxShadow = 'none';
             cloned.style.maxWidth = '100%';
           }
-          const tail = clonedDoc.querySelector('.pdf-tail') as HTMLElement | null;
-          if (mode === 'head' && tail) tail.style.display = 'none';
-          if (mode === 'tail' && cloned && tail) {
-            for (const child of Array.from(cloned.children) as HTMLElement[]) {
-              if (child !== tail && !child.contains(tail)) child.style.display = 'none';
-            }
-          }
+          // Compact the tail (附註/條款/簽署/頁尾) — small print there
+          // buys back most of the height before any global shrink.
+          const styleEl = clonedDoc.createElement('style');
+          styleEl.textContent = `
+            .pdf-tail p { font-size: 10.5px !important; line-height: 1.45 !important; }
+            .pdf-tail .pt-6 { padding-top: 10px !important; }
+            .pdf-tail .pt-5 { padding-top: 8px !important; }
+            .pdf-tail .mt-6 { margin-top: 10px !important; }
+            .pdf-tail .mt-5 { margin-top: 8px !important; }
+            .pdf-tail .mt-10 { margin-top: 12px !important; }
+            .pdf-tail img[alt="Company chop"] { height: 84px !important; }
+          `;
+          clonedDoc.head.appendChild(styleEl);
         },
       });
 
       const pdf = new JsPDF('p', 'mm', 'a4');
       const pageW = pdf.internal.pageSize.getWidth();   // 210
       const pageH = pdf.internal.pageSize.getHeight();  // 297
-      const imgW = pageW;
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+      const naturalH = (canvas.height * pageW) / canvas.width;
 
-      // Slice one canvas across as many pages as it needs.
-      const addCanvas = (canvas: HTMLCanvasElement, firstPage: boolean) => {
-        const imgH = (canvas.height * imgW) / canvas.width;
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
-        let heightLeft = imgH;
-        let position = 0;
-        if (!firstPage) pdf.addPage();
-        pdf.addImage(dataUrl, 'JPEG', 0, position, imgW, imgH);
-        heightLeft -= pageH;
-        while (heightLeft > 0) {
-          position = heightLeft - imgH;
-          pdf.addPage();
-          pdf.addImage(dataUrl, 'JPEG', 0, position, imgW, imgH);
-          heightLeft -= pageH;
-        }
-      };
-
-      const full = await render('full');
-      const fullH = (full.height * imgW) / full.width;
-      if (fullH <= pageH + 2) {
-        // Fits one page — keep it whole.
-        addCanvas(full, true);
+      if (naturalH <= pageH) {
+        pdf.addImage(dataUrl, 'JPEG', 0, 0, pageW, naturalH);
       } else {
-        // Overflow: page 1 = everything before 附註; page 2+ = the tail.
-        const [head, tailCanvas] = await Promise.all([render('head'), render('tail')]);
-        addCanvas(head, true);
-        addCanvas(tailCanvas, false);
-      }
-
-      // Page numbers — bottom-left of every page (Heidi 2026-09-16).
-      const total = pdf.getNumberOfPages();
-      for (let i = 1; i <= total; i++) {
-        pdf.setPage(i);
-        pdf.setFontSize(9);
-        pdf.setTextColor(140);
-        pdf.text(`Page ${i} of ${total}`, 10, pageH - 6);
+        // Still too tall — shrink the whole sheet to fit the page
+        // height, centred horizontally.
+        const fitW = (pageW * pageH) / naturalH;
+        pdf.addImage(dataUrl, 'JPEG', (pageW - fitW) / 2, 0, fitW, pageH);
       }
 
       pdf.save(`${doc.number}.pdf`);
@@ -166,14 +144,10 @@ export default function DocumentPrintPage() {
        *  stamp Page X of Y bottom-left via @page margin boxes. */}
       <style>{`
         @media print {
-          .pdf-tail { break-inside: avoid; }
-        }
-        @page {
-          @bottom-left {
-            content: "Page " counter(page) " of " counter(pages);
-            font-size: 9pt;
-            color: #888;
-          }
+          /* Small print for 附註/條款/簽署 so the sheet fits one page —
+           * mirrors the PDF button's compaction. */
+          .pdf-tail p { font-size: 10.5px !important; line-height: 1.45 !important; }
+          .pdf-tail img[alt="Company chop"] { height: 84px !important; }
         }
       `}</style>
 
