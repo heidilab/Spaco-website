@@ -286,6 +286,25 @@ export default function DocumentPrintPage() {
             </div>
           )}
 
+          {/* Authorized signature + company chop — on every receipt /
+           *  quotation / invoice (Heidi 2026-09-16). The chop sits above
+           *  the signature line like a physically stamped document. */}
+          <div className="flex justify-end mt-10">
+            <div className="w-64 text-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="https://res.cloudinary.com/daw6lkprh/image/upload/v1789469514/ChatGPT_Image_2026%E5%B9%B49%E6%9C%8815%E6%97%A5_%E4%B8%8B%E5%8D%8806_39_59_y42uip.png"
+                alt="Company chop"
+                className="h-28 w-auto mx-auto -mb-3 select-none"
+                style={{ printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact' }}
+              />
+              <div className="border-t border-ink/40 pt-2">
+                <p className="text-xs text-ink-soft">Authorized Signature 授權簽署</p>
+                <p className="text-[11px] text-ink-soft mt-0.5">Cholliman Incorporation Limited</p>
+              </div>
+            </div>
+          </div>
+
           {/* Footer */}
           <div className="text-center text-xs text-ink-soft mt-10 pt-6 border-t border-ink/10">
             <p className="font-medium text-ink">www.spacohk.com</p>
