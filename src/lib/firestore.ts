@@ -275,7 +275,14 @@ async function assertNoSlotConflict(opts: {
           startTime: string;
           endTime: string;
           googleEventId?: string;
+          isTest?: boolean;
         };
+        // 🧪 test bookings never block real slots on production — same
+        // rule as the server-side conflict checks (Heidi 2026-09-15;
+        // this path missing the skip made admin saves fail on phantom
+        // test-slot overlaps).
+        if (data.isTest && typeof window !== 'undefined'
+          && ['spacohk.com', 'www.spacohk.com'].includes(window.location.hostname)) continue;
         if (data.bookingId === opts.excludeBookingId) continue;
         if (opts.excludeGoogleEventId && data.googleEventId === opts.excludeGoogleEventId) continue;
         const bStart = startMin(data.startTime);

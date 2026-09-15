@@ -712,20 +712,24 @@ export default function AdminBookingDetailPage() {
       // assertNoSlotConflict in lib/firestore.ts throws this prefix so
       // we can surface a specific red warning instead of a generic save
       // failure. Format: SLOT_CONFLICT:<venueId> or SLOT_CONFLICT:<venueId> #<bookingIdPrefix>
+      // Surface the failure in an alert TOO — the red banner renders
+      // mid-page while the save button sits at the bottom, so a failed
+      // save looked like "撳咗但冇反應" (Heidi #TQdbWBlI 2026-09-15).
       if (msg.startsWith('SLOT_CONFLICT')) {
         const target = venues.find((v) => v.id === venueId);
         const targetName = target?.name[locale] || venueId;
-        setError(
-          locale === 'zh'
-            ? `⚠️ ${targetName} 喺呢個時段已經有其他預訂，無法更改場地。請揀其他場地或時段。`
-            : `⚠️ ${targetName} already has a booking at this time. Cannot move — pick another venue or time.`
-        );
+        const conflictRef = msg.includes('#') ? msg.slice(msg.indexOf('#')) : '';
+        const text = locale === 'zh'
+          ? `⚠️ 儲存失敗：${targetName} 喺呢個時段已經有其他預訂${conflictRef ? `（${conflictRef}）` : ''}，請揀其他場地或時段。`
+          : `⚠️ Save failed: ${targetName} already has a booking at this time${conflictRef ? ` (${conflictRef})` : ''}.`;
+        setError(text);
+        alert(text);
       } else {
-        setError(
-          locale === 'zh'
-            ? '儲存失敗，可能與其他預訂衝突'
-            : 'Save failed — may conflict with another booking'
-        );
+        const text = locale === 'zh'
+          ? `儲存失敗：${msg}`
+          : `Save failed: ${msg}`;
+        setError(text);
+        alert(text);
       }
     } finally {
       setSaving(false);
