@@ -22,7 +22,6 @@ import {
   ExternalLink, Plus, X, Package,
 } from 'lucide-react';
 import { getHolidaysForMonth, Holiday } from '@/lib/hkHolidays';
-import { useAuth } from '@/contexts/AuthContext';
 
 // 15-minute increments, 10:00–23:45 — schedule entries (site visits /
 // deliveries) rarely land on the hour, so the pickers need minutes
@@ -82,10 +81,15 @@ export default function AdminCalendarPage() {
   const [venues, setVenues] = useState<Venue[]>(staticVenues);
   useEffect(() => { loadAllVenues().then(setVenues).catch(() => {}); }, []);
   const locale = useLocale() as 'zh' | 'en';
-  // 🧪 test bookings are fake: only ADMIN role sees them (tagged) on the
-  // master calendar — CS/cleaner/marketing never do (Heidi 2026-09-15).
-  const { hasPermission } = useAuth();
-  const canSeeTest = hasPermission('staff');
+  // 🧪 test bookings are fake: the PRODUCTION master calendar hides them
+  // from EVERYONE (admin included — Heidi 2026-09-15: "我仲係見到").
+  // The test site keeps showing them (tagged 🧪) since that's where
+  // testing happens.
+  const [isPreviewHost, setIsPreviewHost] = useState(false);
+  useEffect(() => {
+    const h = window.location.hostname;
+    setIsPreviewHost(h !== 'spacohk.com' && h !== 'www.spacohk.com');
+  }, []);
   const [mounted, setMounted] = useState(false);
   const [currentMonth, setCurrentMonth] = useState<string>('');
   const [todayStr, setTodayStr] = useState<string>('');
@@ -217,7 +221,7 @@ export default function AdminCalendarPage() {
           b.date === date
           && b.status !== 'cancelled'
           && b.status !== 'payment_not_completed'
-          && (!b.isTest || canSeeTest),
+          && (!b.isTest || isPreviewHost),
         )
         .forEach((b) => items.push({ kind: 'booking', sortTime: b.startTime, data: b }));
 
@@ -250,7 +254,7 @@ export default function AdminCalendarPage() {
 
       return items.sort((a, b) => a.sortTime.localeCompare(b.sortTime));
     };
-  }, [bookings, blockedSlots, calendarEvents, canSeeTest]);
+  }, [bookings, blockedSlots, calendarEvents, isPreviewHost]);
 
   const navigateMonth = (delta: number) => {
     if (!currentMonth) return;
@@ -534,7 +538,7 @@ function DayItemPill({ item, userNames }: { item: DayItem; userNames?: Record<st
                                    'bg-gray-100 text-gray-600';
     return (
       <div className={`text-[10px] px-1.5 py-0.5 rounded truncate ${cls}`}>
-        {b.startTime} {venueTag(b.venueId)} · {bookingIdent(b, userNames)}
+        {b.isTest ? '🧪 ' : ''}{b.startTime} {venueTag(b.venueId)} · {bookingIdent(b, userNames)}
       </div>
     );
   }
@@ -686,7 +690,7 @@ function SummaryItemTitle({ item, locale, userNames }: { item: DayItem; locale: 
       const ss = `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
       return <span className="text-amber-700"> · 🎈{ss}-{item.data.startTime} {locale === 'zh' ? '提早入場佈置' : 'early setup'}</span>;
     })() : null;
-    return <>{timeRange}  <span className="font-semibold">{venueTag(item.data.venueId)}</span>  · {bookingIdent(item.data, userNames)}  · {item.data.guestCount}p{setupTag}</>;
+    return <>{item.data.isTest ? '🧪 ' : ''}{timeRange}  <span className="font-semibold">{venueTag(item.data.venueId)}</span>  · {bookingIdent(item.data, userNames)}  · {item.data.guestCount}p{setupTag}</>;
   }
   if (item.kind === 'block') {
     return <>{timeRange}  <span className="font-semibold">{venueTag(item.data.venueId)}</span>  · {locale === 'zh' ? '人手封鎖' : 'Manual block'}</>;
