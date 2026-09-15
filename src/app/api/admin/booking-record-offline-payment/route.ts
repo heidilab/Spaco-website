@@ -113,7 +113,14 @@ export async function POST(req: NextRequest) {
         kind: entryKind,
         note: body.note?.trim() || null,
         recordedBy: body.recordedBy || 'admin',
-        recordedAt: new Date().toISOString(),
+        // Admin can back-date to the day the customer ACTUALLY paid
+        // (Heidi 2026-09-15) — finance exports use this date. When the
+        // chosen date is today (or absent) keep the precise timestamp.
+        recordedAt: (typeof body.paidDate === 'string'
+          && /^\d{4}-\d{2}-\d{2}$/.test(body.paidDate)
+          && body.paidDate !== new Date().toISOString().slice(0, 10))
+          ? `${body.paidDate}T12:00:00.000Z`
+          : new Date().toISOString(),
       }),
       balanceDue: newBalanceDue,
       status: nextStatus,

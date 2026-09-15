@@ -226,6 +226,9 @@ export default function AdminBookingDetailPage() {
   // #WIiQYL2I that never actually charged.
   const [payMethod, setPayMethod] = useState<'fps' | 'bank' | 'cash' | 'other'>('fps');
   const [payNote, setPayNote] = useState<string>('');
+  // 付款日期 — defaults to today; admin back-dates when the customer
+  // actually paid earlier (finance exports use this date).
+  const [payDate, setPayDate] = useState<string>('');
   const [followupBusy, setFollowupBusy] = useState(false);
   const [followupMsg, setFollowupMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
@@ -1083,6 +1086,7 @@ export default function AdminBookingDetailPage() {
           amount: total,
           method: payMethod,
           note: payNote.trim() || undefined,
+          paidDate: payDate || undefined,
           recordedBy: user.uid,
         }),
       });
@@ -1099,6 +1103,7 @@ export default function AdminBookingDetailPage() {
         kind: 'ok',
         text: locale === 'zh' ? '✓ 已記錄付款' : '✓ Payment recorded',
       });
+      setPayDate('');
       const fresh = await getBooking(booking.id);
       if (fresh) setBooking(fresh);
       // If this settled the balance, try to generate the door passcode now
@@ -2720,6 +2725,22 @@ export default function AdminBookingDetailPage() {
                   {locale === 'zh' ? `現有未繳尾數：HK$${booking.balanceDue!.toLocaleString()}` : `Outstanding balance: HK$${booking.balanceDue!.toLocaleString()}`}
                 </p>
               )}
+
+              <div>
+                <label className="block text-xs font-semibold text-ink-soft mb-1">
+                  {locale === 'zh' ? '付款日期' : 'Payment date'}
+                </label>
+                <input
+                  type="date"
+                  value={payDate || new Date().toISOString().slice(0, 10)}
+                  max={new Date().toISOString().slice(0, 10)}
+                  onChange={(e) => setPayDate(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl border-2 border-charcoal/15 text-sm bg-white"
+                />
+                <p className="text-[11px] text-ink-soft mt-1">
+                  {locale === 'zh' ? '預設今日；客人早幾日已過數就改返實際日期（報表會用呢個日期）。' : 'Defaults to today; back-date if the customer paid earlier (used by finance exports).'}
+                </p>
+              </div>
 
               <div>
                 <label className="block text-xs font-semibold text-ink-soft mb-1">
