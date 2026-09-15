@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { buildBookingConfirmationEmail, generateWhatsAppLink } from '@/lib/email';
 import { sendAutomatedEmail } from '@/lib/emailAutomations';
@@ -58,6 +59,7 @@ export async function POST(req: NextRequest) {
       securityDeposit: booking.pricing.securityDeposit,
       promoCode: booking.promoCode,
       promoDiscount: booking.promoDiscount,
+        adminDiscount: adminDiscountAmount(booking as never),
       pointsUsed: booking.pointsUsed,
       pointsDiscount: booking.pointsDiscount,
       balanceDue: booking.balanceDue,

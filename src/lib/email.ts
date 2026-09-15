@@ -354,6 +354,8 @@ export function buildBookingConfirmationEmail(params: {
    *  green discount line shows in the amount table. */
   promoCode?: string;
   promoDiscount?: number;
+  /** Admin-granted 折扣優惠 total (adminDiscountAmount(booking)). */
+  adminDiscount?: number;
   /** Loyalty points redeemed at checkout. When > 0, a violet line shows
    *  the points used and the HK$ value subtracted from the upfront. */
   pointsUsed?: number;
@@ -450,9 +452,10 @@ export function buildBookingConfirmationEmail(params: {
           <h3 style="margin: 22px 0 12px; font-size: 14px; color: ${EMAIL_INK}; letter-spacing: 0.04em; text-transform: uppercase;">💰 金額</h3>
           <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
             ${params.promoCode && (params.promoDiscount ?? 0) > 0 ? `<tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #047857; font-size: 13px;">🎟️ 優惠碼 <span style="font-family: 'Courier New', monospace;">${params.promoCode}</span></td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600; color: #047857;">−HK$${params.promoDiscount!.toLocaleString()}</td></tr>` : ''}
-            <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">小計${(params.promoDiscount ?? 0) > 0 ? '（已扣優惠）' : ''}</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">HK$${discountedSubtotal(params.subtotal, params.promoDiscount).toLocaleString()}</td></tr>
+            ${(params.adminDiscount || 0) > 0 ? `<tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #059669; font-size: 13px;">🎁 折扣優惠</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600; color: #059669;">−HK$${(params.adminDiscount || 0).toLocaleString()}</td></tr>` : ''}
+            <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">小計${(params.promoDiscount ?? 0) > 0 ? '（已扣優惠）' : ''}</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">HK$${Math.max(0, discountedSubtotal(params.subtotal, params.promoDiscount) - (params.adminDiscount || 0)).toLocaleString()}</td></tr>
             ${typeof params.securityDeposit === 'number' ? `<tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">可退按金（活動後退還）</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">HK$${params.securityDeposit.toLocaleString()}</td></tr>` : ''}
-            ${typeof params.securityDeposit === 'number' ? `<tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: ${EMAIL_INK}; font-size: 13px; font-weight: 700;">總額</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 700;">HK$${(discountedSubtotal(params.subtotal, params.promoDiscount) + params.securityDeposit).toLocaleString()}</td></tr>` : ''}
+            ${typeof params.securityDeposit === 'number' ? `<tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: ${EMAIL_INK}; font-size: 13px; font-weight: 700;">總額</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 700;">HK$${(Math.max(0, discountedSubtotal(params.subtotal, params.promoDiscount) - (params.adminDiscount || 0)) + params.securityDeposit).toLocaleString()}</td></tr>` : ''}
             ${(params.pointsDiscount ?? 0) > 0 ? `<tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #6D28D9; font-size: 13px;">✨ 積分抵扣</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600; color: #6D28D9;">−HK$${params.pointsDiscount!.toLocaleString()} (${(params.pointsUsed || 0).toLocaleString()} 分)</td></tr>` : ''}
             <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">已付款</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">HK$${Math.max(0, params.deposit - (params.pointsDiscount || 0)).toLocaleString()}</td></tr>
             ${(params.balanceDue ?? 0) > 0 ? `<tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #B45309; font-size: 13px;">⚠️ 尾數（活動前 2 日繳清）</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 700; color: #B45309;">HK$${params.balanceDue!.toLocaleString()}</td></tr>` : ''}
@@ -662,6 +665,8 @@ export function buildStaffBookingNotificationEmail(params: {
   balanceDue: number;
   promoCode?: string;
   promoDiscount?: number;
+  /** Admin-granted 折扣優惠 total (adminDiscountAmount(booking)). */
+  adminDiscount?: number;
   pointsDiscount?: number;
   /** Refundable security deposit — enables the 可退按金 + 總額 rows. */
   securityDeposit?: number;
@@ -701,9 +706,10 @@ export function buildStaffBookingNotificationEmail(params: {
           <h2 style="margin: 0 0 16px; font-size: 18px; color: ${EMAIL_INK};">💰 金額</h2>
           <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
             ${params.promoCode && (params.promoDiscount ?? 0) > 0 ? `<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #047857; font-size: 13px;">🎟️ 優惠碼 <span style="font-family: 'Courier New', monospace;">${params.promoCode}</span></td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600; color: #047857;">−HK$${params.promoDiscount!.toLocaleString()}</td></tr>` : ''}
-            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">小計${(params.promoDiscount ?? 0) > 0 ? '（已扣優惠）' : ''}</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">HK$${discountedSubtotal(params.subtotal, params.promoDiscount).toLocaleString()}</td></tr>
+            ${(params.adminDiscount || 0) > 0 ? `<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #059669; font-size: 13px;">🎁 折扣優惠</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600; color: #059669;">−HK$${(params.adminDiscount || 0).toLocaleString()}</td></tr>` : ''}
+            <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">小計${(params.promoDiscount ?? 0) > 0 ? '（已扣優惠）' : ''}</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">HK$${Math.max(0, discountedSubtotal(params.subtotal, params.promoDiscount) - (params.adminDiscount || 0)).toLocaleString()}</td></tr>
             ${typeof params.securityDeposit === 'number' ? `<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">可退按金</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">HK$${params.securityDeposit.toLocaleString()}</td></tr>` : ''}
-            ${typeof params.securityDeposit === 'number' ? `<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: ${EMAIL_INK}; font-size: 13px; font-weight: 700;">總額</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 700;">HK$${(discountedSubtotal(params.subtotal, params.promoDiscount) + params.securityDeposit).toLocaleString()}</td></tr>` : ''}
+            ${typeof params.securityDeposit === 'number' ? `<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: ${EMAIL_INK}; font-size: 13px; font-weight: 700;">總額</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 700;">HK$${(Math.max(0, discountedSubtotal(params.subtotal, params.promoDiscount) - (params.adminDiscount || 0)) + params.securityDeposit).toLocaleString()}</td></tr>` : ''}
             <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee; color: #999; font-size: 13px;">已付款</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-weight: 600;">HK$${Math.max(0, params.deposit - (params.pointsDiscount || 0)).toLocaleString()}</td></tr>
             ${balanceRow}
             <tr><td style="padding: 8px 0; color: #999; font-size: 13px;">付款方式</td><td style="padding: 8px 0; text-align: right; font-weight: 600;">${params.paymentMethod}</td></tr>

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import {
@@ -256,6 +257,7 @@ export async function POST(req: NextRequest) {
         securityDeposit: fresh.pricing.securityDeposit,
         promoCode: fresh.promoCode,
         promoDiscount: fresh.promoDiscount,
+        adminDiscount: adminDiscountAmount(booking as never),
         pointsUsed: fresh.pointsUsed,
         pointsDiscount: fresh.pointsDiscount,
         balanceDue: updatedBalance ?? fresh.balanceDue,
