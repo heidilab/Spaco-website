@@ -284,10 +284,13 @@ export async function addKeyboardPasscode(params: {
   const accessToken = await getAccessToken();
   const clientId    = readEnvOrThrow('TTLOCK_CLIENT_ID');
 
-  // Retry once if TTLock rejects a "too simple" passcode — extremely rare
-  // given the generator's ≥3-distinct-digit guard, but the fallback keeps
-  // a single unlucky draw from breaking a booking.
-  for (let attempt = 0; attempt < 2; attempt++) {
+  // Retry policy:
+  //  • -2032 "passcode too simple" → regenerate and retry immediately
+  //  • -3003 "gateway is busy" (and gateway/network timeouts -3002 /
+  //    -3037) → transient: wait 3s and retry (Heidi hit a one-off -3003
+  //    on the WC lock 2026-09-17; the very next call succeeded)
+  const TRANSIENT = new Set([-3003, -3002, -3037]);
+  for (let attempt = 0; attempt < 4; attempt++) {
     const passcode = params.passcode || generatePasscode();
     const body = new URLSearchParams({
       clientId,
@@ -312,6 +315,10 @@ export async function addKeyboardPasscode(params: {
     // errcode -2032 = "passcode too simple". If the caller supplied an
     // explicit passcode we can't retry blindly — bubble the error.
     if (data.errcode === -2032 && !params.passcode) {
+      continue;
+    }
+    if (TRANSIENT.has(data.errcode ?? 0) && attempt < 3) {
+      await new Promise((r) => setTimeout(r, 3000));
       continue;
     }
     if (data.errcode || !data.keyboardPwdId) {
