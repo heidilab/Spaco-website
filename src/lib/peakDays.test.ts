@@ -19,10 +19,26 @@ describe('resolvePeakRule', () => {
     expect(cwb.minHours).toBe(4);           // branch-only field
   });
 
-  it('sw rooms resolve through the sw branch key', () => {
+  it('sw rooms resolve through the legacy sw branch key', () => {
     expect(peakBranchKey('sw-ab')).toBe('sw');
     const sw = resolvePeakRule(XMAS, 'sw-a')!;
     expect(sw.surchargePerHead).toBe(50);
+  });
+
+  it('exact room key beats the legacy sw group and all', () => {
+    const cfg = {
+      date: '2026-12-25',
+      all: { surchargePerHead: 50 },
+      branches: {
+        sw: { surchargePerHead: 60 },
+        'sw-a': { surchargePerHead: 80, minHeadcount: 6 },
+      },
+    };
+    expect(resolvePeakRule(cfg, 'sw-a')!.surchargePerHead).toBe(80);
+    expect(resolvePeakRule(cfg, 'sw-a')!.minHeadcount).toBe(6);
+    expect(resolvePeakRule(cfg, 'sw-b')!.surchargePerHead).toBe(60);  // legacy group
+    expect(resolvePeakRule(cfg, 'sw-ab')!.surchargePerHead).toBe(60);
+    expect(resolvePeakRule(cfg, 'cwb')!.surchargePerHead).toBe(50);   // all
   });
 
   it('null when no config or empty rule', () => {

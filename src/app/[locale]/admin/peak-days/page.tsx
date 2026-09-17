@@ -17,10 +17,15 @@ import { listPeakDays, savePeakDay, deletePeakDay } from '@/lib/peakDays';
 import type { PeakDayConfig, PeakDayRule } from '@/types';
 import { Sparkles, Loader2, Check, ChevronLeft, ChevronRight, Trash2, CopyPlus } from 'lucide-react';
 
-const BRANCHES = ['cwb', 'sw', 'tst', 'wanchai'];
+// 上環 splits into its three rooms (Heidi 2026-09-17) — each can carry
+// its own surcharge/minimums. Legacy docs saved under 'sw' still apply
+// to all three rooms until the date is re-saved.
+const BRANCHES = ['cwb', 'sw-a', 'sw-b', 'sw-ab', 'tst', 'wanchai'];
 const BRANCH_LABELS: Record<string, { zh: string; en: string }> = {
   cwb: { zh: '銅鑼灣', en: 'CWB' },
-  sw: { zh: '上環', en: 'SW' },
+  'sw-a': { zh: '上環 Room A', en: 'SW Room A' },
+  'sw-b': { zh: '上環 Room B', en: 'SW Room B' },
+  'sw-ab': { zh: '上環 全層 A+B', en: 'SW A+B' },
   tst: { zh: '尖沙咀', en: 'TST' },
   wanchai: { zh: '灣仔', en: 'WC' },
 };
@@ -59,7 +64,12 @@ function cfgToDraft(cfg?: PeakDayConfig | null): Draft {
   if (!cfg) return d;
   d.note = cfg.note || '';
   d.all = ruleToDraft(cfg.all);
-  for (const b of BRANCHES) d.branches[b] = ruleToDraft(cfg.branches?.[b]);
+  for (const b of BRANCHES) {
+    // Legacy 'sw' rules prefill the three room rows so re-saving a date
+    // keeps the old behaviour unless the admin changes it.
+    const legacy = b.startsWith('sw-') ? cfg.branches?.['sw'] : undefined;
+    d.branches[b] = ruleToDraft(cfg.branches?.[b] ?? legacy);
+  }
   return d;
 }
 

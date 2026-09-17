@@ -9,16 +9,19 @@ export function peakBranchKey(venueId: string): string {
   return venueId.startsWith('sw-') ? 'sw' : venueId;
 }
 
-/** The effective rule for one venue on one date — branch override wins
- *  field-by-field over `all`. Null when nothing applies. */
+/** The effective rule for one venue on one date. Precedence per field:
+ *  exact room key (sw-a / sw-b / sw-ab — Heidi 2026-09-17: the three
+ *  上環 rooms configure independently) → legacy branch group ('sw') →
+ *  `all`. Non-SW venues: room key === group key, so nothing changes. */
 export function resolvePeakRule(cfg: PeakDayConfig | null | undefined, venueId: string): PeakDayRule | null {
   if (!cfg) return null;
-  const branch = cfg.branches?.[peakBranchKey(venueId)];
+  const room = cfg.branches?.[venueId];
+  const group = cfg.branches?.[peakBranchKey(venueId)];
   const merged: PeakDayRule = {
-    surchargePerHead: branch?.surchargePerHead ?? cfg.all?.surchargePerHead,
-    minHeadcount: branch?.minHeadcount ?? cfg.all?.minHeadcount,
-    minHours: branch?.minHours ?? cfg.all?.minHours,
-    forceWeekendRate: branch?.forceWeekendRate ?? cfg.all?.forceWeekendRate,
+    surchargePerHead: room?.surchargePerHead ?? group?.surchargePerHead ?? cfg.all?.surchargePerHead,
+    minHeadcount: room?.minHeadcount ?? group?.minHeadcount ?? cfg.all?.minHeadcount,
+    minHours: room?.minHours ?? group?.minHours ?? cfg.all?.minHours,
+    forceWeekendRate: room?.forceWeekendRate ?? group?.forceWeekendRate ?? cfg.all?.forceWeekendRate,
   };
   const any = (merged.surchargePerHead || 0) > 0
     || (merged.minHeadcount || 0) > 0
