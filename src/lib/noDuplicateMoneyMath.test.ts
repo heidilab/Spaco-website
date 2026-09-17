@@ -42,6 +42,11 @@ const GUARDED = [
     mustImport: ['computeGrandTotal'],
   },
   {
+    file: 'app/[locale]/admin/receipts/page.tsx',
+    incident: '#rxjuHshl — initial-receipt approve never re-stored balanceDue (paid in full, 尚欠 stuck)',
+    mustImport: ['computeGrandTotal'],
+  },
+  {
     file: 'lib/firestore.ts',
     incident: '#TQdbWBlI — updateBookingDateTime balanceDue ignored 折扣優惠 (stored 11,500 vs real 9,750)',
     mustImport: ['adminDiscountAmount'],

@@ -12,7 +12,7 @@ import { cancelBooking } from '@/lib/cancelBooking';
 import { BookingRecord } from '@/types';
 import { venues } from '@/lib/venues';
 import { Check, X, Eye, Clock, AlertCircle } from 'lucide-react';
-import { discountedSubtotal } from '@/lib/bookingMoney';
+import { discountedSubtotal, computeGrandTotal } from '@/lib/bookingMoney';
 
 export default function AdminReceiptsPage() {
   const locale = useLocale() as 'zh' | 'en';
@@ -171,8 +171,16 @@ export default function AdminReceiptsPage() {
           recordedAt: new Date().toISOString(),
         });
       }
-      if (isBalanceReceipt) {
-        update.balanceDue = 0;
+      // ALWAYS re-store balanceDue from the canonical formula — the old
+      // code only cleared it for BALANCE receipts, so an admin-created
+      // booking paid in full via its link took the 'initial' branch and
+      // kept its stale 尚欠 forever (#rxjuHshl: paid 2,624, still
+      // showing 尚欠 2,624 — Heidi 2026-09-17).
+      const priorLogged = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+      const newLoggedSum = priorLogged + (existing ? 0 : paidAmount);
+      const newBalance = Math.max(0, computeGrandTotal(booking) - newLoggedSum);
+      update.balanceDue = newBalance;
+      if (newBalance === 0 && !booking.balancePaidAt) {
         update.balancePaidAt = serverTimestamp();
       }
       await updateDoc(doc(db, 'bookings', bookingId), update);
