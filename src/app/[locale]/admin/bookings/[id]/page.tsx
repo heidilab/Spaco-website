@@ -697,7 +697,7 @@ export default function AdminBookingDetailPage() {
       // attendee removal. Now we always email so the customer has a
       // concrete record of the new schedule.
       try {
-        await adminApiFetch('/api/admin/booking-edit-followup', {
+        const fu = await adminApiFetch('/api/admin/booking-edit-followup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -705,8 +705,16 @@ export default function AdminBookingDetailPage() {
             previousSnapshot,
           }),
         });
+        if (!fu.ok) throw new Error(`followup ${fu.status}`);
       } catch (err) {
+        // The booking itself saved fine — but Google Calendar + the
+        // customer email did NOT sync. Silence here left #s2VteSf7's
+        // gcal event stale with no hint (Heidi 2026-09-18) — now the
+        // admin is told exactly what to do.
         console.warn('[handleSave] followup (email + gcal) failed:', err);
+        alert(locale === 'zh'
+          ? '⚠️ 預訂已儲存，但 Google 日曆同客人通知 email 同步失敗。\n\n請喺下面撳「推送到 Google 日曆」手動同步一次。'
+          : '⚠️ Booking saved, but Google Calendar + customer email sync failed. Use "Push to Google Calendar" below to sync manually.');
       }
 
       setSaved(true);
