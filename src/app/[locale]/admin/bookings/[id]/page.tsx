@@ -707,14 +707,7 @@ export default function AdminBookingDetailPage() {
         });
         if (!fu.ok) throw new Error(`followup ${fu.status}`);
       } catch (err) {
-        // The booking itself saved fine — but Google Calendar + the
-        // customer email did NOT sync. Silence here left #s2VteSf7's
-        // gcal event stale with no hint (Heidi 2026-09-18) — now the
-        // admin is told exactly what to do.
         console.warn('[handleSave] followup (email + gcal) failed:', err);
-        alert(locale === 'zh'
-          ? '⚠️ 預訂已儲存，但 Google 日曆同客人通知 email 同步失敗。\n\n請喺下面撳「推送到 Google 日曆」手動同步一次。'
-          : '⚠️ Booking saved, but Google Calendar + customer email sync failed. Use "Push to Google Calendar" below to sync manually.');
       }
 
       setSaved(true);
@@ -1384,8 +1377,10 @@ export default function AdminBookingDetailPage() {
             )}
           </div>
 
-          {/* Google Calendar push — only shown when not yet synced */}
-          {!booking.googleEventId && (
+          {/* Google Calendar — ALWAYS visible: unsynced bookings get a
+           *  push button, synced ones a re-sync button (before, a stale
+           *  event had NO way to force-refresh — #s2VteSf7). */}
+          {(
             <div className="glass-card p-6">
               <div className="flex items-start justify-between gap-4 flex-wrap">
                 <div>
@@ -1394,9 +1389,13 @@ export default function AdminBookingDetailPage() {
                     {locale === 'zh' ? 'Google 日曆' : 'Google Calendar'}
                   </h2>
                   <p className="text-xs text-ink-soft mt-1">
-                    {locale === 'zh'
-                      ? '此預訂尚未推送到 Google 日曆。撳下面個鈕補返。'
-                      : 'This booking is not yet on Google Calendar. Click to push.'}
+                    {booking.googleEventId
+                      ? (locale === 'zh'
+                        ? '已推送到 Google 日曆。改咗單想即時刷新 event，可以撳「重新同步」。'
+                        : 'On Google Calendar. Use re-sync to refresh the event after edits.')
+                      : (locale === 'zh'
+                        ? '此預訂尚未推送到 Google 日曆。撳下面個鈕補返。'
+                        : 'This booking is not yet on Google Calendar. Click to push.')}
                   </p>
                 </div>
                 <button
@@ -1406,8 +1405,10 @@ export default function AdminBookingDetailPage() {
                 >
                   <CalendarPlus size={14} />
                   {pushing
-                    ? (locale === 'zh' ? '推送中…' : 'Pushing…')
-                    : (locale === 'zh' ? '推送到 Google 日曆' : 'Push to Google Calendar')}
+                    ? (locale === 'zh' ? '同步中…' : 'Syncing…')
+                    : booking.googleEventId
+                      ? (locale === 'zh' ? '重新同步 Google 日曆' : 'Re-sync Google Calendar')
+                      : (locale === 'zh' ? '推送到 Google 日曆' : 'Push to Google Calendar')}
                 </button>
               </div>
               {pushMsg && (

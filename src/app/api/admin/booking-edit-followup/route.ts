@@ -193,9 +193,16 @@ export async function POST(req: NextRequest) {
     const freshData = (await bookingRef.get()).data() as BookingRecord;
     const fresh: BookingRecord = { ...freshData, id: bookingId };
 
-    const userSnap = await adminDb.collection('users').doc(fresh.userId).get();
-    const profile = userSnap.exists ? (userSnap.data() as UserProfile) : null;
-    const customerEmail = profile?.email;
+    // Admin-direct (線下) bookings carry userId: null — .doc(null)
+    // THROWS, which killed this whole route before the gcal sync ever
+    // ran (#s2VteSf7: edits synced for normal bookings but never for
+    // offline ones). Guard it and fall back to the booking's own
+    // customerEmail so offline customers still get the update email.
+    const userSnap = fresh.userId
+      ? await adminDb.collection('users').doc(fresh.userId).get()
+      : null;
+    const profile = userSnap?.exists ? (userSnap.data() as UserProfile) : null;
+    const customerEmail = profile?.email || fresh.customerEmail || undefined;
     const venue = getVenueById(fresh.venueId);
     const venueName = venue?.name.zh || fresh.branchSlug;
 
@@ -241,7 +248,7 @@ export async function POST(req: NextRequest) {
         `你好，我嘅預訂編號：${bookingId}\n場地：${venueName}\n日期：${fresh.date}`,
       );
       const tpl = buildBookingConfirmationEmail({
-        customerName: profile?.displayName || customerEmail.split('@')[0],
+        customerName: profile?.displayName || fresh.customerName || (customerEmail ? customerEmail.split('@')[0] : '客人'),
         venueId: booking.venueId,
         venueName,
         venueAddress: venue?.address.zh,
