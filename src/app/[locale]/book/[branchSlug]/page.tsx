@@ -8,7 +8,7 @@ import { getVenueBySlug } from '@/lib/venues';
 import { addOns, calculatePricing, noBBQVenues, freeDrinksVenues, hotpotVenues, bbqStandardPriceByVenue, bbqStandardMenu, bbqPremiumMenu, hotpotStandardMenu, hotpotSeafoodMenu, hotpotSoupBases, calcShishaPrice, SHISHA_STAFF_SETUP_FEE, SHISHA_MAX_PIPES, earlySetupPriceByVenue, subtractHours } from '@/lib/pricing';
 import type { AddOnOptions, Venue, PeakDayConfig } from '@/types';
 import { getPeakDay } from '@/lib/peakDays';
-import { resolvePeakRule, effectiveMinGuests, effectiveMinHours } from '@/lib/peakDayRules';
+import { resolvePeakRule, effectiveMinGuests, effectiveMinHours, swSplitBlocked } from '@/lib/peakDayRules';
 import { loadAllVenues, conflictIdsFor } from '@/lib/venueRegistry';
 import {
   ArrowLeft, ArrowRight, Calendar, Clock, Users,
@@ -99,6 +99,8 @@ function BookingPageInner({ venue }: { venue: Venue }) {
     return () => { stale = true; };
   }, [selectedDate]);
   const peakRule = useMemo(() => resolvePeakRule(peakCfg, venue.id), [peakCfg, venue]);
+  // 上環全場優先: Room A / B rejected separately until the release day.
+  const splitBlocked = useMemo(() => swSplitBlocked(peakCfg, venue.id), [peakCfg, venue]);
   const [hasBYOFood, setHasBYOFood] = useState(false);
   const [, setShowGrillWarning] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
@@ -548,7 +550,7 @@ function BookingPageInner({ venue }: { venue: Venue }) {
   const shishaSetupTimeOK = !shishaStaffSetup || !!shishaStaffSetupTime;
 
   // Can proceed check
-  const canProceed = selectedDate && hours >= minHours && adultEquiv >= minGuests && agreedToTerms && whatsappReady && !lastMinuteBlocker && bbqHelperHoursOK && bbqHelperLeadTimeOK && shishaSetupTimeOK;
+  const canProceed = selectedDate && hours >= minHours && adultEquiv >= minGuests && agreedToTerms && whatsappReady && !lastMinuteBlocker && bbqHelperHoursOK && bbqHelperLeadTimeOK && shishaSetupTimeOK && !splitBlocked;
 
   return (
     <div className="pt-28 pb-20 relative overflow-hidden">
@@ -623,6 +625,15 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                   <p className="text-ink-soft">
                     {locale === 'zh' ? `最少預訂 ${minHours} 小時，最少 ${minGuests} 人` : `Min. ${minHours} hours, min. ${minGuests} guests`}
                   </p>
+                  {splitBlocked && (
+                    <div className="mt-2 rounded-xl border-2 border-sky-300 bg-sky-50 px-4 py-3">
+                      <p className="text-sm font-bold text-sky-700">
+                        🔒 {locale === 'zh'
+                          ? `呢日上環只接受全層 A+B 預訂 — 想喺 ${selectedDate} 開派對，請預訂「上環海景旗艦店 - 全層 A+B」`
+                          : `On this date Sheung Wan only accepts full-floor A+B bookings — please book the A+B venue for ${selectedDate}.`}
+                      </p>
+                    </div>
+                  )}
                   {peakRule && (
                     <div className="mt-2 rounded-xl border-2 border-rose-300 bg-rose-50 px-4 py-3">
                       <p className="text-sm font-bold text-rose-700">

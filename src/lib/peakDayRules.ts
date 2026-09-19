@@ -38,3 +38,24 @@ export function effectiveMinGuests(venueMin: number, rule: PeakDayRule | null): 
 export function effectiveMinHours(venueMin: number, rule: PeakDayRule | null): number {
   return Math.max(venueMin, rule?.minHours || 0);
 }
+
+/**
+ * 上環全場優先 (Heidi 2026-09-20): true when `venueId` (sw-a / sw-b)
+ * must NOT be bookable separately on this peak date yet — the date is
+ * flagged full-floor-first and the release moment (date 00:00 HKT −
+ * swSplitReleaseDays days) hasn't arrived. sw-ab and non-SW venues are
+ * never blocked. Existing A+B bookings block A/B afterwards through the
+ * normal conflict checks, so no full-floor lookup is needed here.
+ */
+export function swSplitBlocked(
+  cfg: PeakDayConfig | null | undefined,
+  venueId: string,
+  nowMs: number = Date.now(),
+): boolean {
+  if (!cfg?.swFullFloorFirst) return false;
+  if (venueId !== 'sw-a' && venueId !== 'sw-b') return false;
+  const releaseDays = Math.max(0, cfg.swSplitReleaseDays || 0);
+  const dateStartMs = new Date(`${cfg.date}T00:00:00+08:00`).getTime();
+  const releaseMs = dateStartMs - releaseDays * 24 * 60 * 60 * 1000;
+  return nowMs < releaseMs;
+}

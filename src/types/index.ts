@@ -901,6 +901,14 @@ export interface PeakDayConfig {
   branches?: Record<string, PeakDayRule>;
   /** Optional label shown to customers, e.g. 聖誕節. */
   note?: string;
+  /** 上環全場優先 (Heidi 2026-09-20): while active, Room A / Room B
+   *  reject separate customer bookings for this date — only 全層 A+B
+   *  is offered. A/B open automatically at the release moment. */
+  swFullFloorFirst?: boolean;
+  /** How many days BEFORE the date the A/B split opens (release moment
+   *  = date 00:00 HKT − this many days). 0/absent = A/B stay blocked
+   *  until the date itself arrives. */
+  swSplitReleaseDays?: number;
   updatedAt?: unknown;
 }
 

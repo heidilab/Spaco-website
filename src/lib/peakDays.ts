@@ -10,7 +10,7 @@ import { doc, getDoc, setDoc, deleteDoc, getDocs, collection, query, where, serv
 import { db } from './firebase';
 import type { PeakDayConfig } from '@/types';
 
-export { peakBranchKey, resolvePeakRule, effectiveMinGuests, effectiveMinHours } from './peakDayRules';
+export { peakBranchKey, resolvePeakRule, effectiveMinGuests, effectiveMinHours, swSplitBlocked } from './peakDayRules';
 
 // ── Firestore accessors (client SDK) ──────────────────────────────────
 

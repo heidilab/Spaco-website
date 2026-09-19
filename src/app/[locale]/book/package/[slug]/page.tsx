@@ -18,7 +18,7 @@ import { calculateDeposit } from '@/lib/pricing';
 import { saveBookingCheckoutDraft } from '@/lib/bookingCheckoutDraft';
 import HolidayDatePicker from '@/components/booking/HolidayDatePicker';
 import { getPeakDay } from '@/lib/peakDays';
-import { resolvePeakRule } from '@/lib/peakDayRules';
+import { resolvePeakRule, swSplitBlocked } from '@/lib/peakDayRules';
 import type { PeakDayConfig } from '@/types';
 import AuthModal from '@/components/auth/AuthModal';
 import {
@@ -204,6 +204,7 @@ export default function PackageBookingPage() {
     return () => { stale = true; };
   }, [selectedDate]);
   const peakRule = useMemo(() => resolvePeakRule(peakCfg, pkg.venueId), [peakCfg, pkg.venueId]);
+  const splitBlocked = useMemo(() => swSplitBlocked(peakCfg, pkg.venueId), [peakCfg, pkg.venueId]);
   // Package pax floor may be raised by the peak day's minimum headcount.
   const paxFloor = Math.max(pkg.basePax || 1, peakRule?.minHeadcount || 0);
 
@@ -244,7 +245,7 @@ export default function PackageBookingPage() {
   // ===== Proceed gate =====
   const canProceed =
     !!selectedDate && !!startTime && isDayAllowed && agreedToTerms && whatsappReady &&
-    (!requiresDecoration || !!decorationStyle);
+    (!requiresDecoration || !!decorationStyle) && !splitBlocked;
 
   // ===== Submit =====
   // Creates a real BookingRecord with `packageSlug` set, then hands off to
@@ -380,6 +381,15 @@ export default function PackageBookingPage() {
                 locale={locale}
                 peakVenueId={pkg.venueId}
               />
+              {splitBlocked && selectedDate && (
+                <div className="mt-3 rounded-xl border-2 border-sky-300 bg-sky-50 px-4 py-3">
+                  <p className="text-sm font-bold text-sky-700">
+                    🔒 {locale === 'zh'
+                      ? '呢日上環只接受全層 A+B 預訂，此套餐場地暫時未開放呢一日。'
+                      : 'On this date Sheung Wan only accepts full-floor A+B bookings.'}
+                  </p>
+                </div>
+              )}
               {peakRule && selectedDate && (
                 <div className="mt-3 rounded-xl border-2 border-rose-300 bg-rose-50 px-4 py-3">
                   <p className="text-sm font-bold text-rose-700">

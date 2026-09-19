@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPeakDayAdmin } from '@/lib/peakDaysAdmin';
-import { resolvePeakRule, effectiveMinGuests, effectiveMinHours } from '@/lib/peakDayRules';
+import { resolvePeakRule, effectiveMinGuests, effectiveMinHours, swSplitBlocked } from '@/lib/peakDayRules';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminVerifyIdToken } from '@/lib/adminAuth';
@@ -121,7 +121,14 @@ export async function POST(req: NextRequest) {
   const addOns = Array.isArray(rest.addOns) ? rest.addOns : [];
   // 特別日子 (peak day) rule — surcharge + raised minimums per date/branch;
   // forceWeekendRate charges a weekday at the weekend tier.
-  const peakRule = resolvePeakRule(await getPeakDayAdmin(date as string), venueId);
+  const peakCfgForDate = await getPeakDayAdmin(date as string);
+  const peakRule = resolvePeakRule(peakCfgForDate, venueId);
+  // 上環全場優先: while active, Room A / B reject separate CUSTOMER
+  // bookings for the date (admin links/direct are exempt, same policy
+  // as the minimum floors).
+  if (!draftId && swSplitBlocked(peakCfgForDate, venueId)) {
+    return NextResponse.json({ error: 'SW_FULL_FLOOR_FIRST' }, { status: 400 });
+  }
   const isWeekend = serverIsWeekend(date as string) || peakRule?.forceWeekendRate === true;
   const endDayForHours = (endDate && endDate !== date) ? (endDate as string) : (date as string);
   const startMs = new Date(`${date}T${startTime}:00+08:00`).getTime();

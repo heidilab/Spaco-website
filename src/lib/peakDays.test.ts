@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolvePeakRule, effectiveMinGuests, effectiveMinHours, peakBranchKey } from './peakDayRules';
+import { resolvePeakRule, effectiveMinGuests, effectiveMinHours, peakBranchKey, swSplitBlocked } from './peakDayRules';
 import { calculatePricing } from './pricing';
 import { venues } from './venues';
 import type { PeakDayConfig } from '@/types';
@@ -104,5 +104,43 @@ describe('peakSurchargeOverride (CS-adjusted total)', () => {
     const zero = calculatePricing(v, false, 4, 15, [], 0, 150, 0);
     const none = calculatePricing(v, false, 4, 15, [], 0, 0);
     expect(zero.subtotal).toBe(none.subtotal);
+  });
+});
+
+describe('swSplitBlocked (上環全場優先)', () => {
+  const cfg = {
+    date: '2026-12-25',
+    all: { surchargePerHead: 50 },
+    swFullFloorFirst: true,
+    swSplitReleaseDays: 14,
+  };
+  const ms = (iso: string) => new Date(iso).getTime();
+
+  it('blocks sw-a / sw-b before the release moment', () => {
+    const now = ms('2026-12-01T12:00:00+08:00'); // release = 12-11 00:00
+    expect(swSplitBlocked(cfg, 'sw-a', now)).toBe(true);
+    expect(swSplitBlocked(cfg, 'sw-b', now)).toBe(true);
+  });
+
+  it('never blocks 全層 A+B or other venues', () => {
+    const now = ms('2026-12-01T12:00:00+08:00');
+    expect(swSplitBlocked(cfg, 'sw-ab', now)).toBe(false);
+    expect(swSplitBlocked(cfg, 'cwb', now)).toBe(false);
+  });
+
+  it('opens A/B at the release moment (date − releaseDays, HKT)', () => {
+    expect(swSplitBlocked(cfg, 'sw-a', ms('2026-12-10T23:59:00+08:00'))).toBe(true);
+    expect(swSplitBlocked(cfg, 'sw-a', ms('2026-12-11T00:00:01+08:00'))).toBe(false);
+  });
+
+  it('releaseDays absent blocks until the date itself', () => {
+    const c2 = { date: '2026-12-25', swFullFloorFirst: true };
+    expect(swSplitBlocked(c2, 'sw-a', ms('2026-12-24T23:00:00+08:00'))).toBe(true);
+    expect(swSplitBlocked(c2, 'sw-a', ms('2026-12-25T00:00:01+08:00'))).toBe(false);
+  });
+
+  it('flag off = never blocked', () => {
+    expect(swSplitBlocked({ date: '2026-12-25' }, 'sw-a', ms('2026-12-01T00:00:00+08:00'))).toBe(false);
+    expect(swSplitBlocked(null, 'sw-a', 0)).toBe(false);
   });
 });

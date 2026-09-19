@@ -32,13 +32,15 @@ const BRANCH_LABELS: Record<string, { zh: string; en: string }> = {
 
 /** Editor draft: string inputs (blank = unset) per scope. */
 type RuleDraft = { surchargePerHead: string; minHeadcount: string; minHours: string; forceWeekendRate: boolean };
-type Draft = { note: string; all: RuleDraft; branches: Record<string, RuleDraft> };
+type Draft = { note: string; all: RuleDraft; branches: Record<string, RuleDraft>; swFullFloorFirst: boolean; swSplitReleaseDays: string };
 
 const emptyRule = (): RuleDraft => ({ surchargePerHead: '', minHeadcount: '', minHours: '', forceWeekendRate: false });
 const emptyDraft = (): Draft => ({
   note: '',
   all: emptyRule(),
   branches: Object.fromEntries(BRANCHES.map((b) => [b, emptyRule()])),
+  swFullFloorFirst: false,
+  swSplitReleaseDays: '',
 });
 
 function ruleToDraft(r?: PeakDayRule | null): RuleDraft {
@@ -63,6 +65,8 @@ function cfgToDraft(cfg?: PeakDayConfig | null): Draft {
   const d = emptyDraft();
   if (!cfg) return d;
   d.note = cfg.note || '';
+  d.swFullFloorFirst = cfg.swFullFloorFirst === true;
+  d.swSplitReleaseDays = cfg.swSplitReleaseDays ? String(cfg.swSplitReleaseDays) : '';
   d.all = ruleToDraft(cfg.all);
   for (const b of BRANCHES) {
     // Legacy 'sw' rules prefill the three room rows so re-saving a date
@@ -80,11 +84,15 @@ function draftToCfg(d: Draft): Omit<PeakDayConfig, 'date' | 'updatedAt'> | null 
     const r = draftToRule(d.branches[b]);
     if (r) branches[b] = r;
   }
-  if (!all && Object.keys(branches).length === 0) return null;
+  if (!all && Object.keys(branches).length === 0 && !d.swFullFloorFirst) return null;
   return {
     ...(d.note.trim() ? { note: d.note.trim() } : {}),
     all: all,
     branches,
+    swFullFloorFirst: d.swFullFloorFirst,
+    ...(d.swFullFloorFirst && Number(d.swSplitReleaseDays) > 0
+      ? { swSplitReleaseDays: Math.floor(Number(d.swSplitReleaseDays)) }
+      : {}),
   };
 }
 
@@ -214,6 +222,8 @@ export default function PeakDaysPage() {
   function badge(cfg: PeakDayConfig): string {
     const s = cfg.all?.surchargePerHead
       || Math.max(0, ...Object.values(cfg.branches || {}).map((r) => r.surchargePerHead || 0));
+    if (cfg.swFullFloorFirst && s > 0) return `🔒+$${s}`;
+    if (cfg.swFullFloorFirst) return '🔒AB';
     if (s > 0) return `+$${s}`;
     const forced = cfg.all?.forceWeekendRate
       || Object.values(cfg.branches || {}).some((r) => r.forceWeekendRate);
@@ -348,6 +358,41 @@ export default function PeakDaysPage() {
               <div className="border rounded-lg p-3 bg-amber-50/50">
                 <div className="font-medium text-sm mb-2">{zh ? '全部分店' : 'All branches'}</div>
                 {ruleInputs('all', draft.all, (r) => setDraft({ ...draft, all: r }))}
+              </div>
+
+              {/* 上環全場優先 — Room A/B held back until the release day */}
+              <div className="border-2 border-sky-200 bg-sky-50/50 rounded-lg p-3 space-y-2">
+                <label className="flex items-start gap-2 text-sm font-medium cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={draft.swFullFloorFirst}
+                    onChange={(e) => setDraft({ ...draft, swFullFloorFirst: e.target.checked })}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    🔒 {zh ? '上環全場優先 — 呢日只接全層 A+B 預訂' : 'SW full-floor first — only 全層 A+B bookable'}
+                    <span className="block text-xs font-normal text-gray-500 mt-0.5">
+                      {zh
+                        ? 'Room A / Room B 唔會分開接客人網上預訂，直至去到下面設定嘅開放日仍未有全場預訂，先自動分返兩間房接單。（CS 後台開單唔受限制）'
+                        : 'Rooms A/B reject separate customer bookings until the release day below; existing A+B bookings keep blocking them as usual. Admin bookings unaffected.'}
+                    </span>
+                  </span>
+                </label>
+                {draft.swFullFloorFirst && (
+                  <div className="flex items-center gap-2 text-sm pl-6">
+                    <span className="text-gray-600">{zh ? '活動日前' : 'Open A/B'}</span>
+                    <input
+                      type="number" min={0}
+                      value={draft.swSplitReleaseDays}
+                      onChange={(e) => setDraft({ ...draft, swSplitReleaseDays: e.target.value })}
+                      placeholder="14"
+                      className="border rounded px-2 py-1 w-20 text-right"
+                    />
+                    <span className="text-gray-600">
+                      {zh ? '日開放 Room A / Room B 分開接單（留空 = 去到當日先開放）' : 'days before the event (blank = never until the day)'}
+                    </span>
+                  </div>
+                )}
               </div>
 
               <details className="border rounded-lg p-3">
