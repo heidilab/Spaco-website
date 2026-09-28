@@ -313,12 +313,13 @@ export default function AdminCalendarPage() {
         selectedVenue === 'all' || selectedVenue === SW_GROUP_ID
           ? addVenue
           : selectedVenue;
-      // Expand the date range — same time window per day, capped at 31
-      // days so a typo can't flood the calendar.
+      // Expand the date range — BLOCKS only (site visits / deliveries
+      // are single-day by nature, Heidi 2026-09-28). Same time window
+      // per day, capped at 31 days so a typo can't flood the calendar.
       const dates: string[] = [];
       {
         const cur = new Date(`${addModal.date}T00:00:00`);
-        const last = addEndDate && addEndDate > addModal.date
+        const last = addType === 'block' && addEndDate && addEndDate > addModal.date
           ? new Date(`${addEndDate}T00:00:00`)
           : cur;
         while (cur <= last && dates.length < 31) {
@@ -851,7 +852,9 @@ function AddModal(props: {
           </div>
         </div>
 
-        {/* 跨日排程 — same time window on every day up to 結束日期 */}
+        {/* 跨日封鎖 — same time window on every day up to 結束日期.
+         *  Site visits / deliveries are always single-day. */}
+        {addType === 'block' && (
         <div className="mb-4">
           <label className="text-sm text-ink-soft mb-1 block">
             {locale === 'zh' ? '結束日期（可選 — 橫跨多日）' : 'End date (optional — multi-day)'}
@@ -869,6 +872,7 @@ function AddModal(props: {
               : `Blank = ${date} only; otherwise the same window is created on every day up to the end date (max 31 days).`}
           </p>
         </div>
+        )}
 
         {addType !== 'block' && (
           <div className="mb-4">
