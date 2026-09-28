@@ -1,7 +1,7 @@
 'use client';
 
 import { adminApiFetch } from '@/lib/adminApiFetch';
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { useLocale } from 'next-intl';
 import Link from 'next/link';
 import {
@@ -114,6 +114,7 @@ export default function AdminCalendarPage() {
   const [addVenue, setAddVenue] = useState<string>('cwb');
   const [addNotes, setAddNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Details modal — opened from clicking an item in the day summary
@@ -304,6 +305,8 @@ export default function AdminCalendarPage() {
 
   const handleSubmitAdd = async () => {
     if (!addModal) return;
+    if (submittingRef.current) return;   // hard re-entry guard
+    submittingRef.current = true;
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -313,15 +316,15 @@ export default function AdminCalendarPage() {
         selectedVenue === 'all' || selectedVenue === SW_GROUP_ID
           ? addVenue
           : selectedVenue;
-      // Expand the date range — BLOCKS only (site visits / deliveries
-      // are single-day by nature, Heidi 2026-09-28). Same time window
-      // per day, capped at 31 days so a typo can't flood the calendar.
-      const dates: string[] = [];
-      {
+      // Date list. Multi-day is BLOCKS only (site visits / deliveries are
+      // single-day). Guarded hard: any non-block type is forced to a
+      // single day no matter what addEndDate holds — a stale range must
+      // never spam calendar events again (Heidi 2026-09-30).
+      const dates: string[] = [addModal.date];
+      if (addType === 'block' && addEndDate && addEndDate > addModal.date) {
         const cur = new Date(`${addModal.date}T00:00:00`);
-        const last = addType === 'block' && addEndDate && addEndDate > addModal.date
-          ? new Date(`${addEndDate}T00:00:00`)
-          : cur;
+        cur.setDate(cur.getDate() + 1);
+        const last = new Date(`${addEndDate}T00:00:00`);
         while (cur <= last && dates.length < 31) {
           dates.push(`${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`);
           cur.setDate(cur.getDate() + 1);
@@ -362,6 +365,7 @@ export default function AdminCalendarPage() {
       setSubmitError(err instanceof Error ? err.message : String(err));
     } finally {
       setSubmitting(false);
+      submittingRef.current = false;
     }
   };
 

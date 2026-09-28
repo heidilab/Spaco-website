@@ -28,23 +28,38 @@ export async function createCalendarEvent(
   redirectUri: string,
   input: CreateInput,
 ): Promise<CalendarEvent> {
-  // DEDUP GUARD — refuse to create a second identical event. A slow /
-  // hanging Google push used to leave the request spinning ("處理中"),
-  // and a stale client that resubmitted (or the old multi-day loop) then
-  // duplicated the event across the calendar. Idempotent create kills
-  // that entire class of bug (Heidi 2026-09-30).
-  const dupSnap = await adminDb.collection(COLLECTION)
-    .where('type', '==', input.type)
-    .where('venueId', '==', input.venueId)
-    .where('date', '==', input.date)
-    .where('startTime', '==', input.startTime)
-    .get();
-  const dup = dupSnap.docs.find((d) => {
-    const e = d.data() as CalendarEvent;
-    return e.endTime === input.endTime && (e.notes || '') === (input.notes || '');
-  });
-  if (dup) {
-    return { id: dup.id, ...dup.data() } as unknown as CalendarEvent;
+  // DEDUP + ANTI-SPAM GUARD (Heidi 2026-09-30). A stale client bundle
+  // looped a multi-day range, hammering this route ~every 2.5s and
+  // spamming one event per day across the calendar. Query by notes only
+  // (single-field, no composite index needed — a composite query here
+  // would throw FAILED_PRECONDITION and break creation), then in memory:
+  //   1. exact duplicate (same type/venue/date/time/notes) → return it
+  //      (idempotent — repeated identical submits are harmless)
+  //   2. same signature (type/venue/startTime/notes) created in the last
+  //      2 minutes on ANY date → BLOCK as runaway-loop spam
+  try {
+    const sigSnap = await adminDb.collection(COLLECTION)
+      .where('notes', '==', input.notes || '')
+      .get();
+    const nowMs = Date.now();
+    for (const d of sigSnap.docs) {
+      const e = d.data() as CalendarEvent & { createdAt?: { toMillis?: () => number } };
+      const sameSig = e.type === input.type && e.venueId === input.venueId
+        && e.startTime === input.startTime;
+      if (!sameSig) continue;
+      if (e.date === input.date && e.endTime === input.endTime) {
+        return { id: d.id, ...d.data() } as unknown as CalendarEvent; // exact dup
+      }
+      const createdMs = e.createdAt?.toMillis?.() ?? 0;
+      if (createdMs && nowMs - createdMs < 120000) {
+        // Runaway loop — refuse silently (client keeps its stale state
+        // but nothing new is written / pushed).
+        throw new Error('CALENDAR_EVENT_SPAM_BLOCKED');
+      }
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message === 'CALENDAR_EVENT_SPAM_BLOCKED') throw err;
+    console.error('[calendarEvents] dedup check failed (proceeding):', err);
   }
 
   // Write the Firestore doc FIRST so the request returns fast and can
