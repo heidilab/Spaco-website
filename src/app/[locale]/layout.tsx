@@ -59,6 +59,11 @@ export default async function LocaleLayout({
           'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
           })(window,document,'script','dataLayer','${GTM_ID}');
         `}</Script>
+        {/* GloMap embed — site-wide visitor map widget (Heidi 2026-09-30). */}
+        <Script
+          src="https://glomap.vercel.app/api/embed/8QJthBF6X4PkAygU2GGm/glomap.js"
+          strategy="afterInteractive"
+        />
       </head>
       <body className="font-sans antialiased" suppressHydrationWarning>
         {/* Google Tag Manager (noscript) — must be the first child of <body>. */}
