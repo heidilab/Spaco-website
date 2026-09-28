@@ -108,6 +108,9 @@ export default function AdminCalendarPage() {
   const [addType, setAddType] = useState<AddType>('block');
   const [addStart, setAddStart] = useState('10:00');
   const [addEnd, setAddEnd] = useState('14:00');
+  // 結束日期 — cross-day schedules create the SAME time window on every
+  // day in [date, addEndDate] (Heidi 2026-09-28). Empty = single day.
+  const [addEndDate, setAddEndDate] = useState('');
   const [addVenue, setAddVenue] = useState<string>('cwb');
   const [addNotes, setAddNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -263,6 +266,23 @@ export default function AdminCalendarPage() {
     setCurrentMonth(`${newDate.getFullYear()}-${String(newDate.getMonth() + 1).padStart(2, '0')}`);
   };
 
+  // Dashboard 快捷鍵「新增排程」lands here with ?new=1 — auto-open the
+  // add modal for today (Heidi 2026-09-28).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (new URLSearchParams(window.location.search).get('new') !== '1') return;
+    const today = new Date().toISOString().split('T')[0];
+    setAddType('block');
+    setAddStart('10:00');
+    setAddEnd('14:00');
+    setAddVenue('cwb');
+    setAddNotes('');
+    setAddEndDate('');
+    setSubmitError(null);
+    setAddModal({ date: today });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const openAddFromSummary = () => {
     if (!summaryDate) return;
     setAddType('block');
@@ -277,6 +297,7 @@ export default function AdminCalendarPage() {
           : selectedVenue,
     );
     setAddNotes('');
+    setAddEndDate('');
     setSubmitError(null);
     setAddModal({ date: summaryDate });
   };
@@ -292,31 +313,46 @@ export default function AdminCalendarPage() {
         selectedVenue === 'all' || selectedVenue === SW_GROUP_ID
           ? addVenue
           : selectedVenue;
-      if (addType === 'block') {
-        await createSharedBlockedSlot({
-          venueId: targetVenue,
-          date: addModal.date,
-          startTime: addStart,
-          endTime: addEnd,
-          reason: 'admin_block',
-          bookingId: null,
-        });
-      } else {
-        const res = await adminApiFetch('/api/calendar-events', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            type: addType,
+      // Expand the date range — same time window per day, capped at 31
+      // days so a typo can't flood the calendar.
+      const dates: string[] = [];
+      {
+        const cur = new Date(`${addModal.date}T00:00:00`);
+        const last = addEndDate && addEndDate > addModal.date
+          ? new Date(`${addEndDate}T00:00:00`)
+          : cur;
+        while (cur <= last && dates.length < 31) {
+          dates.push(`${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`);
+          cur.setDate(cur.getDate() + 1);
+        }
+      }
+      for (const d of dates) {
+        if (addType === 'block') {
+          await createSharedBlockedSlot({
             venueId: targetVenue,
-            date: addModal.date,
+            date: d,
             startTime: addStart,
             endTime: addEnd,
-            notes: addNotes,
-          }),
-        });
-        if (!res.ok) {
-          const j = await res.json().catch(() => ({}));
-          throw new Error(j.error || `HTTP ${res.status}`);
+            reason: 'admin_block',
+            bookingId: null,
+          });
+        } else {
+          const res = await adminApiFetch('/api/calendar-events', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              type: addType,
+              venueId: targetVenue,
+              date: d,
+              startTime: addStart,
+              endTime: addEnd,
+              notes: addNotes,
+            }),
+          });
+          if (!res.ok) {
+            const j = await res.json().catch(() => ({}));
+            throw new Error(j.error || `HTTP ${res.status}`);
+          }
         }
       }
       setAddModal(null);
@@ -499,6 +535,8 @@ export default function AdminCalendarPage() {
           setAddStart={setAddStart}
           addEnd={addEnd}
           setAddEnd={setAddEnd}
+          addEndDate={addEndDate}
+          setAddEndDate={setAddEndDate}
           addVenue={addVenue}
           setAddVenue={setAddVenue}
           addNotes={addNotes}
@@ -752,6 +790,7 @@ function AddModal(props: {
   addType: AddType; setAddType: (t: AddType) => void;
   addStart: string;  setAddStart: (s: string) => void;
   addEnd: string;    setAddEnd: (s: string) => void;
+  addEndDate: string; setAddEndDate: (s: string) => void;
   addVenue: string;  setAddVenue: (s: string) => void;
   addNotes: string;  setAddNotes: (s: string) => void;
   submitting: boolean;
@@ -762,6 +801,7 @@ function AddModal(props: {
   const {
     date, locale, selectedVenue,
     addType, setAddType, addStart, setAddStart, addEnd, setAddEnd,
+    addEndDate, setAddEndDate,
     addVenue, setAddVenue, addNotes, setAddNotes,
     submitting, submitError, onSubmit, onClose,
   } = props;
@@ -809,6 +849,25 @@ function AddModal(props: {
               {timeSlots.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
+        </div>
+
+        {/* 跨日排程 — same time window on every day up to 結束日期 */}
+        <div className="mb-4">
+          <label className="text-sm text-ink-soft mb-1 block">
+            {locale === 'zh' ? '結束日期（可選 — 橫跨多日）' : 'End date (optional — multi-day)'}
+          </label>
+          <input
+            type="date"
+            value={addEndDate}
+            min={date}
+            onChange={(e) => setAddEndDate(e.target.value)}
+            className="w-full px-4 py-2.5 rounded-pill bg-white/70 backdrop-blur-md border border-white/80 text-ink"
+          />
+          <p className="text-[11px] text-ink-soft mt-1">
+            {locale === 'zh'
+              ? `留空 = 只限 ${date} 一日；揀咗就由 ${date} 到結束日期每一日都建立同一時段（最多 31 日）。`
+              : `Blank = ${date} only; otherwise the same window is created on every day up to the end date (max 31 days).`}
+          </p>
         </div>
 
         {addType !== 'block' && (
