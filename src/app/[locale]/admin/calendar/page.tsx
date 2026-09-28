@@ -818,8 +818,8 @@ function AddModal(props: {
 
         <div className="grid grid-cols-3 gap-2 mb-5 p-1 bg-white/40 rounded-2xl">
           <TypeTab active={addType === 'block'} onClick={() => setAddType('block')} icon={<Lock size={14} />} label={locale === 'zh' ? '封鎖' : 'Block'} />
-          <TypeTab active={addType === 'site_visit'} onClick={() => setAddType('site_visit')} icon={<Eye size={14} />} label="Site Visit" />
-          <TypeTab active={addType === 'delivery'} onClick={() => setAddType('delivery')} icon={<Truck size={14} />} label="Delivery" />
+          <TypeTab active={addType === 'site_visit'} onClick={() => { setAddType('site_visit'); setAddEndDate(''); }} icon={<Eye size={14} />} label="Site Visit" />
+          <TypeTab active={addType === 'delivery'} onClick={() => { setAddType('delivery'); setAddEndDate(''); }} icon={<Truck size={14} />} label="Delivery" />
         </div>
 
         {(selectedVenue === 'all' || selectedVenue === SW_GROUP_ID) && (
