@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
   const {
     venueId, branchSlug, date, startTime, endTime, endDate,
     hours, guestCount, adultCount, childCount, isWeekend,
-    addOns, hasBYOFood, pricing, peakSurchargeOverride, packageSlug,
+    addOns, hasBYOFood, pricing, peakSurchargeOverride, isAirbnb, packageSlug,
     customerName, whatsappPhone, customerEmail, notes,
     marketingChannel, marketingChannelLabel,
     payments,
@@ -144,6 +144,7 @@ export async function POST(req: NextRequest) {
         userId: null,                    // offline customer — no account
         createdVia: 'admin-direct',
       ...(typeof peakSurchargeOverride === 'number' ? { peakSurchargeOverride: Math.max(0, peakSurchargeOverride) } : {}),
+      ...(isAirbnb === true ? { isAirbnb: true } : {}),
         createdBy: gate.uid,
         venueId,
         branchSlug: branchSlug ?? null,

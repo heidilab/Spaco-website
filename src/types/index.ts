@@ -328,6 +328,10 @@ export interface BookingRecord {
   /** CS-adjusted TOTAL 特別日子附加費 (admin link/direct flow). null or
    *  absent = follow the peak_days rule on recomputes. */
   peakSurchargeOverride?: number | null;
+  /** Internal Airbnb-platform booking (Heidi 2026-09-28): flat admin
+   *  totals, NO security deposit; 按金結算 becomes extra-charge chasing
+   *  (deductions overflow straight into balanceDue). */
+  isAirbnb?: boolean;
   /** Admin-granted per-booking discount (e.g. headcount-milestone deal
    *  promised on WhatsApp). Deducted like a promo in bookingMoney's
    *  netConsumption — 'rent' scope caps the base at the rental portion. */

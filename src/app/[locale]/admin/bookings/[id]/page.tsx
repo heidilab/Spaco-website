@@ -3327,7 +3327,18 @@ function DepositSettlement(props: DepositSettlementProps) {
     <div className="glass-card p-6 space-y-4">
       <div className="flex items-center gap-2">
         <Calculator size={16} className="text-pink" />
-        <h2 className="font-bold">{locale === 'zh' ? '按金結算' : 'Deposit Settlement'}</h2>
+        <h2 className="font-bold">
+          {booking.isAirbnb
+            ? (locale === 'zh' ? '額外收費結算（Airbnb — 冇按金）' : 'Extra charges (Airbnb — no deposit)')
+            : (locale === 'zh' ? '按金結算' : 'Deposit Settlement')}
+        </h2>
+        {booking.isAirbnb && (
+          <p className="text-xs text-ink-soft mt-1">
+            {locale === 'zh'
+              ? '呢張係 Airbnb 單，冇收按金。喺下面照樣入超時／損毀／罰款項目，結算後會變成客人需補付嘅金額，用付款連結或「已於線下付款」追收＋記錄。'
+              : 'Airbnb booking, no deposit held. Enter overtime/damage/penalty items below — on settle they become an amount to chase from the guest.'}
+          </p>
+        )}
       </div>
 
       {alreadySettled && !amending ? (

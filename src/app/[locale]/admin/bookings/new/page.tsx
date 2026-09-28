@@ -116,6 +116,12 @@ export default function AdminNewBookingPage() {
   // to the package and the pricing card replaces the per-hour subtotal
   // with the fixed package fee.
   const [packageSlug, setPackageSlug] = useState<string | null>(null);
+  // Airbnb 單 (Heidi 2026-09-28): internal-only direct bookings from the
+  // Airbnb platform — flat admin-entered totals (rent + extras), NO
+  // security deposit, channel auto-tagged 'airbnb'.
+  const [isAirbnb, setIsAirbnb] = useState(false);
+  const [airbnbRent, setAirbnbRent] = useState('');
+  const [airbnbExtras, setAirbnbExtras] = useState('');
 
   // ── Promo code (validated via /api/promo/validate) ────────────────
   const [promoInput, setPromoInput] = useState('');
@@ -324,11 +330,16 @@ export default function AdminNewBookingPage() {
   const extraPaxCharge = (selectedPackage?.basePax != null && selectedPackage?.extraPaxPrice != null)
     ? Math.max(0, guestCount - selectedPackage.basePax) * selectedPackage.extraPaxPrice
     : 0;
-  const subtotalAfterPackage = pricing
-    ? (selectedPackage
-        ? selectedPackage.price + extraPaxCharge + pricing.addOnTotal
-        : pricing.subtotal)
-    : 0;
+  const airbnbRentNum = Math.max(0, parseFloat(airbnbRent) || 0);
+  const airbnbExtrasNum = Math.max(0, parseFloat(airbnbExtras) || 0);
+  const airbnbSubtotal = airbnbRentNum + airbnbExtrasNum;
+  const subtotalAfterPackage = isAirbnb
+    ? airbnbSubtotal
+    : pricing
+      ? (selectedPackage
+          ? selectedPackage.price + extraPaxCharge + pricing.addOnTotal
+          : pricing.subtotal)
+      : 0;
   const effectiveSubtotal = Math.max(0, subtotalAfterPackage - (promo?.amount || 0));
   // Deposit tier is keyed off the PRE-promo rental cost (subtotalAfterPackage),
   // not the post-promo effective subtotal. Otherwise a $250 promo on a $4,250
@@ -348,9 +359,11 @@ export default function AdminNewBookingPage() {
     return Number.isFinite(n) && n >= 0 ? n : null;
   })();
   const securityDepositAuto = selectedPackage?.deposit ?? calculateSecurityDeposit(subtotalAfterPackage);
-  const securityDeposit = securityDepositOverrideNum ?? securityDepositAuto;
+  // Airbnb bookings carry NO security deposit — the platform handles
+  // damage claims; extra charges are chased via 按金結算's overflow path.
+  const securityDeposit = isAirbnb ? 0 : (securityDepositOverrideNum ?? securityDepositAuto);
   const grandTotal = effectiveSubtotal + securityDeposit;
-  const deposit = calculateDeposit(grandTotal, date || undefined);
+  const deposit = isAirbnb ? grandTotal : calculateDeposit(grandTotal, date || undefined);
   const balanceDue = Math.max(0, grandTotal - deposit);
 
   const endTime = useMemo(() => {
@@ -373,7 +386,7 @@ export default function AdminNewBookingPage() {
 
   // Validation
   const whatsappValid = !customerWhatsapp || isValidHkPhone(customerWhatsapp);
-  const canSubmit = !!user && !!date && !!startTime && hours > 0 && guestCount > 0 && !!venue && !!pricing && whatsappValid && !submitting;
+  const canSubmit = !!user && !!date && !!startTime && hours > 0 && guestCount > 0 && !!venue && !!pricing && whatsappValid && !submitting && (!isAirbnb || airbnbSubtotal > 0);
 
   async function handleApplyPromo() {
     const code = promoInput.trim().toUpperCase();
@@ -477,23 +490,32 @@ export default function AdminNewBookingPage() {
           adultCount,
           childCount,
           isWeekend,
-          addOns: selectedAddOnList,
+          addOns: isAirbnb ? [] : selectedAddOnList,
           hasBYOFood,
-          ...(peakOverride !== null ? { peakSurchargeOverride: peakOverride } : {}),
-          pricing: {
-            baseCharge: selectedPackage ? selectedPackage.price + extraPaxCharge : pricing.baseCharge,
-            addOnTotal: pricing.addOnTotal,
-            subtotal: subtotalAfterPackage,
-            securityDeposit,
-            deposit,
-          },
+          ...(peakOverride !== null && !isAirbnb ? { peakSurchargeOverride: peakOverride } : {}),
+          pricing: isAirbnb
+            ? {
+                baseCharge: airbnbRentNum,
+                addOnTotal: airbnbExtrasNum,
+                subtotal: airbnbSubtotal,
+                securityDeposit: 0,
+                deposit: airbnbSubtotal,
+              }
+            : {
+                baseCharge: selectedPackage ? selectedPackage.price + extraPaxCharge : pricing.baseCharge,
+                addOnTotal: pricing.addOnTotal,
+                subtotal: subtotalAfterPackage,
+                securityDeposit,
+                deposit,
+              },
+          ...(isAirbnb ? { isAirbnb: true } : {}),
           ...(packageSlug ? { packageSlug } : {}),
           customerName: customerName.trim(),
           ...(customerWhatsapp ? { whatsappPhone: normalizeHkPhone(customerWhatsapp) || customerWhatsapp } : {}),
           ...(customerEmail ? { customerEmail } : {}),
           ...(notes ? { notes } : {}),
-          marketingChannel: isCustom ? 'other' : directChannel,
-          marketingChannelLabel: isCustom ? directChannelCustom.trim() : (chosen?.zh || directChannel),
+          marketingChannel: isAirbnb ? 'airbnb' : (isCustom ? 'other' : directChannel),
+          marketingChannelLabel: isAirbnb ? 'Airbnb' : (isCustom ? directChannelCustom.trim() : (chosen?.zh || directChannel)),
           payments: cleanPays,
         }),
       });
@@ -788,7 +810,7 @@ export default function AdminNewBookingPage() {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => setPackageSlug(null)}
+                onClick={() => { setPackageSlug(null); setIsAirbnb(false); }}
                 className={`px-3 py-2 rounded-xl text-sm font-medium transition-all border-2 ${
                   !packageSlug
                     ? 'bg-gradient-pink text-white border-transparent shadow-glow'
@@ -797,11 +819,24 @@ export default function AdminNewBookingPage() {
               >
                 {locale === 'zh' ? '自訂預訂（à la carte）' : 'Custom (à la carte)'}
               </button>
+              {mode === 'direct' && (
+                <button
+                  type="button"
+                  onClick={() => { setIsAirbnb(true); setPackageSlug(null); }}
+                  className={`px-3 py-2 rounded-xl text-sm font-medium transition-all border-2 ${
+                    isAirbnb
+                      ? 'bg-gradient-pink text-white border-transparent shadow-glow'
+                      : 'bg-white/85 text-ink border-charcoal/15 hover:border-pink/60'
+                  }`}
+                >
+                  🏠 Airbnb {locale === 'zh' ? '訂單' : 'order'}
+                </button>
+              )}
               {ALL_PACKAGES.map((p) => (
                 <button
                   key={p.slug}
                   type="button"
-                  onClick={() => setPackageSlug(p.slug)}
+                  onClick={() => { setPackageSlug(p.slug); setIsAirbnb(false); }}
                   className={`px-3 py-2 rounded-xl text-sm font-medium transition-all border-2 ${
                     packageSlug === p.slug
                       ? 'bg-gradient-pink text-white border-transparent shadow-glow'
@@ -819,6 +854,38 @@ export default function AdminNewBookingPage() {
                   ? `已鎖定：${selectedPackage.name.zh}．${selectedPackage.durationHours} 小時．場地 ${venue?.name.zh}`
                   : `Locked: ${selectedPackage.name.en} · ${selectedPackage.durationHours}h · ${venue?.name.en}`}
               </p>
+            )}
+            {isAirbnb && (
+              <div className="mt-4 rounded-xl border-2 border-rose-200 bg-rose-50/50 p-4 space-y-3">
+                <p className="text-sm font-bold text-ink">🏠 {locale === 'zh' ? 'Airbnb 訂單金額（自行輸入，唔按人頭計）' : 'Airbnb amounts (flat, not per-head)'}</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-ink-soft mb-1 block">{locale === 'zh' ? '長租總額 (HK$)' : 'Rental total (HK$)'}</label>
+                    <input
+                      type="number" min={0}
+                      value={airbnbRent}
+                      onChange={(e) => setAirbnbRent(e.target.value)}
+                      placeholder="0"
+                      className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-ink-soft mb-1 block">{locale === 'zh' ? '額外附加費總額 (HK$，可選)' : 'Extras total (HK$, optional)'}</label>
+                    <input
+                      type="number" min={0}
+                      value={airbnbExtras}
+                      onChange={(e) => setAirbnbExtras(e.target.value)}
+                      placeholder="0"
+                      className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white"
+                    />
+                  </div>
+                </div>
+                <p className="text-[11px] text-ink-soft">
+                  {locale === 'zh'
+                    ? '呢類單冇按金。如有超時/損毀/罰款，活動後喺訂單頁「按金結算」照樣入扣減項目，系統會變成向客人追收嘅額外費用。渠道會自動標記為 Airbnb。'
+                    : 'No security deposit. Post-event charges entered in Deposit Settlement become amounts to chase. Channel auto-tagged Airbnb.'}
+                </p>
+              </div>
             )}
           </div>
 
@@ -1560,7 +1627,20 @@ export default function AdminNewBookingPage() {
             {pricing ? (
               <>
                 <div className="space-y-1.5 text-sm mb-4">
-                  {selectedPackage ? (
+                  {isAirbnb ? (
+                    <>
+                      <div className="flex justify-between gap-2">
+                        <span className="text-ink-soft">🏠 {locale === 'zh' ? 'Airbnb 長租總額' : 'Airbnb rental'}</span>
+                        <span className="font-medium text-ink">${airbnbRentNum.toLocaleString()}</span>
+                      </div>
+                      {airbnbExtrasNum > 0 && (
+                        <div className="flex justify-between gap-2">
+                          <span className="text-ink-soft">{locale === 'zh' ? '額外附加費' : 'Extras'}</span>
+                          <span className="font-medium text-ink">${airbnbExtrasNum.toLocaleString()}</span>
+                        </div>
+                      )}
+                    </>
+                  ) : selectedPackage ? (
                     <>
                       <div className="flex justify-between gap-2">
                         <span className="text-ink-soft">
