@@ -32,9 +32,8 @@ export async function GET(request: NextRequest) {
     ['sw-a', 'sw-b', 'sw-ab'].map((v) => getCalendarIdForVenue(v)),
   )).filter(Boolean))) as string[];
 
-  const seen = new Set<string>();
-  const toDelete: Array<{ calendarId: string; id: string; date: string; summary: string }> = [];
-  let totalDelivery = 0;
+  // Every October (1–31) delivery is spam — the real one is 2026-09-29.
+  const toDelete: Array<{ calendarId: string; id: string; date: string; summary: string; notes: string }> = [];
 
   for (const calendarId of calIds) {
     const res = await cal.events.list({
@@ -48,20 +47,16 @@ export async function GET(request: NextRequest) {
       const isDelivery = ev.extendedProperties?.private?.spaco_event_type === 'delivery'
         || /delivery|送貨/i.test(ev.summary || '');
       if (!isDelivery) continue;
-      totalDelivery++;
       const start = ev.start?.dateTime || ev.start?.date || '';
-      const key = `${calendarId}|${start}|${ev.summary}`;
-      if (seen.has(key)) {
-        toDelete.push({ calendarId, id: ev.id!, date: start.slice(0, 10), summary: ev.summary || '' });
-      } else {
-        seen.add(key);
-      }
+      toDelete.push({ calendarId, id: ev.id!, date: start.slice(0, 10), summary: ev.summary || '', notes: ev.description || '' });
     }
   }
+  const totalDelivery = toDelete.length;
 
   if (dry) {
-    return NextResponse.json({ dry: true, totalDelivery, kept: seen.size, deleteCount: toDelete.length,
-      sample: toDelete.slice(0, 10) });
+    return NextResponse.json({ dry: true, totalDelivery,
+      dates: toDelete.map((d) => d.date).sort(),
+      summaries: Array.from(new Set(toDelete.map((d) => `${d.summary} / ${d.notes}`))) });
   }
 
   let deleted = 0;
@@ -69,5 +64,5 @@ export async function GET(request: NextRequest) {
     try { await cal.events.delete({ calendarId: d.calendarId, eventId: d.id }); deleted++; }
     catch (err) { console.warn('[cleanup-gcal-delivery] failed', d.id, err); }
   }
-  return NextResponse.json({ ok: true, totalDelivery, kept: seen.size, deleted });
+  return NextResponse.json({ ok: true, totalDelivery, deleted });
 }
