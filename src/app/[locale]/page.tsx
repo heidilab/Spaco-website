@@ -30,9 +30,10 @@ export default function HomePage({ params }: { params: { locale: string } }) {
       <HeroSection />
       <Marquee />
       <PromoSection />
+      {/* 分店導覽 sits right after 特別優惠 (Heidi 2026-09-30). */}
+      <BranchGrid />
       <CollectionSection />
       <AmenitiesSection />
-      <BranchGrid />
     </>
   );
 }
