@@ -19,14 +19,7 @@ import {
 import { marked } from 'marked';
 import RichEditor from '@/components/article/RichEditor';
 
-// Heuristic: content is markdown when there's no HTML tag at all but
-// classic markdown markers exist. Used to upgrade legacy markdown drafts
-// to HTML on first load into the new WYSIWYG editor.
-function looksLikeMarkdown(s: string): boolean {
-  if (!s) return false;
-  if (/<\w+[^>]*>/.test(s)) return false;           // any HTML tag → already HTML
-  return /(^|\n)#{1,3}\s|^\s*[-*]\s|>\s|\*\*[^*]+\*\*|!\[[^\]]*\]\(/m.test(s);
-}
+import { looksLikeMarkdown } from '@/lib/pasteContent';
 
 function ensureHtml(input: string): string {
   if (!input) return '';
@@ -457,8 +450,8 @@ export default function AdminArticleEditPage() {
               />
               <p className="text-xs text-ink-soft mt-2">
                 {locale === 'zh'
-                  ? '提示:可以撳「智能排版」叫 AI 幫你重新組織內容 + 加圖片建議位;之後再用工具列微調顏色 / 字型 / 大小。'
-                  : 'Tip: Click Smart Format to let AI restructure + suggest image slots, then fine-tune with the toolbar.'}
+                  ? '提示:由網頁 / AI 工具 copy 嘅文章可以直接 Cmd+V 貼入編輯器,標題、清單、表格會自動保留;想一次過貼整篇就撳右上「匯入文章」。之後可撳「智能排版」叫 AI 重整 + 加圖片建議位。'
+                  : 'Tip: paste straight from a web page / AI tool — headings, lists and tables are kept. Use “匯入文章” (top-right of the toolbar) to bulk-import a whole article, then Smart Format to restructure.'}
               </p>
             </div>
           </div>

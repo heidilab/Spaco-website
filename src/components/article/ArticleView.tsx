@@ -95,7 +95,8 @@ export default function ArticleView({
           </div>
 
           <article
-            className="prose prose-lg max-w-none
+            className="article-prose prose prose-lg max-w-none
+              prose-table:my-8 prose-table:text-base prose-th:text-ink prose-td:text-ink-soft prose-tr:border-charcoal/10
               prose-headings:font-display prose-headings:text-ink prose-headings:font-bold
               prose-h1:text-3xl prose-h2:text-2xl prose-h2:mt-12 prose-h2:mb-4 prose-h3:text-xl prose-h3:mt-8 prose-h3:mb-3
               prose-p:text-ink-soft prose-p:leading-relaxed prose-p:my-5

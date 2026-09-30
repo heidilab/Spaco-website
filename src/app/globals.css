@@ -213,3 +213,34 @@ h1, h2, h3, h4, .font-display {
   background-color: var(--pink);
   color: white;
 }
+
+/* ── Article editor + public article tables (Heidi 2026-09-30) ──
+   Typography gives base table styles; these add visible cell borders so
+   comparison tables read clearly, and cell-selection highlight in TipTap. */
+.article-prose table,
+.ProseMirror table {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: auto;
+}
+.article-prose th, .article-prose td,
+.ProseMirror th, .ProseMirror td {
+  border: 1px solid rgba(15, 10, 31, 0.12);
+  padding: 0.6rem 0.85rem;
+  vertical-align: top;
+  text-align: left;
+}
+.article-prose th, .ProseMirror th {
+  background: rgba(255, 94, 148, 0.06);
+  font-weight: 600;
+}
+.ProseMirror td, .ProseMirror th { position: relative; min-width: 3rem; }
+.ProseMirror table p, .article-prose table p { margin: 0; }
+.ProseMirror .selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 94, 148, 0.15);
+  pointer-events: none;
+}
+.ProseMirror .tableWrapper { overflow-x: auto; }

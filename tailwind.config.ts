@@ -1,4 +1,5 @@
 import type { Config } from 'tailwindcss';
+import typography from '@tailwindcss/typography';
 
 const config: Config = {
   content: [
@@ -111,6 +112,9 @@ const config: Config = {
       },
     },
   },
-  plugins: [],
+  // typography → `.prose` classes used by the article editor + public
+  // article page. It was never installed before, so headings / lists /
+  // paragraphs / tables rendered as plain text (Heidi 2026-09-30).
+  plugins: [typography],
 };
 export default config;
