@@ -17,11 +17,19 @@ import { ROLE_PERMISSIONS } from '@/types';
 /** Company main inbox — ALWAYS receives staff notifications, permanently. */
 const ALWAYS_NOTIFY_EMAIL = 'spacohk@gmail.com';
 
+/** Staff accounts that keep their admin login + permissions but must NOT
+ *  receive any system notification EMAIL (Heidi 2026-10-01). Web push is
+ *  unaffected. Compared case-insensitively. */
+const NEVER_EMAIL = new Set<string>([
+  'heidilai1031@gmail.com',
+]);
+
 /**
  * Recipients for internal staff notifications, computed LIVE each time:
  *   • spacohk@gmail.com (always), plus
  *   • every current staff member whose role grants the `bookings`
- *     permission (admin + cs) — their email is read from admin_users.
+ *     permission (admin + cs) — their email is read from admin_users,
+ *   • minus anyone in NEVER_EMAIL.
  *
  * So a CS hire auto-receives the moment they're added in 員工管理, and a
  * departing CS stops the moment they're removed / demoted to a plain
@@ -44,7 +52,7 @@ export async function getStaffNotificationRecipients(): Promise<string[]> {
     (process.env.STAFF_NOTIFICATION_EMAILS || '')
       .split(',').map((s) => s.trim()).filter(Boolean).forEach((e) => set.add(e));
   }
-  return Array.from(set).filter(Boolean);
+  return Array.from(set).filter((e) => e && !NEVER_EMAIL.has(e.toLowerCase()));
 }
 
 export type EmailAutomationKey =
