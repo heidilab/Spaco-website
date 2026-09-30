@@ -1163,7 +1163,7 @@ export function buildBonusAchievedEmail(params: {
   sales: number;
   target: number;
   bonus: number;
-  /** Total bonus accumulated this month across achieved tiers. */
+  /** Bonus of the highest tier reached this month (tiers don't stack). */
   totalBonus: number;
   /** Next tier target, when one exists — keeps the momentum going. */
   nextTarget?: number;
@@ -1181,12 +1181,12 @@ export function buildBonusAchievedEmail(params: {
             今個月嘅獎金 <strong style="color: ${EMAIL_PINK};">${fmt(params.bonus)}</strong> 袋袋平安！
           </p>
           <div style="background: #FFF0F5; border-radius: 14px; padding: 18px 20px; margin: 20px 0; text-align: center;">
-            <p style="margin: 0 0 4px; font-size: 13px; color: ${EMAIL_PINK}; font-weight: 700; letter-spacing: 0.05em;">本月累計獎金</p>
+            <p style="margin: 0 0 4px; font-size: 13px; color: ${EMAIL_PINK}; font-weight: 700; letter-spacing: 0.05em;">本月獎金</p>
             <p style="margin: 0; font-size: 28px; font-weight: 800; color: ${EMAIL_INK};">${fmt(params.totalBonus)}</p>
           </div>
           ${params.nextTarget ? `
           <p style="margin: 0; color: #666; line-height: 1.7;">
-            下一層目標係 <strong>${fmt(params.nextTarget)}</strong> — 乘勝追擊，仲有得加碼！🔥
+            下一層目標係 <strong>${fmt(params.nextTarget)}</strong> — 乘勝追擊，衝上更高一層獎金！🔥
           </p>` : `
           <p style="margin: 0; color: #666; line-height: 1.7;">今個月所有目標已經全部達成 — 勁！🏆</p>`}
         </div>

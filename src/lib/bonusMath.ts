@@ -1,8 +1,9 @@
 // CS monthly sales-bonus math (獎金) — PURE module, no firebase.
 //
 // Each branch has admin-configured tiers: hit tier 1's sales target →
-// earn tier 1's bonus, keep going for tier 2, etc. Tiers are CUMULATIVE:
-// a month that reaches tier 2 pays tier1.bonus + tier2.bonus. Sales are
+// earn tier 1's bonus, keep going for tier 2, etc. Tiers are NOT added
+// together — the month pays ONLY the HIGHEST tier reached (Heidi
+// 2026-09-30: reaching tier 2 pays tier2.bonus, not tier1 + tier2). Sales are
 // calendar-month (same countsForFinance + pricing.subtotal basis as the
 // month close, resetting on the 1st).
 
@@ -11,7 +12,7 @@ import type { BonusTier } from '@/types';
 export interface BonusEvaluation {
   /** Indexes (into the sorted tiers) whose target is met. */
   achievedTierIndexes: number[];
-  /** Sum of bonuses across achieved tiers. */
+  /** Bonus of the HIGHEST achieved tier (tiers do not stack). */
   totalBonus: number;
   /** The next unachieved tier's index, or null when all tiers are hit. */
   nextTierIndex: number | null;
@@ -33,7 +34,7 @@ export function evaluateBonus(sales: number, tiersIn: BonusTier[]): BonusEvaluat
   for (let i = 0; i < tiers.length; i++) {
     if (sales >= tiers[i].target) {
       achievedTierIndexes.push(i);
-      totalBonus += tiers[i].bonus;
+      totalBonus = tiers[i].bonus;          // highest tier reached wins — never summed
     } else {
       nextTierIndex = i;
       break;

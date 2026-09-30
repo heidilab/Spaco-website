@@ -20,7 +20,7 @@ describe('evaluateBonus', () => {
     expect(evaluateBonus(80000, TIERS).nextTierProgressPct).toBe(80);
   });
 
-  it('tier 1 achieved, working toward tier 2 — bonuses are cumulative', () => {
+  it('tier 1 achieved, working toward tier 2', () => {
     const e = evaluateBonus(120000, TIERS);
     expect(e.achievedTierIndexes).toEqual([0]);
     expect(e.totalBonus).toBe(1000);
@@ -31,9 +31,21 @@ describe('evaluateBonus', () => {
   it('all tiers achieved', () => {
     const e = evaluateBonus(250000, TIERS);
     expect(e.achievedTierIndexes).toEqual([0, 1, 2]);
-    expect(e.totalBonus).toBe(4500);
+    expect(e.totalBonus).toBe(2000);   // highest tier only, NOT 1000+1500+2000
     expect(e.nextTierIndex).toBeNull();
     expect(e.nextTierProgressPct).toBeNull();
+  });
+
+  it('pays ONLY the highest tier reached — tiers never stack (Heidi 2026-09-30)', () => {
+    // 上環 Sept: $134,464 vs tiers 100k/$1,500 · 130k/$2,500 · 170k/$3,300
+    const sw = [{ target: 100000, bonus: 1500 }, { target: 130000, bonus: 2500 }, { target: 170000, bonus: 3300 }];
+    expect(evaluateBonus(134464, sw).totalBonus).toBe(2500);   // was wrongly 4,000
+    // 尖沙咀: $75,388 vs 50k/$800 · 70k/$1,500 · 90k/$2,200
+    const tst = [{ target: 50000, bonus: 800 }, { target: 70000, bonus: 1500 }, { target: 90000, bonus: 2200 }];
+    expect(evaluateBonus(75388, tst).totalBonus).toBe(1500);   // was wrongly 2,300
+    // 銅鑼灣: $109,255 vs 90k/$1,000 · 118k/$1,500 → tier 1 only
+    const cwb = [{ target: 90000, bonus: 1000 }, { target: 118000, bonus: 1500 }, { target: 138000, bonus: 2500 }];
+    expect(evaluateBonus(109255, cwb).totalBonus).toBe(1000);
   });
 
   it('exact target counts as achieved', () => {

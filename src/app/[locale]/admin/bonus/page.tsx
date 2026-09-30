@@ -2,7 +2,7 @@
 
 // CS 獎金 — per-branch monthly sales targets with tiered bonuses.
 //
-//   設定    admin sets each branch's tiers (target → bonus, cumulative,
+//   設定    admin sets each branch's tiers (target → bonus, highest tier reached only — NOT summed,
 //          2–3 layers) + the CS emails to notify; admins are CC'd
 //   通知    the daily bonus-check cron emails at 80% progress and on
 //          each tier achieved (deduped per branch per month)
@@ -243,15 +243,22 @@ export default function BonusPage() {
                         {tiers.map((t, i) => {
                           const hit = ev.achievedTierIndexes.includes(i);
                           const isNext = ev.nextTierIndex === i;
+                          // Only the HIGHEST reached tier pays — lower reached
+                          // tiers are superseded (shown struck through).
+                          const paying = hit && i === ev.achievedTierIndexes[ev.achievedTierIndexes.length - 1];
+                          const superseded = hit && !paying;
                           return (
-                            <div key={i} className={`flex justify-between ${hit ? 'text-green-700' : isNext ? 'text-gray-800' : 'text-gray-400'}`}>
+                            <div key={i} className={`flex justify-between ${paying ? 'text-green-700 font-semibold' : superseded ? 'text-green-700/50' : isNext ? 'text-gray-800' : 'text-gray-400'}`}>
                               <span>
                                 {hit ? '✅' : '⬜'} {zh ? `第 ${i + 1} 層` : `Tier ${i + 1}`} — ${fmt(t.target)}
                                 {isNext && ev.nextTierProgressPct !== null && (
                                   <span className="ml-1 text-xs text-primary-600 font-medium">({ev.nextTierProgressPct.toFixed(0)}%)</span>
                                 )}
                               </span>
-                              <span className="font-medium">${fmt(t.bonus)}</span>
+                              <span className={superseded ? 'line-through' : 'font-medium'}>
+                                {paying && <span className="mr-1 text-xs">{zh ? '← 本月獎金' : '← this month'}</span>}
+                                ${fmt(t.bonus)}
+                              </span>
                             </div>
                           );
                         })}
@@ -268,8 +275,8 @@ export default function BonusPage() {
             <h2 className="font-semibold mb-3">{zh ? '獎金記錄（過去 12 個月）' : 'Bonus History (last 12 months)'}</h2>
             <p className="text-xs text-gray-400 mb-3">
               {zh
-                ? '註：用而家嘅目標設定計算。營業額每月 1 號重新起計。'
-                : 'Computed against the current tier settings; sales reset on the 1st.'}
+                ? '註：用而家嘅目標設定計算。每月只計達到嘅最高一層獎金（唔會幾層相加）。營業額每月 1 號重新起計。'
+                : 'Computed against the current tier settings. Only the highest tier reached pays (tiers do not stack). Sales reset on the 1st.'}
             </p>
             <table className="text-sm min-w-[640px] w-full">
               <thead>
