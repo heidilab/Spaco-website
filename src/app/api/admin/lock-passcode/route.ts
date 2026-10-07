@@ -20,55 +20,51 @@ import { buildLockPasscodeEmail } from '@/lib/email';
 import { lockConfirmKey } from '@/lib/lockConfirmKey';
 import { sendAutomatedEmail } from '@/lib/emailAutomations';
 import { getVenueById } from '@/lib/venues';
-import { adminVerifyIdToken, adminUserHasContentPerm } from '@/lib/adminAuth';
 import type { BookingRecord, UserProfile } from '@/types';
 import { requireAdmin } from '@/lib/adminAuth';
+import { sweepUpcomingBookings } from '@/lib/lockPasscode';
 
 export const runtime = 'nodejs';
-export const maxDuration = 30;
+export const maxDuration = 60; // 'sweep' walks every booking in the window
 
 interface Body {
-  bookingId: string;
-  action: 'generate' | 'resend' | 'revoke' | 'set-manual';
+  /** Not needed for action === 'sweep'. */
+  bookingId?: string;
+  action: 'generate' | 'resend' | 'revoke' | 'set-manual' | 'sweep';
   /** Required when action === 'set-manual' — the digits the customer types. */
   passcode?: string;
 }
 
 export async function POST(req: NextRequest) {
+  // 1. Auth — any staff role with the `bookings` permission (admin + CS).
+  //    A second check for the `content` permission used to sit here and
+  //    403'd every CS click on 生成密碼 (CS has no content perm) — removed
+  //    2026-10-07.
   const _gate = await requireAdmin(req, 'bookings');
   if (!_gate.ok) return _gate.res;
-  // 1. Verify the caller is an authenticated admin.
-  const authHeader = req.headers.get('authorization') || '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-  if (!token) {
-    return NextResponse.json({ error: 'missing-token' }, { status: 401 });
-  }
-  let uid: string;
-  try {
-    const decoded = await adminVerifyIdToken(token);
-    uid = decoded.uid;
-  } catch {
-    return NextResponse.json({ error: 'invalid-token' }, { status: 401 });
-  }
-  if (!(await adminUserHasContentPerm(uid))) {
-    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  }
 
   // 2. Parse request body.
   const body = (await req.json()) as Body;
-  if (!body.bookingId || !body.action) {
+  if (!body.action || (body.action !== 'sweep' && !body.bookingId)) {
     return NextResponse.json({ error: 'missing-fields' }, { status: 400 });
   }
 
   // 3. Dispatch.
   try {
+    if (body.action === 'sweep') {
+      // Same idempotent sweep the 09:00 cron runs — lets staff catch up
+      // immediately when the cron missed a day.
+      const summary = await sweepUpcomingBookings();
+      return NextResponse.json({ ok: true, ...summary });
+    }
+    const bookingId = body.bookingId as string;
     if (body.action === 'generate') {
-      const result = await processBookingForLockAccess(body.bookingId);
+      const result = await processBookingForLockAccess(bookingId);
       return NextResponse.json({ ok: true, result });
     }
 
     if (body.action === 'revoke') {
-      await revokeBookingPasscode(body.bookingId);
+      await revokeBookingPasscode(bookingId);
       return NextResponse.json({ ok: true });
     }
 
@@ -77,7 +73,7 @@ export async function POST(req: NextRequest) {
       if (!/^\d{4,9}$/.test(passcode)) {
         return NextResponse.json({ error: 'invalid-passcode', message: '密碼必須係 4-9 位數字' }, { status: 400 });
       }
-      const result = await setManualPasscode(body.bookingId, passcode);
+      const result = await setManualPasscode(bookingId, passcode);
       if (!result.ok) {
         return NextResponse.json({ error: result.reason }, { status: 400 });
       }
@@ -88,7 +84,7 @@ export async function POST(req: NextRequest) {
       // Use the admin SDK throughout — the client SDK has no auth context
       // on the server, so Firestore rules reject reads/writes with the
       // "missing or insufficient permissions" error.
-      const ref = adminDb.collection('bookings').doc(body.bookingId);
+      const ref = adminDb.collection('bookings').doc(bookingId);
       const snap = await ref.get();
       if (!snap.exists) {
         return NextResponse.json({ error: 'booking-not-found' }, { status: 404 });

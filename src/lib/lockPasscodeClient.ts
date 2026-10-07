@@ -64,3 +64,23 @@ export function revokeLockPasscode(bookingId: string) {
 export function setManualLockPasscode(bookingId: string, passcode: string) {
   return callLockPasscodeApi(bookingId, 'set-manual', { passcode });
 }
+
+export interface SweepSummary {
+  scanned: number;
+  results: Array<{ bookingId: string; action: 'generated' | 'reminded' | 'skipped' | 'error'; reason: string; error?: string }>;
+}
+
+/** Run the same sweep the 09:00 cron runs (every confirmed booking in the
+ *  next 2 days): generates missing passcodes / sends balance reminders.
+ *  Idempotent — safe to click any time. */
+export async function sweepLockPasscodes(): Promise<SweepSummary> {
+  const token = await getIdToken();
+  const res = await fetch('/api/admin/lock-passcode', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ action: 'sweep' }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.message || data?.error || `sweep failed (${res.status})`);
+  return data as SweepSummary;
+}

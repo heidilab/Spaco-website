@@ -36,13 +36,15 @@ export async function GET(req: NextRequest) {
 
   const snap = await adminDb
     .collection('bookings')
-    .where('status', '==', 'confirmed')
     .where('date', '>=', fromYmd)
     .where('date', '<=', toYmd)
-    .get();
+    .get(); // date-only range: no composite index needed (status filtered below)
 
   const rows: Array<Record<string, unknown>> = [];
+
   for (const doc of snap.docs) {
+
+    if ((doc.data() as { status?: string }).status !== 'confirmed') continue;
     const b = doc.data() as {
       venueId?: string; date?: string; startTime?: string;
       balanceDue?: number;

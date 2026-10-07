@@ -5,7 +5,8 @@ import { formatPasscode } from '@/lib/lockConfirmKey';
 import { useEffect, useMemo, useState, useRef, type ReactNode } from 'react';
 import { useLocale } from 'next-intl';
 import { getAllBookings, updateBookingStatus, updateBookingBalance, getAllUsers } from '@/lib/firestore';
-import { tryGenerateLockPasscode, resendLockPasscode } from '@/lib/lockPasscodeClient';
+import { tryGenerateLockPasscode, resendLockPasscode, sweepLockPasscodes } from '@/lib/lockPasscodeClient';
+import { KeyRound } from 'lucide-react';
 import { cancelBooking } from '@/lib/cancelBooking';
 import { BookingRecord, BookingDraft } from '@/types';
 import { channelDisplayLabel } from '@/lib/marketingChannels';
@@ -67,6 +68,35 @@ export default function AdminBookingsPage() {
   const locale = useLocale() as 'zh' | 'en';
   const { user } = useAuth();
   const [view, setView] = useState<View>('bookings');
+  const [sweeping, setSweeping] = useState(false);
+
+  // Manual run of the daily lock-passcode sweep (Heidi 2026-10-07) — for
+  // when the 09:00 cron missed a day; reports what it did in plain words.
+  async function handleSweepPasscodes() {
+    if (sweeping) return;
+    setSweeping(true);
+    try {
+      const r = await sweepLockPasscodes();
+      const n = (a: string) => r.results.filter((x) => x.action === a).length;
+      const errs = r.results.filter((x) => x.action === 'error');
+      const lines = [
+        locale === 'zh' ? `檢查咗 ${r.scanned} 張未來 2 日內嘅已確認預訂：` : `Checked ${r.scanned} confirmed bookings in the next 2 days:`,
+        locale === 'zh' ? `✅ 新生成密碼並已 email：${n('generated')}` : `✅ passcodes generated + emailed: ${n('generated')}`,
+        locale === 'zh' ? `💰 發咗尾數提醒（未付清，暫不出密碼）：${n('reminded')}` : `💰 balance reminders sent: ${n('reminded')}`,
+        locale === 'zh' ? `⏭ 唔需要處理（已有密碼 / 未到期）：${n('skipped')}` : `⏭ nothing to do: ${n('skipped')}`,
+      ];
+      if (errs.length) {
+        lines.push('', locale === 'zh' ? `⚠️ ${errs.length} 張出錯：` : `⚠️ ${errs.length} failed:`);
+        errs.slice(0, 8).forEach((e) => lines.push(`#${e.bookingId.slice(0, 8)} — ${e.reason}${e.error ? `: ${e.error.slice(0, 80)}` : ''}`));
+      }
+      alert(lines.join('\n'));
+      if (n('generated') > 0) window.location.reload();
+    } catch (e) {
+      alert((locale === 'zh' ? '檢查失敗：' : 'Sweep failed: ') + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setSweeping(false);
+    }
+  }
   const [bookings, setBookings] = useState<BookingRecord[]>([]);
   const [filteredBookings, setFilteredBookings] = useState<BookingRecord[]>([]);
   const [drafts, setDrafts] = useState<BookingDraft[]>([]);
@@ -256,13 +286,24 @@ export default function AdminBookingsPage() {
             {locale === 'zh' ? '預訂管理' : 'Booking Management'}
           </h1>
         </div>
-        <Link
-          href="/admin/bookings/new"
-          className="btn-primary self-start sm:self-end"
-        >
-          <Plus size={16} />
-          {locale === 'zh' ? '新增預訂連結' : 'New booking link'}
-        </Link>
+        <div className="flex flex-wrap gap-2 self-start sm:self-end">
+          <button
+            type="button"
+            onClick={handleSweepPasscodes}
+            disabled={sweeping}
+            title={locale === 'zh' ? '即刻幫未來 2 日內所有已確認預訂生成門鎖密碼並 email 俾客人（同每朝 9 點自動執行嘅一樣，撳幾多次都唔會重複）' : 'Generate + email lock passcodes for every confirmed booking in the next 2 days (same as the 9am cron; safe to repeat)'}
+            className="btn-outline disabled:opacity-50"
+          >
+            <KeyRound size={16} className={sweeping ? 'animate-pulse' : ''} />
+            {sweeping
+              ? (locale === 'zh' ? '檢查緊…' : 'Checking…')
+              : (locale === 'zh' ? '立即檢查門鎖密碼' : 'Check lock passcodes now')}
+          </button>
+          <Link href="/admin/bookings/new" className="btn-primary">
+            <Plus size={16} />
+            {locale === 'zh' ? '新增預訂連結' : 'New booking link'}
+          </Link>
+        </div>
       </div>
 
       {/* View tabs */}

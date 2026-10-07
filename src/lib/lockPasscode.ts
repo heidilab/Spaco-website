@@ -188,6 +188,12 @@ export async function processBookingForLockAccess(bookingId: string): Promise<Pr
   }
   const b = { id: snap.id, ...snap.data() } as BookingRecord;
 
+  // Test bookings (made on the preview site) must never open a real door
+  // or email a real-looking passcode from production.
+  if (b.isTest && process.env.VERCEL_ENV === 'production') {
+    return { bookingId, action: 'skipped', reason: 'test-booking' };
+  }
+
   const now = Date.now();
   const check = checkEligibility(b, now);
 
@@ -338,13 +344,19 @@ export async function sweepUpcomingBookings(): Promise<{
   const fromYmd = ymdInHkt(todayMs);
   const toYmd   = ymdInHkt(upperMs);
 
+  // Range on `date` ONLY — adding `.where('status','==',…)` turns this into
+  // a composite-index query, and that index was missing in prod, so the
+  // cron threw FAILED_PRECONDITION every morning and no advance booking
+  // ever got its passcode (2026-10-07). Filter status in memory instead;
+  // a 3-day window is a handful of docs.
   const snap = await adminDb
     .collection('bookings')
-    .where('status', '==', 'confirmed')
     .where('date', '>=', fromYmd)
     .where('date', '<=', toYmd)
     .get();
-  const ids = snap.docs.map((d) => d.id);
+  const ids = snap.docs
+    .filter((d) => (d.data() as BookingRecord).status === 'confirmed')
+    .map((d) => d.id);
 
   const results: ProcessResult[] = [];
   for (const id of ids) {
