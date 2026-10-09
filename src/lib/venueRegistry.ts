@@ -12,7 +12,7 @@
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from './firebase';
 import { Venue } from '@/types';
-import { venues as staticVenues, VENUE_CONFLICTS as STATIC_CONFLICTS } from './venues';
+import { venues as staticVenues } from './venues';
 
 let cache: Venue[] | null = null;
 let cacheAt = 0;
@@ -59,26 +59,7 @@ export function invalidateVenueCache(): void {
  *  the hard-coded VENUE_CONFLICTS map. A venue always conflicts with
  *  itself; extra ids come from conflictsWith, plus any venue in the
  *  same spaceGroup that lists it back. */
-export function conflictIdsFor(venueId: string, all: Venue[]): string[] {
-  const me = all.find((v) => v.id === venueId);
-  if (!me) return STATIC_CONFLICTS[venueId] || [venueId];
-  const out = new Set<string>([venueId]);
-  for (const c of me.conflictsWith || []) out.add(c);
-  // Reverse direction: any venue that says it conflicts with me.
-  for (const v of all) {
-    if (v.id !== venueId && (v.conflictsWith || []).includes(venueId)) out.add(v.id);
-  }
-  // Same non-empty spaceGroup without explicit lists = all mutually block.
-  if (me.spaceGroup) {
-    for (const v of all) {
-      if (v.id !== venueId && v.spaceGroup === me.spaceGroup
-        && !(me.conflictsWith?.length) && !(v.conflictsWith?.length)) {
-        out.add(v.id);
-      }
-    }
-  }
-  return Array.from(out);
-}
+export { conflictIdsFor } from './venueConflicts';
 
 /** Default field values applied when creating a venue in 分店管理. */
 export function emptyVenue(): Venue {

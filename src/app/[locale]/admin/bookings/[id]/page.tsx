@@ -39,7 +39,7 @@ import {
   freeDrinksVenues,
   earlySetupPriceByVenue,
 } from '@/lib/pricing';
-import { amountOwed, paidBase, isSettlementOverflow, computeGrandTotal, netConsumption, discountedSubtotal, computeBalanceDue, adminDiscountAmount } from '@/lib/bookingMoney';
+import { depositSettlementAmounts, amountOwed, paidBase, isSettlementOverflow, computeGrandTotal, netConsumption, discountedSubtotal, computeBalanceDue, adminDiscountAmount } from '@/lib/bookingMoney';
 
 /**
  * Live-preview recompute of free_drinks promo amount when admin
@@ -804,10 +804,9 @@ export default function AdminBookingDetailPage() {
    *  reconciles loyalty points against the new expected credit. */
   async function handleAmendSettle() {
     if (!booking || !booking.depositRefund) return;
-    const securityDeposit = booking.pricing.securityDeposit ?? 0;
     const total = totalDeductions();
-    const refundAmount = Math.max(0, Math.min(securityDeposit, securityDeposit - total));
-    const overflowAmount = Math.max(0, total - securityDeposit);
+    const { refund: refundAmount, owed: overflowAmount } = depositSettlementAmounts(booking, total);
+
     if (!window.confirm(locale === 'zh'
       ? `確認修改結算？\n\n新總扣費：HK$${total.toLocaleString()}\n新退款金額：HK$${refundAmount.toLocaleString()}${overflowAmount > 0 ? `\n客人需補付：HK$${overflowAmount.toLocaleString()}` : ''}\n\n會覆蓋原有結算並自動調整積分。`
       : `Amend settlement?\n\nNew deductions: HK$${total.toLocaleString()}\nNew refund: HK$${refundAmount.toLocaleString()}${overflowAmount > 0 ? `\nCustomer owes: HK$${overflowAmount.toLocaleString()}` : ''}\n\nOverwrites the stored settlement and reconciles points.`)) return;
@@ -822,12 +821,9 @@ export default function AdminBookingDetailPage() {
         ...customDeductions.filter((d) => d.label && d.amount > 0),
       ];
 
-      // Money already received BEYOND the canonical bill = what the
-      // customer paid toward the previous overflow. The amended balance
-      // only asks for the part of the NEW overflow not yet covered, so
-      // shrinking a deduction never re-bills money already collected.
-      const paidTowardOverflow = Math.max(0, paidBase(booking) - computeGrandTotal(booking));
-      const newBalance = Math.max(0, overflowAmount - paidTowardOverflow);
+      // Settlement already includes every credited payment; do not subtract
+      // payments above the original bill a second time.
+      const newBalance = overflowAmount;
 
       const prevRefundedAt = (booking.depositRefund as { refundedAt?: unknown })?.refundedAt;
       await updateDoc(doc(db, 'bookings', booking.id), {
@@ -848,7 +844,7 @@ export default function AdminBookingDetailPage() {
       // customer pays out of pocket. Diff against what was credited.
       let pointsMsg = '';
       if (booking.userId && booking.pointsCreditedAt) {
-        const expected = netConsumption(booking) + Math.min(total, securityDeposit) + overflowAmount;
+        const expected = netConsumption(booking) + total;
         const oldCredited = booking.pointsActuallyCredited || 0;
         const diff = expected - oldCredited;
         if (diff > 0) {
@@ -910,18 +906,9 @@ export default function AdminBookingDetailPage() {
     setSettling(true);
     setSettleMsg(null);
     try {
-      const securityDeposit = booking.pricing.securityDeposit ?? 0;
+      const securityDeposit = depositSettlementAmounts(booking).available;
       const total = totalDeductions();
-      // Refund clamped to [0, securityDeposit] — SPACO can never
-      // refund more than was originally collected as deposit, even
-      // if deductions math went sideways. Without this clamp,
-      // #HtMEinHx silently set refund to \$1,450 on a \$1,000 deposit.
-      const refundAmount = Math.max(0, Math.min(securityDeposit, securityDeposit - total));
-      // Overflow = the part of deductions that EXCEEDED the deposit.
-      // Heidi's case (#B7PlO6qv): deductions 加時 HK$2,250 vs deposit
-      // HK$2,000 → overflow HK$250. Booking goes back to 'confirmed'
-      // with balanceDue = 250 so admin can chase + record payment.
-      const overflowAmount = Math.max(0, total - securityDeposit);
+      const { refund: refundAmount, owed: overflowAmount } = depositSettlementAmounts(booking, total);
 
       const deductions = [
         ...selectedFixed.map((id) => {
@@ -2430,6 +2417,7 @@ export default function AdminBookingDetailPage() {
               * caught the missing adminDiscount on #TQdbWBlI). */}
             <Row label={locale === 'zh' ? '小計' : 'Subtotal'} value={`HK$${Math.max(0, discountedSubtotal(booking.pricing.subtotal, booking.promoDiscount) - adminDiscountAmount(booking)).toLocaleString()}`} />
             <Row label={locale === 'zh' ? '可退按金' : 'Refundable deposit'} value={`HK$${(booking.pricing.securityDeposit ?? 0).toLocaleString()}`} />
+            <Row label={locale === 'zh' ? '扣費前可退餘額（含多付）' : 'Refundable credit before deductions'} value={`HK$${depositSettlementAmounts(booking).available.toLocaleString()}`} />
             {(() => {
               const grandTotal =
                 computeGrandTotal(booking);
@@ -2618,7 +2606,7 @@ export default function AdminBookingDetailPage() {
            *  event, system marks completed + credits loyalty points.
            *  Already-settled bookings show a read-only summary with
            *  the option to re-open. */}
-          {(booking.status === 'confirmed' || booking.status === 'completed') && (booking.pricing.securityDeposit ?? 0) > 0 && (
+          {(booking.status === 'confirmed' || booking.status === 'completed') && ((booking.pricing.securityDeposit ?? 0) > 0 || depositSettlementAmounts(booking).available > 0) && (
             <DepositSettlement
               booking={booking}
               locale={locale}
@@ -3282,8 +3270,12 @@ function DepositSettlement(props: DepositSettlementProps) {
     onRecoverPoints, recoveringPoints,
     canAmend, amending, onStartAmend, onCancelAmend, onAmendSettle,
   } = props;
-  const securityDeposit = booking.pricing.securityDeposit ?? 0;
-  const refundAmount = Math.max(0, securityDeposit - total);
+  const securityDeposit = depositSettlementAmounts(booking).available;
+  const { refund: refundAmount } = depositSettlementAmounts(booking, total);
+  const recordedSettlement = booking.depositRefund as { amount?: number; deductions?: { amount: number }[] } | undefined;
+  const recalculatedSettlement = depositSettlementAmounts(booking,
+    (recordedSettlement?.deductions || []).reduce((sum, d) => sum + Math.max(0, d.amount || 0), 0));
+  const settlementMismatch = !!recordedSettlement && Math.abs(recalculatedSettlement.refund - (recordedSettlement.amount || 0)) >= 0.01;
   const alreadySettled = !!booking.depositRefund;
   const pointsCredited = !!booking.pointsCreditedAt;
   const expectedPoints = (() => {
@@ -3387,6 +3379,14 @@ function DepositSettlement(props: DepositSettlementProps) {
             <p className="text-xs text-ink-soft">{locale === 'zh' ? '無扣費' : 'No deductions'}</p>
           )}
 
+          {settlementMismatch && (
+            <p className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
+              {locale === 'zh'
+                ? `最新收款及消費對應嘅累計應退金額為 HK$${recalculatedSettlement.refund.toLocaleString()}，同已記錄結算唔一致。請先核對實際已退款及扣費項目，再修改結算；此金額唔代表要再次全額退款。`
+                : `Current payments and charges imply a cumulative refund of HK$${recalculatedSettlement.refund.toLocaleString()}, different from the recorded settlement. Verify actual refunds and deductions before amending; do not pay this full amount again.`}
+            </p>
+          )}
+
           {/* Loyalty points status — settled bookings that crashed the
            *  credit step (e.g. legacy rows, or the user doc didn't exist
            *  at settle time) get a recovery button so admin can credit
@@ -3464,7 +3464,7 @@ function DepositSettlement(props: DepositSettlementProps) {
           )}
 
           <div className="bg-cream/60 rounded-xl p-3 text-sm">
-            <p className="text-xs text-ink-soft">{locale === 'zh' ? '原始按金' : 'Original deposit'}</p>
+            <p className="text-xs text-ink-soft">{locale === 'zh' ? '可退餘額（按金及多付）' : 'Refundable credit (deposit and overpayment)'}</p>
             <p className="text-xl font-bold">HK${securityDeposit.toLocaleString()}</p>
           </div>
 

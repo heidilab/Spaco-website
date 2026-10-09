@@ -1,9 +1,10 @@
+import { conflictIdsFor } from './venueConflicts';
 // Server-side venue registry (Admin SDK) — mirror of venueRegistry.ts
 // for API routes / RSC. Same fallback-to-static behaviour.
 
 import { adminDb } from './firebaseAdmin';
 import { Venue } from '@/types';
-import { venues as staticVenues, VENUE_CONFLICTS as STATIC_CONFLICTS } from './venues';
+import { venues as staticVenues } from './venues';
 
 let cache: Venue[] | null = null;
 let cacheAt = 0;
@@ -41,20 +42,5 @@ export async function getVenueBySlugServer(slug: string): Promise<Venue | undefi
 /** Dynamic venuesSharingSpace — same semantics as venueRegistry.ts. */
 export async function venuesSharingSpaceServer(venueId: string): Promise<string[]> {
   const all = await loadAllVenuesServer();
-  const me = all.find((v) => v.id === venueId);
-  if (!me) return STATIC_CONFLICTS[venueId] || [venueId];
-  const out = new Set<string>([venueId]);
-  for (const c of me.conflictsWith || []) out.add(c);
-  for (const v of all) {
-    if (v.id !== venueId && (v.conflictsWith || []).includes(venueId)) out.add(v.id);
-  }
-  if (me.spaceGroup) {
-    for (const v of all) {
-      if (v.id !== venueId && v.spaceGroup === me.spaceGroup
-        && !(me.conflictsWith?.length) && !(v.conflictsWith?.length)) {
-        out.add(v.id);
-      }
-    }
-  }
-  return Array.from(out);
+  return conflictIdsFor(venueId, all);
 }

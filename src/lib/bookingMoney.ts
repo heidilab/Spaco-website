@@ -173,6 +173,24 @@ export function paidBase(booking: MoneyBooking): number {
   return (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
 }
 
+/** Cumulative settlement entitlement, before any refund is paid out.
+ * Paid add-ons removed from the bill become refundable credit (paid add-on cancellation).
+ * Never change the contractual deposit or count gateway surcharges as credit.
+ * Existing depositRefund.amount is a settlement record, not another payment.
+ */
+export function depositSettlementAmounts(booking: MoneyBooking, deductions = 0): {
+  available: number; refund: number; owed: number;
+} {
+  const cents = (value: number) => Math.round(value * 100) / 100;
+  const credit = cents(paidBase(booking) - netConsumption(booking));
+  const charged = Math.max(0, cents(deductions));
+  return {
+    available: Math.max(0, credit),
+    refund: Math.max(0, cents(credit - charged)),
+    owed: Math.max(0, cents(charged - credit)),
+  };
+}
+
 /** Total 1.5% card surcharge the customer paid on top of the bill. */
 export function surchargePaid(booking: MoneyBooking): number {
   return (booking.payments || []).reduce((s, p) => s + (p.cardSurcharge || 0), 0);

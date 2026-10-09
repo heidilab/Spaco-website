@@ -10,7 +10,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  POINTS_PER_HKD, pointsToHkd, hkdToPoints,
+  depositSettlementAmounts, POINTS_PER_HKD, pointsToHkd, hkdToPoints,
   grossSubtotal, computeGrandTotal, netConsumption, displayBillTotal, discountedSubtotal,
   paidBase, surchargePaid, paidGateway, computeBalanceDue,
   amountOwed, hasOutstanding, isSettlementOverflow,
@@ -312,5 +312,27 @@ describe('adminDiscountAmount (折扣優惠)', () => {
   it('absent/null discount is a no-op', () => {
     expect(adminDiscountAmount(base)).toBe(0);
     expect(adminDiscountAmount({ ...base, adminDiscount: null })).toBe(0);
+  });
+});
+
+
+describe('Paid addon cancellation becomes refundable credit', () => {
+  const booking = { pricing: { baseCharge: 1740, addOnTotal: 828, securityDeposit: 1000 }, payments: [{ amount: 3958, cardSurcharge: 59.37 }] };
+  it('includes the cancelled $390 without changing the contractual bill', () => {
+    expect(depositSettlementAmounts(booking, 306)).toEqual({ available: 1390, refund: 1084, owed: 0 });
+    expect(computeGrandTotal(booking)).toBe(3568);
+  });
+  it('balances the confirmed $696 deduction and $694 refund', () => {
+    expect(depositSettlementAmounts(booking, 696)).toEqual({ available: 1390, refund: 694, owed: 0 });
+  });
+  it('counts overflow payments once when amending an existing settlement', () => {
+    expect(depositSettlementAmounts({ ...booking, depositRefund: { amount: 0 } }, 1500)).toEqual({ available: 1390, refund: 0, owed: 110 });
+  });
+  it('never refunds unreceived money or gateway surcharges', () => {
+    expect(depositSettlementAmounts({ ...booking, payments: [{ amount: 2000, cardSurcharge: 30 }] }, 100)).toEqual({ available: 0, refund: 0, owed: 668 });
+  });
+  it('ignores negative deductions and rounds currency cents', () => {
+    expect(depositSettlementAmounts(booking, -100).refund).toBe(1390);
+    expect(depositSettlementAmounts(booking, 0.1 + 0.2).refund).toBe(1389.7);
   });
 });

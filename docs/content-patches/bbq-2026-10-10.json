@@ -1,0 +1,62 @@
+{
+  "status": "staged-not-published",
+  "basis": "Heidi confirmed: Wan Chai has no BBQ; all other branches have BBQ. Publish with approved release; use exact old-text preconditions.",
+  "patches": [
+    {
+      "articleId": "0y5A5oHvR9jxfyj43lHS",
+      "slug": "party-room-bbq-5",
+      "field": "content.zh",
+      "old": "SPACO四間分店都設有BBQ戶外燒烤設施包場",
+      "new": "SPACO銅鑼灣、上環及尖沙咀分店提供BBQ設施；灣仔分店不設BBQ"
+    },
+    {
+      "articleId": "15airoOzxt56PFQoQBS0",
+      "slug": "bbq-party-room-bbq-2026-tips",
+      "field": "excerpt.zh",
+      "old": "SPACO四間分店都提供BBQ設施",
+      "new": "SPACO除灣仔分店外，其餘分店均提供BBQ設施"
+    },
+    {
+      "articleId": "QzO4lJVWanFmOtvypPQk",
+      "slug": "bbq-party-room",
+      "field": "content.zh",
+      "old": "為不同需要嘅客戶提供度身訂造嘅BBQ體驗。",
+      "new": "SPACO銅鑼灣、尖沙咀及上環分店提供BBQ設施；灣仔分店不設BBQ。計劃燒烤聚會時，請選擇有BBQ設施嘅分店。"
+    },
+    {
+      "articleId": "CJR41FmQukJPLK9PH9Rl",
+      "slug": "party-room-hong-kong-spaco-2026",
+      "field": "excerpt.zh",
+      "old": "一次過搞掂BBQ、桌球、麻將、火鍋",
+      "new": "各分店設施不同；BBQ適用於灣仔以外分店，另有桌球、麻將、火鍋等選擇"
+    },
+    {
+      "articleId": "cTIHD2OsER8G5SUzCt44",
+      "slug": "party-room-trend",
+      "field": "content.zh",
+      "old": "設施涵蓋BBQ、桌球、麻將、火鍋",
+      "new": "各分店設施涵蓋桌球、麻將、火鍋等；灣仔不設BBQ，其餘分店提供BBQ"
+    },
+    {
+      "articleId": "mPJX6AyMYClsRG3pvVHD",
+      "slug": "party-room-meaning",
+      "field": "content.zh",
+      "old": "提供BBQ、桌球、麻將、火鍋等設施",
+      "new": "各分店提供桌球、麻將、火鍋等設施（按場地而異）；灣仔不設BBQ，其餘分店提供BBQ"
+    },
+    {
+      "articleId": "rdfoGPuZ7PK83rY1Zk6m",
+      "slug": "vs-party-room-2026",
+      "field": "content.zh",
+      "old": "想約埋班friend打牌、燒烤、唱K一次過玩晒？",
+      "new": "想約埋班friend打牌、唱K？灣仔分店不設BBQ；如想加埋燒烤，請選擇銅鑼灣、上環或尖沙咀分店。"
+    },
+    {
+      "articleId": "rdfoGPuZ7PK83rY1Zk6m",
+      "slug": "vs-party-room-2026",
+      "field": "content.zh",
+      "old": "打完幾圈麻雀轉場BBQ燒嘢食",
+      "new": "打完幾圈麻雀轉場BBQ燒嘢食（灣仔不設BBQ，其他分店提供）"
+    }
+  ]
+}

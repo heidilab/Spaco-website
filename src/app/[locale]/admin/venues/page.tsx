@@ -10,6 +10,7 @@
 // Underlying booking system is unchanged — each room is still its own
 // venue doc / venueId.
 
+import { conflictIdsFor } from '@/lib/venueRegistry';
 import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
@@ -95,7 +96,7 @@ export default function AdminVenuesPage() {
       gcalCalendarId: first.gcalCalendarId || '',
       branchTag: first.branch || '',
     });
-    setRooms(rms.map((r) => ({ ...emptyVenue(), ...r })));
+    setRooms(rms.map((r) => ({ ...emptyVenue(), ...r, conflictsWith: conflictIdsFor(r.id, venues).filter(id => id !== r.id) })));
   };
 
   const newBranch = () => {
@@ -159,7 +160,7 @@ export default function AdminVenuesPage() {
       if (!/^[a-z0-9-]{2,24}$/.test(r.id)) return locale === 'zh' ? `${label}：ID 只可用小寫英文/數字/連字號` : `Room ${i + 1}: bad id`;
       if (!/^[a-z0-9-]{2,40}$/.test(r.slug)) return locale === 'zh' ? `${label}：網址名格式錯` : `Room ${i + 1}: bad slug`;
       if (!r.name.zh) return locale === 'zh' ? `${label}：請填場地中文名` : `Room ${i + 1}: zh name required`;
-      const isNewRoom = !venues.some((v) => v.id === r.id);
+      const isNewRoom = newRoomIds.has(`__room${i}__`);
       if (isNewRoom && venues.some((v) => v.id === r.id)) return `${label}: id exists`;
       if (venues.some((v) => v.id !== r.id && v.slug === r.slug) || rooms.some((o, j) => j !== i && o.slug === r.slug)) {
         return locale === 'zh' ? `${label}：網址名已被使用` : `Room ${i + 1}: slug in use`;
@@ -192,6 +193,7 @@ export default function AdminVenuesPage() {
           // Multi-room branches automatically share one physical-space
           // group so the availability logic (上環模式) engages.
           spaceGroup: multi ? (r.spaceGroup || `${key}-physical`) : null,
+          conflictsWith: (r.conflictsWith || []).filter(id => id !== r.id && [...venues, ...rooms].some(room => room.id === id)),
           updatedAt: serverTimestamp(),
         };
         if (docData.gcalCalendarId === null) delete docData.gcalCalendarId;
@@ -294,7 +296,7 @@ export default function AdminVenuesPage() {
 
           {rooms.map((r, i) => {
             const isOpen = openRoom === i;
-            const isNewRoom = !venues.some((v) => v.id === r.id);
+            const isNewRoom = newRoomIds.has(`__room${i}__`);
             const siblings = rooms.filter((_, j) => j !== i);
             const roomTitle = rooms.length > 1
               ? (r.roomLabel?.zh || r.name.zh || `${locale === 'zh' ? '場地' : 'Space'} ${i + 1}`)
@@ -328,7 +330,7 @@ export default function AdminVenuesPage() {
                       )}
                       <div>
                         <label className={labelCls}>{locale === 'zh' ? '場地 ID（儲存後不可改）' : 'Space ID (permanent)'}</label>
-                        <input value={r.id} disabled={!isNewRoom} onChange={(e) => setRoom(i, { id: e.target.value.toLowerCase() })} placeholder="mk-a" className={`${inputCls} font-mono disabled:bg-charcoal/5`} />
+                        <input value={r.id} disabled={!isNewRoom} onChange={(e) => { const nextId = e.target.value.toLowerCase(); setRooms(prev => prev.map((room, j) => ({ ...room, ...(j === i ? { id: nextId } : {}), conflictsWith: (room.conflictsWith || []).map(id => id === r.id && r.id ? nextId : id).filter(Boolean) }))); }} placeholder="mk-a" className={`${inputCls} font-mono disabled:bg-charcoal/5`} />
                       </div>
                       <div>
                         <label className={labelCls}>{locale === 'zh' ? '網址名 (slug)' : 'URL slug'}</label>
@@ -494,10 +496,15 @@ export default function AdminVenuesPage() {
                             const sibId = sib.id || `__room${sj}__`;
                             const ticked = (r.conflictsWith || []).includes(sib.id);
                             return (
-                              <button key={sibId} type="button" disabled={!sib.id}
+                              <button key={sibId} type="button" disabled={!r.id || !sib.id || r.id === sib.id}
+                                aria-pressed={ticked}
                                 onClick={() => {
-                                  const cur = r.conflictsWith || [];
-                                  setRoom(i, { conflictsWith: ticked ? cur.filter((c) => c !== sib.id) : [...cur, sib.id] });
+                                  setRooms(prev => prev.map(room => {
+                                    if (room.id !== r.id && room.id !== sib.id) return room;
+                                    const other = room.id === r.id ? sib.id : r.id;
+                                    const current = room.conflictsWith || [];
+                                    return { ...room, conflictsWith: ticked ? current.filter(id => id !== other) : Array.from(new Set([...current, other])) };
+                                  }));
                                 }}
                                 className={`px-3 py-1.5 rounded-pill text-xs font-semibold border disabled:opacity-40 ${ticked ? 'bg-amber-500 text-white border-amber-500' : 'border-amber-300 text-amber-800'}`}>
                                 {sib.roomLabel?.zh || sib.name.zh || sib.id || `場地 ${sj + 1}`}
