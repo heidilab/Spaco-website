@@ -31,3 +31,9 @@ Status: local working changes on kpay-integration. Not committed, pushed or depl
 
 Vercel preview deployed successfully on 2026-10-09: https://spaco-website-p4wvpau3b-heidilabs-projects.vercel.app/zh
 Deployment ID: dpl_9gkrQDtE9ruqYmJFSsZ1LZgPDHe4 (READY). CLI deployed the uncommitted kpay-integration working tree over base ab7855892dfee86744635c549ae862c5aea22941; no git push. Cloud build, TypeScript and 130 tests passed. Browser homepage loaded. Production app and shared Firebase rules unchanged. Preview is connected to existing Firebase and is not an isolated payment sandbox.
+
+## Production release
+
+Heidi explicitly approved production release on 2026-10-09. Code commit 060e3c2ebbfcc72022ff2b4096de8c08d5a5a96d was pushed to kpay-integration and main.
+Vercel production deployment dpl_4pNo3QS8j8tMfk4FfTSvVTLkoByt is READY and aliased to https://spacohk.com. Cloud 130 tests, type checking and build passed. Production /zh returned HTTP 200; unauthenticated POST /api/kpay/checkout returned 401 missing-token without creating any booking/payment.
+After Heidi renewed Firebase login, current remote rules were backed up in docs/rollback-2026-10-09/. Firestore and Storage rules compiled and were released successfully to spaco-website. Known phase-2 limitations above still apply; no real payment or customer booking was used for smoke testing.
