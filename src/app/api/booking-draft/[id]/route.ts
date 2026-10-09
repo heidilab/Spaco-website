@@ -27,7 +27,17 @@ export async function GET(
   if (!snap.exists) {
     return NextResponse.json({ error: 'not-found' }, { status: 404 });
   }
-  // Spread first so the firestore-injected fields are overridden by an
-  // explicit id at the top level.
-  return NextResponse.json({ id: snap.id, ...snap.data() });
+  const data = snap.data()!;
+  if (data.status !== 'pending' || data.claimedBy || !data.expiresAt?.toMillis || data.expiresAt.toMillis() <= Date.now()) {
+    return NextResponse.json({ error: 'link-unavailable' }, { status: 410 });
+  }
+  const result: Record<string, unknown> = { id: snap.id, claimedBy: null };
+  for (const key of ['venueId', 'branchSlug', 'date', 'endDate', 'startTime', 'endTime', 'hours',
+    'guestCount', 'adultCount', 'childCount', 'isWeekend', 'addOns', 'hasBYOFood', 'pricing',
+    'peakSurchargeOverride', 'promoCode', 'promoCodeId', 'promoDiscount', 'promoFreeDrinksCost',
+    'packageSlug', 'status']) {
+    if (data[key] !== undefined) result[key] = data[key];
+  }
+  result.expiresAt = data.expiresAt.toMillis();
+  return NextResponse.json(result, { headers: { 'Cache-Control': 'private, no-store' } });
 }

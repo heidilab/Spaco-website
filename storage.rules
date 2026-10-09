@@ -1,53 +1,31 @@
 rules_version = '2';
-
-// SPACO Firebase Storage rules.
-// Replaces the expired test-mode defaults (storage rules expire alongside
-// Firestore test rules and need to be deployed manually).
-
 service firebase.storage {
   match /b/{bucket}/o {
-
-    // ───── Helpers ─────
-    function isAuthed() {
-      return request.auth != null;
+    function roleIn(roles) {
+      return request.auth != null
+        && firestore.exists(/databases/(default)/documents/admin_users/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/admin_users/$(request.auth.uid)).data.role in roles;
     }
-    function isStaff() {
-      return isAuthed()
-        && firestore.exists(/databases/(default)/documents/admin_users/$(request.auth.uid));
+    function bookings() { return roleIn(['admin', 'cs']); }
+    function content() { return roleIn(['admin', 'marketing']); }
+    function ownsBooking(id) {
+      return request.auth != null
+        && firestore.get(/databases/(default)/documents/bookings/$(id)).data.userId == request.auth.uid;
     }
-    function isAdmin() {
-      return isStaff()
-        && firestore.get(/databases/(default)/documents/admin_users/$(request.auth.uid)).data.role == 'admin';
+    function receiptFile() {
+      return request.resource.size > 0 && request.resource.size <= 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)|application/pdf');
     }
-
-    // ───── Public site images ─────
-    // Anyone can READ (so the website renders), only admin can WRITE.
-    match /site-images/{file=**} {
-      allow read:  if true;
-      allow write: if isAdmin();
+    match /site-images/{file=**} { allow read: if true; allow write: if content(); }
+    match /articles/{file=**} { allow read: if true; allow write: if content(); }
+    match /receipts/{bookingId}/{filename} {
+      allow get: if bookings() || ownsBooking(bookingId);
+      allow list: if bookings();
+      allow create: if (bookings() || ownsBooking(bookingId)) && receiptFile();
+      allow update, delete: if bookings();
     }
-
-    // ───── FPS payment receipts ─────
-    // Authenticated customers upload their own receipts.
-    // Admin / CS staff and the original uploader can read.
-    match /receipts/{file=**} {
-      allow read:   if isStaff() || isAuthed();
-      allow create: if isAuthed();
-      allow update, delete: if isStaff();
-    }
-
-    // ───── Article assets (hero images + inline images) ─────
-    // Public READ — customer-facing article pages need to render
-    // these. Staff WRITE only; rolled out 2026-06-22 after Heidi hit
-    // storage/unauthorized on hero upload at /admin/articles/[id].
-    match /articles/{file=**} {
-      allow read:  if true;
-      allow write: if isStaff();
-    }
-
-    // Default deny — any path not listed above
-    match /{allPaths=**} {
-      allow read, write: if false;
-    }
+    // Legacy flat receipt paths remain staff-readable; new uploads use booking folders.
+    match /receipts/{filename} { allow read, delete: if bookings(); }
+    match /{allPaths=**} { allow read, write: if false; }
   }
 }

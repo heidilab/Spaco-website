@@ -1,5 +1,8 @@
 'use client';
 
+import { paymentErrorMessage } from '@/lib/paymentErrors';
+import { adminApiFetch } from '@/lib/adminApiFetch';
+
 import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useParams } from 'next/navigation';
@@ -73,7 +76,7 @@ export default function PayBalancePage() {
         router.push(`/book/${slug}/pay-offline/${booking.id}`);
         return;
       }
-      const res = await fetch('/api/kpay/checkout', {
+      const res = await adminApiFetch('/api/kpay/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -87,8 +90,7 @@ export default function PayBalancePage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 409) {
-        setError((data as { message?: string }).message
-          || (locale === 'zh' ? '此預訂已付款' : 'This booking is already paid'));
+        setError(paymentErrorMessage((data as { error?: string }).error || '', locale));
         setSubmitting(false);
         return;
       }

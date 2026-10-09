@@ -180,14 +180,6 @@ export default function AdminNewBookingPage() {
     }
   }, [date]);
 
-  // Permission gate
-  if (!hasPermission('bookings')) {
-    return (
-      <div className="text-center py-20 text-ink-soft">
-        {locale === 'zh' ? '無權限存取' : 'Access Denied'}
-      </div>
-    );
-  }
 
   const venue = venues.find((v) => v.id === venueId);
   // Match the customer-side rule (book/[branchSlug]/page.tsx) EXACTLY:
@@ -627,7 +619,16 @@ export default function AdminNewBookingPage() {
   // Success view (draft created)
   // ───────────────────────────────────────
   if (draftId) {
+    // Permission gate
+  if (!hasPermission('bookings')) {
     return (
+      <div className="text-center py-20 text-ink-soft">
+        {locale === 'zh' ? '無權限存取' : 'Access Denied'}
+      </div>
+    );
+  }
+
+  return (
       <div className="max-w-2xl">
         <div className="mb-6">
           <Link href="/admin/bookings" className="inline-flex items-center gap-2 text-sm text-ink-soft hover:text-pink">

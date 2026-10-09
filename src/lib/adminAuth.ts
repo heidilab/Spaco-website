@@ -23,7 +23,7 @@ import { ROLE_PERMISSIONS } from '@/types';
  */
 export async function requireAdmin(
   req: Request,
-  perm: 'bookings' | 'content' | 'gcal' | 'members' | 'deposit' = 'bookings',
+  perm: 'bookings' | 'content' | 'gcal' | 'members' | 'deposit' | 'calendar' = 'bookings',
 ): Promise<{ ok: true; uid: string } | { ok: false; res: NextResponse }> {
   const authHeader = req.headers.get('authorization') || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
@@ -70,7 +70,7 @@ export async function getStaffRoleAdmin(uid: string): Promise<string | null> {
   const snap = await adminDb.collection('admin_users').doc(uid).get();
   if (!snap.exists) return null;
   const data = snap.data();
-  return (data?.role as string) || 'admin';
+  return typeof data?.role === 'string' ? data.role : null;
 }
 
 /** True iff the user has the `content` permission (Admin Content edit). */

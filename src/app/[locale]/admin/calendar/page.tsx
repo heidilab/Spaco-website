@@ -1,11 +1,11 @@
 'use client';
 
+import { useAuth } from '@/contexts/AuthContext';
 import { adminApiFetch } from '@/lib/adminApiFetch';
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useLocale } from 'next-intl';
 import Link from 'next/link';
 import {
-  getBookingsForMonth,
   createSharedBlockedSlot,
   getBlockedSlotsForMonth,
   getCalendarEventsForMonth,
@@ -76,6 +76,8 @@ function bookingIdent(b: BookingRecord, userNames?: Record<string, string>): str
 }
 
 export default function AdminCalendarPage() {
+  const { hasPermission } = useAuth();
+  const canManageBookings = hasPermission('bookings');
   // Registry-backed venue list (分店管理) — static array is the
   // first paint; Firestore overrides so new/edited venues appear.
   const [venues, setVenues] = useState<Venue[]>(staticVenues);
@@ -138,7 +140,7 @@ export default function AdminCalendarPage() {
     // Pull uid → displayName once so the day-view popup can label
     // bookings by member name (Heidi's 2026-05-23 spec — CS scans
     // by name, not phone digits). Fire in parallel with the rest.
-    const namesPromise = getAllUsers().then((users) => {
+    const namesPromise = (canManageBookings ? getAllUsers() : Promise.resolve([])).then((users) => {
       const map: Record<string, string> = {};
       for (const u of users as Array<{ uid: string; displayName?: string; email?: string }>) {
         const name = u.displayName || u.email?.split('@')[0] || '';
@@ -148,7 +150,10 @@ export default function AdminCalendarPage() {
     });
     if (selectedVenue === 'all') {
       const [bookingData, allSlots, eventData, names] = await Promise.all([
-        getBookingsForMonth(currentMonth),
+        adminApiFetch(`/api/admin/calendar-bookings?month=${currentMonth}`).then(async r => {
+          if (!r.ok) throw new Error('CALENDAR_ACCESS_FAILED');
+          return (await r.json()).bookings as BookingRecord[];
+        }),
         Promise.all(venues.map((v) => getBlockedSlotsForMonth(v.id, currentMonth))),
         getCalendarEventsForMonth(currentMonth),
         namesPromise,
@@ -160,7 +165,10 @@ export default function AdminCalendarPage() {
     } else if (selectedVenue === SW_GROUP_ID) {
       // 上環店 (group): pull all 3 sub-rooms' slots + filter bookings/events.
       const [bookingData, swSlots, eventData, names] = await Promise.all([
-        getBookingsForMonth(currentMonth),
+        adminApiFetch(`/api/admin/calendar-bookings?month=${currentMonth}`).then(async r => {
+          if (!r.ok) throw new Error('CALENDAR_ACCESS_FAILED');
+          return (await r.json()).bookings as BookingRecord[];
+        }),
         Promise.all(SW_GROUP_IDS.map((vid) => getBlockedSlotsForMonth(vid, currentMonth))),
         getCalendarEventsForMonth(currentMonth),
         namesPromise,
@@ -171,7 +179,10 @@ export default function AdminCalendarPage() {
       setUserNames(names);
     } else {
       const [bookingData, slotData, eventData, names] = await Promise.all([
-        getBookingsForMonth(currentMonth),
+        adminApiFetch(`/api/admin/calendar-bookings?month=${currentMonth}`).then(async r => {
+          if (!r.ok) throw new Error('CALENDAR_ACCESS_FAILED');
+          return (await r.json()).bookings as BookingRecord[];
+        }),
         getBlockedSlotsForMonth(selectedVenue, currentMonth),
         getCalendarEventsForMonth(currentMonth),
         namesPromise,
@@ -977,6 +988,7 @@ function BookingDetails({
   locale: 'zh' | 'en';
   onClose: () => void;
 }) {
+  const { hasPermission } = useAuth();
   const statusLabel = booking.status === 'confirmed' ? (locale === 'zh' ? '已確認' : 'Confirmed')
     : booking.status === 'pending' ? (locale === 'zh' ? '待處理' : 'Pending')
     : booking.status === 'cancelled' ? (locale === 'zh' ? '已取消' : 'Cancelled')
@@ -992,10 +1004,10 @@ function BookingDetails({
       <Row label={locale === 'zh' ? '狀態' : 'Status'}>{statusLabel}</Row>
       {booking.whatsappPhone && <Row label="WhatsApp">{booking.whatsappPhone}</Row>}
       <div className="flex gap-3 mt-5">
-        <Link href={`/${locale}/admin/bookings/${booking.id}`} className="flex-1 btn-primary justify-center">
+        {hasPermission('bookings') && <Link href={`/${locale}/admin/bookings/${booking.id}`} className="flex-1 btn-primary justify-center">
           <ExternalLink size={14} />
           {locale === 'zh' ? '查看詳情' : 'View'}
-        </Link>
+        </Link>}
         <button onClick={onClose} className="flex-1 btn-outline justify-center">
           {locale === 'zh' ? '關閉' : 'Close'}
         </button>

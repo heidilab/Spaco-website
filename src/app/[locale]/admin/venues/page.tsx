@@ -38,7 +38,7 @@ const labelCls = 'block text-xs font-semibold text-ink-soft mb-1';
 export default function AdminVenuesPage() {
   const locale = useLocale() as 'zh' | 'en';
   const { hasPermission } = useAuth();
-  const canAccess = hasPermission('content');
+  const canAccess = hasPermission('staff');
 
   const [venues, setVenues] = useState<Venue[]>([]);
   const [loading, setLoading] = useState(true);

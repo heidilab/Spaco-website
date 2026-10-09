@@ -9,6 +9,7 @@ import { getVenueByIdServer, venuesSharingSpaceServer } from '@/lib/venueRegistr
 import { calculatePricing, calculateDeposit, adultEquivalent, freeDrinksVenues, subtractHours } from '@/lib/pricing';
 import { calcPromoDiscount } from '@/lib/promoCodes';
 import { getHoliday } from '@/lib/hkHolidays';
+import { BookingInputError, bookingInterval, finiteNumber, pricePackage, validateAddOns } from '@/lib/bookingSecurity';
 import type { PromoCode } from '@/types';
 
 export const runtime = 'nodejs';
@@ -24,18 +25,6 @@ function serverIsWeekend(dateStr: string): boolean {
   const nextStr = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
   const eve = getHoliday(nextStr);
   return day === 5 || day === 6 || holiday?.type === 'public' || eve?.type === 'public';
-}
-
-// Mirrors venues.ts VENUE_CONFLICTS — must stay in sync when new shared-space
-// venues are added.
-const VENUE_CONFLICTS: Record<string, string[]> = {
-  'sw-a':  ['sw-a', 'sw-ab'],
-  'sw-b':  ['sw-b', 'sw-ab'],
-  'sw-ab': ['sw-a', 'sw-b', 'sw-ab'],
-};
-
-function venuesSharingSpace(venueId: string): string[] {
-  return VENUE_CONFLICTS[venueId] || [venueId];
 }
 
 // Returns a stable lock-document key for the physical space containing
@@ -78,7 +67,30 @@ const toMin = (t: string) => {
  * Response 500: { error: string }
  */
 export async function POST(req: NextRequest) {
-  const body = await req.json();
+  try {
+  const submitted = await req.json();
+  const authHeader = req.headers.get('authorization') || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  if (!token) return NextResponse.json({ error: 'missing-token' }, { status: 401 });
+  let uid: string;
+  try { uid = (await adminVerifyIdToken(token)).uid; }
+  catch { return NextResponse.json({ error: 'invalid-token' }, { status: 401 }); }
+  let draftVersion: FirebaseFirestore.Timestamp | undefined;
+  let body = submitted;
+  if (submitted.draftId) {
+    if (typeof submitted.draftId !== 'string' || submitted.draftId.includes('/')) throw new BookingInputError('INVALID_DRAFT');
+    const snapshot = await adminDb.collection('booking_drafts').doc(submitted.draftId).get();
+    const draft = snapshot.data();
+    if (!draft) return NextResponse.json({ error: 'DRAFT_NOT_FOUND' }, { status: 404 });
+    if (draft.status !== 'pending' || draft.claimedBy || !draft.expiresAt?.toMillis || draft.expiresAt.toMillis() <= Date.now()) {
+      return NextResponse.json({ error: 'DRAFT_EXPIRED_OR_CLAIMED' }, { status: 409 });
+    }
+    draftVersion = snapshot.updateTime;
+    // Every commercial term comes from the staff-issued document, never its client copy.
+    body = { ...draft, draftId: submitted.draftId, draftIdField: submitted.draftId,
+      whatsappPhone: submitted.whatsappPhone || draft.customerWhatsapp,
+      refundDetails: submitted.refundDetails, paymentMethod: submitted.paymentMethod };
+  }
   const {
     venueId,
     date,
@@ -86,7 +98,6 @@ export async function POST(req: NextRequest) {
     endTime,
     endDate,
     draftId,       // route param: if set, claim this draft atomically
-    draftIdField,  // booking-record field: link back to the draft doc
     ...rest
   } = body;
 
@@ -94,31 +105,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
   }
 
-  // ── AUTH ── verify the caller's Firebase ID token and force the
-  // booking's userId to the token's uid. Without this the route was
-  // unauthenticated and trusted a client-supplied userId (book in anyone's
-  // name) + client pricing/status/balanceDue/payments (free bookings).
-  const authHeader = req.headers.get('authorization') || '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-  if (!token) return NextResponse.json({ error: 'missing-token' }, { status: 401 });
-  let uid: string;
-  try {
-    uid = (await adminVerifyIdToken(token)).uid;
-  } catch {
-    return NextResponse.json({ error: 'invalid-token' }, { status: 401 });
-  }
-
   // ── SERVER-RECOMPUTE the money fields (override, never reject — a legit
   // booking's client values already match, a tampered one gets corrected).
   // Registry first (admin-managed pricing/flags), static as fallback.
   const venue = (await getVenueByIdServer(venueId)) ?? getVenueById(venueId);
-  if (venue?.active === false) {
+  if (!venue || venue.active === false) {
     return NextResponse.json({ error: 'VENUE_OFFLINE' }, { status: 400 });
   }
-  const guestCount = Math.max(1, Number(rest.guestCount) || 1);
-  const childCount = Math.max(0, Number(rest.childCount) || 0);
-  const adultCount = Math.max(0, Number(rest.adultCount ?? (guestCount - childCount)));
-  const addOns = Array.isArray(rest.addOns) ? rest.addOns : [];
+  const guestCount = finiteNumber(rest.guestCount, 1, venue.capacity.max);
+  const childCount = finiteNumber(rest.childCount ?? 0, 0, guestCount);
+  if (!Number.isInteger(guestCount) || !Number.isInteger(childCount)) throw new BookingInputError('INVALID_GUESTS');
+  const adultCount = guestCount - childCount;
+  const addOns = draftId ? (rest.addOns || []) : validateAddOns(rest.addOns || [], rest.packageSlug);
   // 特別日子 (peak day) rule — surcharge + raised minimums per date/branch;
   // forceWeekendRate charges a weekday at the weekend tier.
   const peakCfgForDate = await getPeakDayAdmin(date as string);
@@ -130,15 +128,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'SW_FULL_FLOOR_FIRST' }, { status: 400 });
   }
   const isWeekend = serverIsWeekend(date as string) || peakRule?.forceWeekendRate === true;
-  const endDayForHours = (endDate && endDate !== date) ? (endDate as string) : (date as string);
-  const startMs = new Date(`${date}T${startTime}:00+08:00`).getTime();
-  const endMs = new Date(`${endDayForHours}T${endTime}:00+08:00`).getTime();
-  const hours = Math.max(1, Math.round((((endMs - startMs)) / 3600000) * 2) / 2);
-
-  // Package bookings are priced by a fixed package, not the venue formula —
-  // trust their stored pricing but still lock down the safety fields below.
+  const interval = bookingInterval(date, startTime, endTime, endDate);
+  if (interval.startMs <= Date.now()) throw new BookingInputError('DATE_IN_PAST');
+  const hours = interval.hours;
   const isPackage = !!rest.packageSlug;
-  let sanitizedPricing = rest.pricing;
+  let sanitizedPricing = draftId ? rest.pricing : undefined;
+  if (isPackage && !draftId) {
+    if (guestCount < (peakRule?.minHeadcount || 0)) throw new BookingInputError('PEAK_MIN_GUESTS');
+    sanitizedPricing = pricePackage({ packageSlug: rest.packageSlug, venueId, date, startTime, endTime, endDate, guestCount, addOns }, peakRule?.surchargePerHead || 0);
+  }
   let promoDiscount = 0;
   let promoFreeDrinksCost = 0;
   let promoCode: string | null = null;
@@ -159,7 +157,7 @@ export async function POST(req: NextRequest) {
     } catch { /* draft unreadable — fall back to rule surcharge */ }
   }
 
-  if (!isPackage && venue) {
+  if (!isPackage && !draftId) {
     // Peak floors are hard rules for customer self-bookings only.
     if (!isAdminLink) {
       const tierKey = isWeekend ? 'weekend' : 'weekday';
@@ -180,10 +178,15 @@ export async function POST(req: NextRequest) {
         if (pcSnap.exists) {
           const pc = { id: pcSnap.id, ...pcSnap.data() } as PromoCode;
           const equiv = adultEquivalent(Math.max(0, guestCount - childCount), childCount);
-          const drinksCost = freeDrinksVenues.includes(venueId) ? 0 : Math.round(25 * equiv);
+          const drinksCost = freeDrinksVenues.includes(venueId) || !addOns.some((a: { id: string }) => a.id === 'drinks') ? 0 : Math.round(25 * equiv);
           const d = calcPromoDiscount(pc, { subtotal: computed.subtotal, baseCharge: computed.baseCharge, adultEquiv: equiv, drinksCost, venueId });
           const withinTotal = pc.totalUsageLimit == null || pc.totalUsageCount < pc.totalUsageLimit;
-          if (d && d.amount > 0 && pc.enabled !== false && withinTotal) {
+          let withinUser = true;
+          if (pc.perUserLimit != null) {
+            const usage = await adminDb.collection('bookings').where('userId', '==', uid).get();
+            withinUser = usage.docs.filter(doc => doc.data().promoCodeId === pc.id && doc.data().promoRedeemedAt).length < pc.perUserLimit;
+          }
+          if (d && d.amount > 0 && pc.enabled !== false && withinTotal && withinUser) {
             promoDiscount = Math.min(d.amount, computed.subtotal);
             promoFreeDrinksCost = d.freeDrinks ? drinksCost : 0;
             promoCode = pc.code;
@@ -203,9 +206,18 @@ export async function POST(req: NextRequest) {
     };
   }
 
+  if (draftId) {
+    promoDiscount = finiteNumber(rest.promoDiscount || 0);
+    promoFreeDrinksCost = finiteNumber(rest.promoFreeDrinksCost || 0);
+    promoCode = rest.promoCode || null;
+    promoCodeId = rest.promoCodeId || null;
+    if (!sanitizedPricing) throw new BookingInputError('INVALID_DRAFT_PRICE');
+    for (const key of ['baseCharge', 'addOnTotal', 'subtotal', 'securityDeposit', 'deposit']) finiteNumber(sanitizedPricing[key]);
+  }
+
   // Clamp points redemption to the user's actual balance (a tamperer
   // can't claim more than they hold to shrink the charge to $1).
-  let pointsUsed = Math.max(0, Math.floor(Number(rest.pointsUsed) || 0));
+  let pointsUsed = Math.floor(finiteNumber(rest.pointsUsed ?? 0) / 100) * 100;
   if (pointsUsed > 0) {
     try {
       const uSnap = await adminDb.collection('users').doc(uid).get();
@@ -216,7 +228,7 @@ export async function POST(req: NextRequest) {
   // 100 loyalty points = HK$1 (POINTS_PER_HKD). pointsUsed is in POINTS;
   // pointsDiscount is the HK$ value. The old `= pointsUsed` treated 1pt=$1,
   // storing a 100× discount (1,500 pts showed −$1,500 instead of −$15).
-  const pointsDiscount = Math.round((pointsUsed / 100) * 100) / 100;
+  let pointsDiscount = pointsUsed / 100;
 
   // Deposit + balanceDue, matching the confirm/payment pages exactly so
   // nothing drifts. Points do NOT reduce the stored deposit/balance — they
@@ -242,6 +254,8 @@ export async function POST(req: NextRequest) {
     : Number(sanitizedPricing?.baseCharge) || 0;
   const grandTotalForDeposit = Math.max(0, grossSubtotal - promoDiscount) + securityDeposit;
   const deposit = calculateDeposit(grandTotalForDeposit, date as string);
+  pointsDiscount = Math.min(Math.floor(pointsUsed / 100), Math.max(0, Math.floor(deposit - 1)), Math.max(0, Math.floor(grossSubtotal - promoDiscount)));
+  pointsUsed = pointsDiscount * 100;
   const balanceDue = Math.max(0, grandTotalForDeposit - deposit);
   sanitizedPricing = {
     baseCharge, addOnTotal, subtotal: grossSubtotal, securityDeposit, deposit,
@@ -323,6 +337,8 @@ export async function POST(req: NextRequest) {
         if (!draftSnap.exists) throw new Error('DRAFT_NOT_FOUND');
         const draft = draftSnap.data() as { status: string; claimedBy: string | null };
         if (draft.status !== 'pending' || draft.claimedBy) throw new Error('DRAFT_CLAIMED');
+        if (!draftVersion || !draftSnap.updateTime?.isEqual(draftVersion)) throw new Error('DRAFT_CLAIMED');
+        if (draftSnap.data()?.expiresAt?.toMillis() <= Date.now()) throw new Error('DRAFT_CLAIMED');
       }
 
       // ── 4. Conflict check ──────────────────────────────────────────────
@@ -345,9 +361,7 @@ export async function POST(req: NextRequest) {
       bookingId = bookingRef.id;
       // WHITELIST — persist only trusted/server-derived fields. Never
       // spread ...rest (that let a client set status/payments/balanceDue).
-      const pendingExpiresAt = typeof rest.pendingExpiresAt === 'number'
-        ? rest.pendingExpiresAt
-        : Date.now() + 30 * 60 * 1000;
+      const pendingExpiresAt = Date.now() + 30 * 60 * 1000;
       t.create(bookingRef, {
         // Any booking created OUTSIDE the production deployment (preview
         // test site, localhost) is by definition a test booking — both
@@ -358,12 +372,12 @@ export async function POST(req: NextRequest) {
         ...(process.env.VERCEL_ENV !== 'production' ? { isTest: true } : {}),
         userId: uid,                    // forced from the verified token
         venueId,
-        branchSlug: rest.branchSlug ?? null,
+        branchSlug: venue.slug,
         date,
         startTime,
         endTime,
         ...(overnight ? { endDate } : {}),
-        ...(draftIdField ? { draftId: draftIdField } : {}),
+        ...(draftId ? { draftId } : {}),
         hours,
         guestCount,
         adultCount,
@@ -376,7 +390,7 @@ export async function POST(req: NextRequest) {
         ...(draftSurchargeOverride !== null ? { peakSurchargeOverride: draftSurchargeOverride } : {}),
         status: 'awaiting_payment',     // forced — never client 'confirmed'
         paymentMethod: rest.paymentMethod ?? null,
-        receiptUrl: rest.receiptUrl ?? null,
+        receiptUrl: null,
         refundDetails: rest.refundDetails ?? null,
         balanceDue,                     // server-derived
         payments: [],                   // never trust client-supplied payments
@@ -442,8 +456,8 @@ export async function POST(req: NextRequest) {
     });
 
     // Best-effort: sync phone number back to user profile (non-fatal).
-    if (rest.userId && rest.whatsappPhone) {
-      adminDb.collection('users').doc(rest.userId as string)
+    if (rest.whatsappPhone) {
+      adminDb.collection('users').doc(uid)
         .update({ phone: rest.whatsappPhone })
         .catch(() => {});
     }
@@ -463,5 +477,10 @@ export async function POST(req: NextRequest) {
     }
     console.error('[/api/bookings/create]', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+  } catch (err) {
+    if (err instanceof BookingInputError || err instanceof SyntaxError) return NextResponse.json({ error: err.message }, { status: 400 });
+    console.error('[bookings/create] failed', err);
+    return NextResponse.json({ error: 'CREATE_FAILED' }, { status: 500 });
   }
 }

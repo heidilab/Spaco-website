@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { adminVerifyIdToken } from '@/lib/adminAuth';
+import { checkoutAmount, BookingInputError } from '@/lib/bookingSecurity';
+import type { BookingRecord } from '@/types';
+import { paidBase } from '@/lib/bookingMoney';
 import { adminDb } from '@/lib/firebaseAdmin';
 import {
   createManagedOrder,
@@ -62,6 +66,11 @@ function cardSurchargeFor(amount: number): number {
  * with no query string.
  */
 export async function POST(req: NextRequest) {
+  const token = req.headers.get('authorization')?.replace(/^Bearer /, '');
+  if (!token) return NextResponse.json({ error: 'missing-token' }, { status: 401 });
+  let uid: string;
+  try { uid = (await adminVerifyIdToken(token)).uid; }
+  catch { return NextResponse.json({ error: 'invalid-token' }, { status: 401 }); }
   if (!isKpayConfigured()) {
     return NextResponse.json(
       { error: 'KPay not configured. Set KPAY_MID / KPAY_PRIVATE_KEY / KPAY_PLATFORM_PUBLIC_KEY / KPAY_API_BASE.' },
@@ -71,8 +80,7 @@ export async function POST(req: NextRequest) {
   try {
     const {
       bookingId,
-      amount,
-      venueName,
+      amount: requestedAmount,
       isBalancePayment,
       methodGroup,
     } = await req.json() as {
@@ -87,65 +95,48 @@ export async function POST(req: NextRequest) {
       methodGroup?: 'card' | 'wallet';
     };
 
-    if (!bookingId || !amount || amount <= 0) {
-      return NextResponse.json({ error: 'bookingId + positive amount required' }, { status: 400 });
+    if (typeof bookingId !== 'string' || bookingId.includes('/') || !bookingId
+      || !['card', 'wallet'].includes(methodGroup || '') || (isBalancePayment !== undefined && typeof isBalancePayment !== 'boolean')) {
+      return NextResponse.json({ error: 'INVALID_CHECKOUT' }, { status: 400 });
     }
-
-    // Double-charge guard — refuse to mint a second KPay order for a
-    // booking that's already been paid (two-tab / re-open race). The
-    // webhook is idempotent per transactionNo, but two DISTINCT orders
-    // for one booking each produce a distinct transactionNo and both
-    // would record. This is the front-line stop.
-    const guardSnap = await adminDb.collection('bookings').doc(bookingId).get();
-    if (guardSnap.exists) {
-      const gb = guardSnap.data() as {
-        status?: string;
-        payments?: unknown[];
-        balanceDue?: number;
-      };
-      const paidCount = Array.isArray(gb.payments) ? gb.payments.length : 0;
-      if (gb.status === 'completed') {
-        return NextResponse.json({ error: 'ALREADY_PAID', message: '此預訂已完成付款' }, { status: 409 });
+    const bookingRef = adminDb.collection('bookings').doc(bookingId);
+    const lockRef = adminDb.collection('_checkout_orders').doc(`${bookingId}_${isBalancePayment ? 'balance' : 'initial'}`);
+    const reservation = await adminDb.runTransaction(async tx => {
+      const [bookingSnap, orderSnap] = await Promise.all([tx.get(bookingRef), tx.get(lockRef)]);
+      if (!bookingSnap.exists) throw new BookingInputError('BOOKING_NOT_FOUND');
+      const booking = bookingSnap.data() as BookingRecord;
+      if (booking.userId !== uid) throw new BookingInputError('FORBIDDEN');
+      const amount = checkoutAmount(booking, !!isBalancePayment);
+      // Do not silently charge an amount different from the visible confirmation.
+      if (typeof requestedAmount !== 'number' || !Number.isFinite(requestedAmount) || Math.abs(requestedAmount - amount) > 0.005) {
+        throw new BookingInputError('PRICE_CHANGED');
       }
-      if (!isBalancePayment && paidCount > 0) {
-        return NextResponse.json({ error: 'DEPOSIT_ALREADY_PAID', message: '此預訂已付訂金' }, { status: 409 });
+      const existing = orderSnap.data();
+      if (existing && existing.paidBase === paidBase(booking)) {
+        if (existing.amount !== amount || existing.methodGroup !== methodGroup) throw new BookingInputError('PAYMENT_ALREADY_STARTED');
+        if (existing.sessionUrl) return { amount, existing, managedOutTradeNo: existing.managedOutTradeNo as string };
+        throw new BookingInputError('PAYMENT_PROCESSING');
       }
-      if (isBalancePayment && (gb.balanceDue ?? 0) <= 0) {
-        return NextResponse.json({ error: 'NO_BALANCE_DUE', message: '此預訂沒有未繳尾數' }, { status: 409 });
-      }
-    }
+      // The transaction serializes creation; milliseconds distinguish later top-up orders.
+      const tradeNo = `B${bookingId.slice(0, 12)}_${isBalancePayment ? 'B' : 'P'}${Date.now()}`;
+      tx.set(lockRef, { bookingId, uid, amount, methodGroup, managedOutTradeNo: tradeNo,
+        paidBase: paidBase(booking), status: 'creating', createdAt: Date.now() });
+      return { amount, existing: null, managedOutTradeNo: tradeNo };
+    });
+    const { amount, managedOutTradeNo } = reservation;
+    if (reservation.existing) return NextResponse.json(reservation.existing);
+    const venueName = 'Booking';
 
     const surcharge = methodGroup === 'card' ? cardSurchargeFor(amount) : 0;
     const chargeTotal = Math.round((amount + surcharge) * 100) / 100;
     const payMethodOrder = methodGroup ? PAY_METHOD_GROUPS[methodGroup] : undefined;
 
-    // Compose a unique managedOutTradeNo. KPay limit: 32 chars.
-    // Format: B<bookingId-first-12>_<P|B><epoch-seconds>
-    //   P = initial payment, B = balance payment
-    // Lets us trace a KPay order back to a booking + distinguish deposit
-    // vs balance Stripe-style.
-    const flag = isBalancePayment ? 'B' : 'P';
-    const ts = Math.floor(Date.now() / 1000);
-    const managedOutTradeNo = `B${bookingId.slice(0, 12)}_${flag}${ts}`.slice(0, 32);
-
     const origin = getPublicOrigin(req.nextUrl.origin);
     const notifyUrl = `${origin}/api/kpay/webhook`;
     const returnUrl = `${origin}/zh/book/success?booking_id=${bookingId}`;
 
-    // Record the surcharge BEFORE creating the KPay order, keyed by
-    // managedOutTradeNo, so the webhook credits only the base amount
-    // toward the booking's balance and books the surcharge separately.
-    // Fire-and-tolerate: a missing booking doc (diagnostic orders) is
-    // fine — the webhook treats absent records as zero surcharge.
-    if (surcharge > 0) {
-      try {
-        await adminDb.collection('bookings').doc(bookingId).update({
-          [`kpaySurcharges.${managedOutTradeNo}`]: surcharge,
-        });
-      } catch (err) {
-        console.warn('[kpay/checkout] surcharge record skipped:', err);
-      }
-    }
+    // Persist before calling the gateway. If this fails, do not create a charge.
+    if (surcharge > 0) await bookingRef.update({ [`kpaySurcharges.${managedOutTradeNo}`]: surcharge });
 
     const create = await createManagedOrder({
       managedOutTradeNo,
@@ -176,6 +167,8 @@ export async function POST(req: NextRequest) {
       managedOrderNo: create.managedOrderNo,
     });
 
+    await lockRef.update({ status: 'ready', sessionUrl: redirectUrl, managedOrderNo: create.managedOrderNo,
+      baseAmount: amount, surcharge, chargeTotal });
     return NextResponse.json({
       sessionUrl: redirectUrl,    // mirror stripe/checkout's response shape
       managedOrderNo: create.managedOrderNo,
@@ -185,6 +178,7 @@ export async function POST(req: NextRequest) {
       chargeTotal,
     });
   } catch (err) {
+    if (err instanceof BookingInputError) return NextResponse.json({ error: err.message }, { status: err.message === 'FORBIDDEN' ? 403 : 409 });
     console.error('[kpay/checkout] error:', err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Checkout failed' },

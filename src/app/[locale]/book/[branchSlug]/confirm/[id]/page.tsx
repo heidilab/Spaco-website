@@ -1,5 +1,7 @@
 'use client';
 
+import { adminApiFetch } from '@/lib/adminApiFetch';
+
 import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useParams } from 'next/navigation';
@@ -14,7 +16,7 @@ import { getVenueById } from '@/lib/venues';
 import { getPeakDay } from '@/lib/peakDays';
 import { resolvePeakRule } from '@/lib/peakDayRules';
 import { addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE, calculatePricing, freeDrinksVenues, isWithin2Days } from '@/lib/pricing';
-import { BookingRecord, RefundDetails, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
+import { BookingRecord, RefundDetails } from '@/types';
 import { getMarketingChannelOptions, DEFAULT_CHANNEL_OPTIONS, OTHER_OPTION, type MarketingChannelOption } from '@/lib/marketingChannels';
 import {
   loadBookingCheckoutDraft, saveBookingCheckoutDraft,
@@ -296,7 +298,7 @@ export default function ConfirmBookingPage() {
     // Package bookings are flat-priced — never recompute per-head here,
     // it would clobber pkg.price with calculatePricing's per-head math
     // (#m4Dg9Gb0: $6,800 birthday package overwritten to $2,610).
-    if (booking.packageSlug) return;
+    if (booking.packageSlug || booking.draftId) return;
     const venue = getVenueById(booking.venueId);
     if (!venue) return;
     const newAddOns = (booking.addOns || []).filter((a) => a.id !== 'drinks');
@@ -332,14 +334,8 @@ export default function ConfirmBookingPage() {
         },
       }) : b);
     } else {
-      await updateDoc(doc(db, 'bookings', booking.id), {
-        addOns: newAddOns,
-        'pricing.baseCharge': newPricing.baseCharge,
-        'pricing.addOnTotal': newPricing.addOnTotal,
-        'pricing.subtotal':   newPricing.subtotal,
-      });
-      const fresh = await getBooking(booking.id);
-      if (fresh) setBooking(fresh);
+      setBooking(b => b ? ({ ...b, addOns: newAddOns, pricing: { ...b.pricing,
+        baseCharge: newPricing.baseCharge, addOnTotal: newPricing.addOnTotal, subtotal: newPricing.subtotal } }) : b);
     }
   }
 
@@ -347,7 +343,7 @@ export default function ConfirmBookingPage() {
     // Package bookings: flat price, drinks already included — promo
     // codes don't apply, and the free_drinks auto-add path would
     // clobber the package price with per-head math.
-    if (booking?.packageSlug) {
+    if (booking?.packageSlug || booking?.draftId) {
       setPromoError(locale === 'zh' ? '套餐訂單不適用優惠碼' : 'Promo codes cannot be applied to package bookings');
       return;
     }
@@ -477,16 +473,8 @@ export default function ConfirmBookingPage() {
               }) : b);
             }
           } else {
-            await updateDoc(doc(db, 'bookings', booking.id), {
-              addOns: newAddOns,
-              'pricing.baseCharge':  newPricing.baseCharge,
-              'pricing.addOnTotal':  newPricing.addOnTotal,
-              'pricing.subtotal':    newPricing.subtotal,
-            });
-            // Reload the booking so the rest of the page (breakdown, deposit
-            // calc) sees the new add-on + pricing.
-            const fresh = await getBooking(booking.id);
-            if (fresh) setBooking(fresh);
+            setBooking(b => b ? ({ ...b, addOns: newAddOns, pricing: { ...b.pricing,
+              baseCharge: newPricing.baseCharge, addOnTotal: newPricing.addOnTotal, subtotal: newPricing.subtotal } }) : b);
           }
           // The promo's discount tracks the actual drinks cost we just added.
           const drinksCost = Math.round(25 * adultEquiv);
@@ -631,7 +619,13 @@ export default function ConfirmBookingPage() {
         bookingPatch.marketingChannel = 'loyalty_member';
       }
 
-      await updateDoc(doc(db, 'bookings', booking.id), bookingPatch);
+      const confirmation = await adminApiFetch(`/api/bookings/${booking.id}/confirm`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bookingPatch),
+      });
+      if (!confirmation.ok) {
+        const result = await confirmation.json();
+        throw new Error(result.error || 'CONFIRM_FAILED');
+      }
       router.push(`/book/${slug}/payment/${booking.id}`);
     } catch (err) {
       console.error(err);
@@ -767,7 +761,7 @@ export default function ConfirmBookingPage() {
           {/* Promo code — hidden for package bookings (flat price, drinks
            *  already included; the free_drinks auto-add path would clobber
            *  the package price with per-head math). */}
-          {!booking.packageSlug && (
+          {!booking.packageSlug && !booking.draftId && (
           <div className="glass-card p-7 space-y-3">
             <div className="flex items-start gap-3">
               <div className="w-10 h-10 rounded-2xl bg-gradient-warm flex items-center justify-center text-white shrink-0">

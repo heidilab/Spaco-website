@@ -14,6 +14,7 @@ import {
   arrayUnion,
 } from 'firebase/firestore';
 import { db } from './firebase';
+import { adminApiFetch } from './adminApiFetch';
 import { BookingRecord, BlockedSlot, BusinessDocument, DocumentType, DocumentRevision, CalendarEvent, AddOnOptions, PromoCode } from '@/types';
 import { venuesSharingSpace, getVenueById } from './venues';
 import { loadAllVenues, conflictIdsFor } from './venueRegistry';
@@ -27,95 +28,12 @@ import { getHoliday } from './hkHolidays';
 // ============ BOOKINGS ============
 
 export async function createBooking(data: Omit<BookingRecord, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
-  // Server-side conflict check — without this two bookings can stack
-  // with no cleaning gap. UI dropdown shows the static 8AM-11:45PM
-  // list with no filtering, so the only enforcement is here.
-  // (#mjtp9UKB 13:00-16:00 + #IXSLT0Aw 16:00-21:00 both went through
-  // because this check was missing; assertNoSlotConflict catches the
-  // cleaning-buffer overlap correctly when called.)
-  // Pass a synthetic excludeBookingId so nothing matches as "own".
-  await assertNoSlotConflict({
-    venueId: data.venueId,
-    date: data.date,
-    endDate: data.endDate,
-    startTime: data.startTime,
-    endTime: data.endTime,
-    excludeBookingId: '__new_booking__',
+  const res = await adminApiFetch('/api/bookings/create', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
   });
-
-  const ref = await addDoc(collection(db, 'bookings'), {
-    ...data,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
-
-  // Sync the customer's whatsappPhone back to their user profile so
-  // admin sees it in 會員管理 immediately (Heidi's 2026-05-23 spec —
-  // customers were entering phone at booking time but it never landed
-  // on the profile). Best-effort: a profile-write failure shouldn't
-  // block the booking creation.
-  if (data.userId && data.whatsappPhone) {
-    updateDoc(doc(db, 'users', data.userId), { phone: data.whatsappPhone })
-      .catch((err) => console.warn('[createBooking] phone sync failed:', err));
-  }
-
-  const overnight = !!data.endDate && data.endDate !== data.date;
-  const endDate = overnight ? (data.endDate as string) : data.date;
-
-  // Cleaning buffer: 1 hour after end time. Buffer sits on `endDate` so
-  // overnight bookings clean up on day 2.
-  const [endH, endM] = data.endTime.split(':').map(Number);
-  const bufferEndH = endH + 1;
-  const bufferEnd = bufferEndH >= 24
-    ? '23:59'
-    : `${String(bufferEndH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
-
-  // Write the blocked_slot ONLY for the actual booked venue. Earlier
-  // versions also wrote a copy for every venue sharing the same
-  // physical space (sw-a / sw-b / sw-ab), but the conflict CHECKS
-  // already expand via venuesSharingSpace — doing it on writes too
-  // produces phantom slots that wrongly block sibling venues (a sw-b
-  // booking created an sw-ab phantom, which then made sw-a appear
-  // unbookable via the assertNoSlotConflict broad query). Heidi 2026-06.
-  const vid = data.venueId;
-  if (overnight) {
-    // Day 1: start → 23:59
-    await createBlockedSlot({
-      venueId: vid, date: data.date,
-      startTime: data.startTime, endTime: '23:59',
-      reason: 'booking', bookingId: ref.id,
-    });
-    // Day 2: 00:00 → end, plus cleaning buffer after.
-    await createBlockedSlot({
-      venueId: vid, date: endDate,
-      startTime: '00:00', endTime: data.endTime,
-      reason: 'booking', bookingId: ref.id,
-    });
-    await createBlockedSlot({
-      venueId: vid, date: endDate,
-      startTime: data.endTime, endTime: bufferEnd,
-      reason: 'cleaning', bookingId: ref.id,
-    });
-  } else {
-    await createBlockedSlot({
-      venueId: vid,
-      date: data.date,
-      startTime: data.startTime,
-      endTime: data.endTime,
-      reason: 'booking',
-      bookingId: ref.id,
-    });
-    await createBlockedSlot({
-      venueId: vid,
-      date: data.date,
-      startTime: data.endTime,
-      endTime: bufferEnd,
-      reason: 'cleaning',
-      bookingId: ref.id,
-    });
-  }
-
-  return ref.id;
+  const result = await res.json();
+  if (!res.ok) throw new Error(result.error || 'CREATE_FAILED');
+  return result.bookingId;
 }
 
 export async function getBooking(id: string): Promise<BookingRecord | null> {
@@ -1007,33 +925,21 @@ export async function updateBookingReceiptUploaded(
  *        (kept by SPACO as cleaning/damage deduction)
  *  Returns the actual amount credited. */
 export async function creditLoyaltyPoints(userId: string, points: number): Promise<number> {
-  const pointsToAdd = Math.floor(points);
-  if (pointsToAdd <= 0) return 0;
+  const result = await adjustPoints(userId, Math.floor(points));
+  return result.amount;
+}
 
-  const userRef = doc(db, 'users', userId);
-  const snap = await getDoc(userRef);
-  if (!snap.exists()) return 0;
-
-  const currentPoints = snap.data().loyaltyPoints || 0;
-  await updateDoc(userRef, {
-    loyaltyPoints: currentPoints + pointsToAdd,
+async function adjustPoints(userId: string, amount: number): Promise<{ amount: number; ok: boolean }> {
+  const response = await adminApiFetch('/api/admin/loyalty-adjust', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId, amount }),
   });
-
-  return pointsToAdd;
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'POINTS_FAILED');
+  return result;
 }
 
 export async function redeemLoyaltyPoints(userId: string, pointsToUse: number): Promise<boolean> {
-  const userRef = doc(db, 'users', userId);
-  const snap = await getDoc(userRef);
-  if (!snap.exists()) return false;
-
-  const currentPoints = snap.data().loyaltyPoints || 0;
-  if (currentPoints < pointsToUse) return false;
-
-  await updateDoc(userRef, {
-    loyaltyPoints: currentPoints - pointsToUse,
-  });
-  return true;
+  return (await adjustPoints(userId, -Math.floor(pointsToUse))).ok;
 }
 
 /** Loyalty redemption helpers — re-exported from the pure bookingMoney

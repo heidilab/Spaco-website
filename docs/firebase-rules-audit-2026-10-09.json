@@ -1,0 +1,36 @@
+{
+  "score": 1,
+  "summary": "Repository rules static audit only; deployed rule version not verified; no production exploit performed.",
+  "findings": [
+    {
+      "check": "create vs update",
+      "severity": "critical",
+      "issue": "bookings create 只驗 userId，未限制 confirmed、payments、balanceDue；update 又容許更改日期、分店及折扣等敏感欄位。",
+      "recommendation": "客人建立及敏感修改一律經伺服器；規則只容許指定非敏感欄位。"
+    },
+    {
+      "check": "authority source",
+      "severity": "critical",
+      "issue": "users 自己可寫 loyaltyPoints；後端直接讀此餘額作積分折扣。",
+      "recommendation": "積分只可由 Admin SDK 交易更新。"
+    },
+    {
+      "check": "identity-level access",
+      "severity": "major",
+      "issue": "booking_drafts 任何登入者可 read（包括 list），claim 亦未鎖定其他欄位；receipts 任何登入者可 read。",
+      "recommendation": "draft 禁止客人 list，分享連結只回傳必要資料；入數紙按擁有者或指定員工授權。"
+    },
+    {
+      "check": "business roles",
+      "severity": "major",
+      "issue": "expenses、month_closes、bookings 等以 isStaff 授予廣泛存取，未實現 cleaner/marketing/CS 的頁面權限限制。",
+      "recommendation": "將角色及操作權限落實到規則或伺服器。"
+    },
+    {
+      "check": "resource exhaustion and types",
+      "severity": "major",
+      "issue": "blocked_slots 任意登入者可建立；receipts 未設大小、類型及擁有者路徑限制；多個可寫文件未限制欄位型別。",
+      "recommendation": "封鎖時段由伺服器建立；上載限制大小及 MIME、綁定擁有者；加入 schema 驗證。"
+    }
+  ]
+}

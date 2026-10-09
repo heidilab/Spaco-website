@@ -10,6 +10,7 @@
 // date-bounded month query for branch sales — never the whole
 // bookings collection (2026-09-15 lesson).
 
+import { useAuth } from '@/contexts/AuthContext';
 import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { Link } from '@/i18n/routing';
@@ -33,6 +34,8 @@ const BRANCH_LABELS: Record<string, { zh: string; en: string }> = {
 };
 
 export default function AdminDashboard() {
+  const { hasPermission, loading: authLoading } = useAuth();
+  const canManageBookings = hasPermission('bookings');
   const locale = useLocale() as 'zh' | 'en';
   const [todayBookings, setTodayBookings] = useState<BookingRecord[]>([]);
   const [receiptCount, setReceiptCount] = useState(0);
@@ -40,6 +43,7 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (authLoading || !canManageBookings) { setLoading(false); return; }
     const now = new Date();
     const today = now.toISOString().split('T')[0];
     const month = today.slice(0, 7);
@@ -68,7 +72,7 @@ export default function AdminDashboard() {
       setBranchSales(sales);
       setLoading(false);
     }).catch(() => setLoading(false));
-  }, []);
+  }, [authLoading, canManageBookings]);
 
   const quickActions = [
     { href: '/admin/bookings/new', icon: Link2, label: { zh: '新增預訂連結', en: 'New booking link' } },
@@ -76,6 +80,13 @@ export default function AdminDashboard() {
     { href: '/admin/documents', icon: FileText, label: { zh: '單據管理', en: 'Documents' } },
     { href: '/admin/calendar', icon: CalendarRange, label: { zh: '總日曆', en: 'Calendar' } },
   ];
+
+  if (!canManageBookings) return (
+    <div className="space-y-4">
+      <h1 className="text-heading">{locale === 'zh' ? '工作日曆' : 'Work calendar'}</h1>
+      <Link href="/admin/calendar" className="btn-primary">{locale === 'zh' ? '開啟總日曆' : 'Open calendar'}</Link>
+    </div>
+  );
 
   const monthLabel = new Date().getMonth() + 1;
 

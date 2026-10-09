@@ -1,211 +1,91 @@
 rules_version = '2';
-
-// SPACO Firestore security rules
-// Replaces the expired "test mode" defaults.
-//
-// Three tiers of access:
-//   1. Public (read-only)     — site content, images, blocked slots
-//   2. Authenticated users    — their own profile + their own bookings
-//   3. Staff (admin_users)    — full booking access, documents, content edits
-//
-// Bootstrap: the FIRST staff member must be added via Firebase Console
-// (admin_users/{your-uid}) with field { role: 'admin' }.
-
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // ───── Helpers ─────
-    function isAuthed() {
-      return request.auth != null;
+    function signedIn() { return request.auth != null; }
+    function owner(uid) { return signedIn() && request.auth.uid == uid; }
+    function roleIn(roles) {
+      return signedIn() && exists(/databases/$(database)/documents/admin_users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/admin_users/$(request.auth.uid)).data.role in roles;
     }
-    function isStaff() {
-      return isAuthed()
-        && exists(/databases/$(database)/documents/admin_users/$(request.auth.uid));
+    function admin() { return roleIn(['admin']); }
+    function bookings() { return roleIn(['admin', 'cs']); }
+    function content() { return roleIn(['admin', 'marketing']); }
+    function calendar() { return roleIn(['admin', 'cs', 'cleaner', 'marketing']); }
+    function profileFields() {
+      return ['email', 'displayName', 'photoURL', 'phone', 'whatsappPhone', 'createdAt', 'lastLogin',
+        'updatedAt', 'firstBookingChannel', 'firstBookingChannelOther'];
     }
-    function getStaffRole() {
-      return get(/databases/$(database)/documents/admin_users/$(request.auth.uid)).data.role;
+    function validProfile() {
+      return request.resource.data.get('displayName', '') is string
+        && request.resource.data.get('displayName', '').size() <= 200
+        && request.resource.data.get('phone', '') is string
+        && request.resource.data.get('phone', '').size() <= 40
+        && request.resource.data.get('whatsappPhone', '') is string
+        && request.resource.data.get('whatsappPhone', '').size() <= 40;
     }
-    function isAdmin() {
-      return isStaff() && getStaffRole() == 'admin';
+    match /users/{uid} {
+      allow read: if owner(uid) || bookings();
+      allow create: if owner(uid) && validProfile()
+        && request.resource.data.keys().hasOnly(profileFields().concat(['loyaltyPoints']))
+        && request.resource.data.get('loyaltyPoints', 0) == 0;
+      // Points are server-written, including staff adjustments.
+      allow update: if (owner(uid) || bookings()) && validProfile()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(profileFields());
+      allow delete: if admin();
     }
-    function isOwner(userId) {
-      return isAuthed() && request.auth.uid == userId;
+    match /admin_users/{uid} {
+      allow read: if owner(uid) || admin();
+      allow write: if admin();
     }
-
-    // ───── User profiles ─────
-    // Users can read/write their own profile. Staff can read any (for member admin).
-    match /users/{userId} {
-      allow read:  if isOwner(userId) || isStaff();
-      allow create: if isOwner(userId);
-      allow update: if isOwner(userId) || isStaff();
-      allow delete: if isAdmin();
+    match /bookings/{id} {
+      allow read: if owner(resource.data.userId) || bookings();
+      allow create, delete: if bookings();
+      allow update: if bookings() || (owner(resource.data.userId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'refundDetails', 'paymentMethod', 'receiptUrl', 'paymentReceiptUploadedAt', 'status', 'updatedAt'
+        ])
+        && resource.data.status in ['awaiting_payment', 'awaiting_review', 'confirmed']
+        && (request.resource.data.status == resource.data.status
+          || (resource.data.status in ['awaiting_payment', 'awaiting_review']
+            && request.resource.data.status == 'awaiting_payment')
+          || (request.resource.data.status == 'awaiting_review'
+            && request.resource.data.get('receiptUrl', '') is string
+            && request.resource.data.get('receiptUrl', '').size() > 0))
+        && request.resource.data.get('paymentMethod', null) in [null, 'fps', 'bank', 'kpay']
+        && (request.resource.data.get('receiptUrl', null) == null
+          || (request.resource.data.receiptUrl is string && request.resource.data.receiptUrl.size() <= 3000)));
     }
-
-    // ───── Staff roster ─────
-    // Anyone authenticated can read their own admin doc (used by AuthContext
-    // to detect staff status). Only admins can grant/revoke staff roles.
-    match /admin_users/{userId} {
-      allow read:   if isOwner(userId) || isAdmin();
-      allow write:  if isAdmin();
+    match /booking_drafts/{id} {
+      // Public link preview uses a redacted server response. No customer enumeration or writes.
+      allow read, write: if bookings();
     }
-
-    // ───── Bookings ─────
-    // Owners + staff can read; owners can create their own; staff can edit any.
-    //
-    // Owner updates are RESTRICTED so a customer can't grant themselves value
-    // without paying (previously any owner could self-patch status:'confirmed'
-    // + balanceDue:0 and the daily cron would then mint a real door passcode).
-    // A non-staff owner may NOT:
-    //   • change the payments[] array (money records are server-written only), or
-    //   • transition the booking INTO 'confirmed' / 'completed' status.
-    // They can still keep an already-confirmed booking confirmed (self-modify),
-    // move to awaiting_payment / awaiting_review / cancelled, upload receipts,
-    // and set promo/points/refund details. Staff bypass all of this.
-    match /bookings/{bookingId} {
-      allow read:   if (isAuthed() && resource.data.userId == request.auth.uid) || isStaff();
-      allow create: if isAuthed() && request.resource.data.userId == request.auth.uid;
-      allow update: if isStaff()
-        || (isAuthed()
-            && resource.data.userId == request.auth.uid
-            && request.resource.data.get('payments', []) == resource.data.get('payments', [])
-            && (request.resource.data.status == resource.data.status
-                || !(request.resource.data.status in ['confirmed', 'completed']))
-            // Once a booking is paid (confirmed/completed), freeze the money
-            // fields on owner writes: a customer could otherwise self-zero
-            // balanceDue to trigger a free door passcode, or rewrite pricing
-            // after paying. Legit post-payment edits (customer self-modify,
-            // admin edits) go through the server / Admin SDK, which bypasses
-            // these rules. Pre-payment bookings stay owner-writable so the
-            // confirm page can apply promos + set the deposit.
-            && (!(resource.data.status in ['confirmed', 'completed'])
-                || (request.resource.data.get('balanceDue', 0) == resource.data.get('balanceDue', 0)
-                    && request.resource.data.get('pricing', {}) == resource.data.get('pricing', {}))));
-      allow delete: if isStaff();
+    match /blocked_slots/{id} {
+      allow read: if true;
+      allow write: if bookings();
     }
-
-    // ───── Booking drafts (staff-initiated → customer claims) ─────
-    // CS / admin pre-fills a booking; the draft URL is sent to the customer.
-    // The customer logs in, claims, and a real booking is created.
-    match /booking_drafts/{draftId} {
-      // Staff: full access. Customer: can read any draft (URL is unguessable
-      // and links are shared via WhatsApp). They can also claim a draft for
-      // themselves by writing claimedBy = their uid + status = 'claimed'.
-      allow read:   if isStaff() || isAuthed();
-      allow create, delete: if isStaff();
-      allow update: if isStaff()
-        || (isAuthed()
-            && resource.data.claimedBy == null
-            && resource.data.status == 'pending'
-            && request.resource.data.claimedBy == request.auth.uid
-            && request.resource.data.status == 'claimed');
-    }
-
-    // ───── Blocked slots ─────
-    // Public READ so that the booking page can show availability without login.
-    // Only staff can create/modify blocks (and the booking flow on the server).
-    match /blocked_slots/{slotId} {
-      allow read:  if true;
-      allow create: if isAuthed();   // booking flow auto-creates blocks
-      allow update, delete: if isStaff();
-    }
-
-    // ───── Site CMS ─────
-    // Public read so the website can render. Admin-only edits.
-    // (Collection names are snake_case to match the code in lib/content.ts.)
-    match /site_images/{id} {
-      allow read:  if true;
-      allow write: if isAdmin();
-    }
-    match /site_content/{id} {
-      allow read:  if true;
-      allow write: if isAdmin();
-    }
-    // ───── Venues (分店管理) ─────
-    // Public read — the whole site renders from these. Staff write via
-    // the /admin/venues manager.
+    match /site_images/{id} { allow read: if true; allow write: if content(); }
+    match /site_content/{id} { allow read: if true; allow write: if admin() || (id != 'settings' && content()); }
+    match /site_seo/{id} { allow read: if true; allow write: if content(); }
     match /venues/{id} {
-      allow read:  if true;
-      allow write: if isStaff();
+      allow read: if true;
+      allow create, delete: if admin();
+      allow update: if admin() || (content() && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'name', 'description', 'images', 'heroImage', 'amenities', 'updatedAt'
+      ]));
     }
-    // 特別日子/旺季 per-date surcharge + minimums — customers' booking UI
-    // must read these to badge dates, so reads are public.
-    match /peak_days/{date} {
-      allow read:  if true;
-      allow write: if isStaff();
-    }
-    match /site_seo/{id} {
-      // Public read so generateMetadata (server-side, no auth) can fetch.
-      allow read:  if true;
-      allow write: if isAdmin();
-    }
-
-    // ───── Business documents (Quotation / Invoice / Receipt) ─────
-    // Staff-only end-to-end. No public access.
-    match /documents/{id} {
-      allow read, write: if isStaff();
-    }
-
-    // ───── Secrets (e.g. Google OAuth refresh tokens) ─────
-    // Admin-only. Server reads/writes these via the user's auth token; the
-    // client UI never reads the value back, only the connected/disconnected
-    // status.
-    match /secrets/{id} {
-      allow read, write: if isAdmin();
-    }
-
-    // ───── System metadata (last sync time, feature flags, etc.) ─────
-    // Finance Phase 2 — per-branch expense ledger + recurring templates.
-    // Staff-only both ways: customers never see finance data.
-    match /expenses/{id} {
-      allow read, write: if isStaff();
-    }
-    match /expense_templates/{id} {
-      allow read, write: if isStaff();
-    }
-    // Finance Phase 3 — month-close records (splits snapshot, reconciled
-    // KPay fee, closed flag). Staff-only both ways.
-    match /month_closes/{id} {
-      allow read, write: if isStaff();
-    }
-
-    match /system/{id} {
-      allow read:  if isStaff();
-      allow write: if isAdmin();
-    }
-
-    // ───── Calendar events (site visits, deliveries) ─────
-    // Informational events scheduled by staff. Do NOT block bookings.
-    // Read/write via the admin UI (client SDK) needs staff role; the API
-    // routes that push to Google use Admin SDK so they bypass these rules.
-    match /calendar_events/{id} {
-      allow read, write: if isStaff();
-    }
-
-    // ───── Promo codes ─────
-    // Admin-only management. Customers validate codes via a server route
-    // (Admin SDK) so they never need direct read access; this keeps the
-    // catalog private (no enumeration of unused codes from the client).
-    match /promo_codes/{id} {
-      allow read, write: if isStaff();
-    }
-
-    // ───── Articles (blog / content sharing) ─────
-    // Public read for PUBLISHED articles (so /articles + /articles/[slug]
-    // load without auth). Staff can read all (incl. drafts) for the admin
-    // list. Only staff can write.
-    //
-    // Note: queries from unauthenticated users MUST include
-    // `where('status', '==', 'published')` for Firestore to allow the
-    // read — this matches what listPublishedArticles() does. The
-    // get-by-slug helper also passes through this same rule.
+    match /peak_days/{id} { allow read: if true; allow write: if admin(); }
+    match /documents/{id} { allow read, write: if bookings(); }
+    match /secrets/{id} { allow read, write: if admin(); }
+    match /expenses/{id} { allow read, write: if admin(); }
+    match /expense_templates/{id} { allow read, write: if admin(); }
+    match /month_closes/{id} { allow read, write: if admin(); }
+    match /system/{id} { allow read: if bookings(); allow write: if admin(); }
+    match /calendar_events/{id} { allow read: if calendar(); allow write: if bookings(); }
+    match /promo_codes/{id} { allow read: if bookings(); allow write: if admin(); }
     match /articles/{id} {
-      allow read:  if isStaff() || resource.data.status == 'published';
-      allow write: if isStaff();
+      allow read: if content() || resource.data.status == 'published';
+      allow write: if content();
     }
-
-    // Default deny — fallthrough.
-    match /{document=**} {
-      allow read, write: if false;
-    }
+    match /{document=**} { allow read, write: if false; }
   }
 }

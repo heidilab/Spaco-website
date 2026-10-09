@@ -1,6 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { paymentErrorMessage } from '@/lib/paymentErrors';
+import { adminApiFetch } from '@/lib/adminApiFetch';
+
+import { useEffect, useState, useRef } from 'react';
 import { useLocale } from 'next-intl';
 import { useParams } from 'next/navigation';
 import { useRouter } from '@/i18n/routing';
@@ -86,6 +89,7 @@ export default function PaymentMethodPage() {
   const bookingId = params.id as string;
   const slug = params.branchSlug as string;
   const isDraft = bookingId === 'new';
+  const createdId = useRef<string | null>(null);
 
   const [booking, setBooking] = useState<BookingRecord | null>(null);
   const [draft, setDraft] = useState<BookingCheckoutDraft | null>(null);
@@ -226,6 +230,7 @@ export default function PaymentMethodPage() {
   /** Draft mode: first (atomic, server-side) write of the booking —
    *  this is also what holds the physical slot. Returns the real id. */
   async function ensureBooking(paymentMethod: 'kpay' | 'fps'): Promise<string> {
+    if (createdId.current) return createdId.current;
     if (!isDraft) {
       await updateBookingPaymentMethod(booking!.id, paymentMethod);
       return booking!.id;
@@ -286,7 +291,9 @@ export default function PaymentMethodPage() {
       throw new Error((errData as { error?: string }).error || 'CREATE_FAILED');
     }
     const { bookingId: newId } = await createRes.json() as { bookingId: string };
+    createdId.current = newId;
     clearBookingCheckoutDraft();
+    router.replace(`/book/${slug}/payment/${newId}`);
     return newId;
   }
 
@@ -309,7 +316,7 @@ export default function PaymentMethodPage() {
       }
 
       const id = await ensureBooking('kpay');
-      const res = await fetch('/api/kpay/checkout', {
+      const res = await adminApiFetch('/api/kpay/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -323,8 +330,7 @@ export default function PaymentMethodPage() {
       const data = await res.json().catch(() => ({}));
       if (res.status === 409) {
         // Already paid (two-tab / re-open) — send them to their bookings.
-        setError((data as { message?: string }).message
-          || (locale === 'zh' ? '此預訂已付款' : 'This booking is already paid'));
+        setError(paymentErrorMessage((data as { error?: string }).error || '', locale));
         setSubmitting(false);
         return;
       }

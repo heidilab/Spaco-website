@@ -29,7 +29,7 @@ export default function FPSUpload({ bookingId, amount, onUploadComplete }: FPSUp
 
     setUploading(true);
     try {
-      const storageRef = ref(storage, `receipts/${bookingId}-${Date.now()}`);
+      const storageRef = ref(storage, `receipts/${bookingId}/${Date.now()}`);
       await uploadBytes(storageRef, file);
       const url = await getDownloadURL(storageRef);
       setUploaded(true);
