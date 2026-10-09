@@ -15,7 +15,16 @@
   "hero": {
     "title": "GATHERING",
     "subtitle": "SPACO — 賦予專屬空間無限可能",
-    "cta": "探索空間"
+    "cta": "探索空間",
+    "amenitiesCta": "探索設施",
+    "followCta": "追蹤我們",
+    "followLabel": "在 Instagram 追蹤 SPACO",
+    "bookingStatus": "網上預訂",
+    "locations": "香港 · 4 間分店",
+    "eventTypes": "派對 · 商務 · 親子",
+    "branchesLabel": "分店",
+    "partiesLabel": "開心聚會",
+    "bookingLabel": "網上預訂"
   },
   "marquee": {
     "text": "專屬空間 • 私人活動 • 極致設計 • BESPOKE SPACES • PRIVATE EVENT • REFINED DESIGN •"
@@ -90,9 +99,12 @@
     "phone": "電話",
     "email": "電郵",
     "address": "地址",
-    "copyright": "© 2024 SPACO. All rights reserved.",
+    "copyright": "© {year} SPACO. 版權所有。",
     "terms": "條款及細則",
-    "privacy": "私隱政策"
+    "privacy": "私隱政策",
+    "followTitle": "掌握最新優惠",
+    "followDescription": "追蹤 SPACO Instagram，查看場地靈感、套餐及最新消息。",
+    "followButton": "追蹤 Instagram"
   },
   "booking": {
     "title": "預訂空間",

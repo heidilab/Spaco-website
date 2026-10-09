@@ -15,7 +15,16 @@
   "hero": {
     "title": "GATHERING",
     "subtitle": "SPACO — Unleash Infinite Possibilities",
-    "cta": "Explore Spaces"
+    "cta": "Explore Spaces",
+    "amenitiesCta": "Explore amenities",
+    "followCta": "Follow us",
+    "followLabel": "Follow SPACO on Instagram",
+    "bookingStatus": "Live booking",
+    "locations": "4 locations · HK",
+    "eventTypes": "Party · Corporate · Family",
+    "branchesLabel": "Branches",
+    "partiesLabel": "Happy parties",
+    "bookingLabel": "Booking online"
   },
   "marquee": {
     "text": "BESPOKE SPACES • PRIVATE EVENT • REFINED DESIGN • BESPOKE SPACES • PRIVATE EVENT • REFINED DESIGN •"
@@ -90,9 +99,12 @@
     "phone": "Phone",
     "email": "Email",
     "address": "Address",
-    "copyright": "© 2024 SPACO. All rights reserved.",
+    "copyright": "© {year} SPACO. All rights reserved.",
     "terms": "Terms & Conditions",
-    "privacy": "Privacy Policy"
+    "privacy": "Privacy Policy",
+    "followTitle": "Discover our latest offers",
+    "followDescription": "Follow SPACO on Instagram for venue inspiration, packages and updates.",
+    "followButton": "Follow on Instagram"
   },
   "booking": {
     "title": "Book a Space",

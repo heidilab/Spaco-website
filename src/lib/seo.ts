@@ -115,7 +115,7 @@ export async function buildMetadata({
 
   return {
     metadataBase: new URL(SITE_URL),
-    title,
+    title: title && /\bSPACO\b/i.test(title) ? { absolute: title } : title,
     description,
     keywords,
     alternates: {

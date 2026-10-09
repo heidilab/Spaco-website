@@ -43,6 +43,15 @@ export default function Header() {
     return () => document.removeEventListener('mousedown', handler);
   }, [spacesOpen]);
 
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileOpen(false);
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [mobileOpen]);
+
   const toggleLocale = () => {
     const newLocale = locale === 'zh' ? 'en' : 'zh';
     router.replace(pathname, { locale: newLocale });
@@ -161,7 +170,10 @@ export default function Header() {
 
             {/* Mobile Menu Button */}
             <button
-              className="md:hidden"
+              className="md:hidden min-h-11 min-w-11 flex items-center justify-center"
+              aria-label={mobileOpen ? (locale === 'zh' ? '關閉選單' : 'Close menu') : (locale === 'zh' ? '開啟選單' : 'Open menu')}
+              aria-expanded={mobileOpen}
+              aria-controls="mobile-navigation"
               onClick={() => setMobileOpen(!mobileOpen)}
             >
               {mobileOpen ? <X size={24} /> : <Menu size={24} />}
@@ -170,10 +182,11 @@ export default function Header() {
 
           {/* Mobile Nav */}
           {mobileOpen && (
-            <div className="md:hidden pb-6 border-t border-charcoal/10">
+            <div id="mobile-navigation" className="md:hidden pb-6 border-t border-charcoal/10 max-h-[calc(100dvh-6rem)] overflow-y-auto">
               <nav className="flex flex-col gap-1 pt-4">
                 {/* Spaces accordion */}
                 <button
+                  aria-expanded={mobileSpacesOpen}
                   onClick={() => setMobileSpacesOpen((v) => !v)}
                   className="flex items-center justify-between text-lg font-medium py-2"
                 >

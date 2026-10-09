@@ -70,6 +70,9 @@ export default function PromoSection() {
             // Empty linkUrl = no destination set yet — render as a non-link
             // (still visible, just doesn't navigate). Avoids dead links.
             const href = promo.linkUrl?.trim() || '';
+            const readableAlt = promo.alt?.trim();
+            const alt = readableAlt && readableAlt !== promo.key && readableAlt !== promo.id
+              ? readableAlt : (locale === 'zh' ? `SPACO 精選優惠 ${i + 1}` : `SPACO special offer ${i + 1}`);
 
             // Alternating tilt for an organic photo-collage feel — each card
             // sits at -1°, 0°, +1° in a 3-up layout. Hover straightens it.
@@ -105,7 +108,9 @@ export default function PromoSection() {
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={promo.url}
-                        alt={promo.alt || `Promo ${i + 1}`}
+                        alt={alt}
+                        loading="lazy"
+                        decoding="async"
                         className="absolute inset-0 w-full h-full object-cover group-hover:scale-[1.04] transition-transform duration-700"
                       />
                       {/* Subtle sheen on hover for tactile feedback */}

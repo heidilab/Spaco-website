@@ -244,3 +244,10 @@ h1, h2, h3, h4, .font-display {
   pointer-events: none;
 }
 .ProseMirror .tableWrapper { overflow-x: auto; }
+
+/* Keep keyboard navigation visible and anchor headings clear of the fixed header. */
+:where(a, button, input, select, textarea):focus-visible {
+  outline: 3px solid #9462b9;
+  outline-offset: 4px;
+}
+#collection, #amenities { scroll-margin-top: 7rem; }

@@ -14,7 +14,7 @@ export default function HeroSection() {
   useEffect(() => {
     getSiteImageByKey('hero-main').then((img) => {
       if (img) setHeroImage(img.url);
-    });
+    }).catch(() => { /* Keep the branded fallback if CMS is unavailable. */ });
   }, []);
 
   return (
@@ -49,19 +49,19 @@ export default function HeroSection() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
           >
-            <div className="glass-card relative p-8 md:p-12 lg:p-14">
+            <div className="glass-card relative p-5 sm:p-8 md:p-12 lg:p-14">
               {/* Top status row */}
               <div className="flex flex-wrap items-center gap-2 mb-6">
                 <span className="chip-glow">
                   <span className="w-1.5 h-1.5 rounded-full bg-lime animate-pulse-glow" />
-                  Live booking
+                  {t('bookingStatus')}
                 </span>
                 <span className="chip">
-                  <MapPin size={12} />4 locations · HK
+                  <MapPin size={12} />{t('locations')}
                 </span>
                 <span className="chip">
                   <Sparkles size={12} className="text-pink" />
-                  Party · Corporate · Family
+                  {t('eventTypes')}
                 </span>
               </div>
 
@@ -93,21 +93,21 @@ export default function HeroSection() {
                   <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
                 </a>
                 <a href="#amenities" className="btn-glass text-base">
-                  Explore amenities
+                  {t('amenitiesCta')}
                 </a>
                 <a
                   href="https://www.instagram.com/spacohk"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="btn-glass text-base group"
-                  aria-label="Follow SPACO on Instagram"
+                  aria-label={t('followLabel')}
                 >
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-pink">
                     <rect x="2" y="2" width="20" height="20" rx="5" ry="5"/>
                     <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/>
                     <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/>
                   </svg>
-                  Follow us
+                  {t('followCta')}
                 </a>
               </div>
 
@@ -115,17 +115,17 @@ export default function HeroSection() {
               <div className="mt-10 pt-6 border-t border-white/50 grid grid-cols-3 gap-4 max-w-md">
                 <div>
                   <div className="text-2xl font-bold font-display text-ink">4</div>
-                  <div className="text-xs text-ink-soft mt-0.5">Branches</div>
+                  <div className="text-xs text-ink-soft mt-0.5">{t('branchesLabel')}</div>
                 </div>
                 <div>
                   <div className="text-2xl font-bold font-display text-gradient-pink">
                     1k+
                   </div>
-                  <div className="text-xs text-ink-soft mt-0.5">Happy parties</div>
+                  <div className="text-xs text-ink-soft mt-0.5">{t('partiesLabel')}</div>
                 </div>
                 <div>
                   <div className="text-2xl font-bold font-display text-ink">24/7</div>
-                  <div className="text-xs text-ink-soft mt-0.5">Booking online</div>
+                  <div className="text-xs text-ink-soft mt-0.5">{t('bookingLabel')}</div>
                 </div>
               </div>
             </div>
