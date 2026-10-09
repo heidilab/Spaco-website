@@ -21,3 +21,7 @@ Scope: KPay sales/refund callbacks, reward consumption at KPay settlement, expir
 ## Operations
 
 Review `paymentReviewRequired` bookings in admin; reconcile funds, availability and entitlement before manual confirmation/refund. The flag is intentionally not automatically cleared by a later callback. Inspect unmatched transactions in server-only `_payment_reconciliation`. Existing offline/FPS reward workflows are outside this KPay settlement change. Previous callback markers remain respected. No Firebase rules change is required because new collections are server-only under default deny.
+
+## Production release — 2026-10-09
+
+Heidi explicitly approved production release. Commit 2320fb51c619809a6603b40c1dddaadac45ba530 was fast-forwarded and pushed to main. Vercel production dpl_G1vFGSiaxEKfCnY7EHRzj28ygcho is READY and aliased to https://spacohk.com. Cloud 143 tests, TypeScript and build passed. Production smoke checks: /zh 200; unauthenticated checkout 401; unsigned webhook 400; unauthenticated finalization cron 401. The five-minute retry schedule is deployed and the production CRON_SECRET is configured. An authenticated cron execution was not manually triggered, to avoid processing live work as a smoke test. Firebase rules unchanged. Notion release log and architecture updated.
