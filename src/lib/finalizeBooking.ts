@@ -1,5 +1,4 @@
 import { adminDb } from '@/lib/firebaseAdmin';
-import { FieldValue } from 'firebase-admin/firestore';
 import { buildBookingConfirmationEmail, generateWhatsAppLink } from '@/lib/email';
 import {
   sendAutomatedEmail,
@@ -10,7 +9,6 @@ import { getVenueById } from '@/lib/venues';
 import { processBookingForLockAccess } from '@/lib/lockPasscode';
 import { pushBookingToCalendar, updateBookingOnCalendar } from '@/lib/googleCalendar';
 import { formatAddOnsForStaff } from '@/lib/pricing';
-import { deductLoyaltyPoints } from '@/lib/loyaltyServer';
 import type { BookingRecord, UserProfile } from '@/types';
 
 /**
@@ -38,10 +36,11 @@ export { computeGrandTotal, computeBalanceDue } from './bookingMoney';
  */
 export async function restoreBlockedSlotsIfMissing(booking: BookingRecord): Promise<boolean> {
   const bookingId = booking.id;
-  const existing = await adminDb
-    .collection('blocked_slots')
-    .where('bookingId', '==', bookingId)
-    .get();
+  return adminDb.runTransaction(async tx => {
+  const current = await tx.get(adminDb.collection('bookings').doc(bookingId));
+  if (!current.exists || !['confirmed', 'completed'].includes(current.data()!.status) || current.data()!.paymentReviewRequired) return false;
+  booking = { ...current.data(), id: bookingId } as BookingRecord;
+  const existing = await tx.get(adminDb.collection('blocked_slots').where('bookingId', '==', bookingId));
   if (!existing.empty) return false;
 
   const overnight = !!booking.endDate && booking.endDate !== booking.date;
@@ -52,9 +51,8 @@ export async function restoreBlockedSlotsIfMissing(booking: BookingRecord): Prom
     bufferEndH >= 24
       ? '23:59'
       : `${String(bufferEndH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
-  const batch = adminDb.batch();
   const newSlot = (data: object) =>
-    batch.create(adminDb.collection('blocked_slots').doc(), data);
+    tx.create(adminDb.collection('blocked_slots').doc(), data);
   if (overnight) {
     newSlot({ venueId: booking.venueId, date: booking.date, startTime: booking.startTime, endTime: '23:59', reason: 'booking', bookingId });
     newSlot({ venueId: booking.venueId, date: endDate, startTime: '00:00', endTime: booking.endTime, reason: 'booking', bookingId });
@@ -63,9 +61,9 @@ export async function restoreBlockedSlotsIfMissing(booking: BookingRecord): Prom
     newSlot({ venueId: booking.venueId, date: booking.date, startTime: booking.startTime, endTime: booking.endTime, reason: 'booking', bookingId });
     newSlot({ venueId: booking.venueId, date: booking.date, startTime: booking.endTime, endTime: bufferEnd, reason: 'cleaning', bookingId });
   }
-  await batch.commit();
   console.warn('[finalizeBooking] restored deleted blocked_slots for booking', bookingId);
   return true;
+  });
 }
 
 interface FinalizeOpts {
@@ -81,16 +79,14 @@ interface FinalizeOpts {
  * successful payment, shared by every payment rail so no rail can
  * silently skip a step:
  *   1. Restore blocked_slots if the cron swept them (initial only)
- *   2. Deduct loyalty points + increment promo usage (initial only)
  *   3. Confirmation email to the customer
  *   4. Lock passcode (or balance reminder) if within the window
  *   5. Google Calendar sync
  *   6. Staff booking + supplier-order notifications
  *
- * Every step is individually try/caught and non-fatal — the booking is
- * already confirmed; a failing side-effect must not 500 the webhook and
- * trigger a duplicate retry. Idempotent: points/promo guarded by
- * pointsRedeemedAt/promoRedeemedAt flags.
+ * Money and rewards have already committed atomically. Failures are reported
+ * to the durable job so a later attempt can retry external side effects.
+ * External notifications use at-least-once delivery; a crash may repeat them.
  *
  * The caller MUST have already written status='confirmed' + the
  * payments[] entry before calling this.
@@ -103,6 +99,11 @@ export async function finalizeConfirmedBooking(
   const bookingRef = adminDb.collection('bookings').doc(bookingId);
   const redirectUri = `${origin}/api/google/callback`;
 
+  const current = await bookingRef.get();
+  const currentBooking = current.data();
+  if (!currentBooking || !['confirmed', 'completed'].includes(currentBooking.status) || currentBooking.paymentReviewRequired) return;
+  const failures: unknown[] = [];
+
   // 1. blocked_slots restore (initial payment only).
   if (!isBalancePayment) {
     try {
@@ -110,32 +111,9 @@ export async function finalizeConfirmedBooking(
       const b = snap.data() as BookingRecord | undefined;
       if (b) await restoreBlockedSlotsIfMissing({ ...b, id: bookingId });
     } catch (err) {
+      failures.push(err);
       console.error('[finalizeBooking] blocked_slots restore failed:', err);
     }
-  }
-
-  // 2. Loyalty points + promo (initial payment only, idempotent).
-  try {
-    const snap = await bookingRef.get();
-    const data = snap.data() as BookingRecord | undefined;
-    const booking = data ? ({ ...data, id: bookingId } as BookingRecord) : undefined;
-    if (booking && !isBalancePayment) {
-      if (booking.pointsUsed && booking.pointsUsed > 0 && !booking.pointsRedeemedAt) {
-        const deducted = await deductLoyaltyPoints(booking.userId, booking.pointsUsed);
-        await bookingRef.update({
-          pointsRedeemedAt: FieldValue.serverTimestamp(),
-          pointsActuallyDeducted: deducted,
-        });
-      }
-      if (booking.promoCodeId && !booking.promoRedeemedAt) {
-        await adminDb.collection('promo_codes').doc(booking.promoCodeId).update({
-          totalUsageCount: FieldValue.increment(1),
-        });
-        await bookingRef.update({ promoRedeemedAt: FieldValue.serverTimestamp() });
-      }
-    }
-  } catch (err) {
-    console.warn('[finalizeBooking] points/promo deduction failed:', err);
   }
 
   // 3. Confirmation email.
@@ -189,6 +167,7 @@ export async function finalizeConfirmedBooking(
       }
     }
   } catch (err) {
+      failures.push(err);
     console.warn('[finalizeBooking] confirmation email failed:', err);
   }
 
@@ -196,6 +175,7 @@ export async function finalizeConfirmedBooking(
   try {
     await processBookingForLockAccess(bookingId);
   } catch (err) {
+      failures.push(err);
     console.warn('[finalizeBooking] lock passcode trigger failed:', err);
   }
 
@@ -252,6 +232,7 @@ export async function finalizeConfirmedBooking(
       });
     }
   } catch (err) {
+      failures.push(err);
     console.warn('[finalizeBooking] staff notify failed:', err);
   }
 
@@ -267,6 +248,8 @@ export async function finalizeConfirmedBooking(
       }
     }
   } catch (err) {
+      failures.push(err);
     console.warn('[finalizeBooking] gcal sync failed:', err);
   }
+  if (failures.length) throw new Error('Payment side effects incomplete');
 }

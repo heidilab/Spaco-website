@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { waitUntil } from '@vercel/functions';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
-import { verifyNotifyMulti, isTransactionSuccess } from '@/lib/kpay';
-import { finalizeConfirmedBooking, computeGrandTotal } from '@/lib/finalizeBooking';
+import { verifyNotifyMulti, isTransactionSuccess, getMid } from '@/lib/kpay';
+import { settleKpayPayment } from '@/lib/settleKpayPayment';
+import { runPaymentFinalization } from '@/lib/paymentFinalization';
 import type { BookingRecord } from '@/types';
 
 export const runtime = 'nodejs';
@@ -81,42 +83,7 @@ export async function POST(req: NextRequest) {
     merchantCode,
     body: rawBody,
   });
-  // Persist EVERY attempt to Firestore so we can debug even when Vercel
-  // CLI logs aren't surfacing recent runs. The debug collection auto-
-  // truncates by recency on read.
-  try {
-    await adminDb.collection('_kpay_webhook_debug').add({
-      receivedAt: new Date().toISOString(),
-      headers: {
-        signature,
-        timestamp,
-        nonce,
-        merchantCode,
-        contentType: req.headers.get('content-type'),
-      },
-      bodyLen: rawBody.length,
-      body: rawBody.slice(0, 2000),
-      fullNotifyUrl,
-      verifyOk: verifyResult.ok,
-      matchedVariant: verifyResult.variant,
-    });
-  } catch (dbErr) {
-    console.warn('[kpay/webhook] debug write failed:', dbErr);
-  }
-
   if (!verifyResult.ok) {
-    console.warn('[kpay/webhook] signature verification FAILED (all variants)', {
-      receivedHeaders: {
-        'K-Signature': signature,
-        'K-Timestamp': timestamp,
-        'K-Nonce-Str': nonce,
-        'K-Merchant-Code': merchantCode,
-        'content-type': req.headers.get('content-type'),
-      },
-      bodyLen: rawBody.length,
-      bodyPreview: rawBody.slice(0, 800),
-      fullNotifyUrl,
-    });
     return NextResponse.json({ error: 'invalid signature' }, { status: 401 });
   }
   console.log('[kpay/webhook] signature OK via variant:', verifyResult.variant);
@@ -126,6 +93,13 @@ export async function POST(req: NextRequest) {
     payload = JSON.parse(rawBody) as KPayNotifyPayload;
   } catch {
     return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 });
+  }
+
+  if (merchantCode !== getMid() || payload.merchantCode !== getMid()
+    || typeof payload.transactionNo !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(payload.transactionNo)
+    || typeof payload.orderNo !== 'string' || typeof payload.outTradeNo !== 'string'
+    || !Number.isFinite(payload.payAmount) || payload.payCurrency !== 'HKD') {
+    return NextResponse.json({ error: 'invalid payment payload' }, { status: 400 });
   }
 
   // REFUND callbacks (fired by /v1/refund) get their own handler. They
@@ -180,7 +154,12 @@ export async function POST(req: NextRequest) {
   let bookingRef: FirebaseFirestore.DocumentReference | null = null;
   let booking: BookingRecord | null = null;
 
-  if (bookingIdPrefix) {
+  const mapped = /^[A-Za-z0-9_-]+$/.test(managedTradeNo) ? await adminDb.collection('_kpay_orders').doc(managedTradeNo).get() : null;
+  if (mapped?.exists) {
+    const snap = await adminDb.collection('bookings').doc(mapped.data()!.bookingId).get();
+    if (snap.exists) { bookingRef = snap.ref; booking = { ...snap.data(), id: snap.id } as BookingRecord; }
+  }
+  if (!mapped?.exists && bookingIdPrefix) {
     // Try exact lookup first when prefix happens to be full-length.
     const directSnap = await adminDb.collection('bookings').doc(bookingIdPrefix).get();
     if (directSnap.exists) {
@@ -190,7 +169,8 @@ export async function POST(req: NextRequest) {
       // Firestore can't prefix-query by doc id directly, so we scan and
       // match by prefix. Fine for our scale (~50 bookings/month).
       const all = await adminDb.collection('bookings').get();
-      const hit = all.docs.find((d) => d.id.startsWith(bookingIdPrefix));
+      const hits = all.docs.filter((d) => d.id.startsWith(bookingIdPrefix));
+      const hit = hits.length === 1 ? hits[0] : undefined;
       if (hit) {
         bookingRef = hit.ref;
         booking = { id: hit.id, ...hit.data() } as BookingRecord;
@@ -199,130 +179,24 @@ export async function POST(req: NextRequest) {
   }
 
   if (!bookingRef || !booking) {
-    console.error('[kpay/webhook] booking not found for', managedTradeNo);
+    await adminDb.collection('_payment_reconciliation').doc(payload.transactionNo).set({ managedTradeNo, transactionNo: payload.transactionNo, amount: payload.payAmount, reason: 'booking_not_found', receivedAt: FieldValue.serverTimestamp() });
     // ACK so KPay stops retrying — but log for manual reconciliation.
     return NextResponse.json({ ok: true, notFound: true, managedTradeNo });
   }
 
-  // Idempotency — reserve this transaction atomically BEFORE any write.
-  // arrayUnion can't dedupe (each entry embeds a fresh recordedAt), and
-  // KPay fires 2 immediate retries on slow ACK, so a plain read-check
-  // races into duplicate payments[] rows (the #WIiQYL2I $31,920 class).
-  // A create()-based marker makes recording at-most-once.
-  const markerRef = adminDb.collection('_kpay_webhook_events').doc(payload.transactionNo);
   try {
-    await markerRef.create({
-      transactionNo: payload.transactionNo,
-      bookingId: bookingRef.id,
-      isBalancePayment,
-      processedAt: FieldValue.serverTimestamp(),
-    });
-  } catch (err) {
-    // ALREADY_EXISTS (gRPC code 6) — a concurrent retry beat us; this
-    // transaction is already recorded, so ACK and skip.
-    if ((err as { code?: number }).code === 6) {
-      return NextResponse.json({ ok: true, alreadyRecorded: true });
+    const result = await settleKpayPayment(bookingRef.id, managedTradeNo, payload, isBalancePayment);
+    if (!result.review) {
+      // A duplicate callback can recover unfinished side effects without crediting twice.
+      waitUntil(runPaymentFinalization(payload.transactionNo, req.nextUrl.origin).catch(() => {
+        console.warn('[kpay/webhook] finalization queued for retry');
+      }));
     }
-    // ANY other error (Firestore unavailable, deadline) must NOT be
-    // treated as "already recorded" — otherwise we'd 200-ACK and KPay
-    // stops retrying while the payment was never recorded anywhere.
-    // Return 500 so KPay's retry ladder recovers it.
-    console.error('[kpay/webhook] marker create failed (will retry):', err);
-    return NextResponse.json({ error: 'marker-create-failed' }, { status: 500 });
+    return NextResponse.json({ ok: true, bookingId: bookingRef.id, ...result });
+  } catch {
+    return NextResponse.json({ error: 'settlement-failed' }, { status: 500 });
   }
 
-  // KPay's payAmount INCLUDES any card surcharge the customer paid.
-  // Only the base amount counts toward the booking balance; the
-  // surcharge is a pass-through of KPay's card fee.
-  const surcharge = booking.kpaySurcharges?.[managedTradeNo] || 0;
-  const creditAmount = Math.max(0, Math.round((payload.payAmount - surcharge) * 100) / 100);
-
-  // Balance from the CANONICAL primitives formula (subtracts promo +
-  // points) — NOT pricing.subtotal, which drifts pre/post-promo. Old
-  // code used subtotal+securityDeposit and ignored promo/points, so
-  // every promo/points booking was left with a phantom balance.
-  const loggedSum = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
-  const grandTotal = computeGrandTotal(booking);
-  const newBalanceDue = Math.max(0, Math.round((grandTotal - loggedSum - creditAmount) * 100) / 100);
-
-  // A successful payment CONFIRMS the booking even if a balance remains
-  // (matches the old Stripe semantics). Never downgrade a booking that's
-  // already completed, and never resurrect one the cron/admin already
-  // killed without flagging it (the slot may have been resold).
-  const deadStates = ['payment_not_completed', 'cancelled'];
-  const wasDead = deadStates.includes(booking.status || '');
-  // Normally a payment confirms the booking. Exception: a booking whose
-  // deposit was already SETTLED (depositRefund present) but got re-opened
-  // to 'confirmed' by an admin add-on top-up — once this payment clears
-  // its balance, it's settled again, so flip it back to 'completed'
-  // (mirrors booking-record-offline-payment's settledWithOverflow case).
-  const wasSettled = !!(booking as { depositRefund?: unknown }).depositRefund;
-  const nextStatus =
-    booking.status === 'completed'
-      ? 'completed'
-      : (wasSettled && newBalanceDue === 0)
-        ? 'completed'
-        : 'confirmed';
-
-  const updates: Record<string, unknown> = {
-    payments: FieldValue.arrayUnion({
-      rentalAmount: 0,
-      addOnAmount: 0,
-      depositAmount: 0,
-      amount: creditAmount,
-      method: 'kpay',
-      kind: isBalancePayment ? 'balance' : 'initial',
-      note: surcharge > 0 ? `KPay（另收 1.5% 卡類手續費 HK$${surcharge}）` : 'KPay',
-      recordedBy: 'kpay-webhook',
-      recordedAt: new Date().toISOString(),
-      ...(surcharge > 0 ? { cardSurcharge: surcharge } : {}),
-      kpayTransactionNo: payload.transactionNo,
-      kpayOrderNo: payload.orderNo,
-      kpayPayMethodId: payload.payMethodId,
-    }),
-    balanceDue: newBalanceDue,
-    status: nextStatus,
-    paymentMethod: 'kpay',
-    // Clear the 30-min hold so the expire cron never sweeps a paid booking.
-    pendingExpiresAt: FieldValue.delete(),
-    // Consume the surcharge marker so a retry / re-read can't re-apply it.
-    ...(surcharge > 0 ? { [`kpaySurcharges.${managedTradeNo}`]: FieldValue.delete() } : {}),
-    updatedAt: FieldValue.serverTimestamp(),
-    ...(newBalanceDue === 0 && !booking.balancePaidAt
-      ? { balancePaidAt: FieldValue.serverTimestamp() }
-      : {}),
-    ...(newBalanceDue === 0 && !booking.paymentVerifiedAt
-      ? { paymentVerifiedAt: FieldValue.serverTimestamp() }
-      : {}),
-  };
-  try {
-    await bookingRef.update(updates);
-  } catch (err) {
-    // The marker was reserved before this write. If the write fails we
-    // must RELEASE the marker, otherwise every KPay retry sees the marker,
-    // returns alreadyRecorded, and the payment is lost forever (money
-    // charged, nothing recorded). Delete it and 500 so KPay retries clean.
-    console.error('[kpay/webhook] booking update failed — releasing marker for retry:', err);
-    await markerRef.delete().catch((delErr) =>
-      console.error('[kpay/webhook] marker release ALSO failed:', delErr));
-    return NextResponse.json({ error: 'booking-update-failed' }, { status: 500 });
-  }
-
-  if (wasDead) {
-    console.warn('[kpay/webhook] RESURRECTED a', booking.status, 'booking on payment —',
-      bookingRef.id, '— slot may have been resold; finalize will rebuild blocked_slots. Review manually.');
-  }
-
-  // All post-payment side-effects (blocked_slots restore, loyalty/promo,
-  // confirmation email, lock passcode, gcal, staff + supplier notify) —
-  // shared with the Stripe rail so KPay can't silently skip any of them.
-  await finalizeConfirmedBooking(bookingRef.id, {
-    isBalancePayment,
-    paymentMethodLabel: 'KPay',
-    origin: req.nextUrl.origin,
-  });
-
-  return NextResponse.json({ ok: true, bookingId: bookingRef.id });
 }
 
 /**
@@ -340,7 +214,8 @@ async function findBookingByTradePrefix(
     return { ref: directSnap.ref, booking: { id: directSnap.id, ...directSnap.data() } as BookingRecord };
   }
   const all = await adminDb.collection('bookings').get();
-  const hit = all.docs.find((d) => d.id.startsWith(prefix));
+  const hits = all.docs.filter((d) => d.id.startsWith(prefix));
+  const hit = hits.length === 1 ? hits[0] : undefined;
   if (hit) {
     return { ref: hit.ref, booking: { id: hit.id, ...hit.data() } as BookingRecord };
   }
@@ -363,25 +238,20 @@ async function handleRefundNotify(payload: KPayNotifyPayload) {
     console.error('[kpay/webhook] REFUND booking not found for', tradeNo);
     return NextResponse.json({ ok: true, notFound: true, tradeNo });
   }
-  const { ref, booking } = found;
-
-  // Idempotency — skip if this refund transaction is already logged.
-  const existing = (booking as { kpayRefunds?: Array<{ kpayTransactionNo?: string }> }).kpayRefunds || [];
-  if (existing.some((r) => r.kpayTransactionNo === payload.transactionNo)) {
-    return NextResponse.json({ ok: true, alreadyRecorded: true });
-  }
-
-  await ref.update({
-    kpayRefunds: FieldValue.arrayUnion({
-      amount: payload.payAmount,
-      state: payload.transactionState,        // 2=success 3=failed
-      stateDesc: payload.transactionStateDesc || null,
-      kpayOrderNo: payload.orderNo,
-      kpayTransactionNo: payload.transactionNo,
-      refundOutTradeNo: tradeNo,
-      recordedAt: new Date().toISOString(),
-    }),
-    updatedAt: FieldValue.serverTimestamp(),
+  const { ref } = found;
+  await adminDb.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    const existing = snap.data()?.kpayRefunds || [];
+    const prior = existing.find((r: { kpayTransactionNo: string }) => r.kpayTransactionNo === payload.transactionNo);
+    if (prior?.state === 2 || prior?.state === payload.transactionState) return;
+    tx.update(ref, {
+      kpayRefunds: [...existing.filter((r: { kpayTransactionNo: string }) => r.kpayTransactionNo !== payload.transactionNo), {
+        amount: payload.payAmount, state: payload.transactionState,
+        stateDesc: payload.transactionStateDesc || null, kpayOrderNo: payload.orderNo,
+        kpayTransactionNo: payload.transactionNo, refundOutTradeNo: tradeNo,
+        recordedAt: new Date().toISOString(),
+      }], updatedAt: FieldValue.serverTimestamp(),
+    });
   });
 
   return NextResponse.json({ ok: true, bookingId: ref.id, refund: true });

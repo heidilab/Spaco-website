@@ -1285,6 +1285,14 @@ export default function AdminBookingDetailPage() {
         </h1>
       </div>
 
+      {booking.paymentReviewRequired && (
+        <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-900">
+          {locale === 'zh'
+            ? '已收到 KPay 款項，但預訂未自動確認。請核對取消／過期狀態、積分或優惠額度及付款金額，再安排退款或確認場地；勿要求客人重複付款。'
+            : 'KPay funds received; automatic confirmation was withheld. Review booking status, rewards and amount before arranging a refund or confirming availability. Do not request duplicate payment.'}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* LEFT — booking info + edit */}
         <div className="lg:col-span-2 space-y-6">

@@ -92,18 +92,18 @@ export async function GET(request: NextRequest) {
   for (const docSnap of candidates) {
     const bookingId = docSnap.id;
     try {
-      const data = docSnap.data() as { venueId?: string; googleEventId?: string };
-      await docSnap.ref.update({
-        status: 'payment_not_completed',
-        updatedAt: FieldValue.serverTimestamp(),
+      const data = await adminDb.runTransaction(async tx => {
+        const fresh = await tx.get(docSnap.ref);
+        const current = fresh.data();
+        if (!current || !['pending', 'awaiting_payment'].includes(current.status)
+          || current.receiptUrl || current.payments?.length
+          || (typeof current.pendingExpiresAt === 'number' && current.pendingExpiresAt > now)) return null;
+        const slots = await tx.get(adminDb.collection('blocked_slots').where('bookingId', '==', bookingId));
+        tx.update(docSnap.ref, { status: 'payment_not_completed', updatedAt: FieldValue.serverTimestamp() });
+        for (const slot of slots.docs) tx.delete(slot.ref);
+        return current;
       });
-      const blockedSnap = await adminDb
-        .collection('blocked_slots')
-        .where('bookingId', '==', bookingId)
-        .get();
-      const batch = adminDb.batch();
-      for (const b of blockedSnap.docs) batch.delete(b.ref);
-      if (blockedSnap.size > 0) await batch.commit();
+      if (!data) continue;
       // Remove the orphaned Google Calendar event so staff don't see a
       // ghost booking. Non-fatal on failure (e.g. gcal disconnected).
       if (data.googleEventId && data.venueId) {

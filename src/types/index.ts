@@ -280,6 +280,9 @@ export interface BookingRecord {
      *  (KPay card/Apple Pay/Google Pay +1.5%). Not part of the booking's
      *  own math — `amount` is already the base credited to the booking. */
     cardSurcharge?: number;
+    kpayTransactionNo?: string;
+    kpayOrderNo?: string;
+    kpayPayMethodId?: number | null;
   }>;
   /** Pending card surcharges keyed by KPay managedOutTradeNo — written
    *  at checkout, consumed by the KPay webhook to split base vs
@@ -376,6 +379,8 @@ export interface BookingRecord {
   /** Set by the payment-confirmation handler once the points have been
    *  taken out of the user's balance. Used to make the deduction
    *  idempotent across retries. */
+  paymentReviewRequired?: boolean;
+  paymentReviewReason?: string;
   pointsRedeemedAt?: unknown;
   /** Actual amount deducted (capped at the customer's balance at the
    *  time of deduction; may be < pointsUsed under concurrent race). */

@@ -117,8 +117,22 @@ export async function POST(req: NextRequest) {
         if (existing.sessionUrl) return { amount, existing, managedOutTradeNo: existing.managedOutTradeNo as string };
         throw new BookingInputError('PAYMENT_PROCESSING');
       }
+      if (!booking.pointsRedeemedAt && (booking.pointsUsed || 0) > 0) {
+        const profile = await tx.get(adminDb.collection('users').doc(uid));
+        if ((profile.data()?.loyaltyPoints || 0) < booking.pointsUsed!) throw new BookingInputError('REWARDS_UNAVAILABLE');
+      }
+      if (booking.promoCodeId && !booking.promoRedeemedAt) {
+        const promo = await tx.get(adminDb.collection('promo_codes').doc(booking.promoCodeId));
+        const pc = promo.data();
+        const uses = await tx.get(adminDb.collection('bookings').where('userId', '==', uid));
+        if (!pc || (pc.totalUsageLimit != null && pc.totalUsageCount >= pc.totalUsageLimit)
+          || (pc.perUserLimit != null && uses.docs.filter(d => d.data().promoCodeId === booking.promoCodeId && d.data().promoRedeemedAt).length >= pc.perUserLimit)) {
+          throw new BookingInputError('REWARDS_UNAVAILABLE');
+        }
+      }
       // The transaction serializes creation; milliseconds distinguish later top-up orders.
       const tradeNo = `B${bookingId.slice(0, 12)}_${isBalancePayment ? 'B' : 'P'}${Date.now()}`;
+      tx.create(adminDb.collection('_kpay_orders').doc(tradeNo), { bookingId, amount, surcharge: methodGroup === 'card' ? cardSurchargeFor(amount) : 0, isBalancePayment: !!isBalancePayment, createdAt: Date.now() });
       tx.set(lockRef, { bookingId, uid, amount, methodGroup, managedOutTradeNo: tradeNo,
         paidBase: paidBase(booking), status: 'creating', createdAt: Date.now() });
       return { amount, existing: null, managedOutTradeNo: tradeNo };

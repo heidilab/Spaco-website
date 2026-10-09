@@ -1,5 +1,6 @@
 export function paymentErrorMessage(code: string, locale: 'zh' | 'en'): string {
   const messages: Record<string, [string, string]> = {
+    REWARDS_UNAVAILABLE: ['積分或優惠額度已改變，請返回確認頁重新核對，或聯絡我們。', 'Reward availability changed. Review your booking or contact us.'],
     PRICE_CHANGED: ['金額已更新，請重新整理此頁確認金額後付款。', 'The amount changed. Refresh and confirm the latest amount before paying.'],
     PAYMENT_ALREADY_STARTED: ['已有付款連結。請選回原本付款方式繼續；如要更改，請聯絡我們。', 'A payment link already exists. Use the original payment method or contact us to change it.'],
     PAYMENT_PROCESSING: ['付款連結處理中。請稍後重試；如持續出現，請聯絡我們核對，勿重複付款。', 'The payment link is being processed. Retry later or contact us to check it; do not pay twice.'],
