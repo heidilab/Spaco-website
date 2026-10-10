@@ -1,5 +1,5 @@
 {
-  "status": "staged-not-published",
+  "status": "published-2026-10-10",
   "basis": "Heidi confirmed: Wan Chai has no BBQ; all other branches have BBQ. Publish with approved release; use exact old-text preconditions.",
   "patches": [
     {
@@ -58,5 +58,6 @@
       "old": "打完幾圈麻雀轉場BBQ燒嘢食",
       "new": "打完幾圈麻雀轉場BBQ燒嘢食（灣仔不設BBQ，其他分店提供）"
     }
-  ]
+  ],
+  "verification": "All 7 documents / 8 replacements read back; public article correction visible. Exact-text and updateTime preconditions used."
 }
