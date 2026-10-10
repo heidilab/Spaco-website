@@ -39,3 +39,9 @@ Firebase rules rollback is separate. Remote rules captured before the first secu
 Home title, description and social images can be managed in admin SEO. Titles already containing SPACO use an absolute title to avoid a second brand suffix. Promotional image alternative text should describe the offer; do not enter storage keys or filenames. Footer follows Instagram rather than collecting email addresses through an unconnected form. Phone/email links open the device's dialler/mail application.
 
 Venue-specific claims in articles must be checked against current venue settings and the business owner. The audit found an all-branches BBQ statement; do not silently rewrite live CMS articles as part of a code preview. Review that article with the current venue information before publishing a correction.
+
+## Preview authentication
+
+Before sharing a new Vercel preview URL, verify its exact hostname is present in Firebase Authentication authorized domains. A new random deployment hostname is not automatically authorized. Preserve all existing domains and add only the verified SPACO hostname (no scheme, path, port or wildcard). Read the config back after updating. Preview still shares live Firebase; do not create test bookings or payments to verify login.
+
+2026-10-10: added `spaco-website-73kkj89n6-heidilabs-projects.vercel.app` to the live Firebase Auth allowlist after the reported `auth/unauthorized-domain` error. Readback confirmed the hostname and preservation of all six previous domains. No app deployment, provider change, user account change or end-to-end user sign-in was performed.
