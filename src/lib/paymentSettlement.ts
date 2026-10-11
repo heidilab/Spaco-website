@@ -1,3 +1,4 @@
+import { promoEligibilityReason } from './promoEligibility';
 import type { BookingRecord, PromoCode } from '@/types';
 import { computeGrandTotal, paidBase } from './bookingMoney';
 
@@ -11,6 +12,7 @@ export function settlementDecision(booking: BookingRecord, credit: number, point
   if (!review && booking.promoCodeId && !booking.promoRedeemedAt && (!promo
     || (promo.totalUsageLimit != null && promo.totalUsageCount >= promo.totalUsageLimit)
     || (promo.perUserLimit != null && userUses >= promo.perUserLimit))) review = 'promo_limit';
+  if (!review && booking.promoCodeId && !booking.promoRedeemedAt && promo && promoEligibilityReason(promo, booking)) review = 'promo_not_applicable';
   const balanceDue = Math.max(0, Math.round((computeGrandTotal(booking) - paidBase(booking) - credit) * 100) / 100);
   const status = review ? (['cancelled', 'payment_not_completed'].includes(booking.status) ? booking.status : 'awaiting_review') : booking.status === 'completed' || (booking.depositRefund && balanceDue === 0) ? 'completed' : 'confirmed';
   return { review, balanceDue, status };

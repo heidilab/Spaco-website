@@ -35,8 +35,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       let freeDrinksCost = booking.promoFreeDrinksCost || 0;
       // CS quotes are immutable commercial terms. Customers may add points,
       // contact/refund details, but cannot remove or replace the agreed deal.
-      if (!booking.draftId && !booking.packageSlug) {
-        const drinks = freeDrinksVenues.includes(booking.venueId) ? 0
+      if (!booking.draftId) {
+        const drinks = booking.packageSlug || freeDrinksVenues.includes(booking.venueId) ? 0
           : Math.round(25 * adultEquivalent(booking.guestCount - (booking.childCount || 0), booking.childCount || 0));
         const autoDrinks = !!(booking as BookingRecord & { promoAutoDrinks?: boolean }).promoAutoDrinks;
         if (autoDrinks) {
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           const subtotal = pricing.subtotal + (addDrinks ? drinks : 0);
           const result = calcPromoDiscount(pc, { subtotal, baseCharge: pricing.baseCharge,
             adultEquiv: adultEquivalent(booking.guestCount - (booking.childCount || 0), booking.childCount || 0),
-            drinksCost: drinks, venueId: booking.venueId });
+            drinksCost: drinks, venueId: booking.venueId, date: booking.date, endDate: booking.endDate, packageSlug: booking.packageSlug });
           if (!result || (pc.totalUsageLimit != null && pc.totalUsageCount >= pc.totalUsageLimit)) throw new BookingInputError('INVALID_PROMO');
           if (pc.perUserLimit != null) {
             const used = await tx.get(adminDb.collection('bookings').where('userId', '==', uid));

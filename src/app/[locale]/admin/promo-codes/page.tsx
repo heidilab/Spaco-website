@@ -8,12 +8,13 @@ import {
 } from '@/lib/promoCodes';
 import type { PromoCode, PromoCodeType } from '@/types';
 import VoucherCampaigns from '@/components/admin/VoucherCampaigns';
-import { venues } from '@/lib/venues';
+import PromoRestrictionsFields, { restrictionErrorText } from '@/components/admin/PromoRestrictionsFields';
+import { EMPTY_PROMO_RESTRICTIONS, promoRestrictionError, type PromoRestrictions } from '@/lib/promoEligibility';
 import {
-  Tag, Plus, Edit2, Trash2, X, Check, Loader2, Calendar, Users as UsersIcon, AlertCircle, Building2,
+  Tag, Plus, Edit2, Trash2, X, Check, Loader2, Calendar, Users as UsersIcon, AlertCircle,
 } from 'lucide-react';
 
-interface FormState {
+interface FormState extends PromoRestrictions {
   code: string;
   type: PromoCodeType;
   percent: string;
@@ -31,6 +32,7 @@ interface FormState {
 }
 
 const EMPTY_FORM: FormState = {
+  ...EMPTY_PROMO_RESTRICTIONS,
   code: '',
   type: 'percent',
   percent: '',
@@ -104,6 +106,10 @@ export default function PromoCodesPage() {
       enabled: c.enabled,
       description: c.description || '',
       venueIds: c.venueIds || [],
+      excludedDateRanges: c.excludedDateRanges || [],
+      packageScope: c.packageScope || 'all',
+      packageSlugs: c.packageSlugs || [],
+      appliesToStandardBookings: c.appliesToStandardBookings !== false,
       freeDrinks: !!c.freeDrinks,
       percentScope: c.percentScope === 'rent' ? 'rent' : 'all',
     });
@@ -115,6 +121,8 @@ export default function PromoCodesPage() {
   }
 
   async function handleSave() {
+    const restrictionError = promoRestrictionError(form);
+    if (restrictionError) { setFlash({kind:'err',text:restrictionErrorText(restrictionError,locale)}); return; }
     if (!form.code.trim()) {
       setFlash({ kind: 'err', text: locale === 'zh' ? '請輸入優惠碼' : 'Code required' });
       return;
@@ -144,6 +152,10 @@ export default function PromoCodesPage() {
         enabled: form.enabled,
         freeDrinks: form.freeDrinks,
         venueIds: form.venueIds,
+        excludedDateRanges: form.excludedDateRanges || [],
+        packageScope: form.packageScope || 'all',
+        packageSlugs: form.packageSlugs || [],
+        appliesToStandardBookings: form.appliesToStandardBookings !== false,
       };
       if (form.type === 'percent') {
         data.percent = Number(form.percent);
@@ -363,52 +375,7 @@ export default function PromoCodesPage() {
             </Field>
           </div>
 
-          {/* Per-branch scope. Empty selection = applies to all branches. */}
-          <Field
-            label={
-              <span className="flex items-center gap-1.5">
-                <Building2 size={13} />
-                {locale === 'zh' ? '適用分店（唔揀 = 所有分店）' : 'Applies to branches (none = all)'}
-              </span>
-            }
-            fullWidth
-          >
-            <div className="flex flex-wrap gap-2">
-              {venues.map((v) => {
-                const checked = form.venueIds.includes(v.id);
-                return (
-                  <button
-                    key={v.id}
-                    type="button"
-                    onClick={() =>
-                      setForm({
-                        ...form,
-                        venueIds: checked
-                          ? form.venueIds.filter((x) => x !== v.id)
-                          : [...form.venueIds, v.id],
-                      })
-                    }
-                    className={`px-3 py-1.5 rounded-pill text-xs font-medium border transition-all ${
-                      checked
-                        ? 'bg-gradient-pink text-white border-transparent shadow-glow'
-                        : 'bg-white/60 text-ink border-charcoal/15 hover:bg-white'
-                    }`}
-                  >
-                    {checked && '✓ '}{v.name[locale]}
-                  </button>
-                );
-              })}
-            </div>
-            {form.venueIds.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setForm({ ...form, venueIds: [] })}
-                className="mt-2 text-xs text-ink-soft underline hover:text-pink"
-              >
-                {locale === 'zh' ? '清除選擇（適用所有分店）' : 'Clear (apply to all)'}
-              </button>
-            )}
-          </Field>
+          <PromoRestrictionsFields key={editingId} value={form} locale={locale} onChange={patch => setForm(prev => ({...prev,...patch}))} />
 
           {/* Free-drinks combo flag. Hidden when type is already free_drinks
               (then it's already implied). */}

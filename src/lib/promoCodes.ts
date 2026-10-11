@@ -1,3 +1,4 @@
+import { promoEligibilityReason, promoRestrictionError, type PromoRestrictions, type PromoBookingContext } from './promoEligibility';
 // Promo code admin CRUD + checkout validation helpers.
 //
 // Codes live in Firestore at `promo_codes/{id}`. The admin UI uses
@@ -42,6 +43,8 @@ export async function getPromoCode(id: string): Promise<PromoCode | null> {
 }
 
 export async function createPromoCode(data: Omit<PromoCode, 'id' | 'createdAt' | 'updatedAt' | 'totalUsageCount'>): Promise<string> {
+  const restrictionError = promoRestrictionError(data);
+  if (restrictionError) throw new Error(restrictionError);
   const ref = await addDoc(collection(db, 'promo_codes'), {
     ...data,
     code: data.code.trim().toUpperCase(),
@@ -81,7 +84,7 @@ function randomVoucherSuffix(len: number): string {
   return s;
 }
 
-export interface VoucherCampaignParams {
+export interface VoucherCampaignParams extends PromoRestrictions {
   /** Campaign name — groups the codes in the admin list. */
   campaign: string;
   /** Code prefix, e.g. "SPACO500" → SPACO500-X7KQ2M. */
@@ -103,6 +106,8 @@ export interface VoucherCampaignParams {
  *  validator matches the first, so worst case one voucher is unusable,
  *  never double-spendable. */
 export async function createVoucherCampaign(params: VoucherCampaignParams): Promise<PromoCode[]> {
+  const restrictionError = promoRestrictionError(params);
+  if (restrictionError) throw new Error(restrictionError);
   const qty = Math.max(1, Math.min(200, Math.floor(params.quantity)));
   const created: PromoCode[] = [];
   const seen = new Set<string>();
@@ -122,6 +127,11 @@ export async function createVoucherCampaign(params: VoucherCampaignParams): Prom
       perUserLimit: 1,
       enabled: true,
       campaign: params.campaign,
+      venueIds: params.venueIds || [],
+      excludedDateRanges: params.excludedDateRanges || [],
+      packageScope: params.packageScope || 'all',
+      packageSlugs: params.packageSlugs || [],
+      appliesToStandardBookings: params.appliesToStandardBookings !== false,
       description: params.campaign,
       note: '',
     };
@@ -138,7 +148,7 @@ export async function createVoucherCampaign(params: VoucherCampaignParams): Prom
  *  not met). Pure function so server + client + admin preview share. */
 export function calcPromoDiscount(
   code: PromoCode,
-  ctx: {
+  ctx: PromoBookingContext & {
     subtotal: number;
     /** Venue-rental portion of the bill (pricing.baseCharge, incl. any
      *  peak surcharge). Basis for percentScope === 'rent' codes. When a
@@ -161,11 +171,7 @@ export function calcPromoDiscount(
   if (code.startDate && todayStr < code.startDate) return null;
   if (code.endDate && todayStr > code.endDate) return null;
 
-  // Branch scope check — empty / undefined venueIds = applies to every
-  // branch. Otherwise the booking's venueId must be in the allowlist.
-  if (code.venueIds && code.venueIds.length > 0) {
-    if (!ctx.venueId || !code.venueIds.includes(ctx.venueId)) return null;
-  }
+  if (promoEligibilityReason(code, ctx)) return null;
 
   // Minimum subtotal check (cash type).
   if (code.type === 'cash' && code.minSubtotal && ctx.subtotal < code.minSubtotal) {

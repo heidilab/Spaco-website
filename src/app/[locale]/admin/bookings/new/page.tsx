@@ -350,6 +350,9 @@ export default function AdminNewBookingPage() {
     const n = parseInt(t, 10);
     return Number.isFinite(n) && n >= 0 ? n : null;
   })();
+  // A previously validated code must be reapplied after changing the booking.
+  useEffect(() => { setPromo(null); setPromoError(null); }, [date, venueId, selectedPackage?.slug, subtotalAfterPackage, guestCount]);
+
   const securityDepositAuto = selectedPackage?.deposit ?? calculateSecurityDeposit(subtotalAfterPackage);
   // Airbnb bookings carry NO security deposit — the platform handles
   // damage claims; extra charges are chased via 按金結算's overflow path.
@@ -402,6 +405,7 @@ export default function AdminNewBookingPage() {
           adultEquiv: adultEquiv || 1,
           drinksCost: drinksInCart ? Math.round(25 * adultEquiv) : projectedDrinksCost,
           venueId,
+          date, endDate, packageSlug: selectedPackage?.slug,
           // No userId here — admin is creating, not the customer.
         }),
       });
@@ -413,6 +417,9 @@ export default function AdminNewBookingPage() {
           : data.reason === 'disabled'  ? (locale === 'zh' ? '優惠碼已暫停' : 'Code disabled')
           : data.reason === 'expired'   ? (locale === 'zh' ? '優惠碼已過期' : 'Code expired')
           : data.reason === 'not_started' ? (locale === 'zh' ? `優惠由 ${data.startDate} 開始` : `Starts ${data.startDate}`)
+          : data.reason === 'excluded_date' ? (locale === 'zh' ? '此優惠碼不適用於所選活動日期' : 'Excluded event date')
+          : data.reason === 'wrong_package' ? (locale === 'zh' ? '此優惠碼不適用於所選套餐／訂場類型' : 'Ineligible package or booking type')
+          : data.reason === 'missing_booking_context' ? (locale === 'zh' ? '請先確認活動日期' : 'Confirm event dates first')
           : data.reason === 'wrong_venue' ? (locale === 'zh' ? '此優惠碼唔適用於依間分店' : 'Code not valid at this branch')
           : data.reason === 'sold_out'  ? (locale === 'zh' ? '優惠碼已用完' : 'Code sold out')
           : data.reason === 'min_subtotal' ? (locale === 'zh' ? `需滿 HK$${data.minSubtotal}` : `Min subtotal HK$${data.minSubtotal}`)

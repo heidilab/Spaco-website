@@ -1,3 +1,4 @@
+import { promoEligibilityReason, type PromoBookingContext } from '@/lib/promoEligibility';
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { calcPromoDiscount } from '@/lib/promoCodes';
@@ -11,7 +12,7 @@ export const runtime = 'nodejs';
 // never gets a list of codes). Returns the resolved discount or a
 // reason why the code can't be used.
 
-interface ValidateBody {
+interface ValidateBody extends PromoBookingContext {
   /** Venue-rental portion — basis for rent-scoped % codes. */
   baseCharge?: number;
   code?: string;
@@ -53,7 +54,7 @@ export async function POST(req: NextRequest) {
 
     // Window check + minSubtotal check + venue scope are all inside calcPromoDiscount.
     const baseCharge = typeof body.baseCharge === 'number' ? Math.max(0, body.baseCharge) : undefined;
-    const discount = calcPromoDiscount(code, { subtotal, baseCharge, adultEquiv, drinksCost, venueId: body.venueId });
+    const discount = calcPromoDiscount(code, { subtotal, baseCharge, adultEquiv, drinksCost, venueId: body.venueId, date: body.date, endDate: body.endDate, packageSlug: body.packageSlug });
     if (!discount) {
       // Determine specific reason for clearer UI message.
       const todayStr = new Date().toISOString().slice(0, 10);
@@ -63,9 +64,8 @@ export async function POST(req: NextRequest) {
       if (code.endDate && todayStr > code.endDate) {
         return NextResponse.json({ valid: false, reason: 'expired', endDate: code.endDate });
       }
-      if (code.venueIds && code.venueIds.length > 0 && (!body.venueId || !code.venueIds.includes(body.venueId))) {
-        return NextResponse.json({ valid: false, reason: 'wrong_venue', venueIds: code.venueIds });
-      }
+      const eligibilityReason = promoEligibilityReason(code, body);
+      if (eligibilityReason) return NextResponse.json({valid:false, reason:eligibilityReason});
       if (code.type === 'cash' && code.minSubtotal && subtotal < code.minSubtotal) {
         return NextResponse.json({ valid: false, reason: 'min_subtotal', minSubtotal: code.minSubtotal });
       }

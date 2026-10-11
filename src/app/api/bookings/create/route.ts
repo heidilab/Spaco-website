@@ -1,3 +1,4 @@
+import { promoEligibilityReason } from '@/lib/promoEligibility';
 import { NextRequest, NextResponse } from 'next/server';
 import { getPeakDayAdmin } from '@/lib/peakDaysAdmin';
 import { resolvePeakRule, effectiveMinGuests, effectiveMinHours, swSplitBlocked } from '@/lib/peakDayRules';
@@ -170,33 +171,6 @@ export async function POST(req: NextRequest) {
       }
     }
     const computed = calculatePricing(venue, isWeekend, hours, guestCount, addOns, childCount, peakRule?.surchargePerHead || 0, draftSurchargeOverride);
-    // Revalidate the promo server-side (window / venue / min-subtotal /
-    // usage limits all enforced inside calcPromoDiscount).
-    if (rest.promoCodeId) {
-      try {
-        const pcSnap = await adminDb.collection('promo_codes').doc(String(rest.promoCodeId)).get();
-        if (pcSnap.exists) {
-          const pc = { id: pcSnap.id, ...pcSnap.data() } as PromoCode;
-          const equiv = adultEquivalent(Math.max(0, guestCount - childCount), childCount);
-          const drinksCost = freeDrinksVenues.includes(venueId) || !addOns.some((a: { id: string }) => a.id === 'drinks') ? 0 : Math.round(25 * equiv);
-          const d = calcPromoDiscount(pc, { subtotal: computed.subtotal, baseCharge: computed.baseCharge, adultEquiv: equiv, drinksCost, venueId });
-          const withinTotal = pc.totalUsageLimit == null || pc.totalUsageCount < pc.totalUsageLimit;
-          let withinUser = true;
-          if (pc.perUserLimit != null) {
-            const usage = await adminDb.collection('bookings').where('userId', '==', uid).get();
-            withinUser = usage.docs.filter(doc => doc.data().promoCodeId === pc.id && doc.data().promoRedeemedAt).length < pc.perUserLimit;
-          }
-          if (d && d.amount > 0 && pc.enabled !== false && withinTotal && withinUser) {
-            promoDiscount = Math.min(d.amount, computed.subtotal);
-            promoFreeDrinksCost = d.freeDrinks ? drinksCost : 0;
-            promoCode = pc.code;
-            promoCodeId = pc.id;
-          }
-        }
-      } catch (err) {
-        console.warn('[bookings/create] promo revalidation failed, dropping promo:', err);
-      }
-    }
     sanitizedPricing = {
       baseCharge: computed.baseCharge,
       addOnTotal: computed.addOnTotal,
@@ -206,11 +180,45 @@ export async function POST(req: NextRequest) {
     };
   }
 
+  // Revalidate standard and package promos using the server-computed price.
+  // Scope/window/minimum checks and usage limits are checked before storage.
+  if (rest.promoCodeId && !draftId) {
+    try {
+      const pcSnap = await adminDb.collection('promo_codes').doc(String(rest.promoCodeId)).get();
+      if (pcSnap.exists) {
+        const pc = { id: pcSnap.id, ...pcSnap.data() } as PromoCode;
+        if (promoEligibilityReason(pc, {venueId,date,endDate,packageSlug:rest.packageSlug})) throw new BookingInputError('PROMO_NOT_APPLICABLE');
+        const equiv = adultEquivalent(Math.max(0, guestCount - childCount), childCount);
+        const drinksCost = isPackage || freeDrinksVenues.includes(venueId) || !addOns.some((a: { id: string }) => a.id === 'drinks') ? 0 : Math.round(25 * equiv);
+        const d = calcPromoDiscount(pc, { subtotal: sanitizedPricing.subtotal, baseCharge: sanitizedPricing.baseCharge, adultEquiv: equiv, drinksCost, venueId, date, endDate, packageSlug: rest.packageSlug });
+        const withinTotal = pc.totalUsageLimit == null || pc.totalUsageCount < pc.totalUsageLimit;
+        let withinUser = true;
+        if (pc.perUserLimit != null) {
+          const usage = await adminDb.collection('bookings').where('userId', '==', uid).get();
+          withinUser = usage.docs.filter(doc => doc.data().promoCodeId === pc.id && doc.data().promoRedeemedAt).length < pc.perUserLimit;
+        }
+        if (d && d.amount > 0 && pc.enabled !== false && withinTotal && withinUser) {
+          promoDiscount = Math.min(d.amount, sanitizedPricing.subtotal);
+          promoFreeDrinksCost = d.freeDrinks ? drinksCost : 0;
+          promoCode = pc.code;
+          promoCodeId = pc.id;
+        }
+      }
+    } catch (err) {
+      if (err instanceof BookingInputError) throw err;
+      console.warn('[bookings/create] promo revalidation failed, dropping promo:', err);
+    }
+  }
+
   if (draftId) {
     promoDiscount = finiteNumber(rest.promoDiscount || 0);
     promoFreeDrinksCost = finiteNumber(rest.promoFreeDrinksCost || 0);
     promoCode = rest.promoCode || null;
     promoCodeId = rest.promoCodeId || null;
+    if (promoCodeId) {
+      const pc = await adminDb.collection('promo_codes').doc(promoCodeId).get();
+      if (!pc.exists || promoEligibilityReason(pc.data() as PromoCode, {venueId,date,endDate,packageSlug:rest.packageSlug})) throw new BookingInputError('PROMO_NOT_APPLICABLE');
+    }
     if (!sanitizedPricing) throw new BookingInputError('INVALID_DRAFT_PRICE');
     for (const key of ['baseCharge', 'addOnTotal', 'subtotal', 'securityDeposit', 'deposit']) finiteNumber(sanitizedPricing[key]);
   }

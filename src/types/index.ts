@@ -659,6 +659,12 @@ export interface PromoCode {
   note?: string;
   /** Venue ids the code is valid for. Empty / undefined = all branches. */
   venueIds?: string[];
+  /** Inclusive Hong Kong event-date exclusions (not redemption dates). */
+  excludedDateRanges?: Array<{ start: string; end: string }>;
+  packageScope?: 'all' | 'include' | 'exclude' | 'none';
+  packageSlugs?: string[];
+  /** Independent of packageScope; absent means ordinary bookings are allowed. */
+  appliesToStandardBookings?: boolean;
   /** Orthogonal "also make the drinks add-on free" flag — combines with
    *  any monetary `type` (percent / cash / per_pax). Legacy codes with
    *  type='free_drinks' behave as if this is true regardless. */

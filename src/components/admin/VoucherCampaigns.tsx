@@ -13,6 +13,8 @@
 // usage-increment pipeline applies untouched. This component only groups,
 // generates, and annotates.
 
+import PromoRestrictionsFields, { restrictionErrorText } from './PromoRestrictionsFields';
+import { EMPTY_PROMO_RESTRICTIONS, promoRestrictionError, type PromoRestrictions } from '@/lib/promoEligibility';
 import { useMemo, useState } from 'react';
 import {
   createVoucherCampaign, updatePromoCode, deletePromoCode,
@@ -41,7 +43,7 @@ const STATUS_META: Record<CodeStatus, { zh: string; en: string; cls: string }> =
   expired:  { zh: '已過期', en: 'Expired',  cls: 'bg-amber-50 text-amber-700 border-amber-200' },
 };
 
-interface GenFormState {
+interface GenFormState extends PromoRestrictions {
   campaign: string;
   prefix: string;
   quantity: string;
@@ -52,6 +54,7 @@ interface GenFormState {
 }
 
 const EMPTY_GEN: GenFormState = {
+  ...EMPTY_PROMO_RESTRICTIONS,
   campaign: '', prefix: 'SPACO', quantity: '10',
   amount: '500', minSubtotal: '3800', startDate: '', endDate: '',
 };
@@ -93,6 +96,8 @@ export default function VoucherCampaigns({
     if (!gen.prefix.trim()) { setError(locale === 'zh' ? '請輸入 code 字頭' : 'Prefix required'); return; }
     if (!Number.isFinite(quantity) || quantity < 1 || quantity > 200) { setError(locale === 'zh' ? '數量 1–200' : 'Quantity 1–200'); return; }
     if (!Number.isFinite(amount) || amount <= 0) { setError(locale === 'zh' ? '請輸入面值' : 'Amount required'); return; }
+    const restrictionError = promoRestrictionError(gen);
+    if (restrictionError) { setError(restrictionErrorText(restrictionError,locale)); return; }
     setGenerating(true);
     try {
       const params: VoucherCampaignParams = {
@@ -103,6 +108,9 @@ export default function VoucherCampaigns({
         minSubtotal: parseFloat(gen.minSubtotal) || 0,
         startDate: gen.startDate || null,
         endDate: gen.endDate || null,
+        venueIds: gen.venueIds || [], excludedDateRanges: gen.excludedDateRanges || [],
+        packageScope: gen.packageScope || 'all', packageSlugs: gen.packageSlugs || [],
+        appliesToStandardBookings: gen.appliesToStandardBookings !== false,
       };
       await createVoucherCampaign(params);
       setGenOpen(false);
@@ -199,6 +207,7 @@ export default function VoucherCampaigns({
                 className="mt-1 w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white" />
             </label>
           </div>
+          <PromoRestrictionsFields value={gen} locale={locale} onChange={patch => setGen(prev => ({...prev,...patch}))} />
           {error && <p className="text-xs text-rose-600 mt-2">{error}</p>}
           <button
             onClick={handleGenerate}

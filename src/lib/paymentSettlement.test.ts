@@ -24,3 +24,13 @@ describe('payment settlement decisions',()=>{
     expect(settlementDecision({...booking,status:'completed'},1000,0,undefined,0,0).status).toBe('completed');
   });
 });
+
+describe('restricted promos at payment settlement', () => {
+  const code={enabled:true,totalUsageCount:0,packageScope:'none'} as PromoCode;
+  it('routes a newly ineligible package payment to manual review', () => {
+    expect(settlementDecision({...booking,promoCodeId:'p',packageSlug:'birthday-cwb'},900,0,code,0,0).review).toBe('promo_not_applicable');
+  });
+  it('does not retroactively reject an already redeemed discount', () => {
+    expect(settlementDecision({...booking,promoCodeId:'p',packageSlug:'birthday-cwb',promoRedeemedAt:1 as never},900,0,code,0,0).review).toBeNull();
+  });
+});

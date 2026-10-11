@@ -340,13 +340,8 @@ export default function ConfirmBookingPage() {
   }
 
   async function handleApplyPromo() {
-    // Package bookings: flat price, drinks already included — promo
-    // codes don't apply, and the free_drinks auto-add path would
-    // clobber the package price with per-head math.
-    if (booking?.packageSlug || booking?.draftId) {
-      setPromoError(locale === 'zh' ? '套餐訂單不適用優惠碼' : 'Promo codes cannot be applied to package bookings');
-      return;
-    }
+    // CS-issued prices remain immutable; package promos use the flat subtotal.
+    if (booking?.draftId) return;
     // Re-applying replaces any prior auto-add; reset the flag so a
     // non-free-drinks code doesn't inherit a stale "true".
     setPromoAutoAddedDrinks(false);
@@ -374,7 +369,7 @@ export default function ConfirmBookingPage() {
       const venueIncludesDrinksFree = booking
         ? freeDrinksVenues.includes(booking.venueId)
         : false;
-      const projectedDrinksCost = venueIncludesDrinksFree
+      const projectedDrinksCost = booking?.packageSlug || venueIncludesDrinksFree
         ? 0
         : Math.round(25 * adultEquiv);
 
@@ -388,7 +383,7 @@ export default function ConfirmBookingPage() {
           adultEquiv: adultEquiv || 1,
           drinksCost: projectedDrinksCost,
           userId: user?.uid,
-          venueId: booking?.venueId,
+          venueId: booking?.venueId, date: booking?.date, endDate: booking?.endDate, packageSlug: booking?.packageSlug,
         }),
       });
       const data = await res.json();
@@ -400,6 +395,9 @@ export default function ConfirmBookingPage() {
           if (reason === 'not_started') return locale === 'zh' ? `優惠由 ${data.startDate} 開始` : `Starts ${data.startDate}`;
           if (reason === 'expired') return locale === 'zh' ? `優惠已於 ${data.endDate} 結束` : `Expired ${data.endDate}`;
           if (reason === 'min_subtotal') return locale === 'zh' ? `需滿 HK$${data.minSubtotal} 先可用` : `Min subtotal HK$${data.minSubtotal}`;
+          if (reason === 'excluded_date') return locale === 'zh' ? '此優惠碼不適用於所選活動日期' : 'Code not valid on these event dates';
+          if (reason === 'wrong_package') return locale === 'zh' ? '此優惠碼不適用於所選套餐／訂場類型' : 'Code not valid for this package or booking type';
+          if (reason === 'missing_booking_context') return locale === 'zh' ? '請先確認活動日期' : 'Confirm event dates first';
           if (reason === 'wrong_venue') return locale === 'zh' ? '此優惠碼唔適用於依間分店' : 'Code not valid at this branch';
           if (reason === 'sold_out') return locale === 'zh' ? '優惠碼已用完' : 'Code sold out';
           if (reason === 'per_user_limit') return locale === 'zh' ? `你已用過呢個 code（每人限 ${data.perUserLimit} 次）` : `You've already used this code (limit ${data.perUserLimit})`;
@@ -428,6 +426,7 @@ export default function ConfirmBookingPage() {
       if (
         data.freeDrinks
         && booking
+        && !booking.packageSlug
         && !freeDrinksVenues.includes(booking.venueId)
         && !booking.addOns?.some((a) => a.id === 'drinks')
       ) {
@@ -761,7 +760,7 @@ export default function ConfirmBookingPage() {
           {/* Promo code — hidden for package bookings (flat price, drinks
            *  already included; the free_drinks auto-add path would clobber
            *  the package price with per-head math). */}
-          {!booking.packageSlug && !booking.draftId && (
+          {!booking.draftId && (
           <div className="glass-card p-7 space-y-3">
             <div className="flex items-start gap-3">
               <div className="w-10 h-10 rounded-2xl bg-gradient-warm flex items-center justify-center text-white shrink-0">

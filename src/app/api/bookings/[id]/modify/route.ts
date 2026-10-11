@@ -323,7 +323,7 @@ export async function POST(
         const pcForRescale = {
           ...(pcSnap.data() as PromoCode), id: pcSnap.id,
           enabled: true, startDate: undefined, endDate: undefined,
-          venueIds: undefined, minSubtotal: undefined,
+          venueIds: undefined, minSubtotal: undefined, excludedDateRanges: undefined, packageScope: 'all', appliesToStandardBookings: true,
         } as PromoCode;
         const d = calcPromoDiscount(
           pcForRescale,

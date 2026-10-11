@@ -1,3 +1,4 @@
+import { promoEligibilityReason } from './promoEligibility';
 import {
   collection,
   doc,
@@ -271,6 +272,12 @@ export async function updateBookingDateTime(
   const overnight = endDate !== next.date;
   const targetVenueId = next.venueId || booking.venueId;
   const venueChanged = next.venueId !== undefined && next.venueId !== booking.venueId;
+  if (booking.promoCodeId && (venueChanged || next.date !== booking.date || endDate !== (booking.endDate || booking.date))) {
+    const promoSnap = await getDoc(doc(db, 'promo_codes', booking.promoCodeId));
+    if (promoSnap.exists() && promoEligibilityReason(promoSnap.data() as PromoCode, {venueId:targetVenueId,date:next.date,endDate,packageSlug:booking.packageSlug})) {
+      throw new Error('優惠碼不適用於新日期／分店，請先移除優惠碼再修改。 Promo not valid for the new date/branch.');
+    }
+  }
 
   // Early setup access (提早入場佈置) — hours locked BEFORE startTime.
   // Derived from the (new or existing) early-setup add-on quantity so the
@@ -525,7 +532,7 @@ export async function updateBookingDateTime(
             const pcForRescale = {
               ...(pcSnap.data() as PromoCode), id: pcSnap.id,
               enabled: true, startDate: undefined, endDate: undefined,
-              venueIds: undefined, minSubtotal: undefined,
+              venueIds: undefined, minSubtotal: undefined, excludedDateRanges: undefined, packageScope: 'all', appliesToStandardBookings: true,
             } as PromoCode;
             const d = calcPromoDiscount(
               pcForRescale,
