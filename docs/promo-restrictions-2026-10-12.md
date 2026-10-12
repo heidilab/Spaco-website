@@ -1,9 +1,10 @@
 # 優惠碼適用限制 — 2026-10-12
 
-Status: preview deployed on kpay-integration, code commit 6f149b3. No production deployment or live voucher/booking writes.
-Preview: https://spaco-website-i8galhv3v-heidilabs-projects.vercel.app/zh/admin/promo-codes
-Deployment dpl_6CsqN1ezdPXwWAYy61bkGQMyyXMP READY; cloud 170 tests and build passed. Firebase Auth hostname added and read back, all existing domains preserved. Notion changelog and architecture updated.
-The previous production code does not enforce the new fields: do not issue real restricted vouchers from preview before production release.
+Status: production released with Heidi's explicit approval on 2026-10-12.
+Release commit 72a9e79 (implementation 6f149b3) merged/pushed to main.
+Production: https://spacohk.com/zh/admin/promo-codes
+Deployment dpl_vKKux8ZTRpeJtogDBTtSVQ9HUYtp READY, production alias confirmed; cloud 170 tests, TypeScript/build passed. No live voucher/booking writes or data migration.
+Previous preview: https://spaco-website-i8galhv3v-heidilabs-projects.vercel.app/zh/admin/promo-codes
 
 ## Behaviour
 
