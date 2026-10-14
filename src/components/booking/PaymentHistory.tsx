@@ -127,7 +127,7 @@ export default function PaymentHistory({
   // case without needing to store a pricing snapshot.
   const grandTotal = computeGrandTotal(booking);
   const actualPaidTotal = isPaid ? Math.max(0, grandTotal - (booking.balanceDue || 0)) : 0;
-  const loggedTotalAmount = payments.reduce((s, p) => s + (p.amount || 0), 0);
+  const loggedTotalAmount = payments.reduce((s, p) => s + (p.amount || 0) + (p.cardSurcharge || 0), 0);
   const synthAmount = hasUnsplit ? 0 : Math.max(0, actualPaidTotal - loggedTotalAmount);
 
   const baseCharge = booking.pricing.baseCharge ?? 0;
@@ -319,11 +319,11 @@ export default function PaymentHistory({
 
       <div className="flex items-baseline justify-between bg-cream/40 rounded-xl p-3">
         <p className="text-xs text-ink-soft">
-          {locale === 'zh' ? '已收總額' : 'Total received'}
+          {locale === 'zh' ? '已收總額（含信用卡手續費）' : 'Total received (including card fees)'}
         </p>
         <p className="font-bold text-lg">
           HK${(
-            payments.reduce((s, p) => s + (p.amount || 0), 0)
+            payments.reduce((s, p) => s + (p.amount || 0) + (p.cardSurcharge || 0), 0)
             + initialPaid
           ).toLocaleString()}
         </p>
@@ -434,6 +434,13 @@ export default function PaymentHistory({
                 </span>
                 <span className="text-ink-soft">{METHOD_LABELS[p.method]?.[locale] || p.method}</span>
               </div>
+              {!!p.cardSurcharge && (
+                <div className="mt-1 text-ink-soft space-y-0.5">
+                  <p>{locale === 'zh' ? '信用卡手續費' : 'Card fee'}：HK${p.cardSurcharge.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                  <p className="font-semibold">{locale === 'zh' ? '此筆實收（本金＋手續費）' : 'Received (principal + fee)'}：HK${((p.amount || 0) + p.cardSurcharge).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                  <p>{locale === 'zh' ? '手續費不抵扣尾數，亦不計入可退按金。' : 'The fee does not reduce the balance or increase the refundable deposit.'}</p>
+                </div>
+              )}
               {/* Per-entry bucket breakdown intentionally omitted per
                *  Heidi's 2026-05-23 spec — every entry just shows
                *  amount + method + date. */}

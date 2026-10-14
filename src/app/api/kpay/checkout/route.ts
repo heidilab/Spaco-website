@@ -114,7 +114,7 @@ export async function POST(req: NextRequest) {
       const existing = orderSnap.data();
       if (existing && existing.paidBase === paidBase(booking)) {
         if (existing.amount !== amount || existing.methodGroup !== methodGroup) throw new BookingInputError('PAYMENT_ALREADY_STARTED');
-        if (existing.sessionUrl) return { amount, existing, managedOutTradeNo: existing.managedOutTradeNo as string };
+        if (existing.managedOrderNo) return { amount, existing, managedOutTradeNo: existing.managedOutTradeNo as string };
         throw new BookingInputError('PAYMENT_PROCESSING');
       }
       if (!booking.pointsRedeemedAt && (booking.pointsUsed || 0) > 0) {
@@ -138,7 +138,19 @@ export async function POST(req: NextRequest) {
       return { amount, existing: null, managedOutTradeNo: tradeNo };
     });
     const { amount, managedOutTradeNo } = reservation;
-    if (reservation.existing) return NextResponse.json(reservation.existing);
+    if (reservation.existing) {
+      // Reuse the gateway order, never its timestamped cashier signature.
+      // KPay rejects an old signed URL with 40009 even while the order is payable.
+      const existing = reservation.existing;
+      return NextResponse.json({
+        sessionUrl: buildCashierRedirectUrl({ managedOrderNo: existing.managedOrderNo }),
+        managedOrderNo: existing.managedOrderNo,
+        managedOutTradeNo,
+        baseAmount: existing.baseAmount ?? amount,
+        surcharge: existing.surcharge ?? 0,
+        chargeTotal: existing.chargeTotal ?? amount,
+      });
+    }
     const venueName = 'Booking';
 
     const surcharge = methodGroup === 'card' ? cardSurchargeFor(amount) : 0;
@@ -181,7 +193,7 @@ export async function POST(req: NextRequest) {
       managedOrderNo: create.managedOrderNo,
     });
 
-    await lockRef.update({ status: 'ready', sessionUrl: redirectUrl, managedOrderNo: create.managedOrderNo,
+    await lockRef.update({ status: 'ready', managedOrderNo: create.managedOrderNo,
       baseAmount: amount, surcharge, chargeTotal });
     return NextResponse.json({
       sessionUrl: redirectUrl,    // mirror stripe/checkout's response shape

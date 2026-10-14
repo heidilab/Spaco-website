@@ -2919,15 +2919,11 @@ function OutstandingBalanceSection({
   const balance = booking.balanceDue ?? 0;
   const paidTotal = paidBase(booking);
   const owed = amountOwed(booking);
-  const [origin, setOrigin] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);
   const [settling, setSettling] = useState<boolean>(false);
   const [settleMsg, setSettleMsg] = useState<string | null>(null);
   const [recalcing, setRecalcing] = useState<boolean>(false);
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') setOrigin(window.location.origin);
-  }, []);
 
   /** Re-run the pricing recompute for THIS booking using current
    *  date / time / guests / addOns — picks up any policy fix that
@@ -3070,9 +3066,8 @@ function OutstandingBalanceSection({
 
   if (owed <= 0) return null;
 
-  const payUrl = origin
-    ? `${origin}/${locale}/book/${booking.branchSlug}/pay-balance/${booking.id}`
-    : '';
+  // Customer-facing links must never inherit a preview/admin hostname.
+  const payUrl = `https://spacohk.com/${locale}/book/${encodeURIComponent(booking.branchSlug)}/pay-balance/${encodeURIComponent(booking.id)}`;
 
   const venueName = venuesSnapshot().find((v) => v.id === booking.venueId)?.name[locale] || booking.venueId;
   const message =

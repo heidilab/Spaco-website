@@ -1,5 +1,6 @@
 'use client';
 
+import { signOut } from '@/lib/auth';
 import { paymentErrorMessage } from '@/lib/paymentErrors';
 import { adminApiFetch } from '@/lib/adminApiFetch';
 
@@ -38,8 +39,12 @@ export default function PayBalancePage() {
   const [submitting, setSubmitting] = useState(false);
   const [selected, setSelected] = useState<PayChoice | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
+    let active = true;
+    setBooking(null);
+    setError(null);
     if (authLoading) return;
     if (!user) {
       // Don't bounce to '/' — keep the customer on this URL so when they
@@ -52,13 +57,21 @@ export default function PayBalancePage() {
     setLoading(true);
     getBooking(bookingId)
       .then((b) => {
+        if (!active) return;
         if (!b) setError(locale === 'zh' ? '找不到預訂記錄' : 'Booking not found');
         else if (b.userId !== user.uid) setError(locale === 'zh' ? '無權查看此預訂（請用預訂時嘅帳號登入）' : 'Not authorized — please sign in with the account used to make this booking');
         else if ((b.balanceDue ?? 0) <= 0) setError(locale === 'zh' ? '此預訂沒有未繳尾數' : 'No outstanding balance');
         else { setBooking(b); setError(null); }
       })
-      .finally(() => setLoading(false));
-  }, [bookingId, user, authLoading, locale]);
+      .catch((err: { code?: string }) => {
+        if (!active) return;
+        setError(err.code === 'permission-denied'
+          ? (locale === 'zh' ? '無法讀取此預訂，請用預訂時嘅帳號重新登入；如仍然失敗，請聯絡我們核對付款連結。' : 'Unable to access this booking. Sign in with the booking account, or contact us to check the link.')
+          : (locale === 'zh' ? '暫時無法載入預訂，請重試。' : 'Unable to load the booking. Please retry.'));
+      })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [bookingId, user, authLoading, locale, reloadKey]);
 
   const venue = booking ? getVenueById(booking.venueId) : null;
   const venueName = venue?.name[locale] || booking?.branchSlug || '';
@@ -146,8 +159,12 @@ export default function PayBalancePage() {
       <div className="pt-28 min-h-screen flex items-center justify-center px-6">
         <div className="max-w-md w-full text-center space-y-4">
           <p className="text-rose-500">{error || 'Error'}</p>
+          <button className="block mx-auto underline" onClick={() => setReloadKey(k => k + 1)}>{locale === 'zh' ? '重新載入' : 'Retry'}</button>
+          <button className="block mx-auto underline" onClick={async () => {
+            try { await signOut(); } catch { setError(locale === 'zh' ? '登出失敗，請重試。' : 'Sign out failed. Please retry.'); }
+          }}>{locale === 'zh' ? '切換預訂帳號' : 'Switch booking account'}</button>
           <button
-            onClick={() => router.push('/account')}
+            onClick={() => router.push('/my-bookings')}
             className="text-sm text-ink-soft hover:text-ink underline"
           >
             {locale === 'zh' ? '查看我的預訂' : 'View my bookings'}
