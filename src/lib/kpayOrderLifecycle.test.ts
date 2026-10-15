@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canReplaceKpayOrder, decideKpayOrderReuse, KPAY_CODE_ORDER_EXPIRED } from './kpayOrderLifecycle';
+import { canReplaceKpayOrder, decideKpayOrderReuse, describeKpayAttempts, KPAY_CODE_ORDER_EXPIRED } from './kpayOrderLifecycle';
 const expected = {managedOrderNo:'one',managedOutTradeNo:'trade',chargeTotal:2030};
 const data = {...expected, payAmount:2030,payCurrency:'HKD',managedOrderState:3,paymentOrderList:[]};
 describe('KPay terminal unpaid order proof', () => {
@@ -14,6 +14,20 @@ describe('KPay terminal unpaid order proof', () => {
   });
   it('allows only terminal failed/cancelled attempts', () => {
     expect(canReplaceKpayOrder({ok:true,data:{...data,paymentOrderList:[{result:3,orderState:3},{result:5,orderState:3}]}},expected)).toBe(true);
+  });
+  it('allows a failed/cancelled/closed attempt whatever its orderState (r0qUQ2io 2026-10-15)', () => {
+    for (const p of [{result:3,orderState:2},{result:5,orderState:2},{result:6,orderState:1},{result:3,orderState:1}]) {
+      expect(canReplaceKpayOrder({ok:true,data:{...data,paymentOrderList:[p]}},expected)).toBe(true);
+    }
+  });
+  it('still blocks a pending or successful attempt even at orderState 3', () => {
+    for (const p of [{result:1,orderState:3},{result:2,orderState:3},{result:undefined,orderState:3}]) {
+      expect(canReplaceKpayOrder({ok:true,data:{...data,paymentOrderList:[p]}},expected)).toBe(false);
+    }
+  });
+  it('describes attempts for logs without account data', () => {
+    expect(describeKpayAttempts({paymentOrderList:[{result:3,orderState:2,transactionAccount:'secret'}]})).toEqual(['3/2']);
+    expect(describeKpayAttempts({})).toBeUndefined();
   });
 });
 

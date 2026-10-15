@@ -12,13 +12,25 @@ export function canReplaceKpayOrder(
     || d.managedOutTradeNo !== expected.managedOutTradeNo || d.payCurrency !== 'HKD'
     || typeof d.payAmount !== 'number' || Math.abs(d.payAmount - expected.chargeTotal) > 0.005
     || ![3, 5].includes(d.managedOrderState as number)) return false;
-  // An explicit terminal managed order is required. Any contradictory or
-  // unfamiliar payment attempt blocks replacement, including pending payments.
+  // An explicit terminal managed order is required. Any attempt that may
+  // have moved money blocks replacement: pending (1), success (2),
+  // refunded (4) or an unfamiliar result. A failed (3), cancelled (5) or
+  // closed (6) attempt took nothing, whatever its orderState: KPay keeps
+  // a declined card attempt at orderState 2 下單成功, and requiring
+  // orderState 3 stranded booking r0qUQ2io on 2026-10-15 (state 3,
+  // one failed attempt, decision blocked).
   if (d.transactionNo) return false;
   if (d.paymentOrderList === undefined) return true;
   if (!Array.isArray(d.paymentOrderList)) return false;
   return d.paymentOrderList.every(p => p && typeof p === 'object'
-    && [3, 5, 6].includes(p.result) && p.orderState === 3);
+    && [3, 5, 6].includes(p.result));
+}
+
+/** Compact "result/orderState" list for operational logs (no account data). */
+export function describeKpayAttempts(data?: Record<string, unknown>): string[] | undefined {
+  const list = data?.paymentOrderList;
+  if (!Array.isArray(list)) return undefined;
+  return list.map(p => p && typeof p === 'object' ? `${p.result}/${p.orderState}` : String(p));
 }
 
 /** KPay application code returned by the result query when the managed

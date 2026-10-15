@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { adminVerifyIdToken } from '@/lib/adminAuth';
 import { checkoutAmount, BookingInputError } from '@/lib/bookingSecurity';
 import type { BookingRecord } from '@/types';
-import { decideKpayOrderReuse, type KpayOrderReuseDecision } from '@/lib/kpayOrderLifecycle';
+import { decideKpayOrderReuse, describeKpayAttempts, type KpayOrderReuseDecision } from '@/lib/kpayOrderLifecycle';
 import { paidBase } from '@/lib/bookingMoney';
 import { adminDb } from '@/lib/firebaseAdmin';
 import {
@@ -130,7 +130,7 @@ export async function POST(req: NextRequest) {
       try {
         const result = await queryManagedOrder(expected.managedOutTradeNo, expected.managedOrderNo);
         decision = decideKpayOrderReuse(result, expected);
-        detail = { code: result.code, state: result.data?.managedOrderState, attempts: Array.isArray(result.data?.paymentOrderList) ? result.data!.paymentOrderList.length : undefined };
+        detail = { code: result.code, state: result.data?.managedOrderState, attempts: describeKpayAttempts(result.data) };
       } catch (err) {
         detail = { error: err instanceof Error ? err.message : String(err) };
       }

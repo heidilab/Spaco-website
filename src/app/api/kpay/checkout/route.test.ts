@@ -107,6 +107,12 @@ describe('closed balance order recovery', () => {
     expect((await POST(request(body))).status).toBe(409);
     expect(mocks.gateway).not.toHaveBeenCalled();
   });
+  it('replaces an expired order whose only attempt failed at orderState 2 (production r0qUQ2io case)', async () => {
+    mocks.query.mockResolvedValue({ok:true,data:{managedOrderNo:'old-order',managedOutTradeNo:'old-trade',managedOrderState:3,payAmount:2030,payCurrency:'HKD',paymentOrderList:[{outTradeNo:'x',orderNo:'y',result:3,orderState:2}]}});
+    const res = await POST(request(body));
+    expect(res.status).toBe(200);
+    expect(mocks.gateway).toHaveBeenCalledOnce();
+  });
   it('replaces when the gateway answers 30004 訂單已過期 instead of a result body', async () => {
     mocks.query.mockResolvedValue({ ok: false, code: 30004, message: '訂單已過期' });
     const res = await POST(request(body));
