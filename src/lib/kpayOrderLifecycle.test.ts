@@ -20,10 +20,18 @@ describe('KPay terminal unpaid order proof', () => {
       expect(canReplaceKpayOrder({ok:true,data:{...data,paymentOrderList:[p]}},expected)).toBe(true);
     }
   });
-  it('still blocks a pending or successful attempt even at orderState 3', () => {
-    for (const p of [{result:1,orderState:3},{result:2,orderState:3},{result:undefined,orderState:3}]) {
+  it('still blocks a successful, refunded or unknown attempt even at orderState 3', () => {
+    for (const p of [{result:2,orderState:3},{result:4,orderState:3},{result:undefined,orderState:3},{result:'1',orderState:3}]) {
       expect(canReplaceKpayOrder({ok:true,data:{...data,paymentOrderList:[p]}},expected)).toBe(false);
     }
+  });
+  it('allows a pending attempt only once KPay has closed its transaction order (r0qUQ2io 1/3)', () => {
+    expect(canReplaceKpayOrder({ok:true,data:{...data,paymentOrderList:[{result:1,orderState:3}]}},expected)).toBe(true);
+    for (const p of [{result:1,orderState:1},{result:1,orderState:2},{result:1,orderState:undefined},{result:1,orderState:'3'}]) {
+      expect(canReplaceKpayOrder({ok:true,data:{...data,paymentOrderList:[p]}},expected)).toBe(false);
+    }
+    expect(decideKpayOrderReuse({ok:true,data:{...data,paymentOrderList:[{result:1,orderState:3}]}},expected)).toBe('replace');
+    expect(decideKpayOrderReuse({ok:true,data:{...data,paymentOrderList:[{result:1,orderState:2}]}},expected)).toBe('blocked');
   });
   it('describes attempts for logs without account data', () => {
     expect(describeKpayAttempts({paymentOrderList:[{result:3,orderState:2,transactionAccount:'secret'}]})).toEqual(['3/2']);
