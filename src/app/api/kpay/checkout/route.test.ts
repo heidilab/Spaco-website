@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-const mocks = vi.hoisted(()=>({ verify: vi.fn(), transaction: vi.fn(), create: vi.fn(), update: vi.fn(), set: vi.fn(), gateway: vi.fn(), sign: vi.fn(), lock: undefined as Record<string,unknown> | undefined, data: {} as Record<string,unknown> }));
+const mocks = vi.hoisted(()=>({ verify: vi.fn(), transaction: vi.fn(), create: vi.fn(), update: vi.fn(), set: vi.fn(), gateway: vi.fn(), query: vi.fn(), sign: vi.fn(), lock: undefined as Record<string,unknown> | undefined, data: {} as Record<string,unknown> }));
 vi.mock('@/lib/adminAuth',()=>({adminVerifyIdToken:mocks.verify}));
-vi.mock('@/lib/firebaseAdmin',()=>({adminDb:{ collection:(name:string)=>({doc:(id:string)=>({name,id,update:mocks.update})}),runTransaction:mocks.transaction }}));
-vi.mock('@/lib/kpay',()=>({isKpayConfigured:()=>true,createManagedOrder:mocks.gateway,buildCashierRedirectUrl:mocks.sign,getPublicOrigin:()=> 'https://spaco.test'}));
+vi.mock('@/lib/firebaseAdmin',()=>({adminDb:{ collection:(name:string)=>({doc:(id:string)=>({name,id,update:mocks.update,get:async()=>name==='bookings'?{exists:true,data:()=>mocks.data}:{exists:!!mocks.lock,data:()=>mocks.lock}})}),runTransaction:mocks.transaction }}));
+vi.mock('@/lib/kpay',()=>({isKpayConfigured:()=>true,createManagedOrder:mocks.gateway,queryManagedOrder:mocks.query,buildCashierRedirectUrl:mocks.sign,getPublicOrigin:()=> 'https://spaco.test'}));
 import { POST } from './route';
 const request = (body:unknown, token='valid') => new NextRequest('https://spaco.test/api/kpay/checkout',{method:'POST',headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},body:JSON.stringify(body)});
 beforeEach(()=>{
   vi.clearAllMocks();
   mocks.lock = undefined;
+  mocks.query.mockImplementation(async()=>({ok:true,data:{managedOrderState:1,managedOrderNo:mocks.lock?.managedOrderNo,managedOutTradeNo:mocks.lock?.managedOutTradeNo,payAmount:mocks.lock?.chargeTotal,payCurrency:'HKD'}}));
   mocks.sign.mockReturnValue('https://cashier.test/fresh');
   mocks.verify.mockResolvedValue({uid:'alice'});
   mocks.data={userId:'alice',status:'awaiting_payment',pricing:{deposit:5000},pointsDiscount:0,payments:[]};
@@ -70,5 +71,40 @@ describe('cashier link retries', () => {
     expect((await response.json()).error).toBe('PAYMENT_PROCESSING');
     expect(mocks.gateway).not.toHaveBeenCalled();
     expect(mocks.sign).not.toHaveBeenCalled();
+  });
+});
+
+describe('closed balance order recovery', () => {
+  const body = { bookingId: 'one', amount: 2000, methodGroup: 'card', isBalancePayment: true };
+  beforeEach(() => {
+    mocks.data = { userId: 'alice', status: 'confirmed', balanceDue: 2000, pricing: { subtotal: 3000, securityDeposit: 1000, deposit: 2000 }, payments: [{ amount: 2000 }] };
+    mocks.lock = { paidBase: 2000, amount: 2000, methodGroup: 'card', managedOrderNo: 'old-order', managedOutTradeNo: 'old-trade', surcharge: 30, chargeTotal: 2030 };
+    mocks.query.mockResolvedValue({ok:true,data:{managedOrderNo:'old-order',managedOutTradeNo:'old-trade',managedOrderState:3,payAmount:2030,payCurrency:'HKD',paymentOrderList:[]}});
+  });
+  it('replaces a verified expired unpaid order and keeps its mapping for late callbacks', async () => {
+    const res = await POST(request(body));
+    expect(res.status).toBe(200);
+    expect(mocks.gateway).toHaveBeenCalledOnce();
+    expect(mocks.gateway).toHaveBeenCalledWith(expect.objectContaining({payAmount:2030}));
+    expect(mocks.set).toHaveBeenCalledWith(expect.objectContaining({name:'_kpay_orders',id:'old-trade'}),expect.objectContaining({replacedBy:expect.any(String)}),{merge:true});
+  });
+  it.each([2,4,99])('blocks replacement for paid/refunded/unknown state %s', async state => {
+    mocks.query.mockResolvedValue({ok:true,data:{managedOrderState:state}});
+    expect((await POST(request(body))).status).toBe(409);
+    expect(mocks.gateway).not.toHaveBeenCalled(); expect(mocks.create).not.toHaveBeenCalled();
+  });
+  it('fails closed when gateway status is unavailable', async () => {
+    mocks.query.mockRejectedValue(new Error('timeout'));
+    const res = await POST(request(body));
+    expect((await res.json()).error).toBe('PAYMENT_STATUS_UNAVAILABLE');
+    expect(mocks.gateway).not.toHaveBeenCalled();
+  });
+  it('does not replace a lock another checkout has already reserved', async () => {
+    mocks.query.mockImplementation(async () => {
+      mocks.lock = {...mocks.lock, managedOrderNo:undefined,managedOutTradeNo:'new-trade',status:'creating'};
+      return {ok:true,data:{managedOrderNo:'old-order',managedOutTradeNo:'old-trade',managedOrderState:3,payAmount:2030,payCurrency:'HKD',paymentOrderList:[]}};
+    });
+    expect((await POST(request(body))).status).toBe(409);
+    expect(mocks.gateway).not.toHaveBeenCalled();
   });
 });

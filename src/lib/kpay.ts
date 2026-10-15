@@ -427,13 +427,15 @@ export interface QueryManagedOrderResult {
 
 export async function queryManagedOrder(
   managedOutTradeNo: string,
+  managedOrderNo?: string,
 ): Promise<QueryManagedOrderResult> {
-  const params = new URLSearchParams({ managedOutTradeNo });
+  const params = new URLSearchParams({ managedOutTradeNo, ...(managedOrderNo ? { managedOrderNo } : {}) });
   const path = `${ENDPOINTS.managedOrderResult}?${params.toString()}`;
   const headers = signRequest('GET', path, '');
   const res = await kpayFetch(`${getApiBase()}${path}`, {
     method: 'GET',
     headers: headers as unknown as Record<string, string>,
+    signal: AbortSignal.timeout(10_000),
   });
   const data = (await res.json()) as {
     code: number;

@@ -1,0 +1,5 @@
+# Local sync conflict copies are not application source; retain them on disk.
+**/* 2.ts
+**/* 2.tsx
+**/* 2.md
+**/* 2.rules

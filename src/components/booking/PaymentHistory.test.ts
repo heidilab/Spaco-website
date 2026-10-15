@@ -9,7 +9,7 @@ function fixture(fee?: number): BookingRecord {
   return {
     pricing: { subtotal: 3000, securityDeposit: 1000, total: 4000 },
     balanceDue: 2000,
-    payments: [{ amount: 2000, cardSurcharge: fee, method: 'kpay', kind: 'initial', recordedAt: '2026-10-01T12:00:00Z' }],
+    payments: [{ rentalAmount: 2000, depositAmount: 0, recordedBy: 'fixture', amount: 2000, cardSurcharge: fee, method: 'kpay', kind: 'initial', recordedAt: '2026-10-01T12:00:00Z' }],
   } as BookingRecord;
 }
 describe('payment history card fee display', () => {

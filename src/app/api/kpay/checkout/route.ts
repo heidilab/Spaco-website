@@ -2,10 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { adminVerifyIdToken } from '@/lib/adminAuth';
 import { checkoutAmount, BookingInputError } from '@/lib/bookingSecurity';
 import type { BookingRecord } from '@/types';
+import { canReplaceKpayOrder } from '@/lib/kpayOrderLifecycle';
 import { paidBase } from '@/lib/bookingMoney';
 import { adminDb } from '@/lib/firebaseAdmin';
 import {
   createManagedOrder,
+  queryManagedOrder,
   buildCashierRedirectUrl,
   isKpayConfigured,
   getPublicOrigin,
@@ -101,6 +103,37 @@ export async function POST(req: NextRequest) {
     }
     const bookingRef = adminDb.collection('bookings').doc(bookingId);
     const lockRef = adminDb.collection('_checkout_orders').doc(`${bookingId}_${isBalancePayment ? 'balance' : 'initial'}`);
+    // Read and authenticate before a gateway lookup; re-check inside the
+    // transaction so a concurrent payment or another retry cannot be overwritten.
+    const before = await bookingRef.get();
+    if (!before.exists) throw new BookingInputError('BOOKING_NOT_FOUND');
+    const initialBooking = before.data() as BookingRecord;
+    if (initialBooking.userId !== uid) throw new BookingInputError('FORBIDDEN');
+    const expectedAmount = checkoutAmount(initialBooking, !!isBalancePayment);
+    if (typeof requestedAmount !== 'number' || !Number.isFinite(requestedAmount)
+      || Math.abs(requestedAmount - expectedAmount) > 0.005) throw new BookingInputError('PRICE_CHANGED');
+    const oldLock = (await lockRef.get()).data();
+    let replaceTradeNo: string | null = null;
+    if (isBalancePayment && oldLock?.managedOrderNo && oldLock.paidBase === paidBase(initialBooking)) {
+      try {
+        const result = await queryManagedOrder(oldLock.managedOutTradeNo, oldLock.managedOrderNo);
+        if (!result.ok || !result.data
+          || result.data.managedOrderNo !== oldLock.managedOrderNo
+          || result.data.managedOutTradeNo !== oldLock.managedOutTradeNo
+          || result.data.payCurrency !== 'HKD'
+          || typeof result.data.payAmount !== 'number'
+          || Math.abs(result.data.payAmount - (oldLock.chargeTotal ?? oldLock.amount + (oldLock.surcharge || 0))) > 0.005
+        ) throw new BookingInputError('PAYMENT_STATUS_UNAVAILABLE');
+        if (canReplaceKpayOrder(result, {
+          managedOrderNo: oldLock.managedOrderNo, managedOutTradeNo: oldLock.managedOutTradeNo,
+          chargeTotal: oldLock.chargeTotal ?? oldLock.amount + (oldLock.surcharge || 0),
+        })) replaceTradeNo = oldLock.managedOutTradeNo;
+        else if (result.data.managedOrderState !== 1) throw new BookingInputError('PAYMENT_STATUS_UNAVAILABLE');
+      } catch (err) {
+        if (err instanceof BookingInputError) throw err;
+        throw new BookingInputError('PAYMENT_STATUS_UNAVAILABLE');
+      }
+    }
     const reservation = await adminDb.runTransaction(async tx => {
       const [bookingSnap, orderSnap] = await Promise.all([tx.get(bookingRef), tx.get(lockRef)]);
       if (!bookingSnap.exists) throw new BookingInputError('BOOKING_NOT_FOUND');
@@ -112,7 +145,8 @@ export async function POST(req: NextRequest) {
         throw new BookingInputError('PRICE_CHANGED');
       }
       const existing = orderSnap.data();
-      if (existing && existing.paidBase === paidBase(booking)) {
+      if (existing && existing.paidBase === paidBase(booking)
+        && existing.managedOutTradeNo !== replaceTradeNo) {
         if (existing.amount !== amount || existing.methodGroup !== methodGroup) throw new BookingInputError('PAYMENT_ALREADY_STARTED');
         if (existing.managedOrderNo) return { amount, existing, managedOutTradeNo: existing.managedOutTradeNo as string };
         throw new BookingInputError('PAYMENT_PROCESSING');
@@ -132,6 +166,10 @@ export async function POST(req: NextRequest) {
       }
       // The transaction serializes creation; milliseconds distinguish later top-up orders.
       const tradeNo = `B${bookingId.slice(0, 12)}_${isBalancePayment ? 'B' : 'P'}${Date.now()}`;
+      if (replaceTradeNo) {
+        if (existing?.managedOutTradeNo !== replaceTradeNo) throw new BookingInputError('PAYMENT_PROCESSING');
+        tx.set(adminDb.collection('_kpay_orders').doc(replaceTradeNo), { replacedBy: tradeNo, closedVerifiedAt: Date.now() }, { merge: true });
+      }
       tx.create(adminDb.collection('_kpay_orders').doc(tradeNo), { bookingId, amount, surcharge: methodGroup === 'card' ? cardSurchargeFor(amount) : 0, isBalancePayment: !!isBalancePayment, createdAt: Date.now() });
       tx.set(lockRef, { bookingId, uid, amount, methodGroup, managedOutTradeNo: tradeNo,
         paidBase: paidBase(booking), status: 'creating', createdAt: Date.now() });
