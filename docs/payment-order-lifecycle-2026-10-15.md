@@ -16,4 +16,4 @@ No new staff-facing feature is included. Local sync conflict copies remain on di
 
 ## Verification / release
 
-193 tests pass, including terminal states, contradictory payment attempts, identity/amount mismatch, gateway failure, and concurrent replacement prevention. Preview build pending; no main merge or production deployment. The user was asked to verify the old balance order's payment status in KPay before any manual lock repair. No real payment, refund, booking, email or lock was created.
+193 tests pass, including terminal states, contradictory payment attempts, identity/amount mismatch, gateway failure, and concurrent replacement prevention. Preview dpl_K2mAUuYJ9FKivit7YuvkTF1nggBD READY; cloud 193 tests, TypeScript and build passed (implementation c85e82b). No main merge or production deployment. Retired diagnostic preview domains were removed and other domains preserved. Notion status synced. The user was asked to verify the old balance order's payment status in KPay before any manual lock repair. No real payment, refund, booking, email or lock was created.
