@@ -8,10 +8,10 @@ const VALID_TYPES: CalendarEventType[] = ['site_visit', 'delivery'];
 // POST /api/calendar-events
 // body: { type, venueId, date, startTime, endTime, notes? }
 export async function POST(req: NextRequest) {
-  // 'bookings' (admin + cs), NOT 'gcal' (admin-only): site-visit /
-  // delivery scheduling is CS daily work — the original 'gcal' gate
-  // 403'd CS on 新增排程 (2026-08-12 'forbidden' incident).
-  const _gate = await requireAdmin(req, 'bookings');
+  // 'schedule' (admin + cs + marketing): site-visit / delivery scheduling
+  // is daily work for CS and marketing (Heidi 2026-10-15); cleaners only
+  // read the calendar. Mirrors firestore.rules schedule().
+  const _gate = await requireAdmin(req, 'schedule');
   if (!_gate.ok) return _gate.res;
 
   try {

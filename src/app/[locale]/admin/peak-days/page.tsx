@@ -104,7 +104,10 @@ export default function PeakDaysPage() {
   const locale = useLocale() as 'zh' | 'en';
   const zh = locale === 'zh';
   const { user, hasPermission } = useAuth();
-  const canAccess = hasPermission('staff');
+  // CS may view 特別日子 (Heidi 2026-10-15); only admin edits — rules keep
+  // peak_days writes admin-only, so the buttons are disabled for others.
+  const canAccess = hasPermission('peakdays');
+  const canEdit = hasPermission('staff');
 
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
@@ -341,7 +344,7 @@ export default function PeakDaysPage() {
               <div className="flex items-center justify-between">
                 <h2 className="font-semibold">{selected}</h2>
                 {days[selected] && (
-                  <button onClick={handleDelete} disabled={saving} className="text-sm text-red-500 hover:underline flex items-center gap-1">
+                  <button onClick={handleDelete} disabled={saving || !canEdit} className="text-sm text-red-500 hover:underline flex items-center gap-1">
                     <Trash2 className="w-4 h-4" />{zh ? '刪除呢日設定' : 'Delete'}
                   </button>
                 )}
@@ -412,7 +415,12 @@ export default function PeakDaysPage() {
                 </div>
               </details>
 
-              <button onClick={handleSave} disabled={saving} className="btn-primary text-sm w-full disabled:opacity-40">
+              {!canEdit && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                  {zh ? '只限 admin 修改特別日子設定，你可以查看但不能儲存。' : 'Only admins can change peak-day settings; you can view but not save.'}
+                </p>
+              )}
+              <button onClick={handleSave} disabled={saving || !canEdit} className="btn-primary text-sm w-full disabled:opacity-40">
                 {saving ? <Loader2 className="w-4 h-4 animate-spin inline" /> : (zh ? '儲存呢一日' : 'Save this date')}
               </button>
 
@@ -424,7 +432,7 @@ export default function PeakDaysPage() {
                   <input type="date" value={rangeTo} min={selected}
                     onChange={(e) => setRangeTo(e.target.value)}
                     className="border rounded px-2 py-1.5 text-sm flex-1" />
-                  <button onClick={handleApplyRange} disabled={applyingRange || !rangeTo}
+                  <button onClick={handleApplyRange} disabled={applyingRange || !rangeTo || !canEdit}
                     className="btn-secondary text-sm flex items-center gap-1 disabled:opacity-40">
                     {applyingRange ? <Loader2 className="w-4 h-4 animate-spin" /> : <CopyPlus className="w-4 h-4" />}
                     {zh ? '套用到範圍' : 'Apply range'}

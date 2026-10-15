@@ -67,6 +67,14 @@ describe('Staff roles', () => {
       }
     }
   });
+  it('lets admin, cs and marketing schedule events; cleaners read only; peak days stay admin-written (2026-10-15)', async () => {
+    for (const uid of ['admin', 'cs', 'marketing']) await assertSucceeds(setDoc(doc(db(uid), 'calendar_events', `ev-${uid}`), { type: 'site_visit', date: '2026-11-01' }));
+    await assertFails(setDoc(doc(db('cleaner'), 'calendar_events', 'ev-cleaner'), { type: 'site_visit', date: '2026-11-01' }));
+    await assertSucceeds(getDocs(collection(db('marketing'), 'calendar_events')));
+    await assertSucceeds(getDoc(doc(db('cs'), 'peak_days', '2026-12-25')));
+    await assertFails(setDoc(doc(db('cs'), 'peak_days', '2026-12-25'), { surchargePerHead: 10 }));
+    await assertSucceeds(setDoc(doc(db('admin'), 'peak_days', '2026-12-25'), { surchargePerHead: 10 }));
+  });
   it('allows CS operations, admin financials, marketing articles, calendar reads', async () => {
     await assertSucceeds(updateDoc(doc(db('cs'), 'bookings','one'), {status:'confirmed'}));
     await assertFails(setDoc(doc(db('cs'),'expenses','e'), {amount:10}));

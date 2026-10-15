@@ -776,11 +776,14 @@ export interface BusinessDocument {
 }
 
 // Role permissions
+//   schedule — create/edit/delete 排程 (site visits, deliveries); cleaners read only.
+//   peakdays — open 特別日子; editing additionally needs 'staff' (admin).
+// Heidi 2026-10-15. Keep in step with firestore.rules schedule()/admin().
 export const ROLE_PERMISSIONS: Record<StaffRole, string[]> = {
-  admin: ['content', 'seo', 'gcal', 'members', 'bookings', 'calendar', 'deposit', 'staff', 'documents', 'faq'],
-  cs: ['members', 'bookings', 'calendar', 'deposit', 'documents'],
+  admin: ['content', 'seo', 'gcal', 'members', 'bookings', 'calendar', 'schedule', 'peakdays', 'deposit', 'staff', 'documents', 'faq'],
+  cs: ['members', 'bookings', 'calendar', 'schedule', 'peakdays', 'deposit', 'documents'],
   cleaner: ['calendar'],
-  marketing: ['content', 'seo', 'faq', 'calendar'],
+  marketing: ['content', 'seo', 'faq', 'calendar', 'schedule'],
 };
 
 // ============ SEO ============

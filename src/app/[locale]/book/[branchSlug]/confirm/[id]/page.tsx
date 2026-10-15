@@ -1,6 +1,7 @@
 'use client';
 
 import { adminApiFetch } from '@/lib/adminApiFetch';
+import { paymentErrorMessage, isKnownPaymentError } from '@/lib/paymentErrors';
 
 import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
@@ -628,7 +629,12 @@ export default function ConfirmBookingPage() {
       router.push(`/book/${slug}/payment/${booking.id}`);
     } catch (err) {
       console.error(err);
-      setError(locale === 'zh' ? '儲存失敗，請重試' : 'Save failed, please retry');
+      // Server codes (PAYMENT_ALREADY_STARTED, BOOKING_NOT_EDITABLE, promo
+      // limits…) get their specific wording; anything else stays generic.
+      const code = err instanceof Error ? err.message : '';
+      setError(isKnownPaymentError(code)
+        ? paymentErrorMessage(code, locale)
+        : (locale === 'zh' ? '儲存失敗，請重試' : 'Save failed, please retry'));
       setSubmitting(false);
     }
   }

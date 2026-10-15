@@ -1,6 +1,6 @@
 'use client';
 
-import { paymentErrorMessage } from '@/lib/paymentErrors';
+import { paymentErrorMessage, isKnownPaymentError } from '@/lib/paymentErrors';
 import { adminApiFetch } from '@/lib/adminApiFetch';
 
 import { useEffect, useState, useRef } from 'react';
@@ -340,14 +340,12 @@ export default function PaymentMethodPage() {
       window.location.href = sessionUrl;
     } catch (err) {
       console.error(err);
-      const msg = err instanceof Error ? err.message : '';
-      if (msg === 'SLOT_CONFLICT') {
-        setError(locale === 'zh'
-          ? '非常抱歉，此時段剛被其他人預訂。請返回選擇另一時段。'
-          : 'Sorry, this slot was just booked by someone else. Please go back and choose another time.');
-      } else {
-        setError(locale === 'zh' ? '處理失敗，請重試' : 'Processing failed, please retry');
-      }
+      // Every server rejection code (slot conflict, peak minimums, package
+      // constraints, add-on limits…) has specific customer wording.
+      const code = err instanceof Error ? err.message : '';
+      setError(isKnownPaymentError(code)
+        ? paymentErrorMessage(code, locale)
+        : (locale === 'zh' ? '處理失敗，請重試' : 'Processing failed, please retry'));
       setSubmitting(false);
     }
   }

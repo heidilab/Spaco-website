@@ -11,6 +11,9 @@ service cloud.firestore {
     function bookings() { return roleIn(['admin', 'cs']); }
     function content() { return roleIn(['admin', 'marketing']); }
     function calendar() { return roleIn(['admin', 'cs', 'cleaner', 'marketing']); }
+    // 排程 (site visits / deliveries): Heidi 2026-10-15 — marketing may
+    // schedule, cleaners only read.
+    function schedule() { return roleIn(['admin', 'cs', 'marketing']); }
     function profileFields() {
       return ['email', 'displayName', 'photoURL', 'phone', 'whatsappPhone', 'createdAt', 'lastLogin',
         'updatedAt', 'firstBookingChannel', 'firstBookingChannelOther'];
@@ -80,7 +83,7 @@ service cloud.firestore {
     match /expense_templates/{id} { allow read, write: if admin(); }
     match /month_closes/{id} { allow read, write: if admin(); }
     match /system/{id} { allow read: if bookings(); allow write: if admin(); }
-    match /calendar_events/{id} { allow read: if calendar(); allow write: if bookings(); }
+    match /calendar_events/{id} { allow read: if calendar(); allow write: if schedule(); }
     match /promo_codes/{id} { allow read: if bookings(); allow write: if admin(); }
     match /articles/{id} {
       allow read: if content() || resource.data.status == 'published';

@@ -23,7 +23,7 @@ import { ROLE_PERMISSIONS } from '@/types';
  */
 export async function requireAdmin(
   req: Request,
-  perm: 'bookings' | 'content' | 'gcal' | 'members' | 'deposit' | 'calendar' = 'bookings',
+  perm: 'bookings' | 'content' | 'gcal' | 'members' | 'deposit' | 'calendar' | 'schedule' | 'peakdays' = 'bookings',
 ): Promise<{ ok: true; uid: string } | { ok: false; res: NextResponse }> {
   const authHeader = req.headers.get('authorization') || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';

@@ -78,6 +78,9 @@ function bookingIdent(b: BookingRecord, userNames?: Record<string, string>): str
 export default function AdminCalendarPage() {
   const { hasPermission } = useAuth();
   const canManageBookings = hasPermission('bookings');
+  // 排程 create/delete: admin, cs, marketing. Cleaners read only
+  // (Heidi 2026-10-15); mirrors firestore.rules schedule().
+  const canSchedule = hasPermission('schedule');
   // Registry-backed venue list (分店管理) — static array is the
   // first paint; Firestore overrides so new/edited venues appear.
   const [venues, setVenues] = useState<Venue[]>(staticVenues);
@@ -534,7 +537,7 @@ export default function AdminCalendarPage() {
           holiday={holidaysMap.get(summaryDate)}
           userNames={userNames}
           onClose={() => setSummaryDate(null)}
-          onAdd={openAddFromSummary}
+          onAdd={canSchedule ? openAddFromSummary : undefined}
           onItemClick={(item) => setDetailsModal(item)}
         />
       )}
@@ -571,7 +574,7 @@ export default function AdminCalendarPage() {
           locale={locale}
           submitting={submitting}
           onClose={() => setDetailsModal(null)}
-          onDelete={handleDeleteItem}
+          onDelete={canSchedule ? handleDeleteItem : undefined}
         />
       )}
     </div>
@@ -647,7 +650,8 @@ function DaySummaryModal({
   holiday?: Holiday;
   userNames: Record<string, string>;
   onClose: () => void;
-  onAdd: () => void;
+  /** Absent for roles that may only read the calendar. */
+  onAdd?: () => void;
   onItemClick: (item: DayItem) => void;
 }) {
   const dateObj = new Date(date + 'T00:00:00');
@@ -702,12 +706,14 @@ function DaySummaryModal({
           )}
         </div>
 
-        <div className="mt-4 pt-4 border-t border-charcoal/10">
-          <button onClick={onAdd} className="w-full btn-primary justify-center">
-            <Plus size={16} />
-            {locale === 'zh' ? '新增排程' : 'Add event'}
-          </button>
-        </div>
+        {onAdd && (
+          <div className="mt-4 pt-4 border-t border-charcoal/10">
+            <button onClick={onAdd} className="w-full btn-primary justify-center">
+              <Plus size={16} />
+              {locale === 'zh' ? '新增排程' : 'Add event'}
+            </button>
+          </div>
+        )}
       </div>
     </>
   );
@@ -954,7 +960,7 @@ function DetailsModal({
   locale: 'zh' | 'en';
   submitting: boolean;
   onClose: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
 }) {
   const venueName = (venueId: string) =>
     venuesSnapshot().find((v) => v.id === venueId)?.name[locale] || venueId;
@@ -1024,7 +1030,7 @@ function BlockDetails({
   locale: 'zh' | 'en';
   submitting: boolean;
   onClose: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
 }) {
   return (
     <>
@@ -1034,11 +1040,11 @@ function BlockDetails({
       <p className="text-sm text-ink-soft mb-5">{slot.date} · {slot.startTime}–{slot.endTime}</p>
       <Row label={locale === 'zh' ? '分店' : 'Venue'}>{venueName(slot.venueId)}</Row>
       <div className="flex gap-3 mt-5">
-        <button onClick={onDelete} disabled={submitting}
+        {onDelete && <button onClick={onDelete} disabled={submitting}
           className="flex-1 px-5 py-3 rounded-pill bg-red-50 text-red-600 hover:bg-red-100 transition-colors flex items-center justify-center gap-2 font-medium">
           <Trash2 size={14} />
           {locale === 'zh' ? '刪除' : 'Delete'}
-        </button>
+        </button>}
         <button onClick={onClose} className="flex-1 btn-outline justify-center">
           {locale === 'zh' ? '關閉' : 'Close'}
         </button>
@@ -1096,7 +1102,7 @@ function EventDetails({
   locale: 'zh' | 'en';
   submitting: boolean;
   onClose: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
 }) {
   const isVisit = event.type === 'site_visit';
   return (
@@ -1117,11 +1123,11 @@ function EventDetails({
         {event.googleEventId ? '✓' : '—'}
       </Row>
       <div className="flex gap-3 mt-5">
-        <button onClick={onDelete} disabled={submitting}
+        {onDelete && <button onClick={onDelete} disabled={submitting}
           className="flex-1 px-5 py-3 rounded-pill bg-red-50 text-red-600 hover:bg-red-100 transition-colors flex items-center justify-center gap-2 font-medium">
           <Trash2 size={14} />
           {locale === 'zh' ? '刪除' : 'Delete'}
-        </button>
+        </button>}
         <button onClick={onClose} className="flex-1 btn-outline justify-center">
           {locale === 'zh' ? '關閉' : 'Close'}
         </button>
