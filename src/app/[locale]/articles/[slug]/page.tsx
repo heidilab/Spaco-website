@@ -4,6 +4,7 @@ import { Newspaper, ChevronLeft } from 'lucide-react';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { Article } from '@/types';
 import ArticleView from '@/components/article/ArticleView';
+import { withBrandSuffix } from '@/lib/seo';
 
 const COLLECTION = 'articles';
 const SITE_URL = 'https://spacohk.com';
@@ -29,7 +30,8 @@ export async function generateMetadata({ params }: { params: Promise<{ locale: '
     return { title: locale === 'zh' ? '找唔到呢篇文章 — SPACO' : 'Article not found — SPACO' };
   }
   // SEO override → falls back to article title / excerpt / hero.
-  const title = article.seoTitle?.[locale] || article.title[locale] || article.title.zh;
+  // Brand suffix is added here (root layout no longer carries a title template).
+  const title = withBrandSuffix(article.seoTitle?.[locale] || article.title[locale] || article.title.zh)!;
   const description = article.seoDescription?.[locale]
     || article.excerpt?.[locale]
     || article.excerpt?.zh

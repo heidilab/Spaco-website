@@ -85,6 +85,14 @@ interface BuildMetadataInput {
   fallback?: SeoEntry;
 }
 
+/** Final <title>: keep a title that already names SPACO, otherwise add the
+ *  brand once. Replaces the root-layout `%s · SPACO` template, which the
+ *  client metadata pass re-applied to absolute titles (「SPACO · SPACO」). */
+export function withBrandSuffix(title?: string): string | undefined {
+  if (!title) return undefined;
+  return /\bSPACO\b/i.test(title) ? title : `${title} · SPACO`;
+}
+
 export async function buildMetadata({
   pageId, locale, path, fallback,
 }: BuildMetadataInput): Promise<Metadata> {
@@ -115,7 +123,7 @@ export async function buildMetadata({
 
   return {
     metadataBase: new URL(SITE_URL),
-    title: title && /\bSPACO\b/i.test(title) ? { absolute: title } : title,
+    title: withBrandSuffix(title),
     description,
     keywords,
     alternates: {

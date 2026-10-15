@@ -12,9 +12,12 @@ service firebase.storage {
       return request.auth != null
         && firestore.get(/databases/(default)/documents/bookings/$(id)).data.userId == request.auth.uid;
     }
+    // Any image type (iPhone HEIC, Android formats, screenshots) or a PDF,
+    // capped at 10 MB. Listing only jpeg/png/webp rejected real customer
+    // receipts after the 2026-10-09 rules release.
     function receiptFile() {
       return request.resource.size > 0 && request.resource.size <= 10 * 1024 * 1024
-        && request.resource.contentType.matches('image/(jpeg|png|webp)|application/pdf');
+        && request.resource.contentType.matches('image/.*|application/pdf');
     }
     match /site-images/{file=**} { allow read: if true; allow write: if content(); }
     match /articles/{file=**} { allow read: if true; allow write: if content(); }

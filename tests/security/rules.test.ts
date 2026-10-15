@@ -85,6 +85,10 @@ describe('Receipt privacy and upload constraints', () => {
     await assertFails(getBytes(ref(env.authenticatedContext('bob').storage(),object)));
     await assertFails(getBytes(ref(env.authenticatedContext('cleaner').storage(),object)));
   });
+  it('accepts iPhone HEIC photos and PDF receipts from the owner', async () => {
+    await assertSucceeds(uploadBytes(ref(env.authenticatedContext('alice').storage(),'receipts/one/photo.heic'),new Uint8Array([1]),{contentType:'image/heic'}));
+    await assertSucceeds(uploadBytes(ref(env.authenticatedContext('alice').storage(),'receipts/one/slip.pdf'),new Uint8Array([1]),{contentType:'application/pdf'}));
+  });
   it('denies other-owner uploads, html files and oversized receipts', async () => {
     await assertFails(uploadBytes(ref(env.authenticatedContext('bob').storage(),'receipts/one/x.png'),new Uint8Array([1]),{contentType:'image/png'}));
     await assertFails(uploadBytes(ref(env.authenticatedContext('alice').storage(),'receipts/one/x.html'),new Uint8Array([1]),{contentType:'text/html'}));
