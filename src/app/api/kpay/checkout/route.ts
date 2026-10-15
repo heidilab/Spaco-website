@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { adminVerifyIdToken } from '@/lib/adminAuth';
 import { checkoutAmount, BookingInputError } from '@/lib/bookingSecurity';
 import type { BookingRecord } from '@/types';
-import { canReplaceKpayOrder } from '@/lib/kpayOrderLifecycle';
+import { decideKpayOrderReuse, type KpayOrderReuseDecision } from '@/lib/kpayOrderLifecycle';
 import { paidBase } from '@/lib/bookingMoney';
 import { adminDb } from '@/lib/firebaseAdmin';
 import {
@@ -114,25 +114,32 @@ export async function POST(req: NextRequest) {
       || Math.abs(requestedAmount - expectedAmount) > 0.005) throw new BookingInputError('PRICE_CHANGED');
     const oldLock = (await lockRef.get()).data();
     let replaceTradeNo: string | null = null;
-    if (isBalancePayment && oldLock?.managedOrderNo && oldLock.paidBase === paidBase(initialBooking)) {
+    // A previously created managed order (deposit OR balance) is only
+    // reusable while the gateway still reports it awaiting payment. The
+    // cashier expires orders, so ask KPay before re-signing: a dead unpaid
+    // order is replaced, a paid/unknown one blocks a second charge.
+    if (oldLock?.managedOrderNo && oldLock.paidBase === paidBase(initialBooking)) {
+      const expected = {
+        managedOrderNo: oldLock.managedOrderNo as string,
+        managedOutTradeNo: oldLock.managedOutTradeNo as string,
+        chargeTotal: oldLock.chargeTotal
+          ?? Math.round((oldLock.amount + (oldLock.surcharge ?? (oldLock.methodGroup === 'card' ? cardSurchargeFor(oldLock.amount) : 0))) * 100) / 100,
+      };
+      let decision: KpayOrderReuseDecision = 'blocked';
+      let detail: Record<string, unknown> = {};
       try {
-        const result = await queryManagedOrder(oldLock.managedOutTradeNo, oldLock.managedOrderNo);
-        if (!result.ok || !result.data
-          || result.data.managedOrderNo !== oldLock.managedOrderNo
-          || result.data.managedOutTradeNo !== oldLock.managedOutTradeNo
-          || result.data.payCurrency !== 'HKD'
-          || typeof result.data.payAmount !== 'number'
-          || Math.abs(result.data.payAmount - (oldLock.chargeTotal ?? oldLock.amount + (oldLock.surcharge || 0))) > 0.005
-        ) throw new BookingInputError('PAYMENT_STATUS_UNAVAILABLE');
-        if (canReplaceKpayOrder(result, {
-          managedOrderNo: oldLock.managedOrderNo, managedOutTradeNo: oldLock.managedOutTradeNo,
-          chargeTotal: oldLock.chargeTotal ?? oldLock.amount + (oldLock.surcharge || 0),
-        })) replaceTradeNo = oldLock.managedOutTradeNo;
-        else if (result.data.managedOrderState !== 1) throw new BookingInputError('PAYMENT_STATUS_UNAVAILABLE');
+        const result = await queryManagedOrder(expected.managedOutTradeNo, expected.managedOrderNo);
+        decision = decideKpayOrderReuse(result, expected);
+        detail = { code: result.code, state: result.data?.managedOrderState, attempts: Array.isArray(result.data?.paymentOrderList) ? result.data!.paymentOrderList.length : undefined };
       } catch (err) {
-        if (err instanceof BookingInputError) throw err;
-        throw new BookingInputError('PAYMENT_STATUS_UNAVAILABLE');
+        detail = { error: err instanceof Error ? err.message : String(err) };
       }
+      // Operational trace (no customer data): why a retry was reused,
+      // replaced or refused, so staff can read Vercel logs when a
+      // customer reports a payment-link failure.
+      console.log('[kpay/checkout] prior order', { bookingId, kind: isBalancePayment ? 'balance' : 'initial', decision, ...detail });
+      if (decision === 'replace') replaceTradeNo = expected.managedOutTradeNo;
+      else if (decision !== 'reuse') throw new BookingInputError('PAYMENT_STATUS_UNAVAILABLE');
     }
     const reservation = await adminDb.runTransaction(async tx => {
       const [bookingSnap, orderSnap] = await Promise.all([tx.get(bookingRef), tx.get(lockRef)]);

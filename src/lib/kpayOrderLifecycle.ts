@@ -20,3 +20,39 @@ export function canReplaceKpayOrder(
   return d.paymentOrderList.every(p => p && typeof p === 'object'
     && [3, 5, 6].includes(p.result) && p.orderState === 3);
 }
+
+/** KPay application code returned by the result query when the managed
+ *  order has lapsed (status_code.md: 30004 訂單已過期). The gateway can
+ *  no longer collect on it, so a replacement cannot double-charge. */
+export const KPAY_CODE_ORDER_EXPIRED = 30004;
+
+export type KpayOrderReuseDecision = 'reuse' | 'replace' | 'blocked';
+
+/**
+ * What checkout may do with a previously created managed order whose
+ * cashier the customer is reopening.
+ *
+ *   reuse    — still awaiting payment (state 1): re-sign the same order.
+ *   replace  — gateway says the order is dead and nothing was collected:
+ *              create a new order; keep the old mapping for late callbacks.
+ *   blocked  — paid, refunded, unknown, mismatched or unreadable: never
+ *              open another charge; staff must reconcile.
+ *
+ * A managed order is NOT payable forever (the cashier runs an expiry
+ * countdown), so 'reuse' alone strands every customer who comes back
+ * later with the gateway's 「該訂單已完結」 page — the 2026-10-15 balance
+ * incident. The replacement decision must come from the gateway, never
+ * from the age of our own lock.
+ */
+export function decideKpayOrderReuse(
+  result: { ok: boolean; code?: number; data?: Record<string, unknown> },
+  expected: { managedOrderNo: string; managedOutTradeNo: string; chargeTotal: number },
+): KpayOrderReuseDecision {
+  if (!result.ok) return result.code === KPAY_CODE_ORDER_EXPIRED ? 'replace' : 'blocked';
+  const d = result.data;
+  if (!d || d.managedOrderNo !== expected.managedOrderNo
+    || d.managedOutTradeNo !== expected.managedOutTradeNo || d.payCurrency !== 'HKD'
+    || typeof d.payAmount !== 'number' || Math.abs(d.payAmount - expected.chargeTotal) > 0.005) return 'blocked';
+  if (d.managedOrderState === 1) return 'reuse';
+  return canReplaceKpayOrder(result, expected) ? 'replace' : 'blocked';
+}

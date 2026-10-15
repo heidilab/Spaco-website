@@ -107,4 +107,57 @@ describe('closed balance order recovery', () => {
     expect((await POST(request(body))).status).toBe(409);
     expect(mocks.gateway).not.toHaveBeenCalled();
   });
+  it('replaces when the gateway answers 30004 訂單已過期 instead of a result body', async () => {
+    mocks.query.mockResolvedValue({ ok: false, code: 30004, message: '訂單已過期' });
+    const res = await POST(request(body));
+    expect(res.status).toBe(200);
+    expect(mocks.gateway).toHaveBeenCalledOnce();
+    expect(mocks.set).toHaveBeenCalledWith(expect.objectContaining({ name: '_kpay_orders', id: 'old-trade' }), expect.objectContaining({ replacedBy: expect.any(String) }), { merge: true });
+  });
+  it('still blocks on 30002 訂單不存在 (wrong credentials or unknown order)', async () => {
+    mocks.query.mockResolvedValue({ ok: false, code: 30002, message: '訂單不存在' });
+    const res = await POST(request(body));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe('PAYMENT_STATUS_UNAVAILABLE');
+    expect(mocks.gateway).not.toHaveBeenCalled();
+  });
+  it('lets the customer switch card → wallet once the old card order is dead', async () => {
+    const res = await POST(request({ ...body, methodGroup: 'wallet' }));
+    expect(res.status).toBe(200);
+    expect(mocks.gateway).toHaveBeenCalledWith(expect.objectContaining({ payAmount: 2000 }));
+  });
+  it('derives the expected gateway charge for a legacy lock without chargeTotal', async () => {
+    mocks.lock = { paidBase: 2000, amount: 2000, methodGroup: 'card', managedOrderNo: 'old-order', managedOutTradeNo: 'old-trade' };
+    const res = await POST(request(body));
+    expect(res.status).toBe(200);
+    expect(mocks.gateway).toHaveBeenCalledOnce();
+  });
+});
+
+describe('closed deposit order recovery', () => {
+  const body = { bookingId: 'one', amount: 5000, methodGroup: 'card' };
+  beforeEach(() => {
+    mocks.lock = { paidBase: 0, amount: 5000, methodGroup: 'card', managedOrderNo: 'old-order', managedOutTradeNo: 'old-trade', surcharge: 75, chargeTotal: 5075 };
+  });
+  it('re-signs the deposit order while KPay still reports it awaiting payment', async () => {
+    mocks.query.mockResolvedValue({ ok: true, data: { managedOrderNo: 'old-order', managedOutTradeNo: 'old-trade', managedOrderState: 1, payAmount: 5075, payCurrency: 'HKD' } });
+    const res = await POST(request(body));
+    expect(res.status).toBe(200);
+    expect((await res.json()).managedOrderNo).toBe('old-order');
+    expect(mocks.gateway).not.toHaveBeenCalled();
+  });
+  it('replaces an expired unpaid deposit order within the booking hold', async () => {
+    mocks.query.mockResolvedValue({ ok: true, data: { managedOrderNo: 'old-order', managedOutTradeNo: 'old-trade', managedOrderState: 3, payAmount: 5075, payCurrency: 'HKD', paymentOrderList: [] } });
+    const res = await POST(request(body));
+    expect(res.status).toBe(200);
+    expect(mocks.gateway).toHaveBeenCalledWith(expect.objectContaining({ payAmount: 5075 }));
+    expect(mocks.set).toHaveBeenCalledWith(expect.objectContaining({ name: '_kpay_orders', id: 'old-trade' }), expect.objectContaining({ replacedBy: expect.any(String) }), { merge: true });
+  });
+  it('blocks a second deposit charge when KPay reports the old order paid', async () => {
+    mocks.query.mockResolvedValue({ ok: true, data: { managedOrderNo: 'old-order', managedOutTradeNo: 'old-trade', managedOrderState: 2, payAmount: 5075, payCurrency: 'HKD' } });
+    const res = await POST(request(body));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe('PAYMENT_STATUS_UNAVAILABLE');
+    expect(mocks.gateway).not.toHaveBeenCalled();
+  });
 });

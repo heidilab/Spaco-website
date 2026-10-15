@@ -17,3 +17,13 @@ No new staff-facing feature is included. Local sync conflict copies remain on di
 ## Verification / release
 
 193 tests pass, including terminal states, contradictory payment attempts, identity/amount mismatch, gateway failure, and concurrent replacement prevention. Preview dpl_K2mAUuYJ9FKivit7YuvkTF1nggBD READY; cloud 193 tests, TypeScript and build passed (implementation c85e82b). No main merge or production deployment. Retired diagnostic preview domains were removed and other domains preserved. Notion status synced. The user was asked to verify the old balance order's payment status in KPay before any manual lock repair. No real payment, refund, booking, email or lock was created.
+
+## 2026-10-15 follow-up: gateway-driven reuse for every prior order
+
+Production (dpl_FQFdgsnASzqyvmjMFMw2vyLik8dH, release 2c23054) still re-signs the stored managed order unconditionally, so the customer's balance link reopened an order KPay had already closed (「該訂單已完結」). The replacement logic in c85e82b never reached production.
+
+Local KPay documentation (`.claude/kpay-docs/全託管訂單.md`, `status_code.md`) confirms the query schema used by `canReplaceKpayOrder`: `managedOrderState` 1 待支付 / 2 已支付 / 3 已過期 / 4 已退貨 / 5 已關閉, `paymentOrderList[].result` and `.orderState`, and application code 30004 訂單已過期. The managed-order add API has no expiry parameter; the cashier runs its own countdown, so no stored order may be assumed payable later.
+
+Change: `decideKpayOrderReuse` returns reuse (state 1), replace (verified terminal unpaid order, or gateway code 30004) or blocked (paid, refunded, unknown, mismatched, 30002, or query failure). The checkout route now applies it to deposit and balance locks alike, derives the expected gateway charge for legacy locks without `chargeTotal`, allows a method switch once the old order is dead, and logs the decision (booking id, kind, state/code only). The old `_kpay_orders` mapping is kept for late callbacks, as before.
+
+Verification: 216 unit tests pass (new lifecycle, 30004, 30002, legacy lock, deposit reuse/replace/paid cases). TypeScript passes for tracked files; a pre-existing test fixture cast in `PaymentHistory.test.ts` was tightened to `as unknown as BookingRecord`. Untracked ` 2.ts` sync copies still fail tsc locally and remain excluded from deployment. Not yet verified against the production gateway; mocked tests are not proof of customer payment.
