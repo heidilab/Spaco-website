@@ -1,0 +1,31 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function roleIn(roles) {
+      return request.auth != null
+        && firestore.exists(/databases/(default)/documents/admin_users/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/admin_users/$(request.auth.uid)).data.role in roles;
+    }
+    function bookings() { return roleIn(['admin', 'cs']); }
+    function content() { return roleIn(['admin', 'marketing']); }
+    function ownsBooking(id) {
+      return request.auth != null
+        && firestore.get(/databases/(default)/documents/bookings/$(id)).data.userId == request.auth.uid;
+    }
+    function receiptFile() {
+      return request.resource.size > 0 && request.resource.size <= 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)|application/pdf');
+    }
+    match /site-images/{file=**} { allow read: if true; allow write: if content(); }
+    match /articles/{file=**} { allow read: if true; allow write: if content(); }
+    match /receipts/{bookingId}/{filename} {
+      allow get: if bookings() || ownsBooking(bookingId);
+      allow list: if bookings();
+      allow create: if (bookings() || ownsBooking(bookingId)) && receiptFile();
+      allow update, delete: if bookings();
+    }
+    // Legacy flat receipt paths remain staff-readable; new uploads use booking folders.
+    match /receipts/{filename} { allow read, delete: if bookings(); }
+    match /{allPaths=**} { allow read, write: if false; }
+  }
+}

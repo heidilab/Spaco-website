@@ -1,0 +1,91 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function owner(uid) { return signedIn() && request.auth.uid == uid; }
+    function roleIn(roles) {
+      return signedIn() && exists(/databases/$(database)/documents/admin_users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/admin_users/$(request.auth.uid)).data.role in roles;
+    }
+    function admin() { return roleIn(['admin']); }
+    function bookings() { return roleIn(['admin', 'cs']); }
+    function content() { return roleIn(['admin', 'marketing']); }
+    function calendar() { return roleIn(['admin', 'cs', 'cleaner', 'marketing']); }
+    function profileFields() {
+      return ['email', 'displayName', 'photoURL', 'phone', 'whatsappPhone', 'createdAt', 'lastLogin',
+        'updatedAt', 'firstBookingChannel', 'firstBookingChannelOther'];
+    }
+    function validProfile() {
+      return request.resource.data.get('displayName', '') is string
+        && request.resource.data.get('displayName', '').size() <= 200
+        && request.resource.data.get('phone', '') is string
+        && request.resource.data.get('phone', '').size() <= 40
+        && request.resource.data.get('whatsappPhone', '') is string
+        && request.resource.data.get('whatsappPhone', '').size() <= 40;
+    }
+    match /users/{uid} {
+      allow read: if owner(uid) || bookings();
+      allow create: if owner(uid) && validProfile()
+        && request.resource.data.keys().hasOnly(profileFields().concat(['loyaltyPoints']))
+        && request.resource.data.get('loyaltyPoints', 0) == 0;
+      // Points are server-written, including staff adjustments.
+      allow update: if (owner(uid) || bookings()) && validProfile()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(profileFields());
+      allow delete: if admin();
+    }
+    match /admin_users/{uid} {
+      allow read: if owner(uid) || admin();
+      allow write: if admin();
+    }
+    match /bookings/{id} {
+      allow read: if owner(resource.data.userId) || bookings();
+      allow create, delete: if bookings();
+      allow update: if bookings() || (owner(resource.data.userId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'refundDetails', 'paymentMethod', 'receiptUrl', 'paymentReceiptUploadedAt', 'status', 'updatedAt'
+        ])
+        && resource.data.status in ['awaiting_payment', 'awaiting_review', 'confirmed']
+        && (request.resource.data.status == resource.data.status
+          || (resource.data.status in ['awaiting_payment', 'awaiting_review']
+            && request.resource.data.status == 'awaiting_payment')
+          || (request.resource.data.status == 'awaiting_review'
+            && request.resource.data.get('receiptUrl', '') is string
+            && request.resource.data.get('receiptUrl', '').size() > 0))
+        && request.resource.data.get('paymentMethod', null) in [null, 'fps', 'bank', 'kpay']
+        && (request.resource.data.get('receiptUrl', null) == null
+          || (request.resource.data.receiptUrl is string && request.resource.data.receiptUrl.size() <= 3000)));
+    }
+    match /booking_drafts/{id} {
+      // Public link preview uses a redacted server response. No customer enumeration or writes.
+      allow read, write: if bookings();
+    }
+    match /blocked_slots/{id} {
+      allow read: if true;
+      allow write: if bookings();
+    }
+    match /site_images/{id} { allow read: if true; allow write: if content(); }
+    match /site_content/{id} { allow read: if true; allow write: if admin() || (id != 'settings' && content()); }
+    match /site_seo/{id} { allow read: if true; allow write: if content(); }
+    match /venues/{id} {
+      allow read: if true;
+      allow create, delete: if admin();
+      allow update: if admin() || (content() && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'name', 'description', 'images', 'heroImage', 'amenities', 'updatedAt'
+      ]));
+    }
+    match /peak_days/{id} { allow read: if true; allow write: if admin(); }
+    match /documents/{id} { allow read, write: if bookings(); }
+    match /secrets/{id} { allow read, write: if admin(); }
+    match /expenses/{id} { allow read, write: if admin(); }
+    match /expense_templates/{id} { allow read, write: if admin(); }
+    match /month_closes/{id} { allow read, write: if admin(); }
+    match /system/{id} { allow read: if bookings(); allow write: if admin(); }
+    match /calendar_events/{id} { allow read: if calendar(); allow write: if bookings(); }
+    match /promo_codes/{id} { allow read: if bookings(); allow write: if admin(); }
+    match /articles/{id} {
+      allow read: if content() || resource.data.status == 'published';
+      allow write: if content();
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}
