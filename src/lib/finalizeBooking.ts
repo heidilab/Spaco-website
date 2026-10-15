@@ -173,7 +173,14 @@ export async function finalizeConfirmedBooking(
 
   // 4. Lock passcode / balance reminder.
   try {
-    await processBookingForLockAccess(bookingId);
+    const lock = await processBookingForLockAccess(bookingId);
+    // The processor reports problems as a result, not an exception. Log
+    // anything other than a successful issue so a silent 'error' /
+    // 'skipped' (e.g. gateway failure after a balance payment) is visible
+    // in the function logs instead of surfacing only at the daily sweep.
+    if (lock.action !== 'generated') {
+      console.warn('[finalizeBooking] lock passcode not issued', { bookingId, action: lock.action, reason: lock.reason, error: lock.error });
+    }
   } catch (err) {
       failures.push(err);
     console.warn('[finalizeBooking] lock passcode trigger failed:', err);
