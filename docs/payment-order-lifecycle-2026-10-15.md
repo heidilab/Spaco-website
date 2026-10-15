@@ -31,3 +31,9 @@ Verification: 216 unit tests pass (new lifecycle, 30004, 30002, legacy lock, dep
 ## Production release (2026-10-15)
 
 Heidi explicitly approved immediate production release. main fast-forwarded to ef64e00 and pushed. Production deployment dpl_FMTvSAzaf3bFC8P3vJgddtXmzCSK is READY and aliased to https://spacohk.com (previous production: dpl_FQFdgsnASzqyvmjMFMw2vyLik8dH, keep for rollback). Post-deploy checks: /zh HTTP 200, unauthenticated /api/kpay/checkout 401, balance page route 200. The customer's retry against the production gateway is the only end-to-end verification; the `[kpay/checkout] prior order` log line records the reuse/replace/blocked decision for it. Preview hostname was not added to Firebase Auth (no permission from this session). No payment, refund, booking, email or lock was created.
+
+## Second production release (2026-10-15, afternoon)
+
+The customer's first retry after ef64e00 was still refused. Production log (`[kpay/checkout] prior order`): managed order state 3 (expired), one payment attempt, decision blocked. KPay keeps a declined attempt at orderState 2, and the documentation sample even shows a successful attempt at orderState 1, so orderState is not a terminal indicator. `canReplaceKpayOrder` now blocks only on attempts whose result may have moved money (1 pending, 2 success, 4 refunded, unknown); failed/cancelled/closed attempts permit replacement. The log line lists each attempt as result/orderState.
+
+Heidi approved immediate release. main fast-forwarded to d59b30a; production dpl_BHRuUcvKV47q6LAGoHMXbxAezPCJ READY and aliased to https://spacohk.com (/zh 200, unauthenticated checkout 401). 220 tests and TypeScript passed. No preview was deployed for this step because preview credentials cannot query production orders. Customer retry remains the end-to-end verification.
