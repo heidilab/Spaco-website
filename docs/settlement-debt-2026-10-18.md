@@ -24,3 +24,7 @@
 ## Known gap (not changed)
 
 Month-close Total Sales is the sum of booking subtotals; 加時/罰款 (deposit deductions) appear only in the proportion table, not in Total Sales or profit. Late settlement payments are added to Total Sales as instructed, which is asymmetric with promptly paid deductions. Including deductions in Total Sales would change past months and needs Heidi's decision.
+
+## Production release
+
+Heidi approved. main fast-forwarded to 263e0b5 (feature 7e1765f); production dpl_2cy7H7M9MrP8vwBKbQcWTdh3rs12 READY and aliased to https://spacohk.com. /zh, the booking page and my-bookings return 200; the reminder cron and booking create return 401 without credentials; Vercel lists `/api/cron/settlement-debt-reminders` among the project crons. No rules change. The first cron run is expected at 10:00 HKT; with no current debtors it should send nothing.
