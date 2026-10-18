@@ -12,7 +12,7 @@ import { cancelBooking } from '@/lib/cancelBooking';
 import { BookingRecord } from '@/types';
 import { venues } from '@/lib/venues';
 import { Check, X, Eye, Clock, AlertCircle } from 'lucide-react';
-import { discountedSubtotal, computeGrandTotal } from '@/lib/bookingMoney';
+import { discountedSubtotal, computeGrandTotal, initialAmountDue } from '@/lib/bookingMoney';
 
 export default function AdminReceiptsPage() {
   const locale = useLocale() as 'zh' | 'en';
@@ -73,9 +73,13 @@ export default function AdminReceiptsPage() {
 
     const isBalanceReceipt =
       !!booking.paymentVerifiedAt && (booking.balanceDue ?? 0) > 0;
+    // Initial receipt = deposit − points (what the FPS page told the
+    // customer to transfer). Approving raw pricing.deposit recorded a full
+    // payment while the confirmation step still deducted the points
+    // (#dZzBW1b6, #jmSeFTvD — 2026-10-18).
     const paidAmount = isBalanceReceipt
       ? (booking.balanceDue ?? 0)
-      : (booking.pricing.deposit || 0);
+      : initialAmountDue(booking);
 
     // Hard guard — refuse re-approving a confirmed booking when there's
     // nothing left to settle. #jMW2skDl: admin clicked Approve twice 14
@@ -318,7 +322,12 @@ export default function AdminReceiptsPage() {
                         HK${discountedSubtotal(booking.pricing.subtotal, booking.promoDiscount).toLocaleString()}
                       </p>
                       <p className="text-xs text-muted">
-                        {locale === 'zh' ? '應付' : 'Due'}: HK${booking.pricing.deposit.toLocaleString()}
+                        {locale === 'zh' ? '應付' : 'Due'}: HK${initialAmountDue(booking).toLocaleString()}
+                        {(booking.pointsDiscount || 0) > 0 && (
+                          <span className="ml-1 text-violet-600">
+                            {locale === 'zh' ? `（已扣積分 HK$${booking.pointsDiscount}）` : ` (after HK$${booking.pointsDiscount} points)`}
+                          </span>
+                        )}
                       </p>
                     </div>
 

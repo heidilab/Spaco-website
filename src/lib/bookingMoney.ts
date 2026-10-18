@@ -160,6 +160,20 @@ export function displayBillTotal(booking: MoneyBooking): number {
   );
 }
 
+/**
+ * What the customer must transfer for the FIRST payment, on every rail.
+ * `pricing.deposit` is stored BEFORE points (points only reduce the
+ * upfront charge), so the amount due is deposit − pointsDiscount.
+ *
+ * KPay already charged this; the FPS page, the WhatsApp message and the
+ * admin receipt approval used raw `pricing.deposit`, so FPS customers
+ * paid in full while approval still deducted their points (#dZzBW1b6,
+ * #jmSeFTvD — corrected 2026-10-18). Every surface must use this.
+ */
+export function initialAmountDue(booking: MoneyBooking): number {
+  return Math.max(0, Math.round(((booking.pricing?.deposit || 0) - (booking.pointsDiscount || 0)) * 100) / 100);
+}
+
 // ── Payments ───────────────────────────────────────────────────────────
 
 /**

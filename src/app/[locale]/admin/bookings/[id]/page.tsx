@@ -2401,6 +2401,13 @@ export default function AdminBookingDetailPage() {
                 </div>
               );
             })()}
+            {/* 小計 sits below the −折扣/−優惠碼 rows, so it must already
+              * reflect BOTH deductions (#nbWTrtyG convention; Heidi
+              * caught the missing adminDiscount on #TQdbWBlI). */}
+            <Row label={locale === 'zh' ? '小計' : 'Subtotal'} value={`HK$${Math.max(0, discountedSubtotal(booking.pricing.subtotal, booking.promoDiscount) - adminDiscountAmount(booking)).toLocaleString()}`} />
+            {/* Points are a payment-side redemption, not part of 小計, so the
+              * row sits BELOW it; above it, 小計 looked like it ignored the
+              * −積分 line (#dZzBW1b6, 2026-10-18). 總額 already nets it. */}
             {(booking.pointsUsed ?? 0) > 0 && (
               <Row
                 icon={<Sparkles size={14} />}
@@ -2409,13 +2416,6 @@ export default function AdminBookingDetailPage() {
                 highlight="violet"
               />
             )}
-            {/* 小計 sits BELOW the −優惠碼 row, so it must already reflect
-              * the deduction (#nbWTrtyG showed gross $1,650 under a −$150
-              * promo line): 場租 + 加購 − 優惠 = 小計. */}
-            {/* 小計 sits below the −折扣/−優惠碼 rows, so it must already
-              * reflect BOTH deductions (#nbWTrtyG convention; Heidi
-              * caught the missing adminDiscount on #TQdbWBlI). */}
-            <Row label={locale === 'zh' ? '小計' : 'Subtotal'} value={`HK$${Math.max(0, discountedSubtotal(booking.pricing.subtotal, booking.promoDiscount) - adminDiscountAmount(booking)).toLocaleString()}`} />
             <Row label={locale === 'zh' ? '可退按金' : 'Refundable deposit'} value={`HK$${(booking.pricing.securityDeposit ?? 0).toLocaleString()}`} />
             <Row label={locale === 'zh' ? '扣費前可退餘額（含多付）' : 'Refundable credit before deductions'} value={`HK$${depositSettlementAmounts(booking).available.toLocaleString()}`} />
             {(() => {

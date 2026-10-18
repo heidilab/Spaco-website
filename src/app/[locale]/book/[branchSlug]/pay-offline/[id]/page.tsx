@@ -11,6 +11,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage
 import { BookingRecord } from '@/types';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
 import { generateWhatsAppLink } from '@/lib/email';
+import { initialAmountDue } from '@/lib/bookingMoney';
 import { Copy, Check, Upload, MessageCircle, Clock } from 'lucide-react';
 import { motion } from 'framer-motion';
 
@@ -79,9 +80,10 @@ export default function PayOfflinePage() {
   // received, hiding the shortfall.
   const isBalancePayment =
     booking.status === 'confirmed' && (booking.balanceDue ?? 0) > 0;
+  // Initial FPS amount = deposit − points, identical to KPay (2026-10-18).
   const amountDue = isBalancePayment
     ? (booking.balanceDue ?? 0)
-    : (booking.pricing.deposit || 0);
+    : initialAmountDue(booking);
   const amountLabelZh = isBalancePayment ? '尾數' : '應付金額';
   const amountLabelEn = isBalancePayment ? 'Balance' : 'Amount due';
   const paymentNounZh = isBalancePayment ? '尾數' : '線下付款';

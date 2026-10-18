@@ -15,8 +15,27 @@ import {
   paidBase, surchargePaid, paidGateway, computeBalanceDue,
   amountOwed, hasOutstanding, isSettlementOverflow,
   commissionForBooking, estimatedKpayFee,
-  adminDiscountAmount,
+  adminDiscountAmount, initialAmountDue,
 } from './bookingMoney';
+
+describe('initialAmountDue — FPS must charge the same as KPay (#dZzBW1b6)', () => {
+  const b = {
+    pricing: { baseCharge: 4350, addOnTotal: 0, subtotal: 4350, securityDeposit: 2000, deposit: 6350 },
+    pointsUsed: 4100, pointsDiscount: 41,
+  };
+  it('subtracts the points discount from the stored (pre-points) deposit', () => {
+    expect(initialAmountDue(b)).toBe(6309);
+  });
+  it('a customer who pays initialAmountDue has nothing left beyond the deposit', () => {
+    const paid = { ...b, payments: [{ amount: initialAmountDue(b) }] };
+    expect(computeBalanceDue(paid)).toBe(0);
+    expect(depositSettlementAmounts(paid).available).toBe(2000);
+  });
+  it('equals the deposit when no points are used and never goes negative', () => {
+    expect(initialAmountDue({ pricing: { deposit: 3320 } })).toBe(3320);
+    expect(initialAmountDue({ pricing: { deposit: 10 }, pointsDiscount: 50 })).toBe(0);
+  });
+});
 
 describe('points conversion', () => {
   // A1 create route stored pointsDiscount = pointsUsed (1pt = $1), a 100x

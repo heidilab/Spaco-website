@@ -8,7 +8,7 @@ import { storage } from '@/lib/firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { BookingRecord } from '@/types';
 import { venues } from '@/lib/venues';
-import { displayBillTotal, paidGateway } from '@/lib/bookingMoney';
+import { displayBillTotal, paidGateway, initialAmountDue } from '@/lib/bookingMoney';
 import { generateWhatsAppLink } from '@/lib/email';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
 import { CalendarDays, Clock, Users, Upload, MessageCircle, CreditCard, AlertCircle, ChevronRight } from 'lucide-react';
@@ -222,8 +222,8 @@ function BookingCard({
 
   const whatsappMsg =
     locale === 'zh'
-      ? `你好，預訂編號：${booking.id}\n金額：HK$${booking.pricing.deposit.toLocaleString()}`
-      : `Hi, Booking ID: ${booking.id}\nAmount: HK$${booking.pricing.deposit.toLocaleString()}`;
+      ? `你好，預訂編號：${booking.id}\n金額：HK$${initialAmountDue(booking).toLocaleString()}`
+      : `Hi, Booking ID: ${booking.id}\nAmount: HK$${initialAmountDue(booking).toLocaleString()}`;
   const whatsappLink = generateWhatsAppLink(PAYMENT_DETAILS.fps.digitsOnly, whatsappMsg);
 
   return (

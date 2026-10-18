@@ -4,6 +4,7 @@ import { buildOfflinePaymentPendingEmail, generateWhatsAppLink } from '@/lib/ema
 import { sendAutomatedEmail } from '@/lib/emailAutomations';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
 import { getVenueById } from '@/lib/venues';
+import { initialAmountDue } from '@/lib/bookingMoney';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,9 +37,11 @@ export async function POST(req: NextRequest) {
     if (!user.email) return NextResponse.json({ ok: true, skipped: 'no email' });
 
     const venue = getVenueById(booking.venueId);
+    // Same amount as the FPS page and KPay: deposit − points (2026-10-18).
+    const amountDue = initialAmountDue(booking as Parameters<typeof initialAmountDue>[0]);
     const whatsappLink = generateWhatsAppLink(
       PAYMENT_DETAILS.fps.digitsOnly,
-      `你好，我已完成線下付款。\n預訂編號：${bookingId}\n金額：HK$${booking.pricing.deposit.toLocaleString()}`,
+      `你好，我已完成線下付款。\n預訂編號：${bookingId}\n金額：HK$${amountDue.toLocaleString()}`,
     );
 
     const tpl = buildOfflinePaymentPendingEmail({
@@ -48,7 +51,7 @@ export async function POST(req: NextRequest) {
       startTime: booking.startTime,
       endTime: booking.endTime,
       endDate: booking.endDate,
-      amountDue: booking.pricing.deposit,
+      amountDue,
       fpsNumber: PAYMENT_DETAILS.fps.display,
       bankName: PAYMENT_DETAILS.bank.name,
       bankAccount: PAYMENT_DETAILS.bank.accountNumber,
