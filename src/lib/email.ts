@@ -1113,6 +1113,70 @@ export function buildBalanceDueReminderEmail(params: {
   };
 }
 
+/**
+ * Post-event settlement debt reminder (Heidi 2026-10-18): sent 14 and 30
+ * days after settlement when deductions exceeded the deposit and the
+ * shortfall is still unpaid. New bookings stay blocked until it is paid.
+ */
+export function buildSettlementDebtReminderEmail(params: {
+  customerName: string;
+  venueName: string;
+  date: string;
+  bookingId: string;
+  amountDue: number;
+  stage: 14 | 30;
+  /** Online pay link for members; omitted for no-account bookings. */
+  payUrl?: string;
+  whatsappLink: string;
+}) {
+  const second = params.stage === 30;
+  return {
+    subject: second
+      ? `⚠️ SPACO 第二次提醒 — 請補回已完場訂單尚欠 HK$${params.amountDue.toLocaleString()}`
+      : `SPACO 提醒 — 已完場訂單尚欠 HK$${params.amountDue.toLocaleString()} 未補回`,
+    html: `
+      <div style="font-family: ${EMAIL_FONT}; max-width: 600px; margin: 0 auto; background: ${EMAIL_BG}; padding: 40px 20px;">
+        ${emailHeader('補款提醒 · OUTSTANDING BALANCE')}
+
+        <div style="background: white; padding: 32px; border-radius: 20px; margin-bottom: 16px;">
+          <p style="margin: 0 0 14px; font-size: 16px; color: ${EMAIL_INK};">Hi ${params.customerName},</p>
+          <p style="margin: 0 0 22px; color: #666; line-height: 1.7;">
+            多謝你早前使用 SPACO。活動完結後結算時，<strong>按金不足以抵扣加時／賠償等費用</strong>，以下訂單仍有尚欠款項${second ? '，呢個係我哋第二次提醒' : ''}。<br>
+            <strong>補回款項前，帳戶將無法預約新訂單。</strong>
+          </p>
+
+          <div style="background: linear-gradient(135deg, #FEE2E2 0%, #FFE4E6 100%); border-left: 4px solid #EF4444; border-radius: 16px; padding: 20px 22px; margin: 0 0 22px;">
+            <p style="margin: 0 0 4px; font-size: 11px; color: #991B1B; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 700;">尚欠金額 Outstanding</p>
+            <p style="margin: 0; font-size: 32px; font-weight: 800; color: #991B1B; font-family: 'Courier New', monospace;">
+              HK$${params.amountDue.toLocaleString()}
+            </p>
+          </div>
+
+          <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+            <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">場地</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">${params.venueName}</td></tr>
+            <tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px;">活動日期</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600;">${params.date}</td></tr>
+            <tr><td style="padding: 10px 0; color: #999; font-size: 13px;">預訂編號</td><td style="padding: 10px 0; text-align: right; font-weight: 600; font-family: 'Courier New', monospace;">#${params.bookingId.slice(0, 8)}</td></tr>
+          </table>
+        </div>
+
+        <div style="background: white; padding: 24px; border-radius: 20px; text-align: center; margin-bottom: 16px;">
+          ${params.payUrl ? `
+          <a href="${params.payUrl}" style="display: inline-block; background: #EC4899; color: white; padding: 14px 32px; border-radius: 999px; text-decoration: none; font-weight: 700; font-size: 15px; margin-bottom: 14px;">
+            立即網上補款 Pay now
+          </a>
+          <p style="margin: 0 0 14px; font-size: 13px; color: #999;">請用預訂時嘅帳號登入；可用信用卡、電子錢包或 FPS。</p>` : ''}
+          <p style="margin: 0 0 14px; font-size: 14px; color: #666; line-height: 1.7;">如有疑問或已經付款，請 WhatsApp 我哋核對。</p>
+          <a href="${params.whatsappLink}" style="display: inline-block; background: #25D366; color: white; padding: 12px 28px; border-radius: 999px; text-decoration: none; font-weight: 600; font-size: 14px;">
+            💬 WhatsApp 聯絡我們
+          </a>
+        </div>
+
+        ${emailFooter()}
+      </div>
+    `,
+  };
+}
+
 // ─────────────────────────────────────────────────────────────
 // CS sales-bonus notifications (獎金) — sent by /api/cron/bonus-check
 // to the branch's CS list + admins.

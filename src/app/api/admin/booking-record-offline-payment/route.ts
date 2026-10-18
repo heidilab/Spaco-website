@@ -4,6 +4,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import type { BookingRecord } from '@/types';
 import { requireAdmin } from '@/lib/adminAuth';
 import { computeGrandTotal } from '@/lib/finalizeBooking';
+import { amountOwed } from '@/lib/bookingMoney';
 
 export const runtime = 'nodejs';
 
@@ -76,7 +77,13 @@ export async function POST(req: NextRequest) {
     // Refunds are money OUT — flip the sign once here and every formula
     // below nets correctly.
     const signedTotal = body.isRefund ? -Math.abs(total) : total;
-    const newBalanceDue = Math.max(0, grandTotal - loggedSum - signedTotal);
+    // After deposit settlement the debt lives in balanceDue (the bill
+    // itself is already covered), so grandTotal − paid is ≤ 0 and the old
+    // formula cleared ANY partial payment to zero — which would also lift
+    // the booking block (Heidi 2026-10-18). Reduce the actual debt instead.
+    const newBalanceDue = booking.depositRefund && !body.isRefund
+      ? Math.max(0, Math.round((amountOwed(booking) - signedTotal) * 100) / 100)
+      : Math.max(0, grandTotal - loggedSum - signedTotal);
 
     // Status advancement (mirrors booking-edit-followup):
     // only from upstream states; never downgrade confirmed/completed.

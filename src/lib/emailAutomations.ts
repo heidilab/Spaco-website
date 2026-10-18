@@ -64,6 +64,7 @@ export type EmailAutomationKey =
   | 'offline_payment_pending'
   | 'fps_reminder'
   | 'balance_due_reminder'
+  | 'settlement_debt_reminder'
   | 'lock_passcode'
   | 'post_event'
   | 'birthday'
@@ -183,6 +184,19 @@ export const EMAIL_AUTOMATIONS: EmailAutomationDef[] = [
     trigger: {
       zh: 'Cron — 每日 03:00 HKT',
       en: 'Cron — daily at 03:00 HKT',
+    },
+    audience: 'customer',
+  },
+  {
+    key: 'settlement_debt_reminder',
+    name: { zh: '結算欠款提醒', en: 'Settlement Debt Reminder' },
+    description: {
+      zh: '完場結算後按金唔夠扣、客人仲未補款時，提醒補回尾數；未補款前無法預約新單。',
+      en: 'When deductions exceeded the deposit and the shortfall is unpaid, reminds the customer to pay; new bookings stay blocked until then.',
+    },
+    trigger: {
+      zh: 'Cron — 每日 10:00 HKT；結算後第 14 日及第 30 日各一次',
+      en: 'Cron — daily at 10:00 HKT; once on day 14 and once on day 30 after settlement',
     },
     audience: 'customer',
   },

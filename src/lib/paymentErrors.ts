@@ -29,6 +29,7 @@ const MESSAGES: Record<string, [string, string]> = {
   FORBIDDEN: ['請用預訂時嘅帳號登入後再試。', 'Sign in with the account used for this booking and try again.'],
   DEPOSIT_ALREADY_PAID: ['訂金已付款，請到我的預訂查看尾數。', 'The deposit is already paid. View your booking for the balance.'],
   DEPOSIT_REQUIRED: ['請先完成訂金付款，之後先可以繳付尾數。', 'Pay the deposit first; the balance can be paid afterwards.'],
+  SETTLEMENT_DEBT_OUTSTANDING: ['你有已完場訂單仍有未補款項（按金不足以抵扣）。請先到「我的預訂」補回欠款，之後就可以預約新訂單。', 'A past booking still has an unpaid settlement balance (the deposit did not cover the charges). Please pay it in My Bookings first; you can then make new bookings.'],
   // Slot / venue
   SLOT_CONFLICT: ['非常抱歉，此時段剛被其他人預訂。請返回選擇另一時段。', 'Sorry, this slot was just booked by someone else. Please go back and choose another time.'],
   EARLY_SETUP_BEFORE_DAY: ['提早入場佈置時間唔可以早過當日 00:00，請縮短佈置時數。', 'Early setup cannot start before 00:00 on the event day. Reduce the setup hours.'],

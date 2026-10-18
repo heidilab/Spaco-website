@@ -12,6 +12,7 @@ import { calcPromoDiscount } from '@/lib/promoCodes';
 import { getHoliday } from '@/lib/hkHolidays';
 import { BookingInputError, bookingInterval, finiteNumber, pricePackage, validateAddOns } from '@/lib/bookingSecurity';
 import type { PromoCode } from '@/types';
+import { assertNoSettlementDebt } from '@/lib/settlementDebtServer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -76,6 +77,9 @@ export async function POST(req: NextRequest) {
   let uid: string;
   try { uid = (await adminVerifyIdToken(token)).uid; }
   catch { return NextResponse.json({ error: 'invalid-token' }, { status: 401 }); }
+  // Unpaid post-event settlement debt blocks every new booking, including
+  // CS links, until it is paid (Heidi 2026-10-18).
+  await assertNoSettlementDebt(uid);
   let draftVersion: FirebaseFirestore.Timestamp | undefined;
   let body = submitted;
   if (submitted.draftId) {

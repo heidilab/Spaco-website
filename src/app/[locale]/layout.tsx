@@ -8,6 +8,7 @@ import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
 import { AuthProvider } from '@/contexts/AuthContext';
 import VisitTracker from '@/components/VisitTracker';
+import SettlementDebtNotice from '@/components/account/SettlementDebtNotice';
 import JsonLd from '@/components/seo/JsonLd';
 import { buildOrganizationLd } from '@/lib/jsonLd';
 import { buildMetadata } from '@/lib/seo';
@@ -106,6 +107,7 @@ export default async function LocaleLayout({
             <JsonLd data={[buildOrganizationLd(locale as 'zh' | 'en')]} />
             <VisitTracker />
             <Header />
+            <SettlementDebtNotice />
             <main>{children}</main>
             <Footer />
           </AuthProvider>

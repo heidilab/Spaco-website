@@ -6,6 +6,7 @@ import { calculateDeposit, adultEquivalent, freeDrinksVenues } from '@/lib/prici
 import { calcPromoDiscount } from '@/lib/promoCodes';
 import { BookingInputError, finiteNumber } from '@/lib/bookingSecurity';
 import type { BookingRecord, PromoCode } from '@/types';
+import { assertNoSettlementDebt } from '@/lib/settlementDebtServer';
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const token = req.headers.get('authorization')?.replace(/^Bearer /, '');
@@ -14,6 +15,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   try { uid = (await adminVerifyIdToken(token)).uid; }
   catch { return NextResponse.json({ error: 'invalid-token' }, { status: 401 }); }
   try {
+    await assertNoSettlementDebt(uid);
     const body = await req.json();
     const ref = adminDb.collection('bookings').doc(params.id);
     await adminDb.runTransaction(async tx => {

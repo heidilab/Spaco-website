@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-const m=vi.hoisted(()=>({verify:vi.fn(),draft:undefined as Record<string,unknown>|undefined,created:[] as Array<{collection:string;data:Record<string,unknown>}>,phone:vi.fn(),promo:undefined as Record<string,unknown>|undefined}));
+const m=vi.hoisted(()=>({verify:vi.fn(),draft:undefined as Record<string,unknown>|undefined,created:[] as Array<{collection:string;data:Record<string,unknown>}>,phone:vi.fn(),promo:undefined as Record<string,unknown>|undefined,userBookings:[] as Array<{id:string;data:()=>Record<string,unknown>}>}));
 vi.mock('@/lib/adminAuth',()=>({adminVerifyIdToken:m.verify}));
 vi.mock('@/lib/firebase',()=>({db:{}}));
 vi.mock('@/lib/peakDaysAdmin',()=>({getPeakDayAdmin:async()=>null}));
@@ -8,7 +8,7 @@ vi.mock('@/lib/venueRegistryServer',()=>({getVenueByIdServer:async()=>({id:'cwb'
 vi.mock('@/lib/firebaseAdmin',()=>{
   const version={isEqual:()=>true};
   const reference=(name:string,id='new-booking')=>({name,id,get:async()=>name==='booking_drafts'?{exists:!!m.draft,data:()=>m.draft,updateTime:version}:name==='promo_codes'?{exists:!!m.promo,id:'test-promo',data:()=>m.promo}:{exists:true,data:()=>({loyaltyPoints:1000})},update:m.phone});
-  const collection=(name:string)=>({doc:(id?:string)=>reference(name,id),where:()=>({where:()=>({get:async()=>({docs:[]})}),get:async()=>({docs:[]})})});
+  const collection=(name:string)=>({doc:(id?:string)=>reference(name,id),where:()=>({where:()=>({get:async()=>({docs:[]})}),get:async()=>({docs:name==='bookings'?m.userBookings:[]})})});
   return {adminDb:{collection,runTransaction:async(fn:(tx:unknown)=>Promise<unknown>)=>fn({
     get:async(ref:ReturnType<typeof reference>)=>ref.name==='booking_drafts'?{exists:!!m.draft,data:()=>m.draft,updateTime:version}:{docs:[],exists:true},
     create:(ref:ReturnType<typeof reference>,data:Record<string,unknown>)=>m.created.push({collection:ref.name,data}),update:()=>{},set:()=>{},
@@ -17,7 +17,7 @@ vi.mock('@/lib/firebaseAdmin',()=>{
 import { POST } from './route';
 const body={venueId:'cwb',branchSlug:'forged',packageSlug:'birthday-cwb',date:'2026-11-20',startTime:'10:00',endTime:'13:00',guestCount:15,childCount:0,addOns:[],pricing:{baseCharge:1,subtotal:1,addOnTotal:0,securityDeposit:0,deposit:1},userId:'victim',whatsappPhone:'+85200000000'};
 const request=(b:unknown,auth=true)=>new NextRequest('https://spaco.test/api/bookings/create',{method:'POST',headers:{'Content-Type':'application/json',...(auth?{Authorization:'Bearer token'}:{})},body:JSON.stringify(b)});
-beforeEach(()=>{vi.useFakeTimers();vi.setSystemTime(new Date('2026-10-09T00:00:00+08:00'));m.verify.mockResolvedValue({uid:'alice'});m.draft=undefined;m.promo=undefined;m.created=[];m.phone.mockResolvedValue(undefined);});
+beforeEach(()=>{vi.useFakeTimers();vi.setSystemTime(new Date('2026-10-09T00:00:00+08:00'));m.verify.mockResolvedValue({uid:'alice'});m.draft=undefined;m.promo=undefined;m.created=[];m.userBookings=[];m.phone.mockResolvedValue(undefined);});
 describe('booking creation boundaries',()=>{
   it('rejects unauthenticated creates',async()=>{expect((await POST(request(body,false))).status).toBe(401);expect(m.created).toEqual([]);});
   it('ignores client price, uid, status and invented expiry for a real package',async()=>{
@@ -27,6 +27,14 @@ describe('booking creation boundaries',()=>{
     expect(booking.userId).toBe('alice');expect(booking.status).toBe('awaiting_payment');
     expect(booking.pricing).toEqual({baseCharge:6800,addOnTotal:0,subtotal:6800,securityDeposit:2000,deposit:8800});
     expect(booking.pendingExpiresAt).toBe(Date.now()+30*60000);expect(booking.branchSlug).toBe('causeway-bay');
+  });
+  it('refuses any new booking while a settlement debt is unpaid, and allows it once paid (Heidi 2026-10-18)',async()=>{
+    const debt={status:'confirmed',date:'2026-10-01',userId:'alice',pricing:{baseCharge:2000,addOnTotal:0,securityDeposit:1000},payments:[{amount:3000}],depositRefund:{amount:0,deductions:[{amount:2000}],refundedAt:'2026-10-02T00:00:00Z'},balanceDue:1000};
+    m.userBookings=[{id:'old',data:()=>debt}];
+    const blocked=await POST(request(body));
+    expect(blocked.status).toBe(400);expect((await blocked.json()).error).toBe('SETTLEMENT_DEBT_OUTSTANDING');expect(m.created).toEqual([]);
+    m.userBookings=[{id:'old',data:()=>({...debt,status:'completed',balanceDue:0,payments:[{amount:3000},{amount:1000}]})}];
+    expect((await POST(request(body))).status).toBe(200);
   });
   it('rejects invented package names',async()=>{expect((await POST(request({...body,packageSlug:'free'}))).status).toBe(400);expect(m.created).toEqual([]);});
   it('uses authoritative CS terms even if the client changes price, date and venue',async()=>{

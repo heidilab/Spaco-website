@@ -20,6 +20,7 @@ import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllBookings } from '@/lib/firestore';
 import { branchKey as branchKeyOf, countsForFinance, salesCategoryBreakdown } from '@/lib/finance';
+import { settlementCashTiming } from '@/lib/settlementDebt';
 import { listExpenses, getFinanceConfig, saveFinanceConfig, type FinanceConfig } from '@/lib/expenses';
 import { commissionForBooking, estimatedKpayFee, splitAmounts, adminDiscountAmount } from '@/lib/bookingMoney';
 import { getMonthClose, saveMonthClose } from '@/lib/monthClose';
@@ -80,7 +81,11 @@ interface MonthNumbers {
   count: number;
   channelSales: Record<string, number>;
   channelCounts: Record<string, number>;
-  cats: { rent: number; bbqHotpot: number; shisha: number; cater: number; drinks: number; extPenalty: number };
+  cats: { rent: number; bbqHotpot: number; shisha: number; cater: number; drinks: number; extPenalty: number; lateCollections: number };
+  /** This month's bookings with settlement debt not received by month end. */
+  uncollected: Array<{ id: string; amount: number }>;
+  /** Earlier months' settlement debt received in this month (補收舊單欠款). */
+  lateList: Array<{ id: string; eventMonth: string; amount: number }>;
 }
 
 export default function MonthClosePage() {
@@ -169,15 +174,29 @@ export default function MonthClosePage() {
       countsForFinance(b, { includeTest: isPreviewHost })
       && b.date.startsWith(m)
       && branchKeyOf(b.venueId) === branch);
-    const cats = { rent: 0, bbqHotpot: 0, shisha: 0, cater: 0, drinks: 0, extPenalty: 0 };
+    const cats = { rent: 0, bbqHotpot: 0, shisha: 0, cater: 0, drinks: 0, extPenalty: 0, lateCollections: 0 };
     let sales = 0, commissions = 0, kpayEst = 0, discounts = 0;
     const channelSales: Record<string, number> = {};
     const channelCounts: Record<string, number> = {};
     const commissionByChannel: Record<string, number> = {};
+    const uncollected: Array<{ id: string; amount: number }> = [];
+    const lateList: Array<{ id: string; eventMonth: string; amount: number }> = [];
     for (const b of rows) {
-      const total = b.pricing.subtotal || 0;
-      sales += total;
       const c = salesCategoryBreakdown(b);
+      // 收到先計 (Heidi 2026-10-18): settlement debt still unpaid, or paid
+      // only after this month ended, is not this month's revenue. It comes
+      // off 加時/罰款 first (where deductions sit), then off rent.
+      const timing = settlementCashTiming(b, { includeTest: isPreviewHost });
+      let rentCut = 0;
+      if (timing.excludedFromEventMonth > 0) {
+        const fromPenalty = Math.min(c.extPenalty, timing.excludedFromEventMonth);
+        c.extPenalty -= fromPenalty;
+        rentCut = Math.min(c.rent, timing.excludedFromEventMonth - fromPenalty);
+        c.rent -= rentCut;
+        uncollected.push({ id: b.id, amount: timing.excludedFromEventMonth });
+      }
+      const total = (b.pricing.subtotal || 0) - rentCut;
+      sales += total;
       cats.rent += c.rent; cats.bbqHotpot += c.bbqHotpot; cats.shisha += c.shisha;
       cats.cater += c.cater; cats.drinks += c.drinks; cats.extPenalty += c.extPenalty;
       if (config) {
@@ -194,6 +213,17 @@ export default function MonthClosePage() {
       channelSales[ch] = (channelSales[ch] || 0) + total;
       channelCounts[ch] = (channelCounts[ch] || 0) + 1;
     }
+    // Settlement debt from EARLIER months received in this month: income of
+    // this month, listed with the original booking and month.
+    for (const b of allBookings) {
+      if (!countsForFinance(b, { includeTest: isPreviewHost }) || branchKeyOf(b.venueId) !== branch || b.date.slice(0, 7) >= m) continue;
+      for (const l of settlementCashTiming(b, { includeTest: isPreviewHost }).late) {
+        if (l.month !== m) continue;
+        cats.lateCollections += l.amount;
+        lateList.push({ id: b.id, eventMonth: b.date.slice(0, 7), amount: l.amount });
+      }
+    }
+    sales += cats.lateCollections;
     const close = fyCloses[m];
     const kpayIsActual = typeof close?.kpayActualFee === 'number';
     const kpayFee = kpayIsActual ? (close!.kpayActualFee as number) : kpayEst;
@@ -202,7 +232,7 @@ export default function MonthClosePage() {
     return {
       sales, stored, commissions, commissionByChannel, discounts, kpayFee, kpayIsActual,
       expenses, profit: sales - expenses, count: rows.length,
-      channelSales, channelCounts, cats,
+      channelSales, channelCounts, cats, uncollected, lateList,
     };
   }
 
@@ -482,6 +512,7 @@ export default function MonthClosePage() {
       const catKeys: Array<[keyof MonthNumbers['cats'], string]> = [
         ['rent', 'Rent'], ['bbqHotpot', 'BBQ/Hotpot'], ['shisha', 'Shisha'],
         ['cater', '到會'], ['drinks', 'Drinks'], ['extPenalty', '加時/罰款'],
+        ['lateCollections', '補收舊單欠款'],
       ];
       for (const [k, label] of catKeys) {
         const r = aoa.length;
@@ -644,6 +675,36 @@ export default function MonthClosePage() {
                 <div className="text-xl font-bold">{cur.sales ? `${((cur.profit / cur.sales) * 100).toFixed(1)}%` : '—'}</div>
               </div>
             </div>
+            {(cur.uncollected.length > 0 || cur.lateList.length > 0) && (
+              <div className="mt-3 grid md:grid-cols-2 gap-3 text-xs">
+                {cur.uncollected.length > 0 && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                    <div className="font-semibold text-amber-800 mb-1">
+                      {zh ? '結算欠款未收（不計入今個月）' : 'Settlement debt not received (excluded this month)'}
+                    </div>
+                    {cur.uncollected.map((u) => (
+                      <div key={u.id} className="flex justify-between text-amber-900">
+                        <a href={`/${locale}/admin/bookings/${u.id}`} className="underline">#{u.id.slice(0, 8)}</a>
+                        <span>${fmt(u.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {cur.lateList.length > 0 && (
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                    <div className="font-semibold text-emerald-800 mb-1">
+                      {zh ? '補收舊單欠款（已計入今個月總銷售）' : 'Earlier settlement debt received (in this month’s sales)'}
+                    </div>
+                    {cur.lateList.map((l, i) => (
+                      <div key={`${l.id}-${i}`} className="flex justify-between text-emerald-900">
+                        <a href={`/${locale}/admin/bookings/${l.id}`} className="underline">#{l.id.slice(0, 8)} · {zh ? '原月份' : 'from'} {l.eventMonth}</a>
+                        <span>${fmt(l.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* ── 分紅 ── */}

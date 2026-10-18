@@ -12,6 +12,10 @@
 
 Points/promos are finally checked and consumed at settlement, not reserved before the customer pays. Competing already-open links can both charge; the ineligible one needs manual reconciliation. Offline/FPS workflows remain separately managed.
 
+## Settlement debt
+
+When deposit-settlement deductions exceed the customer's credit, the shortfall stays in `balanceDue` on a `confirmed` booking. While any such debt is unpaid the customer sees a warning on sign-in and `/api/bookings/create` and `/api/bookings/[id]/confirm` refuse new bookings (`SETTLEMENT_DEBT_OUTSTANDING`). There is no stored ban flag: paying online (pay-balance page) or recording the payment with 記錄線下收款 lifts the block immediately. A partial offline payment now reduces the debt instead of clearing it. Reminder emails go out once on day 14 and once on day 30 after settlement (automation `settlement_debt_reminder`, toggle in Email 自動化). Month close counts only money received by the end of the event month; later payments appear in the month received under 補收舊單欠款 with the original booking and month.
+
 ## Scheduled work
 
 `vercel.json` is the source of truth. Vercel schedules are UTC; below is Hong Kong time:
@@ -25,6 +29,7 @@ Points/promos are finally checked and consumed at settlement, not reserved befor
 | Bonus check | 09:00, 15:00, 21:00 daily |
 | Test booking hygiene | 10:30 daily |
 | Payment finalizations | Every 5 minutes |
+| Settlement debt reminders (day 14 / day 30) | 10:00 daily |
 
 Production must have `CRON_SECRET`; do not print it or manually run authenticated jobs as smoke tests. A deployed schedule is not proof every run succeeded: inspect Vercel execution logs and pending job records when diagnosing failures.
 

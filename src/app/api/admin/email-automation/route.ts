@@ -9,7 +9,7 @@ import {
   buildLockPasscodeEmail, buildPostEventEmail, buildBirthdayEmail,
   buildWelcomeEmail, buildStaffBookingNotificationEmail,
   buildStaffReceiptPendingEmail, buildStaffSupplierOrderEmail,
-  buildBookingCancelledEmail, sendEmail,
+  buildBookingCancelledEmail, buildSettlementDebtReminderEmail, sendEmail,
 } from '@/lib/email';
 import type { BookingRecord } from '@/types';
 import { requireAdmin } from '@/lib/adminAuth';
@@ -112,6 +112,17 @@ function buildPreview(key: EmailAutomationKey): { subject: string; html: string 
         startTime: SAMPLE.startTime,
         endTime: SAMPLE.endTime,
         balanceDue: 4200,
+        whatsappLink: SAMPLE.whatsappLink,
+      });
+    case 'settlement_debt_reminder':
+      return buildSettlementDebtReminderEmail({
+        customerName: SAMPLE.customerName,
+        venueName: SAMPLE.venueName,
+        date: SAMPLE.date,
+        bookingId: SAMPLE.bookingId,
+        amountDue: 1000,
+        stage: 14,
+        payUrl: `https://spacohk.com/zh/book/causeway-bay/pay-balance/${SAMPLE.bookingId}`,
         whatsappLink: SAMPLE.whatsappLink,
       });
     case 'lock_passcode':
