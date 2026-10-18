@@ -18,3 +18,7 @@ A read-only scan of every booking with `pointsUsed > 0` found two offline-paid b
 - Settled September booking: recalculated refund now matches the refund actually paid (the admin mismatch warning disappears); the settlement points credit was topped up to the no-redemption basis at Heidi's request.
 
 Readback confirmed both bookings and both customers' balances. No email, notification, refund or payment was triggered. Customer amounts are recorded in the session, not here.
+
+## Production release
+
+Heidi approved. main fast-forwarded to 7b03bab (fix c751504). Production deployment dpl_6dmFjEHJLhmPMre9AsfdcHHapFfS READY and aliased to https://spacohk.com; deployment id recorded in the Notion changelog. No rules change.
