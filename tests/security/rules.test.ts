@@ -84,6 +84,17 @@ describe('Staff roles', () => {
     await assertSucceeds(getDocs(collection(db('cleaner'),'calendar_events')));
   });
 });
+describe('Venue photos (分店管理) — admin uploads, public reads (2026-10-23)', () => {
+  it('lets admin upload an image, denies marketing/cs and non-images, and serves it publicly', async () => {
+    const path = 'venue-images/hart-a-1.png';
+    await assertSucceeds(uploadBytes(ref(env.authenticatedContext('admin').storage(), path), new Uint8Array([1]), { contentType: 'image/png' }));
+    await assertFails(uploadBytes(ref(env.authenticatedContext('marketing').storage(), 'venue-images/m.png'), new Uint8Array([1]), { contentType: 'image/png' }));
+    await assertFails(uploadBytes(ref(env.authenticatedContext('cs').storage(), 'venue-images/c.png'), new Uint8Array([1]), { contentType: 'image/png' }));
+    await assertFails(uploadBytes(ref(env.authenticatedContext('admin').storage(), 'venue-images/x.html'), new Uint8Array([1]), { contentType: 'text/html' }));
+    await assertSucceeds(getBytes(ref(env.unauthenticatedContext().storage(), path)));
+  });
+});
+
 describe('Receipt privacy and upload constraints', () => {
   it('allows owner upload/read, denies other customers, and permits CS review', async () => {
     const object = 'receipts/one/test.png';

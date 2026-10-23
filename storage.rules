@@ -6,8 +6,13 @@ service firebase.storage {
         && firestore.exists(/databases/(default)/documents/admin_users/$(request.auth.uid))
         && firestore.get(/databases/(default)/documents/admin_users/$(request.auth.uid)).data.role in roles;
     }
+    function admin() { return roleIn(['admin']); }
     function bookings() { return roleIn(['admin', 'cs']); }
     function content() { return roleIn(['admin', 'marketing']); }
+    function imageFile() {
+      return request.resource.size > 0 && request.resource.size <= 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
     function ownsBooking(id) {
       return request.auth != null
         && firestore.get(/databases/(default)/documents/bookings/$(id)).data.userId == request.auth.uid;
@@ -21,6 +26,13 @@ service firebase.storage {
     }
     match /site-images/{file=**} { allow read: if true; allow write: if content(); }
     match /articles/{file=**} { allow read: if true; allow write: if content(); }
+    // 分店管理 venue photos (admin-only page). Missing from the 2026-10-09
+    // rules, so every upload failed with storage/unauthorized (2026-10-23).
+    match /venue-images/{file=**} {
+      allow read: if true;
+      allow create, update: if admin() && imageFile();
+      allow delete: if admin();
+    }
     match /receipts/{bookingId}/{filename} {
       allow get: if bookings() || ownsBooking(bookingId);
       allow list: if bookings();
