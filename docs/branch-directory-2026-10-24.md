@@ -15,3 +15,7 @@ HART (尖沙咀, branchKey `tsthart`, three active spaces) was added in 分店�
 ## Not changed
 
 Static SEO text still mentions four branches in the default meta description (editable in admin SEO). `src/lib/branchInfo.ts` and `jsonLd.venuesForBranch` remain static for legacy pages; the branch layout already falls back to the registry for dynamic slugs.
+
+## Production release
+
+Heidi approved. main fast-forwarded to 02d509e (feature 344c0dd); production dpl_4zztztpxtWWCAB5XoFZcJh6AxpFf READY and aliased to https://spacohk.com. /zh, /en, /zh/branches/tsthart and /zh/book/hart-a return 200; the live home page lists five branch links including tsthart, shows 「香港 · 5 間分店」 and "5 locations · Hong Kong", renders the HART card, and has no console errors. No rules change.
