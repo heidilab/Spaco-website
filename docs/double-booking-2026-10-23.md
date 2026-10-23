@@ -18,3 +18,7 @@ Read-only scan of all upcoming active bookings found exactly these two without s
 ## Verification
 
 294 unit tests, TypeScript and focused lint pass. Preview dpl_CwFHVetNBdvf7ALaSpyVUSmJzwAu (guards + menu) ready; the FPS restore fix is in the next preview.
+
+## Production release
+
+Heidi approved. main fast-forwarded to 52cee1a; production dpl_DGy1tgdXWxPUKJjCG3dP2De3Kb2j READY and aliased to https://spacohk.com. Home, CWB and SW booking pages return 200; booking create and the hygiene cron return 401 without credentials; CWB 2026-10-31 offers start times only up to 15:00 (evening booked). Final preview before release: dpl_7bZPXmdSumBey72APc3KNXYKwEX1. No rules change.
