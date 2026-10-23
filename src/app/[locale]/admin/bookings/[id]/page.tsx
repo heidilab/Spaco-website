@@ -19,7 +19,7 @@ import {
   creditLoyaltyPoints,
   redeemLoyaltyPoints,
 } from '@/lib/firestore';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, getDocs, query, collection, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { BookingRecord, UserProfile, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
 import { channelDisplayLabel } from '@/lib/marketingChannels';
@@ -1300,6 +1300,11 @@ export default function AdminBookingDetailPage() {
                       ? (locale === 'zh' ? '標記為測試單？此單將不會計入任何財務報表。' : 'Mark as TEST? Excluded from all finance reports.')
                       : (locale === 'zh' ? '取消測試單標記？此單將重新計入財務報表。' : 'Unmark test? Booking counts in finance again.'))) return;
                     await updateDoc(doc(db, 'bookings', booking.id), { isTest: next, updatedAt: serverTimestamp() });
+                    // Keep the booking's blocked_slots in step: a real booking
+                    // whose slots stay stamped isTest is invisible to the
+                    // site's availability (CWB 2026-10-31 double booking).
+                    const slotSnap = await getDocs(query(collection(db, 'blocked_slots'), where('bookingId', '==', booking.id)));
+                    await Promise.all(slotSnap.docs.map((s) => updateDoc(s.ref, { isTest: next })));
                     const fresh = await getBooking(booking.id);
                     if (fresh) setBooking(fresh);
                   }}

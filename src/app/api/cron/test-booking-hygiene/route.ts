@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { removeBookingFromCalendar } from '@/lib/googleCalendar';
+import { restoreBlockedSlotsIfMissing } from '@/lib/finalizeBooking';
+import type { BookingRecord } from '@/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -58,5 +60,30 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, testBookings: snap.size, slotsStamped, gcalRemoved });
+  // ── Slot integrity for REAL upcoming bookings (2026-10-23) ──────────
+  // A real booking whose blocked_slots are missing, or still stamped isTest
+  // from a period when it was flagged as a test, shows as AVAILABLE on the
+  // site (CWB 2026-10-31 was sold twice). Rebuild / un-stamp them daily.
+  const today = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
+  let slotsRestored = 0;
+  let slotsUnstamped = 0;
+  const repaired: string[] = [];
+  const upcoming = await adminDb.collection('bookings').where('date', '>=', today).get();
+  for (const d of upcoming.docs) {
+    const b = d.data() as BookingRecord;
+    if (b.isTest || !['confirmed', 'awaiting_payment', 'awaiting_review'].includes(b.status)) continue;
+    const slots = await adminDb.collection('blocked_slots').where('bookingId', '==', d.id).get();
+    for (const slot of slots.docs) {
+      if ((slot.data() as { isTest?: boolean }).isTest) {
+        await slot.ref.set({ isTest: false, repairedAt: new Date().toISOString() }, { merge: true });
+        slotsUnstamped++;
+        repaired.push(d.id);
+      }
+    }
+    if (!slots.docs.some((s) => (s.data() as { reason?: string }).reason === 'booking')) {
+      if (await restoreBlockedSlotsIfMissing({ ...b, id: d.id })) { slotsRestored++; repaired.push(d.id); }
+    }
+  }
+  if (repaired.length) console.warn('[test-hygiene] repaired real-booking slots', Array.from(new Set(repaired)));
+  return NextResponse.json({ ok: true, testBookings: snap.size, slotsStamped, gcalRemoved, slotsRestored, slotsUnstamped });
 }

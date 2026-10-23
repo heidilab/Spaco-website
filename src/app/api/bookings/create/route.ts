@@ -13,6 +13,7 @@ import { getHoliday } from '@/lib/hkHolidays';
 import { BookingInputError, bookingInterval, finiteNumber, pricePackage, validateAddOns } from '@/lib/bookingSecurity';
 import type { PromoCode } from '@/types';
 import { assertNoSettlementDebt } from '@/lib/settlementDebtServer';
+import { overlappingBookings, type OverlapBooking, type OverlapWindow } from '@/lib/bookingOverlap';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -366,6 +367,31 @@ export async function POST(req: NextRequest) {
             throw new Error('SLOT_CONFLICT');
           }
         }
+      }
+
+      // ── 4b. Conflict check against the BOOKINGS themselves ───────────
+      // blocked_slots can be missing or hidden (CWB 2026-10-31 was sold
+      // twice that way), so the paid bookings are the final authority.
+      const candidateDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+      for (const vid of sharedVenues) {
+        for (const d of lockDates) {
+          for (const field of ['date', 'endDate'] as const) {
+            const snap = await t.get(adminDb.collection('bookings').where('venueId', '==', vid).where(field, '==', d));
+            candidateDocs.push(...snap.docs);
+          }
+        }
+      }
+      const requestedWindows: OverlapWindow[] = overnight
+        ? [{ date: date as string, startTime, endTime: '23:59' }, { date: resolvedEndDate, startTime: '00:00', endTime }]
+        : [{ date: date as string, startTime, endTime }];
+      if (setupStart) requestedWindows.push({ date: date as string, startTime: setupStart, endTime: startTime });
+      const seen = new Set<string>();
+      const clashes = overlappingBookings(requestedWindows,
+        candidateDocs.filter((d) => !seen.has(d.id) && seen.add(d.id)).map((d) => ({ id: d.id, ...(d.data() as Omit<OverlapBooking, 'id'>) })),
+        { production: process.env.VERCEL_ENV === 'production' });
+      if (clashes.length) {
+        console.warn('[bookings/create] booking overlap without blocked_slots', { venueId, date, clashes: clashes.map((c) => c.id) });
+        throw new Error('SLOT_CONFLICT');
       }
 
       // ── 5. Create booking document ────────────────────────────────────

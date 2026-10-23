@@ -53,12 +53,12 @@ export const CATERING_ITEMS: CateringItem[] = [
   { code: '110', category: 'main', name: { zh: '蕃茄肉醬海鮮繪長通粉（約 2 磅）',      en: 'Tomato seafood bolognese penne (~2 lb)' } },
 
   // ── 派對熱盤 Side Dish ──
-  { code: '121', category: 'side', name: { zh: '日式炸餃子 20 件',                    en: 'Japanese fried gyoza × 20' } },
+  { code: '121', category: 'side', name: { zh: '墨魚天婦羅配甜辣雞醬 25 件',          en: 'Squid tempura with sweet chili sauce × 25' }, tags: ['chef-pick'] },
   { code: '122', category: 'side', name: { zh: '和風小丸子 20 件',                    en: 'Takoyaki × 20' }, tags: ['kids-favorite'] },
   { code: '123', category: 'side', name: { zh: '紫心香芋波波 20 件',                  en: 'Purple sweet potato balls × 20' }, tags: ['vegetarian'] },
   { code: '124', category: 'side', name: { zh: '燒日本蕃薯仔 30 件',                  en: 'Roasted Japanese mini sweet potatoes × 30' } },
   { code: '125', category: 'side', name: { zh: '炙燒八爪魚棒 15 支',                  en: 'Torched octopus skewers × 15' } },
-  { code: '126', category: 'side', name: { zh: '墨魚天婦羅配甜辣雞醬 25 件',          en: 'Squid tempura with sweet chili sauce × 25' }, tags: ['chef-pick'] },
+  { code: '126', category: 'side', name: { zh: '蜜汁烤雞翼 15 件',                    en: 'Honey-glazed roasted chicken wings × 15' } },
   { code: '127', category: 'side', name: { zh: '醬燒雞中翼 15 件',                    en: 'Soy-glazed chicken mid-wings × 15' }, tags: ['kids-favorite'] },
   { code: '128', category: 'side', name: { zh: '酥炸魷魚圈配凱薩汁 12 件',            en: 'Crispy squid rings with Caesar dressing × 12' } },
   { code: '129', category: 'side', name: { zh: '鰻魚芝士蟹棒玉子燒 9 件',            en: 'Eel, cheese & crab stick tamagoyaki × 9' } },
@@ -75,7 +75,7 @@ export const CATERING_ITEMS: CateringItem[] = [
   { code: '138', category: 'green', name: { zh: '素・冷烏冬配胡麻汁（約 2 磅）',         en: 'Vegetarian cold udon with sesame sauce (~2 lb)' }, tags: ['vegetarian'] },
   { code: '139', category: 'green', name: { zh: '香烤焗南瓜片（約 20 塊）',             en: 'Roasted pumpkin slices × 20' } },
   { code: '140', category: 'green', name: { zh: '韓風泡菜炒飯（約 2 磅）',             en: 'Korean kimchi fried rice (~2 lb)' }, tags: ['mild-spicy'] },
-  { code: '141', category: 'green', name: { zh: '天使與魔鬼一口西多士（約 2 磅）',       en: 'Angel & devil bite-sized French toast (~2 lb)' } },
+  { code: '141', category: 'green', name: { zh: '天使與魔鬼一口西多士（30 件）',         en: 'Angel & devil bite-sized French toast × 30' } },
   { code: '182', category: 'green', name: { zh: '日式素之卷（16 件）',                  en: 'Japanese vegetarian rolls × 16' } },
 
   // ── 料理長發板 Japan Food ──
@@ -111,7 +111,7 @@ export const CATERING_ITEMS: CateringItem[] = [
 
   // ── 甜品 / 包點 Dessert & Bread ──
   { code: '170', category: 'dessert', name: { zh: '芝士吞拿魚三文治（12 件）',          en: 'Cheese tuna sandwiches × 12' } },
-  { code: '171', category: 'dessert', name: { zh: '蘋果牛奶流沙包（9 件）',            en: 'Apple milk lava buns × 9' } },
+  { code: '171', category: 'dessert', name: { zh: '蘋果牛奶流沙包（6 件）',            en: 'Apple milk lava buns × 6' } },
   { code: '172', category: 'dessert', name: { zh: 'Tiramisu 意式芝士蛋糕杯（12 件）',   en: 'Tiramisu Italian cheesecake cups × 12' }, tags: ['chef-pick'] },
   { code: '173', category: 'dessert', name: { zh: '一口藍莓芝士蛋糕（12 件）',          en: 'Mini blueberry cheesecakes × 12' } },
   { code: '174', category: 'dessert', name: { zh: '比利時朱古力布朗尼（16 件）',        en: 'Belgian chocolate brownies × 16' } },
@@ -125,14 +125,17 @@ export const CATERING_ITEMS: CateringItem[] = [
   // ── 多國風味 World Flavours (2-day notice) ──
   { code: '156', category: 'world', name: { zh: '美式蜜汁即燒豬肋骨（約 12 支骨）',     en: 'American honey BBQ pork ribs (~12 ribs)' } },
   { code: '157', category: 'world', name: { zh: '芝士肉鬆培根蔥油手抓餅 9 件',          en: 'Cheese, pork floss, bacon & scallion pancake × 9' } },
-  { code: '158', category: 'world', name: { zh: '越式鮮蝦長春卷配噲汁 12 條',          en: 'Vietnamese prawn spring rolls with hoisin × 12' } },
+  { code: '158', category: 'world', name: { zh: '田園車厘茄素肉丸串 12 件',            en: 'Garden cherry tomato & veggie meatball skewers × 12' }, tags: ['vegetarian'] },
   { code: '159', category: 'world', name: { zh: '泰式酸辣無骨鳳爪配蜜糖芥末醬 12 隻',  en: 'Thai sour-spicy boneless chicken feet with honey mustard × 12' } },
   { code: '160', category: 'world', name: { zh: '地中海風味素菜薄餅 9 件',              en: 'Mediterranean vegetable flatbread × 9' } },
-  { code: '161', category: 'world', name: { zh: '墨西哥蔬菜雞肉卷配胡麻醬 12 件',      en: 'Mexican veggie & chicken wraps with sesame sauce × 12' } },
+  { code: '161', category: 'world', name: { zh: '墨西哥蔬菜雞肉卷配胡麻醬 9 件',       en: 'Mexican veggie & chicken wraps with sesame sauce × 9' } },
   { code: '162', category: 'world', name: { zh: '香脆爆汁一口生煎包（18 件）',          en: 'Crispy bite-sized pan-fried buns × 18' } },
-  { code: '163', category: 'world', name: { zh: '古早風味鹽酥雞（20-24 件）',          en: 'Taiwanese-style salt & pepper chicken (20-24 pcs)' } },
+  { code: '163', category: 'world', name: { zh: '韓式甜辣炸雞 16 件',                  en: 'Korean sweet & spicy fried chicken × 16' }, tags: ['mild-spicy'] },
   { code: '164', category: 'world', name: { zh: '寶島甜不辣拼台灣腸（各 12 件）',       en: 'Taiwanese tempura & sausage platter × 12 each' } },
-  { code: '165', category: 'world', name: { zh: '黑松露熔岩芝士炸薯角 1 份',            en: 'Black truffle molten cheese potato wedges (1 portion)' } },
+  { code: '165', category: 'world', name: { zh: '黃金菠蘿腸仔串 18 件',                en: 'Golden pineapple & sausage skewers × 18' } },
+  { code: '166', category: 'world', name: { zh: '香辣羅非烤魚煲（約 1450g）',          en: 'Spicy grilled tilapia pot (~1450 g)' }, tags: ['mild-spicy'] },
+  { code: '167', category: 'world', name: { zh: '蒜香羅非烤魚煲（約 1450g）',          en: 'Garlic grilled tilapia pot (~1450 g)' } },
+  { code: '183', category: 'world', name: { zh: '黑松露焗岩芝士炸薯角 1 份',            en: 'Black truffle baked molten cheese potato wedges (1 portion)' } },
 
   // ── 追加款式 Add-on Dishes (with own prices) ──
   { code: 'A1',  category: 'addon', name: { zh: '派對手打檸檬茶（5 升）',              en: 'Party-style handcrafted lemon tea (5 L)' }, price: 298, tags: ['chef-pick'] },
@@ -140,7 +143,7 @@ export const CATERING_ITEMS: CateringItem[] = [
   { code: 'A3',  category: 'addon', name: { zh: '桶裝珍珠奶茶（5 升）',                en: 'Bucket pearl milk tea (5 L)' }, price: 298, tags: ['kids-favorite'] },
   { code: 'A4',  category: 'addon', name: { zh: '桶裝夏日水果茶（5 升）',              en: 'Bucket summer fruit tea (5 L)' }, price: 298 },
   { code: 'A5',  category: 'addon', name: { zh: '椰子花膠雞湯（2.4 升）',              en: 'Coconut fish maw chicken soup (2.4 L)' }, price: 358 },
-  { code: 'A6',  category: 'addon', name: { zh: '蟲草花螺片姬茸花膠雞湯（2.4 升）',    en: 'Cordyceps, whelk & maitake fish maw chicken soup (2.4 L)' }, price: 358 },
+  { code: 'A6',  category: 'addon', name: { zh: '健康美味水果盤（2 盤）',              en: 'Healthy fresh fruit platter × 2 trays' }, price: 398 },
   { code: 'A7',  category: 'addon', name: { zh: '傳統蠔豉冬菇花膠雞湯（2.4 升）',      en: 'Traditional oyster, mushroom & fish maw chicken soup (2.4 L)' }, price: 358 },
   { code: 'A8',  category: 'addon', name: { zh: '招牌燒羊架（8 件）',                  en: 'Signature roasted lamb rack × 8' }, price: 468 },
   { code: 'A9',  category: 'addon', name: { zh: '極上壽司盛 40 件',                    en: 'Premium sushi platter × 40' }, price: 728, tags: ['chef-pick'] },

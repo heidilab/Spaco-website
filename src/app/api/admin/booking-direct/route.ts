@@ -3,6 +3,7 @@ import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { requireAdmin } from '@/lib/adminAuth';
 import { computeGrandTotal, computeBalanceDue, paidBase } from '@/lib/bookingMoney';
+import { overlappingBookings, type OverlapBooking, type OverlapWindow } from '@/lib/bookingOverlap';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -135,6 +136,28 @@ export async function POST(req: NextRequest) {
             throw new Error('SLOT_CONFLICT');
           }
         }
+      }
+      // Bookings themselves are the final authority when blocked_slots are
+      // missing or hidden (CWB 2026-10-31 double booking).
+      const candidateDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+      for (const vid of sharedVenues) {
+        for (const d of lockDates) {
+          for (const field of ['date', 'endDate'] as const) {
+            const snap = await t.get(adminDb.collection('bookings').where('venueId', '==', vid).where(field, '==', d));
+            candidateDocs.push(...snap.docs);
+          }
+        }
+      }
+      const requestedWindows: OverlapWindow[] = overnight
+        ? [{ date: date as string, startTime, endTime: '23:59' }, { date: resolvedEndDate, startTime: '00:00', endTime }]
+        : [{ date: date as string, startTime, endTime }];
+      const seen = new Set<string>();
+      const clashes = overlappingBookings(requestedWindows,
+        candidateDocs.filter((d) => !seen.has(d.id) && seen.add(d.id)).map((d) => ({ id: d.id, ...(d.data() as Omit<OverlapBooking, 'id'>) })),
+        { production: process.env.VERCEL_ENV === 'production' });
+      if (clashes.length) {
+        console.warn('[booking-direct] booking overlap without blocked_slots', { venueId, date, clashes: clashes.map((c) => c.id) });
+        throw new Error('SLOT_CONFLICT');
       }
 
       const bookingRef = adminDb.collection('bookings').doc();
