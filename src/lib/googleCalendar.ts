@@ -10,6 +10,7 @@
 // Auth: OAuth 2.0 (refresh token stored in Firestore at `secrets/google_oauth`).
 
 import { google, calendar_v3 } from 'googleapis';
+import { normalizeGcalCalendarId } from './gcalCalendarId';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from './firebaseAdmin';
 import { BlockedSlot, BookingRecord } from '@/types';
@@ -60,7 +61,8 @@ export async function getCalendarIdForVenue(venueId: string): Promise<string | n
   try {
     const { getVenueByIdServer } = await import('./venueRegistryServer');
     const v = await getVenueByIdServer(venueId);
-    if (v?.gcalCalendarId) return v.gcalCalendarId;
+    const id = normalizeGcalCalendarId(v?.gcalCalendarId);
+    if (id) return id;
   } catch { /* registry unreachable — fall back to env */ }
   const calKey = venueIdToCalendarKey(venueId);
   return calKey ? getCalendarIds()[calKey] : null;
@@ -76,10 +78,11 @@ export async function getCalendarGroups(): Promise<Array<{ key: string; calId: s
   try {
     const { loadAllVenuesServer } = await import('./venueRegistryServer');
     for (const v of await loadAllVenuesServer()) {
-      if (!v.gcalCalendarId) continue;
-      const arr = byCal.get(v.gcalCalendarId) || [];
+      const calId = normalizeGcalCalendarId(v.gcalCalendarId);
+      if (!calId) continue;
+      const arr = byCal.get(calId) || [];
       arr.push(v.id);
-      byCal.set(v.gcalCalendarId, arr);
+      byCal.set(calId, arr);
       covered.add(v.id);
     }
   } catch { /* registry unreachable */ }

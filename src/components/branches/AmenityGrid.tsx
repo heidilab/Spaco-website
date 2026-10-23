@@ -7,9 +7,10 @@
 
 import { useState } from 'react';
 import {
-  Flame, ChefHat, Beer, Gamepad2, Dice5, Mic2, Sparkles,
+  Flame, ChefHat, Beer, Gamepad2, Dice5, Mic2,
   CookingPot, Spade, Volume2, Users as UsersIcon,
-  Tv, ChevronDown, ChevronUp, type LucideIcon,
+  Tv, ChevronDown, ChevronUp, Joystick, Volleyball, ChevronsUp, ToyBrick, CircleDot,
+  type LucideIcon,
 } from 'lucide-react';
 
 export interface AmenityEntry {
@@ -36,12 +37,12 @@ const REGISTRY: Array<{
   kind?: 'switch' | 'board';
 }> = [
   // 燒烤 / BBQ
-  { match: /\b(bbq|barbe?cue|燒烤)\b|戶外\s*BBQ/i,
+  { match: /\b(bbq|barbe?cue)\b|燒烤|戶外\s*BBQ/i,
     label: { zh: '戶外 BBQ', en: 'Outdoor BBQ' },
     icon: Flame,
     gradient: 'from-orange-500 to-rose-500' },
   // 火鍋 / Hotpot
-  { match: /\b(hotpot|hot\s*pot|打邊爐|火鍋)\b/i,
+  { match: /\b(hotpot|hot\s*pot)\b|打邊爐|火鍋/i,
     label: { zh: '火鍋', en: 'Hotpot' },
     icon: ChefHat,
     gradient: 'from-rose-500 to-red-500' },
@@ -70,8 +71,28 @@ const REGISTRY: Array<{
   // 桌球 / Pool Table
   { match: /pool\s*table|billiard|桌球/i,
     label: { zh: '桌球', en: 'Pool Table' },
-    icon: Sparkles,
+    icon: CircleDot,
     gradient: 'from-emerald-600 to-emerald-800' },
+  // 街機 / Arcade
+  { match: /arcade|街機|遊戲機/i,
+    label: { zh: '街機', en: 'Arcade' },
+    icon: Joystick,
+    gradient: 'from-fuchsia-500 to-purple-600' },
+  // 波波池 / Ball pit
+  { match: /ball\s*pit|波波池|波波/i,
+    label: { zh: '波波池', en: 'Ball Pit' },
+    icon: Volleyball,
+    gradient: 'from-cyan-500 to-sky-500' },
+  // 彈跳床 / 大跳床 / Trampoline
+  { match: /trampoline|彈跳床|跳床|彈床/i,
+    label: { zh: '彈跳床', en: 'Trampoline' },
+    icon: ChevronsUp,
+    gradient: 'from-lime-500 to-emerald-500' },
+  // 兒童玩具 / Kids toys
+  { match: /\btoys?\b|玩具|兒童遊樂/i,
+    label: { zh: '兒童玩具', en: 'Kids Toys' },
+    icon: ToyBrick,
+    gradient: 'from-amber-400 to-orange-500' },
   // 獨立廚房 / Private Kitchen
   { match: /private\s*kitchen|獨立廚房/i,
     label: { zh: '獨立廚房', en: 'Private Kitchen' },
@@ -102,7 +123,7 @@ const REGISTRY: Array<{
 /** Resolve a single amenity string to a card entry. Returns undefined
  *  when the string doesn't match anything in the registry — caller
  *  renders a generic fallback in that case. */
-function resolveAmenity(raw: string, locale: 'zh' | 'en'): AmenityEntry {
+export function resolveAmenity(raw: string): AmenityEntry {
   const trimmed = raw.trim();
   for (const r of REGISTRY) {
     if (r.match.test(trimmed)) {
@@ -134,7 +155,7 @@ export default function AmenityGrid({ amenities, switchGames, boardGames, locale
   // Resolve + dedupe by display label
   const seen = new Set<string>();
   let entries: AmenityEntry[] = amenities
-    .map((a) => resolveAmenity(a, locale))
+    .map((a) => resolveAmenity(a))
     .filter((e) => {
       const key = e.label[locale];
       if (seen.has(key)) return false;
@@ -146,10 +167,10 @@ export default function AmenityGrid({ amenities, switchGames, boardGames, locale
   // list doesn't already include them (admin may have left amenities
   // alone and only entered the games list).
   if (switchGames.length > 0 && !entries.some((e) => e.kind === 'switch')) {
-    entries.push(resolveAmenity('Switch', locale));
+    entries.push(resolveAmenity('Switch'));
   }
   if (boardGames.length > 0 && !entries.some((e) => e.kind === 'board')) {
-    entries.push(resolveAmenity('桌遊', locale));
+    entries.push(resolveAmenity('桌遊'));
   }
 
   // Reorder: gameables (Switch / Board) go last so the user reads

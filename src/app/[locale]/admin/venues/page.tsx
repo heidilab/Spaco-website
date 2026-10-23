@@ -11,6 +11,7 @@
 // venue doc / venueId.
 
 import { conflictIdsFor } from '@/lib/venueRegistry';
+import { normalizeGcalCalendarId } from '@/lib/gcalCalendarId';
 import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
@@ -189,7 +190,7 @@ export default function AdminVenuesPage() {
           branchName: shared.branchName,
           address: shared.address,
           branch: shared.branchTag || shared.branchName.en?.slice(0, 4).toUpperCase() || key.toUpperCase(),
-          gcalCalendarId: shared.gcalCalendarId.trim() || null,
+          gcalCalendarId: normalizeGcalCalendarId(shared.gcalCalendarId),
           // Multi-room branches automatically share one physical-space
           // group so the availability logic (上環模式) engages.
           spaceGroup: multi ? (r.spaceGroup || `${key}-physical`) : null,
