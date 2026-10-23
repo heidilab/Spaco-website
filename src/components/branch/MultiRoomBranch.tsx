@@ -14,9 +14,11 @@ import { Link } from '@/i18n/routing';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowRight, ArrowLeft, Users, Maximize, Clock, ChevronLeft, ChevronRight, X, Sparkles, MapPin } from 'lucide-react';
 import type { Venue } from '@/types';
-import { amenityLabels } from '@/lib/venues';
+import { venueAmenityItems } from '@/lib/venueAmenities';
 import AmenityGrid from '@/components/branches/AmenityGrid';
 import { isCombinedRoom, optionLetter, orderRooms, roomLabel } from '@/lib/roomOrder';
+import { getPackagesByVenueId } from '@/lib/packages';
+import BranchPackages from '@/components/branches/BranchPackages';
 
 const GRADIENTS = ['bg-gradient-cool', 'bg-gradient-pink', 'bg-gradient-sunset', 'bg-gradient-warm'];
 
@@ -29,6 +31,8 @@ export default function MultiRoomBranch({ rooms: input, locale }: { rooms: Venue
   const lightboxImages = lightbox ? rooms[lightbox.roomIdx]?.images || [] : [];
   const toList = (raw?: string) => (raw || '').split('\n').map((s) => s.trim()).filter(Boolean);
   const singlesCount = rooms.filter((r) => !isCombinedRoom(r)).length;
+  // Packages sold on any of this branch's spaces (HART birthday package lives on Room A+B).
+  const packages = useMemo(() => rooms.flatMap((r) => getPackagesByVenueId(r.id)), [rooms]);
 
   return (
     <div className="pt-28 relative overflow-hidden">
@@ -90,10 +94,7 @@ export default function MultiRoomBranch({ rooms: input, locale }: { rooms: Venue
             // Combined option without its own photos: full-width detail card
             // (the floor is already shown in the individual rooms' galleries).
             const hideGallery = isCombinedRoom(v) && imgs.length === 0;
-            const amenText = v.amenitiesText?.[locale] || '';
-            const items = amenText
-              ? amenText.split(/[、,，\n]/).map((s) => s.trim()).filter(Boolean)
-              : (v.amenities || []).map((a) => amenityLabels[a]?.[locale] || a);
+            const items = venueAmenityItems(v, locale);
             const sw = toList(v.switchGames?.[locale]);
             const bg = toList(v.boardGames?.[locale]);
             return (
@@ -227,6 +228,8 @@ export default function MultiRoomBranch({ rooms: input, locale }: { rooms: Venue
           })}
         </div>
       </section>
+
+      <BranchPackages packages={packages} locale={locale} />
 
       {/* Lightbox */}
       <AnimatePresence>

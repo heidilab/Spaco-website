@@ -9,7 +9,7 @@ import { useParams } from 'next/navigation';
 import { useRouter } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
 import { getBooking, updateBookingPaymentMethod } from '@/lib/firestore';
-import { getVenueById } from '@/lib/venues';
+import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import { BookingRecord } from '@/types';
 import { LogIn, CreditCard, Smartphone, Building2, MapPin, CalendarDays, Clock, Users } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -85,6 +85,7 @@ export default function PaymentMethodPage() {
   const locale = useLocale() as 'zh' | 'en';
   const params = useParams();
   const router = useRouter();
+  useVenueRegistryReady(); // registry venues (HART) are not in the static list
   const { user, loading: authLoading } = useAuth();
   const bookingId = params.id as string;
   const slug = params.branchSlug as string;
@@ -210,7 +211,7 @@ export default function PaymentMethodPage() {
     );
   }
 
-  const venue = getVenueById(booking.venueId);
+  const venue = findVenueNow(booking.venueId);
   const venueName = venue?.name[locale] || booking.branchSlug;
   const pointsDiscount = booking.pointsDiscount || 0;
   const chargeAmount = Math.max(1, booking.pricing.deposit - pointsDiscount);

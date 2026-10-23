@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { Link } from '@/i18n/routing';
-import { getVenueBySlug, amenityLabels } from '@/lib/venues';
+import { getVenueBySlug } from '@/lib/venues';
+import { venueAmenityItems } from '@/lib/venueAmenities';
 import { loadAllVenues } from '@/lib/venueRegistry';
 import AmenityGrid from '@/components/branches/AmenityGrid';
 import { SiteImage, Venue } from '@/types';
@@ -264,10 +265,7 @@ export default function SheungWanBranchPage() {
                      *  games auto-shown when game lists are populated). */}
                     {(() => {
                       const rv2 = regVenues[v.id] ?? v;
-                      const amenText = rv2.amenitiesText?.[locale] || '';
-                      const items = amenText
-                        ? amenText.split(/[、,，\n]/).map((s) => s.trim()).filter(Boolean)
-                        : rv2.amenities.map((a) => amenityLabels[a]?.[locale] || a);
+                      const items = venueAmenityItems(rv2, locale);
                       const toList = (raw?: string) => (raw || '').split('\n').map((s) => s.trim()).filter(Boolean);
                       const sw = toList(rv2.switchGames?.[locale]);
                       const bg = toList(rv2.boardGames?.[locale]);

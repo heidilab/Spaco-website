@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import Logo from '@/components/layout/Logo';
-import { BIRTHDAY_CWB_PACKAGE } from '@/lib/packages';
+import { BIRTHDAY_CWB_PACKAGE, getPackagesByCategory } from '@/lib/packages';
 import { DECORATION_STYLES } from '@/lib/decorations';
 import { getSiteImageByKey } from '@/lib/content';
 
@@ -145,7 +145,7 @@ export default function FamilyPage() {
                     {locale === 'zh' ? '生日包場套餐' : 'Birthday Package'}
                   </div>
                   <h2 className="text-3xl md:text-4xl font-bold font-display mb-3 leading-tight">
-                    {locale === 'zh' ? '銅鑼灣店生日包場' : 'Causeway Bay Birthday Bash'}
+                    {locale === 'zh' ? '生日包場套餐' : 'Birthday Bash Package'}
                     <span className="block text-2xl md:text-3xl font-display font-normal mt-1 opacity-90">
                       HK${BIRTHDAY_CWB_PACKAGE.price.toLocaleString()}
                       <span className="text-base font-normal ml-2 opacity-75">
@@ -168,10 +168,13 @@ export default function FamilyPage() {
                   </ul>
 
                   <div className="flex flex-wrap items-center gap-3">
-                    <Link href={`/book/package/${BIRTHDAY_CWB_PACKAGE.slug}`} className="inline-flex items-center gap-2 px-7 py-3.5 rounded-pill bg-white text-pink font-bold hover:-translate-y-0.5 transition-transform shadow-lg">
-                      {locale === 'zh' ? '預訂生日包場' : 'Book Birthday Package'}
-                      <ArrowRight size={16} />
-                    </Link>
+                    {/* One button per branch running the package (CWB + TST HART). */}
+                    {getPackagesByCategory('birthday').map((p) => (
+                      <Link key={p.slug} href={`/book/package/${p.slug}`} className="inline-flex items-center gap-2 px-7 py-3.5 rounded-pill bg-white text-pink font-bold hover:-translate-y-0.5 transition-transform shadow-lg">
+                        {locale === 'zh' ? `預訂 ${p.branchLabel?.zh ?? ''}` : `Book ${p.branchLabel?.en ?? ''}`}
+                        <ArrowRight size={16} />
+                      </Link>
+                    ))}
                     <span className="text-xs text-white/75 inline-flex items-center gap-1">
                       <Clock size={12} />
                       {BIRTHDAY_CWB_PACKAGE.earliestStart}–{BIRTHDAY_CWB_PACKAGE.latestEnd} ·{' '}
@@ -194,7 +197,7 @@ export default function FamilyPage() {
                       {locale === 'zh' ? '可退按金' : 'refundable deposit'}
                     </p>
                     <div className="text-xs text-ink-soft space-y-1 border-t border-white/60 pt-3">
-                      <p>📍 {locale === 'zh' ? '銅鑼灣店' : 'Causeway Bay only'}</p>
+                      <p>📍 {getPackagesByCategory('birthday').map((p) => p.branchLabel?.[locale] ?? p.venueId).join(locale === 'zh' ? '／' : ' / ')}</p>
                       <p>⏱️ {locale === 'zh' ? '3 小時固定包場' : 'Fixed 3-hour exclusive'}</p>
                       <p>👥 {locale === 'zh' ? '不限人頭' : 'Unlimited guests'}</p>
                     </div>

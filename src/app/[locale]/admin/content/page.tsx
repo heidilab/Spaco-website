@@ -131,6 +131,8 @@ const PROMO_LINK_OPTIONS: { value: string; label: { zh: string; en: string } }[]
   { value: '/family',                     label: { zh: '親子派對',           en: 'Family Parties' } },
   { value: '/corporate',                  label: { zh: '商務活動',           en: 'Corporate Events' } },
   { value: '/book/package/birthday-cwb',  label: { zh: '生日包場（銅鑼灣）', en: 'Birthday Package (CWB)' } },
+  { value: '/book/package/birthday-hart', label: { zh: '生日包場（尖沙咀 HART）', en: 'Birthday Package (TST HART)' } },
+  { value: '/branches/tsthart',           label: { zh: '尖沙咀 HART 分店',    en: 'TST HART Branch' } },
   { value: '/book/package/mahjong-wanchai', label: { zh: '麻雀包場（灣仔）',  en: 'Mahjong Package (Wan Chai)' } },
   { value: '/book/package/corporate-tst', label: { zh: '企業套餐（尖沙咀）',  en: 'Corporate Package Booking (TST)' } },
   { value: '/branches/causeway-bay',      label: { zh: '銅鑼灣分店',         en: 'Causeway Bay Branch' } },

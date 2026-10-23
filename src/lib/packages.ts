@@ -22,6 +22,9 @@ export interface EventPackage {
   category: PackageCategory;
   /** Allowed venue ids (other branches won't appear). Single id for now. */
   venueId: string;
+  /** Short branch name for the 揀分店 switcher / family page buttons when
+   *  the same package runs at several branches. */
+  branchLabel?: { zh: string; en: string };
   name: { zh: string; en: string };
   shortDesc: { zh: string; en: string };
   /** Bullet list of inclusions */
@@ -66,6 +69,7 @@ export const BIRTHDAY_CWB_PACKAGE: EventPackage = {
   slug: 'birthday-cwb',
   category: 'birthday',
   venueId: 'cwb',
+  branchLabel: { zh: '銅鑼灣店', en: 'Causeway Bay' },
   name: {
     zh: '銅鑼灣店生日包場 Package',
     en: 'Causeway Bay Birthday Package',
@@ -98,6 +102,37 @@ export const BIRTHDAY_CWB_PACKAGE: EventPackage = {
   pitch: {
     zh: '$6,800 全包．3 小時專屬包場．不限人頭．無酒精飲品任飲．基本氣球佈置',
     en: '$6,800 flat · 3-hour exclusive · unlimited guests · drinks & balloons included',
+  },
+};
+
+/**
+ * Same $6,800 birthday package at the TST HART branch — the whole floor
+ * (Hart Room A+B, registry id `hart-ab`) for 3 hours. Heidi 2026-10-24:
+ * 「呢間新分店係同銅鑼灣一樣，會做 HK$6,800 生日包場 package」. Hours and
+ * notice period copied from CWB until Heidi says otherwise.
+ */
+export const BIRTHDAY_HART_PACKAGE: EventPackage = {
+  ...BIRTHDAY_CWB_PACKAGE,
+  slug: 'birthday-hart',
+  venueId: 'hart-ab',
+  branchLabel: { zh: '尖沙咀 HART', en: 'TST HART' },
+  name: {
+    zh: '尖沙咀 HART 生日包場 Package',
+    en: 'TST HART Birthday Package',
+  },
+  includes: {
+    zh: [
+      '尖沙咀 HART 店全場（Room A+B）3 小時包場',
+      '基本氣球佈置',
+      '無酒精飲品任飲',
+      '不限人頭（場地容納上限為準）',
+    ],
+    en: [
+      'Full venue exclusive (Room A+B, 3 hours) at TST HART',
+      'Basic balloon decoration',
+      'Unlimited non-alcoholic drinks',
+      'Unlimited guests (within venue capacity)',
+    ],
   },
 };
 
@@ -220,6 +255,7 @@ export const CORPORATE_TST_PACKAGE: EventPackage = {
 
 export const ALL_PACKAGES: EventPackage[] = [
   BIRTHDAY_CWB_PACKAGE,
+  BIRTHDAY_HART_PACKAGE,
   MAHJONG_WANCHAI_PACKAGE,
   CORPORATE_TST_PACKAGE,
 ];
@@ -231,4 +267,10 @@ export function getPackageBySlug(slug: string): EventPackage | undefined {
 /** Packages bookable at a given venue (by venue.id). */
 export function getPackagesByVenueId(venueId: string): EventPackage[] {
   return ALL_PACKAGES.filter((p) => p.venueId === venueId);
+}
+
+/** Sibling packages of one category (e.g. the birthday package at every
+ *  branch that runs it) — drives the 揀分店 switcher on the package page. */
+export function getPackagesByCategory(category: PackageCategory): EventPackage[] {
+  return ALL_PACKAGES.filter((p) => p.category === category);
 }

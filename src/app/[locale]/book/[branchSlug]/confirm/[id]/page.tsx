@@ -13,7 +13,7 @@ import {
   POINTS_PER_HKD, pointsToHkd, hasSuccessfulBooking } from '@/lib/firestore';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { getVenueById } from '@/lib/venues';
+import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import { getPeakDay } from '@/lib/peakDays';
 import { resolvePeakRule } from '@/lib/peakDayRules';
 import { addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE, calculatePricing, freeDrinksVenues, isWithin2Days } from '@/lib/pricing';
@@ -76,6 +76,9 @@ export default function ConfirmBookingPage() {
   const locale = useLocale() as 'zh' | 'en';
   const params = useParams();
   const router = useRouter();
+  // Registry venues (HART) are not in the static list — load once so the
+  // name and the drinks repricing below see them.
+  useVenueRegistryReady();
   const { user, loading: authLoading } = useAuth();
   const bookingId = params.id as string;
   const slug = params.branchSlug as string;
@@ -257,7 +260,7 @@ export default function ConfirmBookingPage() {
     );
   }
 
-  const venue = getVenueById(booking.venueId);
+  const venue = findVenueNow(booking.venueId);
   const venueName = venue?.name[locale] || booking.branchSlug;
   const securityDeposit = booking.pricing.securityDeposit ?? 0;
 
@@ -300,7 +303,7 @@ export default function ConfirmBookingPage() {
     // it would clobber pkg.price with calculatePricing's per-head math
     // (#m4Dg9Gb0: $6,800 birthday package overwritten to $2,610).
     if (booking.packageSlug || booking.draftId) return;
-    const venue = getVenueById(booking.venueId);
+    const venue = findVenueNow(booking.venueId);
     if (!venue) return;
     const newAddOns = (booking.addOns || []).filter((a) => a.id !== 'drinks');
     // Keep the 特別日子 surcharge inside baseCharge when repricing —
@@ -431,7 +434,7 @@ export default function ConfirmBookingPage() {
         && !freeDrinksVenues.includes(booking.venueId)
         && !booking.addOns?.some((a) => a.id === 'drinks')
       ) {
-        const venue = getVenueById(booking.venueId);
+        const venue = findVenueNow(booking.venueId);
         if (venue) {
           const newAddOns = [...(booking.addOns || []), { id: 'drinks', quantity: 1 }];
           const peakRule = resolvePeakRule(await getPeakDay(booking.date), booking.venueId);

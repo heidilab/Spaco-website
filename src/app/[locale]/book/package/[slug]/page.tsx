@@ -8,12 +8,12 @@ import { motion } from 'framer-motion';
 import {
   ArrowLeft, ArrowRight, Calendar, Clock, Sparkles, Check,
   AlertCircle, MessageCircle, Palette, Image as ImageIcon, Plus, Minus, Users,
-  Loader2, LogIn,
+  Loader2, LogIn, MapPin,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getUserProfile, updateUserWhatsapp } from '@/lib/firestore';
-import { getVenueBySlug } from '@/lib/venues';
-import { getPackageBySlug, CATEGORY_LABEL } from '@/lib/packages';
+import { useRegistryVenue } from '@/lib/useRegistryVenue';
+import { getPackageBySlug, getPackagesByCategory, CATEGORY_LABEL } from '@/lib/packages';
 import { calculateDeposit } from '@/lib/pricing';
 import { saveBookingCheckoutDraft } from '@/lib/bookingCheckoutDraft';
 import HolidayDatePicker from '@/components/booking/HolidayDatePicker';
@@ -66,16 +66,10 @@ export default function PackageBookingPage() {
 
   if (!pkg) notFound();
 
-  const venue = getVenueBySlug(
-    // map venue id → slug
-    pkg.venueId === 'cwb' ? 'causeway-bay'
-    : pkg.venueId === 'wanchai' ? 'wan-chai'
-    : pkg.venueId === 'tst' ? 'tsim-sha-tsui'
-    : pkg.venueId === 'sw-a' ? 'sheung-wan-a'
-    : pkg.venueId === 'sw-b' ? 'sheung-wan-b'
-    : pkg.venueId === 'sw-ab' ? 'sheung-wan-ab'
-    : ''
-  );
+  // Registry first — HART rooms only exist in 分店管理, not src/lib/venues.ts.
+  const venue = useRegistryVenue(pkg.venueId);
+  // Same package at other branches (CWB ↔ TST HART birthday) → 揀分店 chips.
+  const siblings = getPackagesByCategory(pkg.category);
 
   // ===== Date / time =====
   const [selectedDate, setSelectedDate] = useState('');
@@ -363,6 +357,27 @@ export default function PackageBookingPage() {
             <span className="text-gradient-pink">{pkg.name[locale].split(' ').slice(1).join(' ')}</span>
           </h1>
           <p className="text-lg text-ink-soft mt-3">{pkg.shortDesc[locale]}</p>
+          {siblings.length > 1 && (
+            <div className="mt-5 flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-ink-soft mr-1">
+                {locale === 'zh' ? '揀分店' : 'Choose branch'}
+              </span>
+              {siblings.map((p) => {
+                const active = p.slug === pkg.slug;
+                return (
+                  <Link
+                    key={p.slug}
+                    href={`/book/package/${p.slug}`}
+                    aria-current={active ? 'page' : undefined}
+                    className={active ? 'chip-glow font-bold text-ink' : 'chip hover:text-pink transition-colors'}
+                  >
+                    <MapPin size={12} className={active ? 'text-pink' : 'text-ink-soft'} />
+                    {p.branchLabel?.[locale] ?? p.venueId}
+                  </Link>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

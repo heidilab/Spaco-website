@@ -10,7 +10,7 @@ import { useParams } from 'next/navigation';
 import { useRouter } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
 import { getBooking } from '@/lib/firestore';
-import { getVenueById } from '@/lib/venues';
+import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import { BookingRecord } from '@/types';
 import { LogIn, CreditCard, Smartphone, Building2 } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -29,6 +29,7 @@ export default function PayBalancePage() {
   const locale = useLocale() as 'zh' | 'en';
   const params = useParams();
   const router = useRouter();
+  useVenueRegistryReady(); // registry venues (HART) are not in the static list
   const { user, loading: authLoading } = useAuth();
   const bookingId = params.id as string;
   const slug = params.branchSlug as string;
@@ -73,7 +74,7 @@ export default function PayBalancePage() {
     return () => { active = false; };
   }, [bookingId, user, authLoading, locale, reloadKey]);
 
-  const venue = booking ? getVenueById(booking.venueId) : null;
+  const venue = booking ? findVenueNow(booking.venueId) : null;
   const venueName = venue?.name[locale] || booking?.branchSlug || '';
   const balance = booking?.balanceDue ?? 0;
   const cardFee = surchargeFor(balance);
