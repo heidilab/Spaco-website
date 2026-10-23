@@ -3,7 +3,7 @@ import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import type { BookingRecord } from '@/types';
 import { requireAdmin } from '@/lib/adminAuth';
-import { computeGrandTotal } from '@/lib/finalizeBooking';
+import { computeGrandTotal, restoreBlockedSlotsIfMissing } from '@/lib/finalizeBooking';
 import { amountOwed } from '@/lib/bookingMoney';
 
 export const runtime = 'nodejs';
@@ -154,11 +154,25 @@ export async function POST(req: NextRequest) {
     };
     await ref.update(update);
 
+    // A booking resurrected from payment_not_completed / awaiting_* lost
+    // its blocked_slots when the expiry cron swept it. Rebuild them so the
+    // time stops showing as available (CWB 2026-10-31 double booking).
+    let slotsRestored = false;
+    if (nextStatus === 'confirmed' && booking.status !== 'confirmed') {
+      try {
+        slotsRestored = await restoreBlockedSlotsIfMissing({ ...booking, status: 'confirmed' });
+        if (slotsRestored) console.warn('[record-offline-payment] restored blocked_slots for', bookingId);
+      } catch (err) {
+        console.error('[record-offline-payment] blocked_slots restore failed:', err);
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       bookingId,
       newBalanceDue,
       status: nextStatus,
+      slotsRestored,
     });
   } catch (err) {
     return NextResponse.json(

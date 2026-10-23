@@ -10,6 +10,7 @@ import { deductLoyaltyPoints } from '@/lib/loyaltyServer';
 import { FieldValue } from 'firebase-admin/firestore';
 import type { BookingRecord } from '@/types';
 import { requireAdmin } from '@/lib/adminAuth';
+import { restoreBlockedSlotsIfMissing } from '@/lib/finalizeBooking';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -31,6 +32,17 @@ export async function POST(req: NextRequest) {
     // Pin doc id onto the booking — .data() drops it and downstream
     // gcal description / email body both render Booking ID.
     const booking: BookingRecord = { ...(snap.data() as BookingRecord), id: bookingId };
+
+    // An FPS booking approved AFTER the 30-minute hold lapsed has already
+    // had its blocked_slots deleted by the expiry cron; approval flips it
+    // back to confirmed but nothing re-blocked the time, so the site kept
+    // selling it (CWB 2026-10-31, SW 2026-10-29). Rebuild before anything
+    // else, and regardless of whether the customer has an email.
+    try {
+      if (await restoreBlockedSlotsIfMissing(booking)) console.warn('[payment-confirmed] restored blocked_slots for', bookingId);
+    } catch (err) {
+      console.error('[payment-confirmed] blocked_slots restore failed:', err);
+    }
 
     const userSnap = await adminDb.collection('users').doc(booking.userId).get();
     const user = userSnap.exists ? (userSnap.data() as { email?: string; displayName?: string }) : null;
