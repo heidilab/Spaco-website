@@ -4,7 +4,7 @@
  * natural thing to paste from Google Calendar's settings page is the
  * embed URL or the "public URL" — HART's three rooms were saved as
  * `https://calendar.google.com/calendar/embed?src=…%40group.calendar.google.com&ctz=…`
- * and the sync logged "Not Found" (2026-10-25). Accept all of those and
+ * and the sync logged "Not Found" (2026-10-24). Accept all of those and
  * reduce them to the bare id; anything unrecognised is returned trimmed.
  */
 export function normalizeGcalCalendarId(input: string | null | undefined): string | null {

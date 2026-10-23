@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { resolveAmenity } from './AmenityGrid';
 
-// Heidi 2026-10-25: 火鍋／街機／波波池／彈跳床／兒童玩具 showed the generic
+// Heidi 2026-10-24: 火鍋／街機／波波池／彈跳床／兒童玩具 showed the generic
 // people icon on the HART page.
 describe('amenity icon matching', () => {
   it.each([

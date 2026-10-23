@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { normalizeGcalCalendarId } from './gcalCalendarId';
 
 const id = 'b39d07abcdef@group.calendar.google.com';
-describe('normalizeGcalCalendarId — embed URL pasted into 分店管理 (HART, 2026-10-25)', () => {
+describe('normalizeGcalCalendarId — embed URL pasted into 分店管理 (HART, 2026-10-24)', () => {
   it('extracts the id from an embed URL with %40', () => {
     expect(normalizeGcalCalendarId(`https://calendar.google.com/calendar/embed?src=${encodeURIComponent(id)}&ctz=Asia%2FHong_Kong`)).toBe(id);
   });
