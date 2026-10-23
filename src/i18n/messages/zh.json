@@ -20,7 +20,7 @@
     "followCta": "追蹤我們",
     "followLabel": "在 Instagram 追蹤 SPACO",
     "bookingStatus": "網上預訂",
-    "locations": "香港 · 4 間分店",
+    "locations": "香港 · {count} 間分店",
     "eventTypes": "派對 · 商務 · 親子",
     "branchesLabel": "分店",
     "partiesLabel": "開心聚會",
@@ -82,7 +82,7 @@
   },
   "branches": {
     "title": "分店導覽",
-    "subtitle": "四間分店，覆蓋港九核心地段",
+    "subtitle": "{count} 間分店，覆蓋港九核心地段",
     "cwb": "銅鑼灣店",
     "wanchai": "灣仔店",
     "sheungwan": "上環海景旗艦店",

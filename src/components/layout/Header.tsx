@@ -10,18 +10,15 @@ import UserMenu from '@/components/auth/UserMenu';
 import AuthModal from '@/components/auth/AuthModal';
 import { LogoInline } from '@/components/layout/Logo';
 import WhatsAppCTA from '@/components/layout/WhatsAppCTA';
-
-// Branches surfaced in the Spaces dropdown — keep in sync with BranchGrid
-const BRANCH_LINKS = [
-  { slug: 'causeway-bay',  label: { zh: '銅鑼灣店',       en: 'Causeway Bay' } },
-  { slug: 'wan-chai',      label: { zh: '灣仔店',         en: 'Wan Chai' } },
-  { slug: 'tsim-sha-tsui', label: { zh: '尖沙咀店',       en: 'Tsim Sha Tsui' } },
-  { slug: 'sheung-wan',    label: { zh: '上環海景旗艦店', en: 'Sheung Wan Flagship' } },
-];
+import { useBranchDirectory } from '@/lib/branchDirectory';
 
 export default function Header() {
   const t = useTranslations('nav');
   const locale = useLocale() as 'zh' | 'en';
+  // Branches in the Spaces dropdown come from 分店管理 (registry), so a
+  // new branch appears here without a code change (HART, 2026-10-24).
+  const { branches } = useBranchDirectory();
+  const BRANCH_LINKS = branches.map((b) => ({ slug: b.slug, label: b.name }));
   const pathname = usePathname();
   const router = useRouter();
   const { user, loading } = useAuth();

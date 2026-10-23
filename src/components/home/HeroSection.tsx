@@ -6,9 +6,12 @@ import { ArrowRight, Sparkles, MapPin } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { getSiteImageByKey } from '@/lib/content';
 import Logo from '@/components/layout/Logo';
+import { useBranchDirectory } from '@/lib/branchDirectory';
 
 export default function HeroSection() {
   const t = useTranslations('hero');
+  // Branch count follows 分店管理 (registry), not a hard-coded 4.
+  const { branches } = useBranchDirectory();
   const [heroImage, setHeroImage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -57,7 +60,7 @@ export default function HeroSection() {
                   {t('bookingStatus')}
                 </span>
                 <span className="chip">
-                  <MapPin size={12} />{t('locations')}
+                  <MapPin size={12} />{t('locations', { count: branches.length })}
                 </span>
                 <span className="chip">
                   <Sparkles size={12} className="text-pink" />
@@ -114,7 +117,7 @@ export default function HeroSection() {
               {/* Bottom stat strip */}
               <div className="mt-10 pt-6 border-t border-white/50 grid grid-cols-3 gap-4 max-w-md">
                 <div>
-                  <div className="text-2xl font-bold font-display text-ink">4</div>
+                  <div className="text-2xl font-bold font-display text-ink">{branches.length}</div>
                   <div className="text-xs text-ink-soft mt-0.5">{t('branchesLabel')}</div>
                 </div>
                 <div>

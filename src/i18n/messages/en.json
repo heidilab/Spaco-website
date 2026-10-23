@@ -20,7 +20,7 @@
     "followCta": "Follow us",
     "followLabel": "Follow SPACO on Instagram",
     "bookingStatus": "Live booking",
-    "locations": "4 locations · HK",
+    "locations": "{count} locations · HK",
     "eventTypes": "Party · Corporate · Family",
     "branchesLabel": "Branches",
     "partiesLabel": "Happy parties",
@@ -82,7 +82,7 @@
   },
   "branches": {
     "title": "Our Branches",
-    "subtitle": "Four locations across Hong Kong's prime districts",
+    "subtitle": "{count} locations across Hong Kong's prime districts",
     "cwb": "Causeway Bay",
     "wanchai": "Wan Chai",
     "sheungwan": "Sheung Wan",

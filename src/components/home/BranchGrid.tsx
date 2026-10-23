@@ -1,41 +1,54 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
 import { Link } from '@/i18n/routing';
 import { motion } from 'framer-motion';
 import { ArrowUpRight, MapPin } from 'lucide-react';
 import SplitHeading from '@/components/ui/SplitHeading';
 import { getSiteImageByKey } from '@/lib/content';
+import { useBranchDirectory } from '@/lib/branchDirectory';
 
-// Slot keys here MUST match the admin content sections in
-// src/app/[locale]/admin/content/page.tsx (`branches-grid` section).
-const branches = [
-  { key: 'cwb',       slug: 'causeway-bay',  gradient: 'bg-gradient-pink',    orb: 'orb-pink',     imageKey: 'branch-hero-cwb' },
-  { key: 'wanchai',   slug: 'wan-chai',      gradient: 'bg-gradient-warm',    orb: 'orb-coral',    imageKey: 'branch-hero-wc' },
-  { key: 'sheungwan', slug: 'sheung-wan',    gradient: 'bg-gradient-cool',    orb: 'orb-sky',      imageKey: 'branch-hero-sw' },
-  { key: 'tst',       slug: 'tsim-sha-tsui', gradient: 'bg-gradient-sunset',  orb: 'orb-lavender', imageKey: 'branch-hero-tst' },
+// Branch list comes from 分店管理 (registry) — a new branch shows up here
+// automatically (HART, 2026-10-24). The original four keep their 內容管理
+// hero-image slots (`branches-grid` section); newer branches use the first
+// photo uploaded on the venue in 分店管理, else a gradient.
+const LEGACY_IMAGE_KEY: Record<string, string> = {
+  cwb: 'branch-hero-cwb',
+  wanchai: 'branch-hero-wc',
+  'sheung-wan': 'branch-hero-sw',
+  tst: 'branch-hero-tst',
+};
+const PALETTE = [
+  { gradient: 'bg-gradient-pink',   orb: 'orb-pink' },
+  { gradient: 'bg-gradient-warm',   orb: 'orb-coral' },
+  { gradient: 'bg-gradient-cool',   orb: 'orb-sky' },
+  { gradient: 'bg-gradient-sunset', orb: 'orb-lavender' },
 ];
 
 export default function BranchGrid() {
   const t = useTranslations('branches');
+  const locale = useLocale() as 'zh' | 'en';
+  const { branches } = useBranchDirectory();
   const [images, setImages] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    // Load all 4 branch hero images in parallel; missing ones fall back to gradient
+    // 內容管理 hero images for the legacy branches; missing ones fall back
+    // to the venue photo or gradient.
     Promise.all(
-      branches.map(async (b) => {
-        const img = await getSiteImageByKey(b.imageKey).catch(() => null);
-        return [b.imageKey, img?.url || ''] as const;
+      Object.entries(LEGACY_IMAGE_KEY).map(async ([key, imageKey]) => {
+        const img = await getSiteImageByKey(imageKey).catch(() => null);
+        return [key, img?.url || ''] as const;
       })
     ).then((entries) => {
       const map: Record<string, string> = {};
-      for (const [k, v] of entries) {
-        if (v) map[k] = v;
-      }
+      for (const [k, v] of entries) if (v) map[k] = v;
       setImages(map);
     });
   }, []);
+
+  const count = branches.length;
+  const colsClass = count >= 5 ? 'lg:grid-cols-5' : count === 3 ? 'lg:grid-cols-3' : 'lg:grid-cols-4';
 
   return (
     <section className="section-padding relative overflow-hidden">
@@ -52,18 +65,20 @@ export default function BranchGrid() {
           <div>
             <span className="chip mb-4">
               <MapPin size={12} className="text-coral" />
-              4 locations · Hong Kong
+              {count} locations · Hong Kong
             </span>
             <h2 className="text-heading font-display mb-3">
               <SplitHeading text={t('title')} accentClassName="text-gradient-warm" />
             </h2>
-            <p className="text-lg text-ink-soft max-w-xl">{t('subtitle')}</p>
+            <p className="text-lg text-ink-soft max-w-xl">{t('subtitle', { count })}</p>
           </div>
         </motion.div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+        <div className={`grid grid-cols-1 sm:grid-cols-2 ${colsClass} gap-5`}>
           {branches.map((branch, i) => {
-            const heroUrl = images[branch.imageKey];
+            const heroUrl = images[branch.key] || branch.coverImage;
+            const palette = PALETTE[i % PALETTE.length];
+            const name = branch.name[locale] || branch.name.zh;
             return (
               <motion.div
                 key={branch.key}
@@ -79,7 +94,9 @@ export default function BranchGrid() {
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={heroUrl}
-                          alt={t(branch.key)}
+                          alt={name}
+                          loading="lazy"
+                          decoding="async"
                           className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
                         />
                         {/* Tint to keep text readable */}
@@ -88,13 +105,13 @@ export default function BranchGrid() {
                     ) : (
                       <>
                         {/* Gradient base fallback */}
-                        <div className={`absolute inset-0 ${branch.gradient}`} />
+                        <div className={`absolute inset-0 ${palette.gradient}`} />
                         <div
-                          className={`orb ${branch.orb} animate-float-slow group-hover:scale-110 transition-transform duration-700`}
+                          className={`orb ${palette.orb} animate-float-slow group-hover:scale-110 transition-transform duration-700`}
                           style={{ width: 200, height: 200, top: '-30px', right: '-30px', opacity: 0.7 }}
                         />
                         <div
-                          className={`orb ${branch.orb} animate-float-medium`}
+                          className={`orb ${palette.orb} animate-float-medium`}
                           style={{ width: 100, height: 100, bottom: '20%', left: '-20px', opacity: 0.5 }}
                         />
                       </>
@@ -105,11 +122,16 @@ export default function BranchGrid() {
                       <div className="flex items-end justify-between gap-3">
                         <div>
                           <p className="text-[10px] uppercase tracking-widest text-ink-soft font-semibold mb-1">
-                            Branch 0{i + 1}
+                            Branch {String(i + 1).padStart(2, '0')}
                           </p>
                           <h3 className="text-lg font-bold font-display text-ink leading-tight">
-                            {t(branch.key)}
+                            {name}
                           </h3>
+                          {branch.rooms.length > 1 && (
+                            <p className="text-xs text-ink-soft mt-1">
+                              {locale === 'zh' ? `${branch.rooms.length} 個空間` : `${branch.rooms.length} spaces`}
+                            </p>
+                          )}
                         </div>
                         <div className="w-10 h-10 rounded-full bg-ink text-white flex items-center justify-center group-hover:bg-gradient-pink transition-all flex-shrink-0">
                           <ArrowUpRight size={18} className="group-hover:rotate-45 transition-transform" />
