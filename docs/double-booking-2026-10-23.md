@@ -22,3 +22,7 @@ Read-only scan of all upcoming active bookings found exactly these two without s
 ## Production release
 
 Heidi approved. main fast-forwarded to 52cee1a; production dpl_DGy1tgdXWxPUKJjCG3dP2De3Kb2j READY and aliased to https://spacohk.com. Home, CWB and SW booking pages return 200; booking create and the hygiene cron return 401 without credentials; CWB 2026-10-31 offers start times only up to 15:00 (evening booked). Final preview before release: dpl_7bZPXmdSumBey72APc3KNXYKwEX1. No rules change.
+
+## Venue photo uploads (same day)
+
+分店管理 uploads to `venue-images/`, a path no storage rules version ever allowed, so uploads failed with storage/unauthorized. Commit f6c3c6a adds admin-only image writes (10 MB cap) with public read, covered by emulator tests (21 pass). Heidi approved; live rules were backed up to `docs/rollback-2026-10-23/storage.rules` (ruleset ce9bdb4d, verified identical to the 2026-10-15 release) and the new ruleset 64ba7201 was released through the Firebase Rules API at 14:12:53Z, read back identical to `storage.rules`. Firestore release 6c70fa3d untouched.
