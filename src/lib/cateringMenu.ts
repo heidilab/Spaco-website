@@ -95,7 +95,7 @@ export const CATERING_ITEMS: CateringItem[] = [
   { code: '151', category: 'sushi', name: { zh: '精選壽司 14 件（炙燒蟹棒 4、玉子 4、吞拿魚沙律 3、蟹籽 3）',                 en: 'Premium sushi × 14 (torched crab stick, tamago, tuna salad, crab roe)' } },
   { code: '152', category: 'sushi', name: { zh: '小卷拼盤 64 件（玉子蟹柳青瓜千本漬）',  en: 'Mini roll platter × 64 (tamago / crab / cucumber / pickled radish)' }, tags: ['kids-favorite'] },
   { code: '153', category: 'sushi', name: { zh: '三文魚壽司盛 24 件（三文魚 4、三文魚腩 2、辣味三文魚 2、三文魚小卷 16）', en: 'Salmon sushi platter × 24 (salmon, salmon belly, spicy salmon, mini salmon rolls)' }, tags: ['chef-pick'] },
-  { code: '154', category: 'sushi', name: { zh: '韓式辣炒豚肉紫菜卷 24 件',            en: 'Korean spicy pork seaweed rolls × 24' } },
+  { code: '154', category: 'sushi', name: { zh: '韓式牛肉紫菜卷 24 件',            en: 'Korean beef seaweed rolls × 24' } },
   { code: '155', category: 'sushi', name: { zh: '招牌三文魚飯糰 8 件',                  en: 'Signature salmon rice balls × 8' }, tags: ['kids-favorite'] },
 
   // ── 沙律 & 前菜 Salad & Appetizer ──
