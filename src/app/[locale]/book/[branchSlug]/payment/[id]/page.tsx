@@ -11,6 +11,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getBooking, updateBookingPaymentMethod } from '@/lib/firestore';
 import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import { BookingRecord } from '@/types';
+import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { LogIn, CreditCard, Smartphone, Building2, MapPin, CalendarDays, Clock, Users } from 'lucide-react';
 import { motion } from 'framer-motion';
 import AuthModal from '@/components/auth/AuthModal';
@@ -223,7 +224,8 @@ export default function PaymentMethodPage() {
   // committing to pay.
   const securityDeposit = booking.pricing.securityDeposit ?? 0;
   const promoDiscount = booking.promoDiscount || 0;
-  const effectiveSubtotal = Math.max(0, booking.pricing.subtotal - promoDiscount);
+  const adminDiscountHkd = adminDiscountAmount(booking);
+  const effectiveSubtotal = Math.max(0, booking.pricing.subtotal - promoDiscount - adminDiscountHkd);
   const grandTotal = effectiveSubtotal + securityDeposit;
   const isFullPayment = booking.pricing.deposit >= grandTotal;
   const balanceDue = booking.balanceDue ?? 0;
@@ -437,6 +439,12 @@ export default function PaymentMethodPage() {
                 <div className="flex justify-between text-emerald-700">
                   <span>− {locale === 'zh' ? '優惠碼折扣' : 'Promo discount'}{booking.promoCode ? <span className="font-mono text-xs ml-1">{booking.promoCode}</span> : null}</span>
                   <span>−HK${promoDiscount.toLocaleString()}</span>
+                </div>
+              )}
+              {adminDiscountHkd > 0 && (
+                <div className="flex justify-between text-emerald-700">
+                  <span>− 🎁 {locale === 'zh' ? '折扣優惠' : 'Discount'}{booking.adminDiscount?.note ? ` (${booking.adminDiscount.note})` : ''}</span>
+                  <span>−HK${adminDiscountHkd.toLocaleString()}</span>
                 </div>
               )}
               <div className="flex justify-between">

@@ -171,6 +171,8 @@ export async function POST(req: NextRequest) {
         }),
         status: nextStatus,
         updatedAt: FieldValue.serverTimestamp(),
+        // Money credited → the 30-minute slot hold no longer applies.
+        ...(booking.pendingExpiresAt ? { pendingExpiresAt: FieldValue.delete() } : {}),
       };
       // Capture the chosen payment method on the booking if it wasn't
       // already set — useful for finance reports + receipt rendering.

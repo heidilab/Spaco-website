@@ -78,3 +78,31 @@ export function decideKpayOrderReuse(
   if (d.managedOrderState === 1) return 'reuse';
   return canReplaceKpayOrder(result, expected) ? 'replace' : 'blocked';
 }
+
+/**
+ * May checkout open a NEW managed order while the previous one is still
+ * awaiting payment (state 1), because the charge terms changed since it
+ * was created — the bill moved (admin added guests / add-ons, a discount
+ * was granted) or the customer switched card ↔ wallet?
+ *
+ * Re-signing the old order would charge the wrong amount; refusing
+ * outright stranded the customer (PAYMENT_ALREADY_STARTED on every retry
+ * until KPay expired the order). Superseding is safe only while the
+ * gateway proves nothing has moved: no transactionNo and every attempt
+ * failed / cancelled / closed. A pending attempt on an open transaction
+ * still blocks — the customer may be mid-payment in another tab.
+ */
+export function canSupersedeAwaitingKpayOrder(
+  result: { ok: boolean; data?: Record<string, unknown> },
+  expected: { managedOrderNo: string; managedOutTradeNo: string; chargeTotal: number },
+): boolean {
+  const d = result.data;
+  if (!result.ok || !d || d.managedOrderNo !== expected.managedOrderNo
+    || d.managedOutTradeNo !== expected.managedOutTradeNo || d.payCurrency !== 'HKD'
+    || typeof d.payAmount !== 'number' || Math.abs(d.payAmount - expected.chargeTotal) > 0.005
+    || d.managedOrderState !== 1 || d.transactionNo) return false;
+  if (d.paymentOrderList === undefined) return true;
+  if (!Array.isArray(d.paymentOrderList)) return false;
+  return d.paymentOrderList.every(p => p && typeof p === 'object'
+    && isHarmlessKpayAttempt(p.result, p.orderState));
+}

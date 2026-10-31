@@ -35,7 +35,7 @@ export async function GET(
   for (const key of ['venueId', 'branchSlug', 'date', 'endDate', 'startTime', 'endTime', 'hours',
     'guestCount', 'adultCount', 'childCount', 'isWeekend', 'addOns', 'hasBYOFood', 'pricing',
     'peakSurchargeOverride', 'promoCode', 'promoCodeId', 'promoDiscount', 'promoFreeDrinksCost',
-    'packageSlug', 'status']) {
+    'packageSlug', 'adminDiscount', 'status']) {
     if (data[key] !== undefined) result[key] = data[key];
   }
   result.expiresAt = data.expiresAt.toMillis();

@@ -68,9 +68,35 @@ export function pricePackage(input: {
     + Math.round(surchargePerHead * guests);
   return { baseCharge, addOnTotal, subtotal: baseCharge + addOnTotal, securityDeposit: pkg.deposit, deposit: 0 };
 }
+/**
+ * Staff-granted per-booking discount (折扣優惠) as stored on a draft or a
+ * booking. Accepts the exact `BookingRecord['adminDiscount']` shape and
+ * nothing else; null/undefined means "no discount". Three CS use cases
+ * map onto it: 現金扣減 = cash/all, 場租折扣 = percent/rent, 全單折扣 =
+ * percent/all. The amount itself always comes from adminDiscountAmount()
+ * so the deposit, balance and receipts agree.
+ */
+export function sanitizeAdminDiscount(value: unknown): NonNullable<BookingRecord['adminDiscount']> | null {
+  if (value == null) return null;
+  if (typeof value !== 'object') throw new BookingInputError('INVALID_DISCOUNT');
+  const d = value as { type?: unknown; value?: unknown; scope?: unknown; note?: unknown };
+  if (d.type !== 'percent' && d.type !== 'cash') throw new BookingInputError('INVALID_DISCOUNT');
+  if (d.scope !== 'all' && d.scope !== 'rent') throw new BookingInputError('INVALID_DISCOUNT');
+  const amount = finiteNumber(d.value, 0, d.type === 'percent' ? 100 : 10000000);
+  if (amount <= 0) return null;
+  if (d.note !== undefined && (typeof d.note !== 'string' || d.note.length > 200)) throw new BookingInputError('INVALID_DISCOUNT');
+  const note = typeof d.note === 'string' ? d.note.trim() : '';
+  return { type: d.type, value: amount, scope: d.scope, ...(note ? { note } : {}) };
+}
 export function checkoutAmount(booking: BookingRecord, balance: boolean, now = Date.now()): number {
   if (!['awaiting_payment', 'awaiting_review', 'confirmed'].includes(booking.status)) throw new BookingInputError('BOOKING_NOT_PAYABLE');
-  if (booking.pendingExpiresAt && booking.pendingExpiresAt <= now) throw new BookingInputError('BOOKING_EXPIRED');
+  // The 30-minute slot hold only guards the FIRST payment. Once money has
+  // been credited the booking is held by that payment, yet FPS approval
+  // and offline recording never cleared `pendingExpiresAt`, so every
+  // later KPay balance link (admin added pax, settlement overflow) was
+  // refused as BOOKING_EXPIRED (TST 2026-10-31: 9 extra guests, customer
+  // could not pay from the link or 會員中心). Mirrors settlementDecision.
+  if (!paidBase(booking) && booking.pendingExpiresAt && booking.pendingExpiresAt <= now) throw new BookingInputError('BOOKING_EXPIRED');
   if (!balance && paidBase(booking) > 0) throw new BookingInputError('DEPOSIT_ALREADY_PAID');
   if (balance && paidBase(booking) <= 0) throw new BookingInputError('DEPOSIT_REQUIRED');
   const amount = balance ? amountOwed(booking) : (booking.pricing.deposit - (booking.pointsDiscount || 0));

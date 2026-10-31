@@ -18,6 +18,7 @@ import { getPeakDay } from '@/lib/peakDays';
 import { resolvePeakRule } from '@/lib/peakDayRules';
 import { addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE, calculatePricing, freeDrinksVenues, isWithin2Days } from '@/lib/pricing';
 import { BookingRecord, RefundDetails } from '@/types';
+import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { getMarketingChannelOptions, DEFAULT_CHANNEL_OPTIONS, OTHER_OPTION, type MarketingChannelOption } from '@/lib/marketingChannels';
 import {
   loadBookingCheckoutDraft, saveBookingCheckoutDraft,
@@ -268,7 +269,10 @@ export default function ConfirmBookingPage() {
   // is recomputed from the new subtotal so the customer pays less both
   // upfront and on balance, proportionally.
   const promoDiscount = applied?.amount || 0;
-  const effectiveSubtotal = Math.max(0, booking.pricing.subtotal - promoDiscount);
+  // Staff 折扣優惠 from a CS link — deducted exactly like the promo so the
+  // deposit recomputed here never drops the deal.
+  const adminDiscountHkd = adminDiscountAmount(booking);
+  const effectiveSubtotal = Math.max(0, booking.pricing.subtotal - promoDiscount - adminDiscountHkd);
   const effectiveGrandTotal = effectiveSubtotal + securityDeposit;
   const isFullPayment = effectiveGrandTotal <= 10000 || isWithin2Days(booking.date);
   const effectiveDeposit = isFullPayment
@@ -725,6 +729,12 @@ export default function ConfirmBookingPage() {
                 <div className="flex justify-between text-sm text-emerald-700">
                   <span>− {locale === 'zh' ? '優惠碼' : 'Promo'} <span className="font-mono text-xs">{applied.code}</span></span>
                   <span>−HK${applied.amount.toLocaleString()}</span>
+                </div>
+              )}
+              {adminDiscountHkd > 0 && (
+                <div className="flex justify-between text-sm text-emerald-700">
+                  <span>− 🎁 {locale === 'zh' ? '折扣優惠' : 'Discount'}{booking.adminDiscount?.note ? ` (${booking.adminDiscount.note})` : ''}</span>
+                  <span>−HK${adminDiscountHkd.toLocaleString()}</span>
                 </div>
               )}
               <div className="flex justify-between text-sm">

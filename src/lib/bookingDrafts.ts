@@ -153,6 +153,7 @@ export async function claimBookingDraft(
       ...(typeof draft.promoDiscount === 'number' ? { promoDiscount: draft.promoDiscount } : {}),
       ...(typeof draft.promoFreeDrinksCost === 'number' ? { promoFreeDrinksCost: draft.promoFreeDrinksCost } : {}),
       ...(draft.packageSlug ? { packageSlug: draft.packageSlug } : {}),
+      ...(draft.adminDiscount ? { adminDiscount: draft.adminDiscount } : {}),
     }),
   });
 
@@ -209,6 +210,7 @@ export async function recreateBookingDraft(
     ...(typeof oldDraft.promoDiscount === 'number' ? { promoDiscount: oldDraft.promoDiscount } : {}),
     ...(typeof oldDraft.promoFreeDrinksCost === 'number' ? { promoFreeDrinksCost: oldDraft.promoFreeDrinksCost } : {}),
     ...(oldDraft.packageSlug ? { packageSlug: oldDraft.packageSlug } : {}),
+    ...(oldDraft.adminDiscount ? { adminDiscount: oldDraft.adminDiscount } : {}),
   });
 }
 

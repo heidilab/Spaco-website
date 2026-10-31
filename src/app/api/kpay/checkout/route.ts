@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { adminVerifyIdToken } from '@/lib/adminAuth';
 import { checkoutAmount, BookingInputError } from '@/lib/bookingSecurity';
 import type { BookingRecord } from '@/types';
-import { decideKpayOrderReuse, describeKpayAttempts, type KpayOrderReuseDecision } from '@/lib/kpayOrderLifecycle';
+import { decideKpayOrderReuse, describeKpayAttempts, canSupersedeAwaitingKpayOrder, type KpayOrderReuseDecision } from '@/lib/kpayOrderLifecycle';
 import { paidBase } from '@/lib/bookingMoney';
 import { adminDb } from '@/lib/firebaseAdmin';
 import {
@@ -49,6 +49,31 @@ const CARD_SURCHARGE_RATE = 0.015;
 
 function cardSurchargeFor(amount: number): number {
   return Math.round(amount * CARD_SURCHARGE_RATE * 100) / 100;
+}
+
+/** A `_checkout_orders` reservation still at status 'creating' after
+ *  this long never reached the gateway (order/add is a single synchronous
+ *  call); a later checkout may replace it instead of answering
+ *  PAYMENT_PROCESSING forever. */
+const STALE_CREATING_MS = 3 * 60 * 1000;
+
+/** Undo a reservation whose gateway order/add failed, so the customer's
+ *  next click can create a fresh order. The `_kpay_orders` mapping is
+ *  kept (marked failed) in case KPay did create the order after all —
+ *  the webhook still resolves it to the booking. */
+async function releaseFailedReservation(
+  lockRef: FirebaseFirestore.DocumentReference,
+  tradeNo: string,
+  detail: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await Promise.all([
+      lockRef.delete(),
+      adminDb.collection('_kpay_orders').doc(tradeNo).set({ gatewayFailedAt: Date.now(), ...detail }, { merge: true }),
+    ]);
+  } catch (err) {
+    console.error('[kpay/checkout] could not release failed reservation', { tradeNo, err: err instanceof Error ? err.message : String(err) });
+  }
 }
 
 /**
@@ -114,6 +139,16 @@ export async function POST(req: NextRequest) {
       || Math.abs(requestedAmount - expectedAmount) > 0.005) throw new BookingInputError('PRICE_CHANGED');
     const oldLock = (await lockRef.get()).data();
     let replaceTradeNo: string | null = null;
+    let replaceReason: 'closed' | 'superseded' | 'abandoned' | null = null;
+    // Have the charge terms moved since the prior order was created? The
+    // bill changes when admin adds guests / add-ons or grants a discount,
+    // and the customer may pick the other rail (card ↔ wallet). Re-signing
+    // the old order would charge the wrong amount, and refusing outright
+    // (PAYMENT_ALREADY_STARTED on every retry until KPay expired the
+    // order) is how the TST 2026-10-31 customer was stranded.
+    const termsChanged = !!oldLock
+      && (typeof oldLock.amount !== 'number' || Math.abs(oldLock.amount - expectedAmount) > 0.005
+        || oldLock.methodGroup !== methodGroup);
     // A previously created managed order (deposit OR balance) is only
     // reusable while the gateway still reports it awaiting payment. The
     // cashier expires orders, so ask KPay before re-signing: a dead unpaid
@@ -127,9 +162,18 @@ export async function POST(req: NextRequest) {
       };
       let decision: KpayOrderReuseDecision = 'blocked';
       let detail: Record<string, unknown> = {};
+      let queried = false;
+      let superseded = false;
       try {
         const result = await queryManagedOrder(expected.managedOutTradeNo, expected.managedOrderNo);
+        queried = true;
         decision = decideKpayOrderReuse(result, expected);
+        if (decision === 'reuse' && termsChanged) {
+          // Still awaiting payment but for the wrong terms: open a new
+          // order only when the gateway proves nothing has been collected.
+          superseded = canSupersedeAwaitingKpayOrder(result, expected);
+          decision = superseded ? 'replace' : 'blocked';
+        }
         detail = { code: result.code, state: result.data?.managedOrderState, attempts: describeKpayAttempts(result.data) };
       } catch (err) {
         detail = { error: err instanceof Error ? err.message : String(err) };
@@ -137,9 +181,23 @@ export async function POST(req: NextRequest) {
       // Operational trace (no customer data): why a retry was reused,
       // replaced or refused, so staff can read Vercel logs when a
       // customer reports a payment-link failure.
-      console.log('[kpay/checkout] prior order', { bookingId, kind: isBalancePayment ? 'balance' : 'initial', decision, ...detail });
-      if (decision === 'replace') replaceTradeNo = expected.managedOutTradeNo;
-      else if (decision !== 'reuse') throw new BookingInputError('PAYMENT_STATUS_UNAVAILABLE');
+      console.log('[kpay/checkout] prior order', { bookingId, kind: isBalancePayment ? 'balance' : 'initial', decision, termsChanged, ...detail });
+      if (decision === 'replace') {
+        replaceTradeNo = expected.managedOutTradeNo;
+        replaceReason = superseded ? 'superseded' : 'closed';
+      } else if (decision !== 'reuse') {
+        throw new BookingInputError(queried && termsChanged ? 'PAYMENT_ALREADY_STARTED' : 'PAYMENT_STATUS_UNAVAILABLE');
+      }
+    } else if (oldLock && !oldLock.managedOrderNo && typeof oldLock.managedOutTradeNo === 'string'
+      && oldLock.paidBase === paidBase(initialBooking)
+      && typeof oldLock.createdAt === 'number' && Date.now() - oldLock.createdAt > STALE_CREATING_MS) {
+      // The gateway call for this reservation died (timeout / 5xx) before
+      // the lock was marked ready, and nothing cleaned it up: every retry
+      // answered PAYMENT_PROCESSING. No managed order exists for it, so a
+      // fresh reservation cannot double-charge.
+      console.warn('[kpay/checkout] replacing abandoned reservation', { bookingId, kind: isBalancePayment ? 'balance' : 'initial', ageMs: Date.now() - oldLock.createdAt });
+      replaceTradeNo = oldLock.managedOutTradeNo;
+      replaceReason = 'abandoned';
     }
     const reservation = await adminDb.runTransaction(async tx => {
       const [bookingSnap, orderSnap] = await Promise.all([tx.get(bookingRef), tx.get(lockRef)]);
@@ -175,7 +233,10 @@ export async function POST(req: NextRequest) {
       const tradeNo = `B${bookingId.slice(0, 12)}_${isBalancePayment ? 'B' : 'P'}${Date.now()}`;
       if (replaceTradeNo) {
         if (existing?.managedOutTradeNo !== replaceTradeNo) throw new BookingInputError('PAYMENT_PROCESSING');
-        tx.set(adminDb.collection('_kpay_orders').doc(replaceTradeNo), { replacedBy: tradeNo, closedVerifiedAt: Date.now() }, { merge: true });
+        tx.set(adminDb.collection('_kpay_orders').doc(replaceTradeNo), {
+          replacedBy: tradeNo,
+          ...(replaceReason === 'closed' ? { closedVerifiedAt: Date.now() } : { supersededAt: Date.now(), supersededReason: replaceReason }),
+        }, { merge: true });
       }
       tx.create(adminDb.collection('_kpay_orders').doc(tradeNo), { bookingId, amount, surcharge: methodGroup === 'card' ? cardSurchargeFor(amount) : 0, isBalancePayment: !!isBalancePayment, createdAt: Date.now() });
       tx.set(lockRef, { bookingId, uid, amount, methodGroup, managedOutTradeNo: tradeNo,
@@ -209,25 +270,34 @@ export async function POST(req: NextRequest) {
     // Persist before calling the gateway. If this fails, do not create a charge.
     if (surcharge > 0) await bookingRef.update({ [`kpaySurcharges.${managedOutTradeNo}`]: surcharge });
 
-    const create = await createManagedOrder({
-      managedOutTradeNo,
-      payAmount: chargeTotal,
-      returnUrl,
-      notifyUrl,
-      itemList: [
-        {
-          itemNo: bookingId.slice(0, 32),
-          itemName: `SPACO — ${venueName || 'Booking'}${isBalancePayment ? ' (Balance)' : ''}${surcharge > 0 ? ' +1.5% card fee' : ''}`,
-          price: chargeTotal,
-          quantity: 1,
-        },
-      ],
-      orderRemark: `Booking ID: ${bookingId}`,
-      payMethodOrder,
-    });
+    let create: Awaited<ReturnType<typeof createManagedOrder>>;
+    try {
+      create = await createManagedOrder({
+        managedOutTradeNo,
+        payAmount: chargeTotal,
+        returnUrl,
+        notifyUrl,
+        itemList: [
+          {
+            itemNo: bookingId.slice(0, 32),
+            itemName: `SPACO — ${venueName || 'Booking'}${isBalancePayment ? ' (Balance)' : ''}${surcharge > 0 ? ' +1.5% card fee' : ''}`,
+            price: chargeTotal,
+            quantity: 1,
+          },
+        ],
+        orderRemark: `Booking ID: ${bookingId}`,
+        payMethodOrder,
+      });
+    } catch (err) {
+      // Network / 5xx on order/add: free the reservation so the next click
+      // can try again instead of hitting PAYMENT_PROCESSING forever.
+      await releaseFailedReservation(lockRef, managedOutTradeNo, { gatewayError: err instanceof Error ? err.message : String(err) });
+      throw err;
+    }
 
     if (!create.ok || !create.managedOrderNo) {
       console.error('[kpay/checkout] order/add failed:', create);
+      await releaseFailedReservation(lockRef, managedOutTradeNo, { gatewayCode: create.code ?? null, gatewayMessage: create.message ?? null });
       return NextResponse.json(
         { error: 'Failed to create KPay order', code: create.code, message: create.message },
         { status: 502 },

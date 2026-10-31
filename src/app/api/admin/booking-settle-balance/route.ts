@@ -94,6 +94,7 @@ export async function POST(req: NextRequest) {
     await ref.update({
       balanceDue: 0,
       balancePaidAt: FieldValue.serverTimestamp(),
+      ...(booking.pendingExpiresAt ? { pendingExpiresAt: FieldValue.delete() } : {}),
       payments: FieldValue.arrayUnion({
         rentalAmount,
         addOnAmount,

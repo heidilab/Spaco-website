@@ -80,3 +80,37 @@ describe('package promo restrictions at authoritative creation',()=>{
     expect(m.created).toEqual([]);
   });
 });
+
+describe('staff 折扣優惠 on CS links (Heidi 2026-10-31)',()=>{
+  const draftBase={...body,packageSlug:undefined,venueId:'cwb',date:'2026-11-20',startTime:'10:00',endTime:'15:00',guestCount:20,childCount:0,addOns:[],status:'pending',claimedBy:null,expiresAt:{toMillis:()=>Date.now()+3600000},
+    pricing:{baseCharge:5000,addOnTotal:1000,subtotal:6000,securityDeposit:2000,deposit:8000}};
+  it('deducts a rent-only % discount from the upfront charge and stores it on the booking',async()=>{
+    m.draft={...draftBase,adminDiscount:{type:'percent',value:10,scope:'rent',note:'熟客'}};
+    const response=await POST(request({...body,draftId:'staff-draft'}));
+    expect(response.status).toBe(200);
+    const booking=m.created.find(x=>x.collection==='bookings')!.data;
+    // 6,000 − 500 (10% of rent 5,000) + 2,000 deposit = 7,500 ≤ 10k → paid in full upfront
+    expect(booking.pricing).toEqual({baseCharge:5000,addOnTotal:1000,subtotal:6000,securityDeposit:2000,deposit:7500});
+    expect(booking.balanceDue).toBe(0);
+    expect(booking.adminDiscount).toEqual({type:'percent',value:10,scope:'rent',note:'熟客'});
+  });
+  it('deducts a cash discount from the whole bill',async()=>{
+    m.draft={...draftBase,adminDiscount:{type:'cash',value:800,scope:'all'}};
+    const response=await POST(request({...body,draftId:'staff-draft'}));
+    expect(response.status).toBe(200);
+    const booking=m.created.find(x=>x.collection==='bookings')!.data;
+    expect((booking.pricing as {deposit:number}).deposit).toBe(7200);
+  });
+  it('rejects a malformed discount on the draft rather than guessing',async()=>{
+    m.draft={...draftBase,adminDiscount:{type:'percent',value:150,scope:'all'}};
+    expect((await POST(request({...body,draftId:'staff-draft'}))).status).toBe(400);
+    expect(m.created).toEqual([]);
+  });
+  it('ignores a discount a customer puts in a self-booking body',async()=>{
+    const response=await POST(request({...body,adminDiscount:{type:'percent',value:90,scope:'all'}}));
+    expect(response.status).toBe(200);
+    const booking=m.created.find(x=>x.collection==='bookings')!.data;
+    expect(booking.adminDiscount).toBeUndefined();
+    expect((booking.pricing as {deposit:number}).deposit).toBe(8800);
+  });
+});

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bookingInterval, pricePackage, validateAddOns, checkoutAmount } from './bookingSecurity';
+import { bookingInterval, pricePackage, validateAddOns, checkoutAmount, sanitizeAdminDiscount } from './bookingSecurity';
 import type { BookingRecord } from '@/types';
 const now = Date.parse('2026-10-09T00:00:00+08:00');
 const birthday = { packageSlug:'birthday-cwb', venueId:'cwb', date:'2026-10-20', startTime:'10:00',endTime:'13:00',guestCount:15,addOns:[] };
@@ -47,5 +47,36 @@ describe('trusted prices and booking validation', () => {
     const paid = {...booking,status:'confirmed',payments:[{amount:6900}]} as BookingRecord;
     expect(checkoutAmount(paid,true,now)).toBe(7000);
     expect(checkoutAmount({...paid, payments:[{amount:13900}] as BookingRecord['payments'],balanceDue:650,depositRefund:{} as BookingRecord['depositRefund']},true,now)).toBe(650);
+  });
+  it('lets a paid booking settle its balance after the 30-minute hold lapsed (TST 2026-10-31: FPS approval never cleared pendingExpiresAt)', () => {
+    const paid = {...booking,status:'confirmed',payments:[{amount:6900}],pendingExpiresAt:now-3600000} as BookingRecord;
+    expect(checkoutAmount(paid,true,now)).toBe(7000);
+    // The hold still guards the FIRST payment.
+    expect(()=>checkoutAmount({...booking,pendingExpiresAt:now-1},false,now)).toThrow('BOOKING_EXPIRED');
+  });
+  it('deducts a staff 折扣優惠 from the balance owed', () => {
+    // rent 12,000 × 10% = 1,200 off → 12,000 − 1,200 − 100 pts + 2,000 deposit − 6,900 paid = 5,800.
+    // Admin saves re-store balanceDue from the same formula; a stale higher stored value still wins (amountOwed = max).
+    const paid = {...booking,status:'confirmed',payments:[{amount:6900}],adminDiscount:{type:'percent',value:10,scope:'rent'},balanceDue:0} as BookingRecord;
+    expect(checkoutAmount(paid,true,now)).toBe(5800);
+    expect(checkoutAmount({...paid,balanceDue:7000},true,now)).toBe(7000);
+  });
+});
+describe('staff discount input', () => {
+  it('accepts the three CS forms and normalises them', () => {
+    expect(sanitizeAdminDiscount({type:'cash',value:500,scope:'all',note:' 熟客 '})).toEqual({type:'cash',value:500,scope:'all',note:'熟客'});
+    expect(sanitizeAdminDiscount({type:'percent',value:15,scope:'rent'})).toEqual({type:'percent',value:15,scope:'rent'});
+    expect(sanitizeAdminDiscount({type:'percent',value:20,scope:'all',note:''})).toEqual({type:'percent',value:20,scope:'all'});
+  });
+  it('treats absent or zero as no discount', () => {
+    expect(sanitizeAdminDiscount(undefined)).toBeNull();
+    expect(sanitizeAdminDiscount(null)).toBeNull();
+    expect(sanitizeAdminDiscount({type:'cash',value:0,scope:'all'})).toBeNull();
+  });
+  it('rejects malformed, negative, over-100% or oversized input', () => {
+    for (const bad of ['10', 10, {type:'free',value:1,scope:'all'}, {type:'cash',value:-5,scope:'all'}, {type:'percent',value:120,scope:'all'},
+      {type:'cash',value:Infinity,scope:'all'}, {type:'cash',value:1,scope:'deposit'}, {type:'cash',value:1,scope:'all',note:'x'.repeat(201)}, {type:'cash',value:'5',scope:'all'}]) {
+      expect(()=>sanitizeAdminDiscount(bad)).toThrow();
+    }
   });
 });

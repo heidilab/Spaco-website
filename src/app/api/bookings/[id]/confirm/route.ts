@@ -5,6 +5,7 @@ import { adminVerifyIdToken } from '@/lib/adminAuth';
 import { calculateDeposit, adultEquivalent, freeDrinksVenues } from '@/lib/pricing';
 import { calcPromoDiscount } from '@/lib/promoCodes';
 import { BookingInputError, finiteNumber } from '@/lib/bookingSecurity';
+import { adminDiscountAmount } from '@/lib/bookingMoney';
 import type { BookingRecord, PromoCode } from '@/types';
 import { assertNoSettlementDebt } from '@/lib/settlementDebtServer';
 
@@ -68,11 +69,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         if (addDrinks) { addOns = [...addOns, { id: 'drinks', quantity: 1 }]; pricing.addOnTotal += drinks; pricing.subtotal += drinks; }
         tx.update(ref, { promoAutoDrinks: addDrinks });
       }
-      const grand = Math.max(0, pricing.subtotal - discount) + (pricing.securityDeposit || 0);
+      // Staff 折扣優惠 on a CS link stays deducted when the customer adds
+      // points here — otherwise this recompute silently restored the
+      // undiscounted deposit.
+      const adminDisc = adminDiscountAmount({ pricing, adminDiscount: booking.adminDiscount });
+      const grand = Math.max(0, pricing.subtotal - discount - adminDisc) + (pricing.securityDeposit || 0);
       pricing.deposit = calculateDeposit(grand, booking.date);
       const requested = finiteNumber(body.pointsUsed ?? 0);
       const pointsDiscount = Math.min(Math.floor(requested / 100), Math.floor((profile.data()?.loyaltyPoints || 0) / 100),
-        Math.max(0, Math.floor(pricing.deposit - 1)), Math.max(0, Math.floor(pricing.subtotal - discount)));
+        Math.max(0, Math.floor(pricing.deposit - 1)), Math.max(0, Math.floor(pricing.subtotal - discount - adminDisc)));
       const patch: Record<string, unknown> = {
         pricing, addOns, promoCodeId: codeId, promoCode: codeText, promoDiscount: discount,
         promoFreeDrinksCost: freeDrinksCost, pointsUsed: pointsDiscount * 100, pointsDiscount,

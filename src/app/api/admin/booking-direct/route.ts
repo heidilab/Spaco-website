@@ -3,6 +3,7 @@ import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { requireAdmin } from '@/lib/adminAuth';
 import { computeGrandTotal, computeBalanceDue, paidBase } from '@/lib/bookingMoney';
+import { BookingInputError, sanitizeAdminDiscount } from '@/lib/bookingSecurity';
 import { overlappingBookings, type OverlapBooking, type OverlapWindow } from '@/lib/bookingOverlap';
 
 export const runtime = 'nodejs';
@@ -59,7 +60,7 @@ export async function POST(req: NextRequest) {
     addOns, hasBYOFood, pricing, peakSurchargeOverride, isAirbnb, packageSlug,
     customerName, whatsappPhone, customerEmail, notes,
     marketingChannel, marketingChannelLabel,
-    payments,
+    payments, adminDiscount: rawAdminDiscount,
   } = body as Record<string, never> & {
     payments?: DirectPayment[];
     pricing?: { baseCharge?: number; addOnTotal?: number; subtotal?: number; securityDeposit?: number; deposit?: number };
@@ -70,6 +71,13 @@ export async function POST(req: NextRequest) {
   }
   if (!customerName || !String(customerName).trim()) {
     return NextResponse.json({ error: 'customer-name-required' }, { status: 400 });
+  }
+  // Optional staff 折扣優惠 typed on the form (same shape as the CS link).
+  let adminDiscount: ReturnType<typeof sanitizeAdminDiscount> = null;
+  try { adminDiscount = sanitizeAdminDiscount(rawAdminDiscount); }
+  catch (err) {
+    if (err instanceof BookingInputError) return NextResponse.json({ error: err.message }, { status: 400 });
+    throw err;
   }
 
   const cleanPayments = (Array.isArray(payments) ? payments : [])
@@ -103,7 +111,7 @@ export async function POST(req: NextRequest) {
 
   // Money derived through the shared module so balanceDue always agrees
   // with the rest of the system.
-  const moneyShape = { pricing, payments: cleanPayments };
+  const moneyShape = { pricing, payments: cleanPayments, adminDiscount };
   const grandTotal = computeGrandTotal(moneyShape);
   const balanceDue = computeBalanceDue(moneyShape);
   const paid = paidBase(moneyShape);
@@ -185,6 +193,7 @@ export async function POST(req: NextRequest) {
         addOns: Array.isArray(addOns) ? addOns : [],
         hasBYOFood: !!hasBYOFood,
         pricing,
+        ...(adminDiscount ? { adminDiscount } : {}),
         // Paid offline → confirmed immediately; nothing received yet →
         // awaiting_payment so it still surfaces as money-to-chase.
         status: cleanPayments.length > 0 ? 'confirmed' : 'awaiting_payment',

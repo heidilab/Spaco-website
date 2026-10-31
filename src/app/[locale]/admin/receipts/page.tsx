@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllBookings, getBooking, updateBookingStatus } from '@/lib/firestore';
-import { doc, updateDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, arrayUnion, serverTimestamp, deleteField } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { tryGenerateLockPasscode } from '@/lib/lockPasscodeClient';
 import { cancelBooking } from '@/lib/cancelBooking';
@@ -161,6 +161,10 @@ export default function AdminReceiptsPage() {
         status: 'confirmed',
         paymentVerifiedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
+        // Clear the 30-minute slot hold now that money is credited. The
+        // hold was never removed on FPS approval, so a later KPay balance
+        // link (e.g. admin added guests) was refused as BOOKING_EXPIRED.
+        pendingExpiresAt: deleteField(),
       };
       if (!existing) {
         update.payments = arrayUnion({
@@ -191,6 +195,7 @@ export default function AdminReceiptsPage() {
     } else {
       // No amount to record (rare — corrupt booking). Just flip status.
       await updateBookingStatus(bookingId, 'confirmed');
+      await updateDoc(doc(db, 'bookings', bookingId), { pendingExpiresAt: deleteField() });
     }
 
     // Send the booking-confirmation email (mirrors Stripe webhook flow).

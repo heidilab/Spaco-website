@@ -145,6 +145,9 @@ export async function POST(req: NextRequest) {
       balanceDue: newBalanceDue,
       status: nextStatus,
       updatedAt: FieldValue.serverTimestamp(),
+      // The 30-minute slot hold is over once money is credited; leaving
+      // it made every later KPay balance link fail with BOOKING_EXPIRED.
+      ...(!body.isRefund && booking.pendingExpiresAt ? { pendingExpiresAt: FieldValue.delete() } : {}),
       ...(!body.isRefund && newBalanceDue === 0 && !booking.balancePaidAt
         ? { balancePaidAt: FieldValue.serverTimestamp() }
         : {}),

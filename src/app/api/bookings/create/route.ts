@@ -10,7 +10,8 @@ import { getVenueByIdServer, venuesSharingSpaceServer } from '@/lib/venueRegistr
 import { calculatePricing, calculateDeposit, adultEquivalent, freeDrinksVenues, subtractHours } from '@/lib/pricing';
 import { calcPromoDiscount } from '@/lib/promoCodes';
 import { getHoliday } from '@/lib/hkHolidays';
-import { BookingInputError, bookingInterval, finiteNumber, pricePackage, validateAddOns } from '@/lib/bookingSecurity';
+import { BookingInputError, bookingInterval, finiteNumber, pricePackage, validateAddOns, sanitizeAdminDiscount } from '@/lib/bookingSecurity';
+import { adminDiscountAmount } from '@/lib/bookingMoney';
 import type { PromoCode } from '@/types';
 import { assertNoSettlementDebt } from '@/lib/settlementDebtServer';
 import { overlappingBookings, type OverlapBooking, type OverlapWindow } from '@/lib/bookingOverlap';
@@ -215,7 +216,11 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Staff-granted 折扣優惠 — only a CS link (the staff-written draft doc)
+  // can carry one; a customer self-booking never does.
+  let adminDiscount: ReturnType<typeof sanitizeAdminDiscount> = null;
   if (draftId) {
+    adminDiscount = sanitizeAdminDiscount(rest.adminDiscount);
     promoDiscount = finiteNumber(rest.promoDiscount || 0);
     promoFreeDrinksCost = finiteNumber(rest.promoFreeDrinksCost || 0);
     promoCode = rest.promoCode || null;
@@ -265,9 +270,12 @@ export async function POST(req: NextRequest) {
   const baseCharge = isPackage
     ? Math.max(0, grossSubtotal - addOnTotal)
     : Number(sanitizedPricing?.baseCharge) || 0;
-  const grandTotalForDeposit = Math.max(0, grossSubtotal - promoDiscount) + securityDeposit;
+  // 折扣優惠 is deducted like the promo (bookingMoney.netConsumption) so
+  // the upfront deposit the link charges already reflects the deal.
+  const adminDiscountHkd = adminDiscountAmount({ pricing: { baseCharge, addOnTotal, subtotal: grossSubtotal }, adminDiscount });
+  const grandTotalForDeposit = Math.max(0, grossSubtotal - promoDiscount - adminDiscountHkd) + securityDeposit;
   const deposit = calculateDeposit(grandTotalForDeposit, date as string);
-  pointsDiscount = Math.min(Math.floor(pointsUsed / 100), Math.max(0, Math.floor(deposit - 1)), Math.max(0, Math.floor(grossSubtotal - promoDiscount)));
+  pointsDiscount = Math.min(Math.floor(pointsUsed / 100), Math.max(0, Math.floor(deposit - 1)), Math.max(0, Math.floor(grossSubtotal - promoDiscount - adminDiscountHkd)));
   pointsUsed = pointsDiscount * 100;
   const balanceDue = Math.max(0, grandTotalForDeposit - deposit);
   sanitizedPricing = {
@@ -439,6 +447,7 @@ export async function POST(req: NextRequest) {
         ...(promoCodeId ? { promoCodeId } : {}),
         ...(promoDiscount > 0 ? { promoDiscount } : {}),
         ...(promoFreeDrinksCost > 0 ? { promoFreeDrinksCost } : {}),
+        ...(adminDiscount ? { adminDiscount } : {}),
         ...(pointsUsed > 0 ? { pointsUsed, pointsDiscount } : {}),
         ...(rest.marketingChannel ? { marketingChannel: rest.marketingChannel } : {}),
         ...(rest.marketingChannelLabel ? { marketingChannelLabel: rest.marketingChannelLabel } : {}),

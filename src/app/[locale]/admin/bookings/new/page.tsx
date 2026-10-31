@@ -22,6 +22,7 @@ import {
 } from '@/lib/pricing';
 import { ALL_PACKAGES, getPackageBySlug, CATEGORY_LABEL } from '@/lib/packages';
 import { createBookingDraft, buildClaimUrl } from '@/lib/bookingDrafts';
+import { adminDiscountAmount } from '@/lib/bookingMoney';
 import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
 import { calcCateringTotal } from '@/lib/pricing';
 import { getHoliday } from '@/lib/hkHolidays';
@@ -136,6 +137,14 @@ export default function AdminNewBookingPage() {
   } | null>(null);
 
   // ── Customer info ───────────────────────────
+  // 折扣優惠 — private deal typed by staff (Heidi 2026-10-31). Three
+  // ways to express it, all stored in BookingRecord.adminDiscount shape:
+  //   cash     → 現金扣減 HK$X            (type cash,    scope all)
+  //   rent_pct → 場租折扣 X%（加購照原價）  (type percent, scope rent)
+  //   all_pct  → 全單折扣 X%              (type percent, scope all)
+  const [discMode, setDiscMode] = useState<'none' | 'cash' | 'rent_pct' | 'all_pct'>('none');
+  const [discValue, setDiscValue] = useState('');
+  const [discNote, setDiscNote] = useState('');
   const [customerName, setCustomerName] = useState('');
   // ── Direct (offline) booking mode — Finance Phase 1 ──
   // 'link' = the classic pay-link draft; 'direct' = record a booking that
@@ -332,7 +341,29 @@ export default function AdminNewBookingPage() {
           ? selectedPackage.price + extraPaxCharge + pricing.addOnTotal
           : pricing.subtotal)
       : 0;
-  const effectiveSubtotal = Math.max(0, subtotalAfterPackage - (promo?.amount || 0));
+  const adminDiscount = (() => {
+    const raw = Math.max(0, parseFloat(discValue) || 0);
+    if (discMode === 'none' || raw <= 0) return null;
+    const type = discMode === 'cash' ? 'cash' as const : 'percent' as const;
+    return {
+      type,
+      value: type === 'percent' ? Math.min(100, raw) : Math.round(raw),
+      scope: discMode === 'rent_pct' ? 'rent' as const : 'all' as const,
+      ...(discNote.trim() ? { note: discNote.trim().slice(0, 200) } : {}),
+    };
+  })();
+  // Rent / add-on split the discount is measured against — the same
+  // baseCharge / addOnTotal the draft stores, so adminDiscountAmount()
+  // here equals what the claim page, create route and receipts compute.
+  const discountBaseCharge = isAirbnb
+    ? airbnbRentNum
+    : selectedPackage ? selectedPackage.price + extraPaxCharge : (pricing?.baseCharge || 0);
+  const discountAddOnTotal = isAirbnb ? airbnbExtrasNum : (pricing?.addOnTotal || 0);
+  const adminDiscountHkd = adminDiscountAmount({
+    pricing: { baseCharge: discountBaseCharge, addOnTotal: discountAddOnTotal, subtotal: subtotalAfterPackage },
+    adminDiscount,
+  });
+  const effectiveSubtotal = Math.max(0, subtotalAfterPackage - (promo?.amount || 0) - adminDiscountHkd);
   // Deposit tier is keyed off the PRE-promo rental cost (subtotalAfterPackage),
   // not the post-promo effective subtotal. Otherwise a $250 promo on a $4,250
   // booking drops the effective subtotal to exactly $4,000, which falls back
@@ -516,6 +547,7 @@ export default function AdminNewBookingPage() {
           marketingChannel: isAirbnb ? 'airbnb' : (isCustom ? 'other' : directChannel),
           marketingChannelLabel: isAirbnb ? 'Airbnb' : (isCustom ? directChannelCustom.trim() : (chosen?.zh || directChannel)),
           payments: cleanPays,
+          ...(adminDiscount ? { adminDiscount } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -584,6 +616,7 @@ export default function AdminNewBookingPage() {
               ...(promo.freeDrinks ? { promoFreeDrinksCost: promo.amount } : {}),
             }
           : {}),
+        ...(adminDiscount ? { adminDiscount } : {}),
       });
       setDraftId(id);
     } catch (err) {
@@ -1533,6 +1566,69 @@ export default function AdminNewBookingPage() {
             {promoError && <p className="text-xs text-rose-500">{promoError}</p>}
           </div>
 
+          {/* 折扣優惠 — private deal agreed on WhatsApp, typed by staff.
+              Deducted from the subtotal (deposit + balance follow) and shown
+              as its own line on the claim page, payment page, 會員中心,
+              emails and receipts. */}
+          <div className="glass-card p-6 space-y-3 border-2 border-emerald-200/70">
+            <h3 className="text-base font-bold text-ink flex items-center gap-2">
+              🎁 {locale === 'zh' ? '折扣優惠（私下額外優惠，可選）' : 'Discount (private deal, optional)'}
+            </h3>
+            <p className="text-xs text-ink-soft -mt-1">
+              {locale === 'zh'
+                ? '揀一種方式輸入。會即時反映喺右邊費用摘要、客人嘅 claim 頁／付款頁／會員中心同收據。可同優惠碼同時使用。'
+                : 'Pick one form. It is reflected in the price summary, the customer claim / payment pages, My Bookings and receipts. Can be combined with a promo code.'}
+            </p>
+            <div className="flex flex-wrap gap-2 text-xs">
+              {([
+                ['none', locale === 'zh' ? '冇折扣' : 'None'],
+                ['cash', locale === 'zh' ? '現金扣減（HK$）' : 'Cash off (HK$)'],
+                ['rent_pct', locale === 'zh' ? '場租折扣（%）' : 'Rent discount (%)'],
+                ['all_pct', locale === 'zh' ? '全單折扣（%）' : 'Whole-bill discount (%)'],
+              ] as const).map(([v, label]) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => { setDiscMode(v); if (v === 'none') setDiscValue(''); }}
+                  className={`px-3 py-1.5 rounded-pill font-semibold border-2 ${discMode === v ? 'border-emerald-500 bg-emerald-100 text-emerald-800' : 'border-charcoal/15 bg-white/85 text-ink-soft'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {discMode !== 'none' && (
+              <>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    max={discMode === 'cash' ? undefined : 100}
+                    step={discMode === 'cash' ? 1 : 0.5}
+                    value={discValue}
+                    onChange={(e) => setDiscValue(e.target.value)}
+                    placeholder={discMode === 'cash' ? '500' : '10'}
+                    className="w-28 px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85 text-right"
+                  />
+                  <span className="text-sm text-ink-soft">{discMode === 'cash' ? 'HK$' : '%'}</span>
+                  <input
+                    value={discNote}
+                    onChange={(e) => setDiscNote(e.target.value)}
+                    maxLength={200}
+                    placeholder={locale === 'zh' ? '備注（例如：熟客優惠、滿 30 人優惠）' : 'Note (e.g. returning-customer deal)'}
+                    className="flex-1 min-w-[12rem] px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white/85"
+                  />
+                </div>
+                <p className="text-xs text-emerald-700">
+                  {adminDiscountHkd > 0
+                    ? (locale === 'zh'
+                        ? `折扣金額：−HK$${adminDiscountHkd.toLocaleString()}${discMode === 'rent_pct' ? `（只計場租 HK$${discountBaseCharge.toLocaleString()}，加購照原價）` : discMode === 'all_pct' ? `（計全單 HK$${subtotalAfterPackage.toLocaleString()}）` : ''}；按金唔會打折`
+                        : `Discount: −HK$${adminDiscountHkd.toLocaleString()}${discMode === 'rent_pct' ? ` (rent HK$${discountBaseCharge.toLocaleString()} only; add-ons at full price)` : ''}; the security deposit is never discounted`)
+                    : (locale === 'zh' ? '輸入數值後會顯示折扣金額' : 'Enter a value to see the discount')}
+                </p>
+              </>
+            )}
+          </div>
+
           {/* Customer info */}
           <div className="glass-card p-6 space-y-3">
             <h3 className="text-base font-bold text-ink">
@@ -1690,6 +1786,12 @@ export default function AdminNewBookingPage() {
                     <div className="flex justify-between gap-2 text-emerald-600">
                       <span>{locale === 'zh' ? `優惠 ${promo.code}` : `Promo ${promo.code}`}</span>
                       <span>−${promo.amount.toLocaleString()}</span>
+                    </div>
+                  )}
+                  {adminDiscountHkd > 0 && (
+                    <div className="flex justify-between gap-2 text-emerald-600">
+                      <span>🎁 {locale === 'zh' ? '折扣優惠' : 'Discount'}{adminDiscount?.note ? `（${adminDiscount.note}）` : ''}</span>
+                      <span>−${adminDiscountHkd.toLocaleString()}</span>
                     </div>
                   )}
                 </div>

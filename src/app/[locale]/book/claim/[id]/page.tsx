@@ -16,6 +16,7 @@ import {
 import { getUserProfile, updateUserWhatsapp } from '@/lib/firestore';
 import { isValidHkPhone, normalizeHkPhone, formatHkPhone } from '@/lib/whatsapp';
 import { addOns as ALL_ADDONS, calculateSecurityDeposit } from '@/lib/pricing';
+import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { venues } from '@/lib/venues';
 import { BookingDraft } from '@/types';
 import AuthModal from '@/components/auth/AuthModal';
@@ -209,7 +210,10 @@ export default function ClaimBookingPage() {
   // SAME math the admin saw when generating the link (otherwise the
   // post-promo deposit leaves a phantom balance equal to the discount).
   const promoDiscount = draft.promoDiscount || 0;
-  const effectiveSubtotal = Math.max(0, draft.pricing.subtotal - promoDiscount);
+  // Staff 折扣優惠 (private deal typed into the link generator) — same
+  // deduction the server applies on claim and bookingMoney applies after.
+  const adminDiscountHkd = adminDiscountAmount({ pricing: draft.pricing, adminDiscount: draft.adminDiscount });
+  const effectiveSubtotal = Math.max(0, draft.pricing.subtotal - promoDiscount - adminDiscountHkd);
   // Refundable security deposit (按金) — tiered $1k / $2k / $4k against
   // the PRE-promo rental cost (draft.pricing.subtotal). Computing against
   // the post-promo number wrongly drops on-tier-edge bookings into the
@@ -380,6 +384,12 @@ export default function ClaimBookingPage() {
                     {draft.promoCode ? ` ${draft.promoCode}` : ''}
                   </span>
                   <span className="font-medium">−HK${promoDiscount.toLocaleString()}</span>
+                </div>
+              )}
+              {adminDiscountHkd > 0 && (
+                <div className="flex justify-between text-emerald-700">
+                  <span>🎁 {locale === 'zh' ? '折扣優惠' : 'Discount'}{draft.adminDiscount?.note ? `（${draft.adminDiscount.note}）` : ''}</span>
+                  <span className="font-medium">−HK${adminDiscountHkd.toLocaleString()}</span>
                 </div>
               )}
               <div className="flex justify-between">

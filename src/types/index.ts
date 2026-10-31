@@ -565,6 +565,11 @@ export interface BookingDraft {
    *  fixed duration). The admin form locks venue + duration + price to
    *  the chosen package — see /lib/packages.ts. */
   packageSlug?: string;
+  /** Staff-granted 折扣優惠 typed into the link generator (Heidi
+   *  2026-10-31: private WhatsApp deals — cash off, % off rent, % off
+   *  the whole bill). Same shape as BookingRecord.adminDiscount; copied
+   *  onto the booking on claim and deducted by bookingMoney. */
+  adminDiscount?: BookingRecord['adminDiscount'];
 }
 
 export interface BlockedSlot {

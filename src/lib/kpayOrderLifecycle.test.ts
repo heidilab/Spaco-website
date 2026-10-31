@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canReplaceKpayOrder, decideKpayOrderReuse, describeKpayAttempts, KPAY_CODE_ORDER_EXPIRED } from './kpayOrderLifecycle';
+import { canReplaceKpayOrder, decideKpayOrderReuse, describeKpayAttempts, canSupersedeAwaitingKpayOrder, KPAY_CODE_ORDER_EXPIRED } from './kpayOrderLifecycle';
 const expected = {managedOrderNo:'one',managedOutTradeNo:'trade',chargeTotal:2030};
 const data = {...expected, payAmount:2030,payCurrency:'HKD',managedOrderState:3,paymentOrderList:[]};
 describe('KPay terminal unpaid order proof', () => {
@@ -65,5 +65,28 @@ describe('KPay prior-order reuse decision (2026-10-15 「該訂單已完結」)'
     for (const p of [{result:2,orderState:2},{result:1,orderState:1}]) {
       expect(decideKpayOrderReuse({ok:true,data:{...data,paymentOrderList:[p]}},expected)).toBe('blocked');
     }
+  });
+});
+
+describe('superseding an awaiting order whose terms changed', () => {
+  const awaiting = {...expected, payAmount:2030, payCurrency:'HKD', managedOrderState:1};
+  it('allows a fresh untouched order (no attempts) and failed/cancelled/closed attempts', () => {
+    expect(canSupersedeAwaitingKpayOrder({ok:true,data:awaiting},expected)).toBe(true);
+    expect(canSupersedeAwaitingKpayOrder({ok:true,data:{...awaiting,paymentOrderList:[]}},expected)).toBe(true);
+    expect(canSupersedeAwaitingKpayOrder({ok:true,data:{...awaiting,paymentOrderList:[{result:3,orderState:2},{result:5,orderState:1},{result:1,orderState:3}]}},expected)).toBe(true);
+  });
+  it('blocks anything that may still collect money', () => {
+    for (const p of [{result:1,orderState:1},{result:1,orderState:2},{result:2,orderState:2},{result:4,orderState:3},{result:undefined,orderState:3}]) {
+      expect(canSupersedeAwaitingKpayOrder({ok:true,data:{...awaiting,paymentOrderList:[p]}},expected)).toBe(false);
+    }
+    expect(canSupersedeAwaitingKpayOrder({ok:true,data:{...awaiting,transactionNo:'t'}},expected)).toBe(false);
+    expect(canSupersedeAwaitingKpayOrder({ok:true,data:{...awaiting,paymentOrderList:{}}},expected)).toBe(false);
+  });
+  it('requires state 1 with matching identity, amount and currency from a successful lookup', () => {
+    for (const patch of [{managedOrderState:3},{managedOrderState:2},{managedOrderNo:'other'},{managedOutTradeNo:'other'},{payAmount:2000},{payCurrency:'USD'}]) {
+      expect(canSupersedeAwaitingKpayOrder({ok:true,data:{...awaiting,...patch}},expected)).toBe(false);
+    }
+    expect(canSupersedeAwaitingKpayOrder({ok:false,data:awaiting},expected)).toBe(false);
+    expect(canSupersedeAwaitingKpayOrder({ok:true},expected)).toBe(false);
   });
 });

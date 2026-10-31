@@ -12,6 +12,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getBooking } from '@/lib/firestore';
 import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import { BookingRecord } from '@/types';
+import { amountOwed } from '@/lib/bookingMoney';
 import { LogIn, CreditCard, Smartphone, Building2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import AuthModal from '@/components/auth/AuthModal';
@@ -61,7 +62,7 @@ export default function PayBalancePage() {
         if (!active) return;
         if (!b) setError(locale === 'zh' ? '找不到預訂記錄' : 'Booking not found');
         else if (b.userId !== user.uid) setError(locale === 'zh' ? '無權查看此預訂（請用預訂時嘅帳號登入）' : 'Not authorized — please sign in with the account used to make this booking');
-        else if ((b.balanceDue ?? 0) <= 0) setError(locale === 'zh' ? '此預訂沒有未繳尾數' : 'No outstanding balance');
+        else if (amountOwed(b) <= 0) setError(locale === 'zh' ? '此預訂沒有未繳尾數' : 'No outstanding balance');
         else { setBooking(b); setError(null); }
       })
       .catch((err: { code?: string }) => {
@@ -76,7 +77,10 @@ export default function PayBalancePage() {
 
   const venue = booking ? findVenueNow(booking.venueId) : null;
   const venueName = venue?.name[locale] || booking?.branchSlug || '';
-  const balance = booking?.balanceDue ?? 0;
+  // Same figure /api/kpay/checkout verifies (amountOwed = max(computed,
+  // stored)). Sending the stored balanceDue alone produced PRICE_CHANGED
+  // whenever the two disagreed after an admin edit.
+  const balance = booking ? amountOwed(booking) : 0;
   const cardFee = surchargeFor(balance);
   const cardTotal = Math.round((balance + cardFee) * 100) / 100;
 
