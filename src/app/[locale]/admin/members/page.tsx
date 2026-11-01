@@ -5,6 +5,8 @@ import { useLocale } from 'next-intl';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllUsers, getUserBookings, updateMemberPhoneEverywhere } from '@/lib/firestore';
+import { adminApiFetch } from '@/lib/adminApiFetch';
+import { normalizeMemberEmail } from '@/lib/memberEmail';
 import { BookingRecord } from '@/types';
 import { Search, CalendarDays, Award, ChevronRight, ArrowLeft, Clock, Download, Users } from 'lucide-react';
 import { doc, updateDoc } from 'firebase/firestore';
@@ -39,6 +41,13 @@ export default function AdminMembersPage() {
   const [phoneDraft, setPhoneDraft] = useState('');
   const [phoneSaving, setPhoneSaving] = useState(false);
   const [phoneMsg, setPhoneMsg] = useState<string | null>(null);
+  // Editable email — customers occasionally mistype their address at
+  // sign-up (e.g. `yahoo.com.hj`) and then receive no confirmation /
+  // passcode emails. Saving goes through the admin API so the Firebase
+  // Auth record is corrected alongside users/{uid}.email.
+  const [emailDraft, setEmailDraft] = useState('');
+  const [emailSaving, setEmailSaving] = useState(false);
+  const [emailMsg, setEmailMsg] = useState<string | null>(null);
   const canAccess = hasPermission('members');
 
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -63,6 +72,8 @@ export default function AdminMembersPage() {
         const hit = list.find((m) => m.uid === targetUid);
         if (hit) {
           setSelectedMember(hit);
+          setPhoneDraft(hit.phone || '');
+          setEmailDraft(hit.email || '');
           setLoadingDetail(true);
           getUserBookings(hit.uid)
             .then((bs) => setMemberBookings(bs))
@@ -104,6 +115,8 @@ export default function AdminMembersPage() {
     setPointsAdjust(0);
     setPhoneDraft(member.phone || '');
     setPhoneMsg(null);
+    setEmailDraft(member.email || '');
+    setEmailMsg(null);
     const bookings = await getUserBookings(member.uid);
     setMemberBookings(bookings);
     setLoadingDetail(false);
@@ -136,6 +149,52 @@ export default function AdminMembersPage() {
       );
     } finally {
       setPhoneSaving(false);
+    }
+  };
+
+  const saveEmail = async () => {
+    if (!selectedMember) return;
+    const next = normalizeMemberEmail(emailDraft);
+    if (!next) {
+      setEmailMsg(locale === 'zh' ? '電郵格式唔啱，請再檢查' : 'That does not look like a valid email address');
+      return;
+    }
+    if (next === (selectedMember.email || '').toLowerCase()) return;
+    setEmailSaving(true);
+    setEmailMsg(null);
+    try {
+      const res = await adminApiFetch('/api/admin/member-update-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uid: selectedMember.uid, email: next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      setSelectedMember({ ...selectedMember, email: next });
+      setEmailDraft(next);
+      setMembers((prev) =>
+        prev.map((m) => (m.uid === selectedMember.uid ? { ...m, email: next } : m)),
+      );
+      if (data.authUpdated) {
+        setEmailMsg(
+          locale === 'zh'
+            ? `✓ 已更新電郵為 ${next}，之後所有 email 通知會寄去呢個地址，客人登入亦請用新電郵`
+            : `✓ Email updated to ${next}. All notifications now go there; the customer should sign in with the new address.`,
+        );
+      } else {
+        setEmailMsg(
+          locale === 'zh'
+            ? `✓ 已更新會員資料電郵為 ${next}（email 通知會寄去呢度），但登入帳戶電郵未能同步：${data.authError || 'unknown'}`
+            : `✓ Profile email updated to ${next} (notifications go there), but the sign-in account could not be updated: ${data.authError || 'unknown'}`,
+        );
+      }
+    } catch (err) {
+      setEmailMsg(
+        (locale === 'zh' ? '失敗：' : 'Failed: ')
+        + (err instanceof Error ? err.message : 'unknown'),
+      );
+    } finally {
+      setEmailSaving(false);
     }
   };
 
@@ -290,6 +349,39 @@ export default function AdminMembersPage() {
             <h2 className="text-xl font-bold">{selectedMember.displayName || '-'}</h2>
             <p className="text-sm text-muted mt-1">{selectedMember.email}</p>
             <div className="mt-4 space-y-3 text-sm">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-muted">{locale === 'zh' ? '電郵' : 'Email'}</span>
+                  {emailDraft.trim().toLowerCase() !== (selectedMember.email || '').toLowerCase() && (
+                    <button
+                      onClick={saveEmail}
+                      disabled={emailSaving}
+                      className="px-3 py-1 rounded-pill bg-pink text-white text-xs font-semibold hover:bg-pink/90 disabled:opacity-40"
+                    >
+                      {emailSaving
+                        ? (locale === 'zh' ? '儲存中…' : 'Saving…')
+                        : (locale === 'zh' ? '儲存電郵' : 'Save email')}
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="email"
+                  value={emailDraft}
+                  onChange={(e) => setEmailDraft(e.target.value)}
+                  placeholder={locale === 'zh' ? '例：name@example.com' : 'e.g. name@example.com'}
+                  className="w-full px-3 py-2 rounded-lg border border-charcoal/15 text-sm bg-white"
+                />
+                <p className="text-[11px] text-muted mt-1">
+                  {locale === 'zh'
+                    ? '客人打錯 email 收唔到通知？改正後所有 email（確認、密碼、提醒）都會寄去新地址。'
+                    : 'Customer mistyped their email? After correcting it, every notification (confirmation, passcode, reminders) goes to the new address.'}
+                </p>
+                {emailMsg && (
+                  <p className={`text-[11px] mt-1 ${emailMsg.startsWith('✓') ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    {emailMsg}
+                  </p>
+                )}
+              </div>
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-muted">{locale === 'zh' ? '電話' : 'Phone'}</span>

@@ -16,6 +16,14 @@ Points/promos are finally checked and consumed at settlement, not reserved befor
 
 When deposit-settlement deductions exceed the customer's credit, the shortfall stays in `balanceDue` on a `confirmed` booking. While any such debt is unpaid the customer sees a warning on sign-in and `/api/bookings/create` and `/api/bookings/[id]/confirm` refuse new bookings (`SETTLEMENT_DEBT_OUTSTANDING`). There is no stored ban flag: paying online (pay-balance page) or recording the payment with 記錄線下收款 lifts the block immediately. A partial offline payment now reduces the debt instead of clearing it. Reminder emails go out once on day 14 and once on day 30 after settlement (automation `settlement_debt_reminder`, toggle in Email 自動化). Month close counts only money received by the end of the event month; later payments appear in the month received under 補收舊單欠款 with the original booking and month.
 
+## Correcting a member's email
+
+Every customer email (confirmation, passcode, reminders) is addressed to `users/{uid}.email` at send time; bookings do not store a copy. When a customer mistyped their address at sign-up (for example `yahoo.com.hj`), open 會員管理, select the member, edit the 電郵 field and press 儲存電郵. The request goes to `/api/admin/member-update-email` (requires the `members` permission), which rewrites the profile email and records who changed it and the previous value, then updates the Firebase Auth email so the customer signs in with the corrected address. If Auth refuses (usually `auth/email-already-exists`, meaning the customer later registered a second account with the right spelling), the profile fix is kept and the page shows the Auth error so staff can decide how to handle the duplicate account.
+
+## Resending the supplier order email
+
+Bookings with supplier items (火鍋, Shisha, 免費佈置, 代燒員, 美食到會) show a 重發 Supplier Order Email 俾 Admin card on the admin booking detail page. It calls `/api/admin/notify-booking` with `supplierOnly: true`, which resends only the 📦 SUPPLIER ORDER email (plus the staff push) to the live staff recipient list and bypasses the Email 自動化 toggle because a person asked for it. The regular 新預訂 staff notification is not re-sent. The card is hidden on bookings with no supplier items, and the endpoint returns 400 for them.
+
 ## Scheduled work
 
 `vercel.json` is the source of truth. Vercel schedules are UTC; below is Hong Kong time:

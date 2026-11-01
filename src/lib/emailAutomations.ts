@@ -345,14 +345,19 @@ export async function sendStaffSupplierOrderNotification(params: {
   customerName: string;
   customerEmail?: string;
   adminUrl: string;
-}): Promise<void> {
-  if (!bookingNeedsSupplierOrder(params.booking)) return;
-  if (!(await isEmailAutomationEnabled('staff_supplier_order'))) {
+  /** Staff-initiated resend (訂單詳情 → 重發 Supplier Order Email). Skips
+   *  the automation on/off toggle — a human explicitly asked for this
+   *  one email — but still no-ops when the booking has no supplier
+   *  items, so there is never a blank order sheet. */
+  force?: boolean;
+}): Promise<{ sent: boolean; recipients: string[]; reason?: 'no-supplier-items' | 'disabled' | 'no-recipients' }> {
+  if (!bookingNeedsSupplierOrder(params.booking)) return { sent: false, recipients: [], reason: 'no-supplier-items' };
+  if (!params.force && !(await isEmailAutomationEnabled('staff_supplier_order'))) {
     console.log('[staff-supplier] skipped (automation disabled)');
-    return;
+    return { sent: false, recipients: [], reason: 'disabled' };
   }
   const list = await getStaffNotificationRecipients();
-  if (list.length === 0) return;
+  if (list.length === 0) return { sent: false, recipients: [], reason: 'no-recipients' };
   const tpl = buildStaffSupplierOrderEmail(params);
   await Promise.all(list.map((to) =>
     sendEmail({ to, subject: tpl.subject, html: tpl.html })
@@ -364,6 +369,7 @@ export async function sendStaffSupplierOrderNotification(params: {
     url: `/zh/admin/bookings/${params.booking.id}`,
     tag: `supplier-${params.booking.id}`,
   });
+  return { sent: true, recipients: list };
 }
 
 /** Send the "receipt pending review" notification to staff. Same recipient

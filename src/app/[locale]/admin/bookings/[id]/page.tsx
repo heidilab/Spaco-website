@@ -1,6 +1,7 @@
 'use client';
 
 import { adminApiFetch } from '@/lib/adminApiFetch';
+import { bookingNeedsSupplierOrder } from '@/lib/email';
 import { formatPasscode, lockConfirmKey } from '@/lib/lockConfirmKey';
 import { getPeakDay } from '@/lib/peakDays';
 import { resolvePeakRule } from '@/lib/peakDayRules';
@@ -240,6 +241,10 @@ export default function AdminBookingDetailPage() {
   const [pushMsg, setPushMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [resendingEmail, setResendingEmail] = useState(false);
   const [resendMsg, setResendMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  // Manual resend of the internal SUPPLIER ORDER email (火鍋 / Shisha /
+  // 佈置 / 代燒員 / 到會) to the staff notification list.
+  const [resendingSupplier, setResendingSupplier] = useState(false);
+  const [supplierMsg, setSupplierMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   // Deposit settlement state — admin inputs deductions after the event,
   // saves once, system marks booking completed + credits loyalty points.
@@ -1159,6 +1164,40 @@ export default function AdminBookingDetailPage() {
     }
   }
 
+  /** Re-send the internal SUPPLIER ORDER email for this booking to the
+   *  staff recipients (spacohk@gmail.com + admin/cs). Used when the
+   *  original was missed or deleted, or after add-ons were edited. Goes
+   *  through /api/admin/notify-booking with supplierOnly so the regular
+   *  "新預訂" staff email is NOT duplicated. */
+  async function handleResendSupplierEmail() {
+    if (!booking || resendingSupplier) return;
+    setResendingSupplier(true);
+    setSupplierMsg(null);
+    try {
+      const res = await adminApiFetch('/api/admin/notify-booking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookingId: booking.id, supplierOnly: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
+      const recipients: string[] = Array.isArray(data?.recipients) ? data.recipients : [];
+      setSupplierMsg({
+        kind: 'ok',
+        text: locale === 'zh'
+          ? `✓ 已重發 Supplier Order Email 俾 Admin${recipients.length ? `（${recipients.join('、')}）` : ''}`
+          : `✓ Supplier order email re-sent to admin${recipients.length ? ` (${recipients.join(', ')})` : ''}`,
+      });
+    } catch (err) {
+      setSupplierMsg({
+        kind: 'err',
+        text: (locale === 'zh' ? '失敗:' : 'Failed: ') + (err instanceof Error ? err.message : 'unknown'),
+      });
+    } finally {
+      setResendingSupplier(false);
+    }
+  }
+
   async function handlePushToGcal() {
     if (!booking || pushing) return;
     setPushing(true);
@@ -1376,6 +1415,47 @@ export default function AdminBookingDetailPage() {
               </div>
             )}
           </div>
+
+          {/* Resend SUPPLIER ORDER email to staff — only for bookings that
+              actually carry supplier items, so it never sends a blank sheet. */}
+          {bookingNeedsSupplierOrder(booking) && (
+            <div className="glass-card p-6">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div>
+                  <h2 className="font-bold flex items-center gap-2">
+                    <Mail size={16} />
+                    {locale === 'zh' ? '重發 Supplier Order Email 俾 Admin' : 'Resend Supplier Order Email to Admin'}
+                  </h2>
+                  <p className="text-xs text-ink-soft mt-1 leading-relaxed">
+                    {locale === 'zh'
+                      ? '呢張單有需要向供應商落單嘅項目（火鍋 / Shisha / 佈置 / 代燒員 / 到會）。撳呢度即時再寄一次 📦 SUPPLIER ORDER email 去員工通知名單（spacohk@gmail.com 同所有 admin / CS），唔會重複寄「新預訂」通知。'
+                      : 'This booking has supplier-order items (hotpot / shisha / decoration / BBQ helper / catering). Click to resend the 📦 SUPPLIER ORDER email to the staff list (spacohk@gmail.com plus every admin / CS) without re-sending the new-booking notification.'}
+                  </p>
+                </div>
+                <button
+                  onClick={handleResendSupplierEmail}
+                  disabled={resendingSupplier}
+                  className="btn-primary disabled:opacity-40 flex items-center gap-2 flex-shrink-0"
+                >
+                  <Mail size={14} />
+                  {resendingSupplier
+                    ? (locale === 'zh' ? '發送中…' : 'Sending…')
+                    : (locale === 'zh' ? '重發 Supplier Email' : 'Resend Supplier Email')}
+                </button>
+              </div>
+              {supplierMsg && (
+                <div
+                  className={`mt-3 text-sm rounded-lg px-3 py-2 ${
+                    supplierMsg.kind === 'ok'
+                      ? 'text-emerald-700 bg-emerald-50'
+                      : 'text-rose-700 bg-rose-50'
+                  }`}
+                >
+                  {supplierMsg.text}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Google Calendar — ALWAYS visible: unsynced bookings get a
            *  push button, synced ones a re-sync button (before, a stale

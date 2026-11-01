@@ -1,14 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { sendStaffBookingNotification, sendStaffSupplierOrderNotification } from '@/lib/emailAutomations';
+import { bookingNeedsSupplierOrder } from '@/lib/email';
 import { getVenueById } from '@/lib/venues';
 import { formatAddOnsForStaff } from '@/lib/pricing';
 import type { BookingRecord, UserProfile } from '@/types';
 import { requireAdmin } from '@/lib/adminAuth';
 
-// POST /api/admin/notify-booking { bookingId }
+// POST /api/admin/notify-booking { bookingId, supplierOnly? }
 // Triggered when admin manually confirms a booking. Sends the staff
 // notification email to STAFF_NOTIFICATION_EMAILS recipients.
+//
+// With `supplierOnly: true` (訂單詳情 → 重發 Supplier Order Email) only the
+// supplier-order email is (re)sent, bypassing the automation toggle, and
+// the response says who received it. Returns 400 when the booking has no
+// supplier items so staff get a clear message instead of a silent no-op.
 //
 // Uses Firebase Admin SDK so it bypasses Firestore rules (the route is
 // invoked by client fetch() without forwarded auth tokens). Idempotency
@@ -22,7 +28,7 @@ export async function POST(req: NextRequest) {
   if (!_gate.ok) return _gate.res;
 
   try {
-    const { bookingId } = await req.json();
+    const { bookingId, supplierOnly } = await req.json();
     if (!bookingId) {
       return NextResponse.json({ error: 'Missing bookingId' }, { status: 400 });
     }
@@ -41,6 +47,27 @@ export async function POST(req: NextRequest) {
 
     const venue = getVenueById(booking.venueId);
     const origin = req.nextUrl.origin;
+
+    if (supplierOnly === true) {
+      if (!bookingNeedsSupplierOrder(booking)) {
+        return NextResponse.json(
+          { error: 'no-supplier-items', message: 'This booking has no supplier-order items (火鍋 / Shisha / 佈置 / 代燒員 / 到會).' },
+          { status: 400 },
+        );
+      }
+      const result = await sendStaffSupplierOrderNotification({
+        booking,
+        venueName: venue?.name.zh || booking.branchSlug,
+        customerName: profile?.displayName || booking.customerName || '—',
+        customerEmail: profile?.email || booking.customerEmail,
+        adminUrl: `${origin}/zh/admin/bookings/${booking.id}`,
+        force: true,
+      });
+      if (!result.sent) {
+        return NextResponse.json({ error: result.reason || 'not-sent' }, { status: 500 });
+      }
+      return NextResponse.json({ ok: true, recipients: result.recipients });
+    }
 
     await sendStaffBookingNotification({
       bookingId: booking.id,
