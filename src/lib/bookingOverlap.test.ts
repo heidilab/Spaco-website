@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bookingWindows, overlappingBookings, windowsOverlap } from './bookingOverlap';
+import { bookingWindows, editStaysWithinReservation, overlappingBookings, windowsOverlap } from './bookingOverlap';
 
 const cwb = { id: 'sold', venueId: 'cwb', date: '2026-10-31', startTime: '18:00', endTime: '23:00', status: 'confirmed' };
 
@@ -33,5 +33,29 @@ describe('booking overlap guard — CWB 2026-10-31 double booking', () => {
   });
   it('treats back-to-back windows as non-overlapping', () => {
     expect(windowsOverlap({ date: 'd', startTime: '10:00', endTime: '12:00' }, { date: 'd', startTime: '12:00', endTime: '14:00' })).toBe(false);
+  });
+});
+
+describe('editStaysWithinReservation — HART Room B 2026-11-06 re-save blocked by a gcal mirror slot', () => {
+  const held = { venueId: 'hart-b', date: '2026-11-06', endDate: '2026-11-07', startTime: '19:00', endTime: '01:00' };
+  it('shrinking 6h → 5h on the same venue stays within the held window', () => {
+    expect(editStaysWithinReservation(held, { date: '2026-11-06', endDate: '2026-11-07', startTime: '19:00', endTime: '00:00' })).toBe(true);
+  });
+  it('a pure repricing save with the time unchanged stays within', () => {
+    expect(editStaysWithinReservation(held, { ...held })).toBe(true);
+  });
+  it('widening, moving, or changing venue is still checked', () => {
+    expect(editStaysWithinReservation(held, { date: '2026-11-06', endDate: '2026-11-07', startTime: '18:00', endTime: '01:00' })).toBe(false);
+    expect(editStaysWithinReservation(held, { date: '2026-11-06', endDate: '2026-11-07', startTime: '19:00', endTime: '02:00' })).toBe(false);
+    expect(editStaysWithinReservation(held, { date: '2026-11-07', startTime: '19:00', endTime: '23:00' })).toBe(false);
+    expect(editStaysWithinReservation(held, { venueId: 'hart-ab', date: '2026-11-06', endDate: '2026-11-07', startTime: '19:00', endTime: '00:00' })).toBe(false);
+  });
+  it('early-setup hours count as part of the window', () => {
+    const withSetup = { ...held, earlySetupHours: 1 };
+    expect(editStaysWithinReservation(withSetup, { date: '2026-11-06', endDate: '2026-11-07', startTime: '19:00', endTime: '00:00', earlySetupHours: 1 })).toBe(true);
+    expect(editStaysWithinReservation(held, { date: '2026-11-06', endDate: '2026-11-07', startTime: '19:00', endTime: '00:00', earlySetupHours: 1 })).toBe(false);
+  });
+  it('unparseable stored times fall back to the full check', () => {
+    expect(editStaysWithinReservation({ ...held, startTime: '' }, { date: '2026-11-06', startTime: '19:00', endTime: '23:00' })).toBe(false);
   });
 });

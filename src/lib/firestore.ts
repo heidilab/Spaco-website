@@ -25,6 +25,7 @@ import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { resolvePeakRule } from './peakDayRules';
 import { calcPromoDiscount } from './promoCodes';
 import { getHoliday } from './hkHolidays';
+import { editStaysWithinReservation } from './bookingOverlap';
 
 // ============ BOOKINGS ============
 
@@ -314,15 +315,32 @@ export async function updateBookingDateTime(
   // don't self-conflict against the very booking we're editing.
   // The checked window starts at the setup start (if any) so the setup
   // hours collide with the previous booking's cleaning buffer too.
-  await assertNoSlotConflict({
-    venueId: targetVenueId,
-    date: next.date,
-    endDate: overnight ? endDate : undefined,
-    startTime: setupStart ?? next.startTime,
-    endTime: next.endTime,
-    excludeBookingId: bookingId,
-    excludeGoogleEventId: (booking as { googleEventId?: string }).googleEventId,
-  });
+  //
+  // Skipped when the edit stays inside the window this booking already
+  // holds on the same venue (shrink, or no time change at all): nothing
+  // new can clash, and a Google Calendar mirror slot on the same evening
+  // otherwise refused every re-save of a paid booking, including the
+  // repricing save with the time unchanged (HART Room B, 2026-11-06).
+  const staysWithin = editStaysWithinReservation(
+    {
+      venueId: booking.venueId, date: booking.date, endDate: booking.endDate,
+      startTime: booking.startTime, endTime: booking.endTime,
+      earlySetupHours: booking.earlySetupHours
+        ?? booking.addOns?.find((a) => a.id === 'early-setup')?.quantity ?? 0,
+    },
+    { venueId: targetVenueId, date: next.date, endDate, startTime: next.startTime, endTime: next.endTime, earlySetupHours },
+  );
+  if (!staysWithin) {
+    await assertNoSlotConflict({
+      venueId: targetVenueId,
+      date: next.date,
+      endDate: overnight ? endDate : undefined,
+      startTime: setupStart ?? next.startTime,
+      endTime: next.endTime,
+      excludeBookingId: bookingId,
+      excludeGoogleEventId: (booking as { googleEventId?: string }).googleEventId,
+    });
+  }
 
   const [endH, endM] = next.endTime.split(':').map(Number);
   // Cleaning buffer: 1 hr after end. If end is past 23:00, buffer pushes

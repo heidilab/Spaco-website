@@ -72,3 +72,32 @@ export function overlappingBookings(
     return requested.some((w) => occupied.some((o) => windowsOverlap(w, o)));
   });
 }
+
+/**
+ * True when an edit keeps the booking inside the time it already holds:
+ * same venue, and the new window (including any 提早入場佈置 hours before
+ * the start) begins no earlier and ends no later than the current one.
+ * Such an edit cannot create a clash that the existing reservation did not
+ * already have, so the slot conflict check is skipped for it. Without this
+ * a Google Calendar mirror slot sitting on the same evening refused every
+ * re-save of a paid booking — including a pure repricing with the time
+ * unchanged (HART Room B, 2026-11-06, 6h → 5h then 儲存 to reprice).
+ * Anything that widens or moves the window, or changes venue, is still
+ * checked in full.
+ */
+export function editStaysWithinReservation(
+  current: Pick<OverlapBooking, 'venueId' | 'date' | 'endDate' | 'startTime' | 'endTime' | 'earlySetupHours'>,
+  next: { venueId?: string; date: string; endDate?: string | null; startTime: string; endTime: string; earlySetupHours?: number },
+): boolean {
+  if (next.venueId !== undefined && next.venueId !== current.venueId) return false;
+  const ms = (date: string, time: string) => Date.parse(`${date}T${time}:00+08:00`);
+  const setup = (h?: number) => Math.max(0, Math.floor(h || 0)) * 3600000;
+  const curEndDate = current.endDate && current.endDate !== current.date ? current.endDate : current.date;
+  const nextEndDate = next.endDate && next.endDate !== next.date ? next.endDate : next.date;
+  const curStart = ms(current.date, current.startTime) - setup(current.earlySetupHours);
+  const curEnd = ms(curEndDate, current.endTime);
+  const nextStart = ms(next.date, next.startTime) - setup(next.earlySetupHours);
+  const nextEnd = ms(nextEndDate, next.endTime);
+  if (![curStart, curEnd, nextStart, nextEnd].every(Number.isFinite)) return false;
+  return nextStart >= curStart && nextEnd <= curEnd;
+}
