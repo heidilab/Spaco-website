@@ -540,7 +540,27 @@ export default function AdminBookingDetailPage() {
     .sort()
     .join('\n');
   const customDirty = liveCustomLine !== storedCustomLine(booking);
-  const addOnsDirty = qtyDirty || shishaDirty || customDirty;
+  // Catering dirty: editing the dishes / tier / delivery of an EXISTING
+  // catering add-on keeps quantity at 1, so qtyDirty never fired. The
+  // auto-synced 消費小計 still went to the server as subtotalOverride,
+  // which folded the new catering price into 場租 while the stored
+  // catering options (and the supplier order) stayed stale. Diff the
+  // selection itself so the save sends the new addOns array.
+  // Compared field-by-field (same defaults as the hydrate step) so key
+  // order / absent optional keys on the stored options never read as a
+  // change — a false positive here would email the customer an update.
+  const cateringLine = (o?: Partial<CateringSelection> | null) => o?.tierId
+    ? JSON.stringify([
+        o.tierId, o.dishCodes || [], o.deliveryZoneId || '', !!o.doorstepDelivery,
+        !!o.noCutlery, o.extraCutlerySets || 0, o.extraFoodTongs || 0, o.deliveryTime || '',
+      ])
+    : '';
+  const storedCateringOptions = booking.addOns?.find((a) => a.id === 'catering')?.options as Partial<CateringSelection> | undefined;
+  const cateringDirty =
+    (addOnQty['catering'] || 0) > 0
+    && !!cateringSelection
+    && cateringLine(cateringSelection) !== cateringLine(storedCateringOptions);
+  const addOnsDirty = qtyDirty || shishaDirty || customDirty || cateringDirty;
 
   const depositOverrideNum = parseFloat(depositOverride);
   const depositDirty =
@@ -739,7 +759,13 @@ export default function AdminBookingDetailPage() {
       // Surface the failure in an alert TOO — the red banner renders
       // mid-page while the save button sits at the bottom, so a failed
       // save looked like "撳咗但冇反應" (Heidi #TQdbWBlI 2026-09-15).
-      if (msg.startsWith('SLOT_CONFLICT')) {
+      if (msg.startsWith('VENUE_NOT_FOUND')) {
+        const text = locale === 'zh'
+          ? `⚠️ 儲存失敗：搵唔到場地「${msg.slice('VENUE_NOT_FOUND:'.length)}」嘅價錢設定，無法重新計價。請先喺 分店管理 確認場地存在。`
+          : `⚠️ Save failed: no pricing found for venue "${msg.slice('VENUE_NOT_FOUND:'.length)}", so the booking could not be repriced. Check the venue exists in 分店管理.`;
+        setError(text);
+        alert(text);
+      } else if (msg.startsWith('SLOT_CONFLICT')) {
         const target = venues.find((v) => v.id === venueId);
         const targetName = target?.name[locale] || venueId;
         const conflictRef = msg.includes('#') ? msg.slice(msg.indexOf('#')) : '';

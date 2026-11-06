@@ -10,6 +10,7 @@ import {
   updateBookingOnCalendar, pushBookingToCalendar,
 } from '@/lib/googleCalendar';
 import { getVenueById } from '@/lib/venues';
+import { loadAllVenuesServer } from '@/lib/venueRegistryServer';
 import { formatAddOnsForStaff } from '@/lib/pricing';
 import type { BookingRecord, UserProfile } from '@/types';
 import { requireAdmin } from '@/lib/adminAuth';
@@ -205,7 +206,11 @@ export async function POST(req: NextRequest) {
       : null;
     const profile = userSnap?.exists ? (userSnap.data() as UserProfile) : null;
     const customerEmail = profile?.email || fresh.customerEmail || undefined;
-    const venue = getVenueById(fresh.venueId);
+    // Registry first — HART rooms only exist in 分店管理, so the static
+    // lookup alone named them by slug in the customer's update email.
+    const registryVenues = await loadAllVenuesServer();
+    const findVenue = (id: string) => registryVenues.find((v) => v.id === id) ?? getVenueById(id);
+    const venue = findVenue(fresh.venueId);
     const venueName = venue?.name.zh || fresh.branchSlug;
 
     // Build the human-readable diff list when caller supplied a snapshot
@@ -216,7 +221,7 @@ export async function POST(req: NextRequest) {
     if (prev) {
       const venueLabel = (id?: string) => {
         if (!id) return '';
-        return getVenueById(id)?.name.zh || id;
+        return findVenue(id)?.name.zh || id;
       };
       if (prev.date && prev.date !== fresh.date) {
         changes.push(`日期: ${prev.date} → ${fresh.date}`);

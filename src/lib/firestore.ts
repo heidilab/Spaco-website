@@ -272,6 +272,20 @@ export async function updateBookingDateTime(
   const overnight = endDate !== next.date;
   const targetVenueId = next.venueId || booking.venueId;
   const venueChanged = next.venueId !== undefined && next.venueId !== booking.venueId;
+  // Venue for the pricing recompute — REGISTRY FIRST. Spaces created in
+  // 分店管理 (HART rooms) exist only in the Firestore `venues` collection;
+  // the static array is the pre-registry seed. Looking up the static list
+  // alone (as this function did until 2026-11-06) returned undefined for
+  // those bookings and the whole pricing block below was skipped without
+  // any error: the time / add-ons were saved but 場租, 小計 and balanceDue
+  // kept the old figures (#x5O1406V 6h → 5h still priced at 6h;
+  // #l1qt8Wzv catering added but 小計 / 總額 unchanged). Resolve it before
+  // touching any slot so a missing venue fails the save loudly instead.
+  const venueForPricing =
+    (await loadAllVenues()).find((v) => v.id === targetVenueId) ?? getVenueById(targetVenueId);
+  if (!venueForPricing && !booking.packageSlug) {
+    throw new Error(`VENUE_NOT_FOUND:${targetVenueId}`);
+  }
   if (booking.promoCodeId && (venueChanged || next.date !== booking.date || endDate !== (booking.endDate || booking.date))) {
     const promoSnap = await getDoc(doc(db, 'promo_codes', booking.promoCodeId));
     if (promoSnap.exists() && promoEligibilityReason(promoSnap.data() as PromoCode, {venueId:targetVenueId,date:next.date,endDate,packageSlug:booking.packageSlug})) {
@@ -435,7 +449,6 @@ export async function updateBookingDateTime(
     || hours !== booking.hours;
 
   if (pricingInputsChanged && !booking.packageSlug) {
-    const venueForPricing = getVenueById(targetVenueId);
     if (venueForPricing) {
       // Recompute isWeekend from the new date — Fri / Sat / public
       // holiday / eve-of-public-holiday. Matches the rule used in
