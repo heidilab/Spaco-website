@@ -58,3 +58,20 @@ stored catering options (and the supplier order email) stayed stale.
 `npx tsc --noEmit --incremental false` clean; `npm test` 31 files / 354 tests
 passing; focused ESLint on the three changed files. No production deployment,
 Firestore write, payment, email or passcode was triggered by this work.
+
+## Follow-up the same day: 儲存 refused with 時段衝突
+
+After the release, 儲存 on `#x5O1406V` (HART Room B, 2026-11-06 19:00) was
+refused with 「尖沙咀 HART 店 Room B 喺呢個時段已經有其他預訂」 and no booking
+reference, i.e. a `blocked_slots` row without a `bookingId`: a Google
+Calendar mirror slot (`reason: 'gcal'`, an event not pushed by the site) or
+an admin block on the same evening. The edit did not widen anything — the
+time was already stored as 5 hours and only the price needed recomputing —
+yet `updateBookingDateTime` ran the full conflict check on every save.
+
+`editStaysWithinReservation` (`src/lib/bookingOverlap.ts`, tested) now
+decides: same venue and a new window (early-setup hours included) that starts
+no earlier and ends no later than the held one skips the conflict check,
+because nothing new can clash. Widening, moving or changing venue is checked
+exactly as before. The overlapping calendar entry itself is still visible on
+`/admin/calendar` for that date and should be reviewed by staff.
