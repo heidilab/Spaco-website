@@ -19,19 +19,24 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllBookings } from '@/lib/firestore';
-import { branchKey as branchKeyOf, countsForFinance, salesCategoryBreakdown } from '@/lib/finance';
+import { branchKey as branchKeyOf, countsForFinance, financeBranches, salesCategoryBreakdown } from '@/lib/finance';
+import { loadAllVenues } from '@/lib/venueRegistry';
 import { settlementCashTiming } from '@/lib/settlementDebt';
 import { listExpenses, getFinanceConfig, saveFinanceConfig, type FinanceConfig } from '@/lib/expenses';
 import { commissionForBooking, estimatedKpayFee, splitAmounts, adminDiscountAmount } from '@/lib/bookingMoney';
 import { getMonthClose, saveMonthClose } from '@/lib/monthClose';
 import { parseKpayStatement, bookingIdPrefixFromOrderRef, type KpayStatementSummary, type KpayStatementTxn } from '@/lib/kpayStatement';
-import type { BookingRecord, MonthCloseRecord, ProfitSplitParty } from '@/types';
+import type { BookingRecord, MonthCloseRecord, ProfitSplitParty, Venue } from '@/types';
 import {
   CalendarCheck, Loader2, Lock, Unlock, Upload, Plus, Trash2,
   FileSpreadsheet, Check,
 } from 'lucide-react';
 
-const BRANCHES = ['cwb', 'sw', 'tst', 'wanchai'];
+// Branch tabs come from the venue registry (finance.financeBranches): the
+// original four keep their keys, so existing month_closes docs still
+// match, and a branch added in 分店管理 closes as ONE branch under its
+// branchKey — 尖沙咀 HART's three rooms → `tsthart` (owner decision 2026-11-10).
+// These are just the short labels the original four have always shown.
 const BRANCH_LABELS: Record<string, { zh: string; en: string }> = {
   cwb: { zh: '銅鑼灣', en: 'CWB' },
   sw: { zh: '上環', en: 'SW' },
@@ -98,6 +103,7 @@ export default function MonthClosePage() {
   const [branch, setBranch] = useState('cwb');
   const [month, setMonth] = useState(currentMonth());
   const [allBookings, setAllBookings] = useState<BookingRecord[]>([]);
+  const [venues, setVenues] = useState<Venue[]>([]);
   const [config, setConfig] = useState<FinanceConfig | null>(null);
   const [mc, setMc] = useState<MonthCloseRecord | null>(null);
   const [fyExpenses, setFyExpenses] = useState<Record<string, number>>({});
@@ -137,12 +143,16 @@ export default function MonthClosePage() {
     setStmtPreview(null); setStmtError(null);
     try {
       const months = fyMonths(month);
-      const [all, cfg, close] = await Promise.all([
+      const [all, cfg, close, registry] = await Promise.all([
         getAllBookings(),
         getFinanceConfig(),
         getMonthClose(branch, month),
+        // Falls back to the static venues if the registry is unreachable
+        // (then only the original four branches are listed).
+        loadAllVenues(),
       ]);
       setAllBookings(all);
+      setVenues(registry);
       setConfig(cfg);
       setMc(close);
       setSplits(close?.splits?.length ? close.splits : (cfg.profitSplits[branch] || []));
@@ -173,7 +183,7 @@ export default function MonthClosePage() {
     const rows = allBookings.filter((b) =>
       countsForFinance(b, { includeTest: isPreviewHost })
       && b.date.startsWith(m)
-      && branchKeyOf(b.venueId) === branch);
+      && branchKeyOf(b.venueId, venues) === branch);
     const cats = { rent: 0, bbqHotpot: 0, shisha: 0, cater: 0, drinks: 0, extPenalty: 0, lateCollections: 0 };
     let sales = 0, commissions = 0, kpayEst = 0, discounts = 0;
     const channelSales: Record<string, number> = {};
@@ -216,7 +226,7 @@ export default function MonthClosePage() {
     // Settlement debt from EARLIER months received in this month: income of
     // this month, listed with the original booking and month.
     for (const b of allBookings) {
-      if (!countsForFinance(b, { includeTest: isPreviewHost }) || branchKeyOf(b.venueId) !== branch || b.date.slice(0, 7) >= m) continue;
+      if (!countsForFinance(b, { includeTest: isPreviewHost }) || branchKeyOf(b.venueId, venues) !== branch || b.date.slice(0, 7) >= m) continue;
       for (const l of settlementCashTiming(b, { includeTest: isPreviewHost }).late) {
         if (l.month !== m) continue;
         cats.lateCollections += l.amount;
@@ -239,14 +249,25 @@ export default function MonthClosePage() {
   const cur = useMemo(
     () => (loading || !config ? null : computeMonth(month)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [loading, config, allBookings, fyExpenses, fyCloses, month, branch, isPreviewHost],
+    [loading, config, allBookings, venues, fyExpenses, fyCloses, month, branch, isPreviewHost],
   );
 
   const fy = useMemo(
     () => (loading || !config ? [] : fyMonths(month).map((m) => ({ m, n: computeMonth(m) }))),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [loading, config, allBookings, fyExpenses, fyCloses, month, branch, isPreviewHost],
+    [loading, config, allBookings, venues, fyExpenses, fyCloses, month, branch, isPreviewHost],
   );
+
+  /** The original four, every active branch in 分店管理, and any branch
+   *  that already has a saved default split (so its settings and closes
+   *  stay reachable if it is later taken offline). */
+  const branches = useMemo(
+    () => financeBranches(venues, [branch, ...Object.keys(config?.profitSplits || {})]),
+    [venues, config, branch],
+  );
+  function branchLabel(key: string, lang: 'zh' | 'en' = locale): string {
+    return BRANCH_LABELS[key]?.[lang] ?? branches.find((b) => b.key === key)?.name[lang] ?? key;
+  }
 
   const isClosed = mc?.status === 'closed';
   const pctSum = splits.reduce((s, p) => s + (Number(p.pct) || 0), 0);
@@ -292,7 +313,7 @@ export default function MonthClosePage() {
         const prefix = bookingIdPrefixFromOrderRef(t.orderRef);
         const bk = prefix ? allBookings.find((b) => b.id.startsWith(prefix)) : undefined;
         if (!bk) { unmatched.push(t); continue; }
-        const key = branchKeyOf(bk.venueId);
+        const key = branchKeyOf(bk.venueId, venues);
         const slot = byBranch[key] || (byBranch[key] = { count: 0, gross: 0, fee: 0 });
         slot.count++; slot.gross += t.amount; slot.fee += t.fee;
       }
@@ -370,7 +391,7 @@ export default function MonthClosePage() {
       const wb = XLSX.utils.book_new();
       const months = fyMonths(month);
       const [fyStartY] = months[0].split('-');
-      const bl = BRANCH_LABELS[branch]?.en || branch.toUpperCase();
+      const bl = branchLabel(branch, 'en');
       const aoa: (string | number)[][] = [];
 
       // Style bookkeeping — every cell's number format is recorded
@@ -619,12 +640,12 @@ export default function MonthClosePage() {
       )}
 
       <div className="flex gap-2 flex-wrap">
-        {BRANCHES.map((b) => (
+        {branches.map(({ key: b }) => (
           <button
             key={b} onClick={() => setBranch(b)}
             className={`px-4 py-1.5 rounded-full text-sm border ${branch === b ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
           >
-            {BRANCH_LABELS[b][locale]}
+            {branchLabel(b)}
           </button>
         ))}
       </div>
@@ -637,7 +658,7 @@ export default function MonthClosePage() {
           <div className="bg-white rounded-xl border p-5">
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-semibold">
-                {monthLabel(month)} · {BRANCH_LABELS[branch][locale]}
+                {monthLabel(month)} · {branchLabel(branch)}
                 {isClosed && (
                   <span className="ml-2 text-xs bg-gray-800 text-white rounded-full px-2 py-0.5 inline-flex items-center gap-1">
                     <Lock className="w-3 h-3" /> {zh ? '已關閉' : 'Closed'}
@@ -825,8 +846,8 @@ export default function MonthClosePage() {
                     {stmtPreview.singleBranch ? (
                       <div className="text-xs text-amber-600">
                         {zh
-                          ? `呢份檔案冇逐筆明細，成筆手續費會入落 ${BRANCH_LABELS[branch][locale]}。`
-                          : `No per-transaction rows — the whole fee goes to ${BRANCH_LABELS[branch][locale]}.`}
+                          ? `呢份檔案冇逐筆明細，成筆手續費會入落 ${branchLabel(branch)}。`
+                          : `No per-transaction rows — the whole fee goes to ${branchLabel(branch)}.`}
                       </div>
                     ) : (
                       <table className="text-xs w-full max-w-md">
@@ -841,7 +862,7 @@ export default function MonthClosePage() {
                         <tbody>
                           {Object.entries(stmtPreview.byBranch).map(([bk, slot]) => (
                             <tr key={bk} className="border-b last:border-0">
-                              <td className="py-1">{BRANCH_LABELS[bk]?.[locale] || bk}</td>
+                              <td className="py-1">{branchLabel(bk)}</td>
                               <td className="text-right">{slot.count}</td>
                               <td className="text-right">${fmt(slot.gross)}</td>
                               <td className="text-right font-semibold">${fmt(slot.fee)}</td>

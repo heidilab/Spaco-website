@@ -2,19 +2,26 @@
 // breakdowns by month / branch / add-on / marketing channel. Pure
 // functions: caller fetches the data, this file does the math.
 
-import type { BookingRecord, MarketingChannel } from '@/types';
+import type { BookingRecord, MarketingChannel, Venue } from '@/types';
 import { addOns as ADDON_CATALOG, bbqStandardPriceByVenue, calcShishaPrice, calcCateringTotal, earlySetupPriceByVenue } from './pricing';
 import { HOTPOT_EXTRA_SOUP_PRICE } from './hotpot';
 import { venues } from './venues';
+import { salesBranchKey, salesBranches } from './bonusBranches';
+
+/** The 分店管理 registry fields the branch roll-up reads. Callers load the
+ *  registry (loadAllVenues on the client, loadAllVenuesServer on the
+ *  server) and pass it in — this file stays pure. */
+export type BranchVenue = Pick<Venue, 'id' | 'name' | 'active' | 'sortOrder' | 'branchKey' | 'branchName'>;
 
 export interface FinanceFilter {
   /** Inclusive YYYY-MM-DD start. Bookings with date < from excluded. */
   from?: string;
   /** Inclusive YYYY-MM-DD end. Bookings with date > to excluded. */
   to?: string;
-  /** Restrict to a branch. 'all' = all venues. 'sw' = all Sheung Wan
-   *  variants (sw-a, sw-b, sw-ab) since they share the same physical
-   *  flagship. Otherwise a venue id (cwb / wanchai / tst). */
+  /** Restrict to a branch group key (see branchKey). 'all' = all venues.
+   *  'sw' = all Sheung Wan variants (sw-a, sw-b, sw-ab) since they share
+   *  the same physical flagship; cwb / wanchai / tst are single venues; a
+   *  branch added in 分店管理 uses its branchKey (e.g. 'tsthart'). */
   branch?: string;
   /** Preview-host testing only: count 🧪 test bookings too. */
   includeTest?: boolean;
@@ -22,21 +29,56 @@ export interface FinanceFilter {
   channel?: MarketingChannel | 'loyalty_member' | 'all';
 }
 
-/** Roll a venueId up to its branch group key used by the finance UI. */
-export function branchKey(venueId: string): string {
-  if (venueId.startsWith('sw-')) return 'sw';
-  return venueId;
+/**
+ * Roll a venueId up to its branch group key used by the finance UI.
+ *
+ * Same rule as the CS 獎金 page (lib/bonusBranches): the original four keep
+ * their keys (cwb / sw / tst / wanchai) so existing month-close records,
+ * expenses and saved settings keep matching, and every other venue rolls
+ * up to its 分店管理 branchKey — the rooms of a multi-room branch (尖沙咀
+ * HART: hart-a / hart-b / hart-ab → 'tsthart') count as ONE branch. It
+ * used to know only the `sw-` prefix, which made each HART room its own
+ * "branch". A venue the registry does not know keeps its own id.
+ */
+export function branchKey(venueId: string, registry: readonly BranchVenue[]): string {
+  return salesBranchKey(venueId, registry);
 }
 
-/** Display name for a branch group key. */
-export function branchGroupName(key: string): { zh: string; en: string } {
-  if (key === 'sw') return { zh: '上環海景旗艦店', en: 'Sheung Wan Flagship' };
-  if (key === 'cwb') return { zh: '銅鑼灣店', en: 'Causeway Bay' };
-  if (key === 'wanchai') return { zh: '灣仔店', en: 'Wan Chai' };
-  if (key === 'tst') return { zh: '尖沙咀店', en: 'Tsim Sha Tsui' };
+const LEGACY_GROUP_NAMES: Record<string, { zh: string; en: string }> = {
+  sw: { zh: '上環海景旗艦店', en: 'Sheung Wan Flagship' },
+  cwb: { zh: '銅鑼灣店', en: 'Causeway Bay' },
+  wanchai: { zh: '灣仔店', en: 'Wan Chai' },
+  tst: { zh: '尖沙咀店', en: 'Tsim Sha Tsui' },
+};
+
+/** Display name for a branch group key: the original four keep their
+ *  long-standing finance names, a branch added in 分店管理 shows its
+ *  branch name from the registry. */
+export function branchGroupName(key: string, registry: readonly BranchVenue[] = []): { zh: string; en: string } {
+  if (LEGACY_GROUP_NAMES[key]) return LEGACY_GROUP_NAMES[key];
+  if (registry.some((v) => salesBranchKey(v.id, registry) === key)) {
+    const hit = salesBranches(registry, [key]).find((b) => b.key === key);
+    if (hit) return hit.name;
+  }
   // Fall back to the venue catalog name if available.
   const v = venues.find((vn) => vn.id === key);
   return v?.name || { zh: key, en: key };
+}
+
+export interface BranchGroup {
+  key: string;
+  name: { zh: string; en: string };
+}
+
+/**
+ * The branch groups a finance page lists, in order: the original four,
+ * then every branch in 分店管理 with an active (上架) space. `extraKeys`
+ * keeps a branch listed although it is offline or gone from the registry
+ * — pass the keys that already have data (bookings in range, saved
+ * settings) so nothing recorded is ever hidden.
+ */
+export function financeBranches(registry: readonly BranchVenue[], extraKeys: readonly string[] = []): BranchGroup[] {
+  return salesBranches(registry, extraKeys).map((b) => ({ key: b.key, name: branchGroupName(b.key, registry) }));
 }
 
 export interface AddOnRevenue {
@@ -230,7 +272,9 @@ export function countsForFinance(b: BookingRecord, opts?: { includeTest?: boolea
 
 export function aggregateBookings(
   bookings: BookingRecord[],
-  filter: FinanceFilter = {},
+  filter: FinanceFilter,
+  /** Venue registry (分店管理) — decides which branch each booking rolls up to. */
+  registry: readonly BranchVenue[],
 ): AggregateResult {
   // Filter pass.
   const filtered = bookings.filter((b) => {
@@ -238,8 +282,8 @@ export function aggregateBookings(
     if (filter.from && b.date < filter.from) return false;
     if (filter.to && b.date > filter.to) return false;
     if (filter.branch && filter.branch !== 'all') {
-      // Branch filter rolls SW variants together.
-      if (branchKey(b.venueId) !== filter.branch) return false;
+      // Branch filter rolls the rooms of one branch together.
+      if (branchKey(b.venueId, registry) !== filter.branch) return false;
     }
     if (filter.channel && filter.channel !== 'all') {
       const ch = b.marketingChannel || 'unknown';
@@ -290,8 +334,9 @@ export function aggregateBookings(
     m.bookings += 1;
     monthlyMap.set(month, m);
 
-    // Branch bucket — SW Room A / B / A+B all roll up to one group.
-    const bKey = branchKey(b.venueId);
+    // Branch bucket — the rooms of one branch (上環 Room A / B / A+B,
+    // HART Room A / B / A+B) all roll up to one group.
+    const bKey = branchKey(b.venueId, registry);
     const branchBucket = branchMap.get(bKey) || { revenue: 0, bookings: 0 };
     branchBucket.revenue += totalForBooking;
     branchBucket.bookings += 1;
@@ -324,7 +369,7 @@ export function aggregateBookings(
   const byBranch: BranchRevenue[] = Array.from(branchMap.entries())
     .map(([id, v]) => ({
       branchId: id,
-      branchName: branchGroupName(id),
+      branchName: branchGroupName(id, registry),
       ...v,
     }))
     .sort((a, b) => b.revenue - a.revenue);

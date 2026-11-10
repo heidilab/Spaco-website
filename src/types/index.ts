@@ -868,7 +868,8 @@ export type ExpenseSource = 'manual' | 'recurring';
  *  only manual + seeded-recurring rows live in this collection. */
 export interface ExpenseRecord {
   id: string;
-  /** Branch group key — matches finance.ts branchKey (sw variants roll up). */
+  /** Branch group key — matches finance.ts branchKey (the rooms of one
+   *  branch roll up: sw-* → sw, hart-* → tsthart). */
   branchKey: string;
   /** YYYY-MM the expense belongs to (accrual month for the P&L). */
   month: string;
@@ -971,7 +972,7 @@ export interface ProfitSplitParty {
  *  Doc id is `${branchKey}_${month}` so closes are naturally unique. */
 export interface MonthCloseRecord {
   id?: string;
-  branchKey: string;          // cwb | sw | tst | wanchai
+  branchKey: string;          // finance.branchKey: cwb | sw | tst | wanchai | a 分店管理 branchKey (tsthart)
   month: string;              // YYYY-MM
   /** Split snapshot for THIS month — starts from the branch default in
    *  finance_config and stays editable until the month is closed. */

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolvePeakRule, effectiveMinGuests, effectiveMinHours, peakBranchKey, swSplitBlocked } from './peakDayRules';
+import { resolvePeakRule, effectiveMinGuests, effectiveMinHours, peakBranchKey, swSplitBlocked, peakRuleScopes } from './peakDayRules';
 import { calculatePricing } from './pricing';
 import { venues } from './venues';
 import type { PeakDayConfig } from '@/types';
@@ -142,5 +142,63 @@ describe('swSplitBlocked (上環全場優先)', () => {
   it('flag off = never blocked', () => {
     expect(swSplitBlocked({ date: '2026-12-25' }, 'sw-a', ms('2026-12-01T00:00:00+08:00'))).toBe(false);
     expect(swSplitBlocked(null, 'sw-a', 0)).toBe(false);
+  });
+});
+
+// 特別日子 hard-coded the original six venues, so the rooms of a branch
+// added in 分店管理 (尖沙咀 HART) could only ever get the 全部分店 rule.
+describe('venues that can carry their own peak-day rule', () => {
+  const hartBranch = { branchKey: 'tsthart', branchName: { zh: '尖沙咀 HART', en: 'TST HART' } };
+  const hart = [
+    { id: 'hart-ab', name: { zh: 'Hart Room A+B', en: 'Hart Room A+B' }, roomLabel: { zh: '全層 A+B', en: 'A+B' }, active: true, sortOrder: 52, ...hartBranch },
+    { id: 'hart-a',  name: { zh: 'Hart Room A',   en: 'Hart Room A' },   roomLabel: { zh: 'Room A', en: 'Room A' },   active: true, sortOrder: 50, ...hartBranch },
+    { id: 'hart-b',  name: { zh: 'Hart Room B',   en: 'Hart Room B' },   roomLabel: { zh: 'Room B' },                 active: true, sortOrder: 51, ...hartBranch },
+  ];
+  const registry = [...venues.map((v, i) => ({ ...v, active: true, sortOrder: i })), ...hart];
+  const LEGACY = ['cwb', 'sw-a', 'sw-b', 'sw-ab', 'tst', 'wanchai'];
+
+  it('lists the original six in their usual order, then each HART room', () => {
+    const scopes = peakRuleScopes(registry);
+    expect(scopes.map((s) => s.key)).toEqual([...LEGACY, 'hart-a', 'hart-b', 'hart-ab']);
+    expect(scopes[0].name).toEqual({ zh: '銅鑼灣', en: 'CWB' });
+    expect(scopes[6].name).toEqual({ zh: '尖沙咀 HART Room A', en: 'TST HART Room A' });
+    expect(scopes[7].name).toEqual({ zh: '尖沙咀 HART Room B', en: 'TST HART Room B' });
+    expect(scopes[8].name).toEqual({ zh: '尖沙咀 HART 全層 A+B', en: 'TST HART A+B' });
+  });
+
+  it('uses the venue name for a single-space branch', () => {
+    const kt = { id: 'kt', name: { zh: '觀塘店', en: 'Kwun Tong' }, active: true, sortOrder: 10, branchKey: 'kt', branchName: { zh: '觀塘店', en: 'Kwun Tong' } };
+    expect(peakRuleScopes([...registry, kt])[6]).toEqual({ key: 'kt', name: { zh: '觀塘店', en: 'Kwun Tong' } });
+  });
+
+  it('shows just the original six when the registry is unreachable', () => {
+    expect(peakRuleScopes(venues).map((s) => s.key)).toEqual(LEGACY);
+    expect(peakRuleScopes([]).map((s) => s.key)).toEqual(LEGACY);
+  });
+
+  it('hides an offline venue unless the date already has a rule for it', () => {
+    const offline = registry.map((v) => (v.id === 'hart-b' ? { ...v, active: false } : v));
+    expect(peakRuleScopes(offline).map((s) => s.key)).toEqual([...LEGACY, 'hart-a', 'hart-ab']);
+    expect(peakRuleScopes(offline, ['hart-b']).map((s) => s.key)).toEqual([...LEGACY, 'hart-a', 'hart-b', 'hart-ab']);
+  });
+
+  it('keeps a row for a saved rule whose venue left the registry, but not for the legacy sw group', () => {
+    expect(peakRuleScopes(registry, ['sw', 'cwb', 'old-venue', 'old-venue']).map((s) => s.key))
+      .toEqual([...LEGACY, 'hart-a', 'hart-b', 'hart-ab', 'old-venue']);
+  });
+
+  it('a rule saved under a HART room id is the one bookings resolve', () => {
+    const cfg: PeakDayConfig = {
+      date: '2026-12-25',
+      all: { surchargePerHead: 50, minHeadcount: 8 },
+      branches: { 'hart-a': { surchargePerHead: 90 }, 'hart-ab': { minHours: 5 } },
+    };
+    for (const scope of peakRuleScopes(registry)) {
+      // Every listed key is a venue id resolvePeakRule can look up.
+      expect(resolvePeakRule(cfg, scope.key)).not.toBeNull();
+    }
+    expect(resolvePeakRule(cfg, 'hart-a')).toMatchObject({ surchargePerHead: 90, minHeadcount: 8 });
+    expect(resolvePeakRule(cfg, 'hart-b')).toMatchObject({ surchargePerHead: 50, minHeadcount: 8 });
+    expect(resolvePeakRule(cfg, 'hart-ab')).toMatchObject({ surchargePerHead: 50, minHours: 5 });
   });
 });

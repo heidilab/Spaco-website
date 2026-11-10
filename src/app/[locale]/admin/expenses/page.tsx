@@ -18,7 +18,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getAllBookings } from '@/lib/firestore';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { branchKey as branchKeyOf, branchGroupName, countsForFinance } from '@/lib/finance';
+import { branchKey as branchKeyOf, branchGroupName, countsForFinance, financeBranches } from '@/lib/finance';
+import { loadAllVenues } from '@/lib/venueRegistry';
 import {
   listExpenses, addExpense, updateExpense, deleteExpense,
   listTemplates, addTemplate, updateTemplate, deleteTemplate, seedRecurring,
@@ -26,12 +27,15 @@ import {
 } from '@/lib/expenses';
 import { commissionForBooking, estimatedKpayFee, discountedSubtotal } from '@/lib/bookingMoney';
 import { channelDisplayLabel, getMarketingChannelOptions, type MarketingChannelOption } from '@/lib/marketingChannels';
-import type { BookingRecord, ExpenseRecord, ExpenseTemplate } from '@/types';
+import type { BookingRecord, ExpenseRecord, ExpenseTemplate, Venue } from '@/types';
 import {
   Wallet, Plus, Trash2, Loader2, Check, Settings2, RefreshCw,
 } from 'lucide-react';
 
-const BRANCHES = ['cwb', 'sw', 'tst', 'wanchai'];
+// Branch tabs come from the venue registry (finance.financeBranches): the
+// original four keep their keys, so existing expenses and templates still
+// match, and a branch added in 分店管理 is ONE ledger under its branchKey —
+// 尖沙咀 HART's three rooms → `tsthart` (owner decision 2026-11-10).
 
 function currentMonth(): string {
   return new Date().toISOString().slice(0, 7);
@@ -49,6 +53,7 @@ export default function ExpensesPage() {
   const [rows, setRows] = useState<ExpenseRecord[]>([]);
   const [templates, setTemplates] = useState<ExpenseTemplate[]>([]);
   const [bookings, setBookings] = useState<BookingRecord[]>([]);
+  const [venues, setVenues] = useState<Venue[]>([]);
   const [config, setConfig] = useState<FinanceConfig | null>(null);
   const [channelNames, setChannelNames] = useState<Map<string, MarketingChannelOption>>(new Map());
   useEffect(() => {
@@ -83,12 +88,16 @@ export default function ExpensesPage() {
     if (!user) return;
     setLoading(true);
     try {
-      const [exp, tpl, all, cfg] = await Promise.all([
+      const [exp, tpl, all, cfg, registry] = await Promise.all([
         listExpenses(branch, month),
         listTemplates(branch),
         getAllBookings(),
         getFinanceConfig(),
+        // Falls back to the static venues if the registry is unreachable
+        // (then only the original four branches are listed).
+        loadAllVenues(),
       ]);
+      setVenues(registry);
       // Auto-seed missing recurring rows, then re-read if anything seeded.
       const created = await seedRecurring(branch, month, tpl, exp, user.uid);
       setRows(created > 0 ? await listExpenses(branch, month) : exp);
@@ -99,7 +108,7 @@ export default function ExpensesPage() {
       setBookings(all.filter((b) =>
         countsForFinance(b, { includeTest: previewHost })
         && b.date.startsWith(month)
-        && branchKeyOf(b.venueId) === branch));
+        && branchKeyOf(b.venueId, registry) === branch));
     } finally {
       setLoading(false);
       setAmountDrafts({});
@@ -187,6 +196,10 @@ export default function ExpensesPage() {
     return <div className="text-center py-20 text-ink-soft">{locale === 'zh' ? '無權限存取' : 'Access Denied'}</div>;
   }
 
+  // The original four + every active branch in 分店管理. The selected
+  // branch stays listed even if it was taken offline meanwhile.
+  const branches = financeBranches(venues, [branch]);
+
   const inputCls = 'px-2.5 py-1.5 rounded-lg border border-charcoal/15 text-sm bg-white';
 
   return (
@@ -205,12 +218,12 @@ export default function ExpensesPage() {
 
       {/* Branch + month picker */}
       <div className="flex items-center gap-2 flex-wrap mb-5">
-        {BRANCHES.map((b) => (
+        {branches.map(({ key: b, name }) => (
           <button key={b} onClick={() => setBranch(b)}
             className={`px-3.5 py-2 rounded-pill text-sm font-semibold transition ${
               branch === b ? 'bg-gradient-pink text-white shadow-glow' : 'bg-white/60 text-ink-soft hover:bg-white'
             }`}>
-            {branchGroupName(b)[locale]}
+            {name[locale]}
           </button>
         ))}
         <input type="month" value={month} onChange={(e) => setMonth(e.target.value)}
@@ -259,8 +272,8 @@ export default function ExpensesPage() {
               <div className="rounded-2xl border border-pink/25 bg-pink/[0.03] p-4 mb-4">
                 <p className="text-xs text-ink-soft mb-2">
                   {locale === 'zh'
-                    ? `「${branchGroupName(branch)[locale]}」嘅固定開支項目 — 新月份會自動入帳；當月金額可以喺下面個表逐月改，唔影響呢度嘅預設。`
-                    : `Recurring items for ${branchGroupName(branch)[locale]} — auto-seeded each month; per-month amounts editable below without touching these defaults.`}
+                    ? `「${branchGroupName(branch, venues)[locale]}」嘅固定開支項目 — 新月份會自動入帳；當月金額可以喺下面個表逐月改，唔影響呢度嘅預設。`
+                    : `Recurring items for ${branchGroupName(branch, venues)[locale]} — auto-seeded each month; per-month amounts editable below without touching these defaults.`}
                 </p>
                 <div className="space-y-1.5 mb-3">
                   {templates.map((t) => (

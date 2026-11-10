@@ -4,7 +4,9 @@
 //   快捷鍵     新增預訂連結 | 新增排程 | 單據管理 | 總日曆
 //   統計       今日預訂 · 待核實入數紙 (→ 核實頁)
 //   分店營業   each branch's CURRENT-MONTH sales (same countsForFinance
-//             × pricing.subtotal basis as 月結, so numbers agree)
+//             × pricing.subtotal basis as 月結, so numbers agree).
+//             Branches come from the venue registry, so one added in
+//             分店管理 (尖沙咀 HART) gets a card, its rooms rolled together.
 //   今日預訂   list (unchanged)
 // Data stays cheap on mobile: server-side count for receipts + a
 // date-bounded month query for branch sales — never the whole
@@ -17,15 +19,16 @@ import { Link } from '@/i18n/routing';
 import { getBookingsForDate } from '@/lib/firestore';
 import { getCountFromServer, getDocs, query, collection, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { BookingRecord } from '@/types';
-import { venues } from '@/lib/venues';
-import { branchKey as branchKeyOf, countsForFinance } from '@/lib/finance';
+import { BookingRecord, Venue } from '@/types';
+import { loadAllVenues } from '@/lib/venueRegistry';
+import { branchKey as branchKeyOf, countsForFinance, financeBranches } from '@/lib/finance';
 import {
   CalendarDays, TrendingUp, Link2, CalendarPlus, FileText,
   CalendarRange, Receipt, ChevronRight,
 } from 'lucide-react';
 
-const BRANCHES = ['cwb', 'sw', 'tst', 'wanchai'];
+// Short labels the original four have always shown; a branch added in
+// 分店管理 uses its name from there.
 const BRANCH_LABELS: Record<string, { zh: string; en: string }> = {
   cwb: { zh: '銅鑼灣', en: 'CWB' },
   sw: { zh: '上環', en: 'SW' },
@@ -40,6 +43,7 @@ export default function AdminDashboard() {
   const [todayBookings, setTodayBookings] = useState<BookingRecord[]>([]);
   const [receiptCount, setReceiptCount] = useState(0);
   const [branchSales, setBranchSales] = useState<Record<string, number>>({});
+  const [venues, setVenues] = useState<Venue[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -59,14 +63,17 @@ export default function AdminDashboard() {
         where('date', '>=', `${month}-01`),
         where('date', '<=', `${month}-31`),
       )),
-    ]).then(([todayData, receipts, monthSnap]) => {
+      // Venue registry — falls back to the static venues if unreachable.
+      loadAllVenues(),
+    ]).then(([todayData, receipts, monthSnap, registry]) => {
+      setVenues(registry);
       setTodayBookings(todayData);
       setReceiptCount(receipts.data().count);
       const sales: Record<string, number> = {};
       for (const d of monthSnap.docs) {
         const b = { id: d.id, ...d.data() } as BookingRecord;
         if (!countsForFinance(b, { includeTest: isPreviewHost })) continue;
-        const bk = branchKeyOf(b.venueId);
+        const bk = branchKeyOf(b.venueId, registry);
         sales[bk] = (sales[bk] || 0) + (b.pricing?.subtotal || 0);
       }
       setBranchSales(sales);
@@ -89,6 +96,9 @@ export default function AdminDashboard() {
   );
 
   const monthLabel = new Date().getMonth() + 1;
+  // The original four, every active branch in 分店管理, and any other
+  // branch that has sales this month (so no sales are left off the board).
+  const branches = financeBranches(venues, Object.keys(branchSales));
 
   return (
     <div>
@@ -159,10 +169,10 @@ export default function AdminDashboard() {
             {locale === 'zh' ? `${monthLabel} 月分店營業額` : `Branch sales — month ${monthLabel}`}
           </h2>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-10">
-            {BRANCHES.map((bk) => (
+            {branches.map(({ key: bk, name }) => (
               <div key={bk} className="glass-card p-5">
                 <p className="text-xs text-ink-soft uppercase tracking-wider font-semibold">
-                  {BRANCH_LABELS[bk][locale]}
+                  {BRANCH_LABELS[bk]?.[locale] ?? name[locale]}
                 </p>
                 <p className="text-xl font-bold font-display text-gradient-pink mt-1">
                   HK${(branchSales[bk] || 0).toLocaleString()}

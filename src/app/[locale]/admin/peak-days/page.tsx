@@ -14,31 +14,29 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
 import { listPeakDays, savePeakDay, deletePeakDay } from '@/lib/peakDays';
-import type { PeakDayConfig, PeakDayRule } from '@/types';
+import { peakRuleScopes } from '@/lib/peakDayRules';
+import { loadAllVenues } from '@/lib/venueRegistry';
+import type { PeakDayConfig, PeakDayRule, Venue } from '@/types';
 import { Sparkles, Loader2, Check, ChevronLeft, ChevronRight, Trash2, CopyPlus } from 'lucide-react';
 
+// The per-venue rows come from the venue registry (peakRuleScopes in
+// lib/peakDayRules): the original six, then every venue added in 分店管理
+// (e.g. 尖沙咀 HART Room A / B / A+B), each keyed by venue id.
 // 上環 splits into its three rooms (Heidi 2026-09-17) — each can carry
 // its own surcharge/minimums. Legacy docs saved under 'sw' still apply
 // to all three rooms until the date is re-saved.
-const BRANCHES = ['cwb', 'sw-a', 'sw-b', 'sw-ab', 'tst', 'wanchai'];
-const BRANCH_LABELS: Record<string, { zh: string; en: string }> = {
-  cwb: { zh: '銅鑼灣', en: 'CWB' },
-  'sw-a': { zh: '上環 Room A', en: 'SW Room A' },
-  'sw-b': { zh: '上環 Room B', en: 'SW Room B' },
-  'sw-ab': { zh: '上環 全層 A+B', en: 'SW A+B' },
-  tst: { zh: '尖沙咀', en: 'TST' },
-  wanchai: { zh: '灣仔', en: 'WC' },
-};
 
 /** Editor draft: string inputs (blank = unset) per scope. */
 type RuleDraft = { surchargePerHead: string; minHeadcount: string; minHours: string; forceWeekendRate: boolean };
 type Draft = { note: string; all: RuleDraft; branches: Record<string, RuleDraft>; swFullFloorFirst: boolean; swSplitReleaseDays: string };
 
 const emptyRule = (): RuleDraft => ({ surchargePerHead: '', minHeadcount: '', minHours: '', forceWeekendRate: false });
+/** `draft.branches` holds only the rows that were loaded or touched; a
+ *  missing key reads as an empty (inherit) rule. */
 const emptyDraft = (): Draft => ({
   note: '',
   all: emptyRule(),
-  branches: Object.fromEntries(BRANCHES.map((b) => [b, emptyRule()])),
+  branches: {},
   swFullFloorFirst: false,
   swSplitReleaseDays: '',
 });
@@ -68,11 +66,15 @@ function cfgToDraft(cfg?: PeakDayConfig | null): Draft {
   d.swFullFloorFirst = cfg.swFullFloorFirst === true;
   d.swSplitReleaseDays = cfg.swSplitReleaseDays ? String(cfg.swSplitReleaseDays) : '';
   d.all = ruleToDraft(cfg.all);
-  for (const b of BRANCHES) {
-    // Legacy 'sw' rules prefill the three room rows so re-saving a date
-    // keeps the old behaviour unless the admin changes it.
-    const legacy = b.startsWith('sw-') ? cfg.branches?.['sw'] : undefined;
-    d.branches[b] = ruleToDraft(cfg.branches?.[b] ?? legacy);
+  // Every saved rule is carried into the draft (whatever venue it is for),
+  // so re-saving a date keeps rules for venues this page does not list.
+  for (const [b, rule] of Object.entries(cfg.branches || {})) {
+    if (b !== 'sw') d.branches[b] = ruleToDraft(rule);
+  }
+  // Legacy 'sw' rules prefill the three room rows so re-saving a date
+  // keeps the old behaviour unless the admin changes it.
+  for (const b of ['sw-a', 'sw-b', 'sw-ab']) {
+    d.branches[b] = ruleToDraft(cfg.branches?.[b] ?? cfg.branches?.['sw']);
   }
   return d;
 }
@@ -80,8 +82,8 @@ function cfgToDraft(cfg?: PeakDayConfig | null): Draft {
 function draftToCfg(d: Draft): Omit<PeakDayConfig, 'date' | 'updatedAt'> | null {
   const all = draftToRule(d.all);
   const branches: Record<string, PeakDayRule> = {};
-  for (const b of BRANCHES) {
-    const r = draftToRule(d.branches[b]);
+  for (const [b, ruleDraft] of Object.entries(d.branches)) {
+    const r = draftToRule(ruleDraft);
     if (r) branches[b] = r;
   }
   if (!all && Object.keys(branches).length === 0 && !d.swFullFloorFirst) return null;
@@ -113,6 +115,11 @@ export default function PeakDaysPage() {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1); // 1-12
   const [days, setDays] = useState<Record<string, PeakDayConfig>>({});
+  const [venues, setVenues] = useState<Venue[]>([]);
+  useEffect(() => {
+    // Falls back to the static venues if the registry is unreachable.
+    loadAllVenues().then(setVenues).catch(() => {});
+  }, []);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(emptyDraft());
@@ -238,6 +245,9 @@ export default function PeakDaysPage() {
   }
 
   const todayStr = new Date().toISOString().slice(0, 10);
+  // Rows of the per-venue overrides: registry venues + any venue this
+  // date already has a rule for.
+  const scopes = peakRuleScopes(venues, Object.keys(draft.branches));
 
   const ruleInputs = (scope: 'all' | string, d: RuleDraft, set: (r: RuleDraft) => void) => (
     <div className="grid grid-cols-3 gap-2">
@@ -403,10 +413,10 @@ export default function PeakDaysPage() {
                   {zh ? '個別分店唔同設定（可選）' : 'Per-branch overrides (optional)'}
                 </summary>
                 <div className="space-y-3 mt-3">
-                  {BRANCHES.map((b) => (
+                  {scopes.map(({ key: b, name }) => (
                     <div key={b}>
-                      <div className="text-xs font-medium text-gray-600 mb-1">{BRANCH_LABELS[b][locale]}</div>
-                      {ruleInputs(b, draft.branches[b], (r) => setDraft({ ...draft, branches: { ...draft.branches, [b]: r } }))}
+                      <div className="text-xs font-medium text-gray-600 mb-1">{name[locale]}</div>
+                      {ruleInputs(b, draft.branches[b] ?? emptyRule(), (r) => setDraft({ ...draft, branches: { ...draft.branches, [b]: r } }))}
                     </div>
                   ))}
                   <p className="text-[11px] text-gray-400">

@@ -4,15 +4,22 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllBookings } from '@/lib/firestore';
-import { aggregateBookings, FinanceFilter, countsForFinance, salesCategoryBreakdown } from '@/lib/finance';
-import { venues } from '@/lib/venues';
 import {
-  BookingRecord, MarketingChannel, MARKETING_CHANNEL_LABELS,
+  aggregateBookings, FinanceFilter, countsForFinance, salesCategoryBreakdown,
+  branchKey as branchKeyOf, branchGroupName, financeBranches,
+} from '@/lib/finance';
+import { loadAllVenues } from '@/lib/venueRegistry';
+import {
+  BookingRecord, MarketingChannel, MARKETING_CHANNEL_LABELS, Venue,
 } from '@/types';
 import { channelDisplayLabel, getMarketingChannelOptions, type MarketingChannelOption } from '@/lib/marketingChannels';
 import { listExpenses, getFinanceConfig } from '@/lib/expenses';
 import { commissionForBooking, estimatedKpayFee, splitAmounts, adminDiscountAmount } from '@/lib/bookingMoney';
 import { getMonthClose } from '@/lib/monthClose';
+
+// The original four branch group keys. Every other branch comes from the
+// venue registry (分店管理) — see extraBranches below.
+const LEGACY_BRANCH_KEYS = ['cwb', 'sw', 'tst', 'wanchai'];
 
 // Branch code used in the Sales Record Excel export.
 function venueCode(venueId: string): string {
@@ -57,6 +64,9 @@ export default function FinanceOverviewPage() {
   const isAdminRole = hasPermission('staff');
 
   const [allBookings, setAllBookings] = useState<BookingRecord[]>([]);
+  // Venue registry (分店管理) — decides which branch a booking rolls up to
+  // and which branches the filter lists.
+  const [venues, setVenues] = useState<Venue[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [{ from, to }, setRange] = useState(defaultFromTo());
@@ -78,8 +88,9 @@ export default function FinanceOverviewPage() {
       setLoading(false);
       return;
     }
-    getAllBookings()
-      .then((b) => setAllBookings(b))
+    // loadAllVenues falls back to the static venues if the registry is unreachable.
+    Promise.all([getAllBookings(), loadAllVenues()])
+      .then(([b, v]) => { setAllBookings(b); setVenues(v); })
       .finally(() => setLoading(false));
   }, [canAccess]);
 
@@ -92,9 +103,20 @@ export default function FinanceOverviewPage() {
     setIsPreviewHost(h !== 'spacohk.com' && h !== 'www.spacohk.com');
   }, []);
   const result = useMemo(
-    () => aggregateBookings(allBookings, { from, to, branch, channel, includeTest: isPreviewHost }),
-    [allBookings, from, to, branch, channel, isPreviewHost],
+    () => aggregateBookings(allBookings, { from, to, branch, channel, includeTest: isPreviewHost }, venues),
+    [allBookings, venues, from, to, branch, channel, isPreviewHost],
   );
+
+  /** Branches beyond the original four: every active branch in 分店管理
+   *  (e.g. 尖沙咀 HART, its rooms rolled together) plus any other branch
+   *  that has counted bookings, so past sales stay filterable. */
+  const extraBranches = useMemo(() => {
+    const withBookings = new Set<string>();
+    for (const b of allBookings) {
+      if (countsForFinance(b, { includeTest: isPreviewHost })) withBookings.add(branchKeyOf(b.venueId, venues));
+    }
+    return financeBranches(venues, Array.from(withBookings)).filter((b) => !LEGACY_BRANCH_KEYS.includes(b.key));
+  }, [allBookings, venues, isPreviewHost]);
 
   function channelLabel(ch: string): string {
     if (ch === 'loyalty_member') return locale === 'zh' ? '🌟 老會員' : '🌟 Loyalty';
@@ -109,7 +131,7 @@ export default function FinanceOverviewPage() {
     if (key === 'cwb') return locale === 'zh' ? '銅鑼灣店' : 'Causeway Bay';
     if (key === 'wanchai') return locale === 'zh' ? '灣仔店' : 'Wan Chai';
     if (key === 'tst') return locale === 'zh' ? '尖沙咀店' : 'Tsim Sha Tsui';
-    return venues.find((v) => v.id === key)?.name[locale] || key;
+    return branchGroupName(key, venues)[locale];
   }
 
   /** Re-apply the current page filter to the raw bookings list — needed
@@ -123,10 +145,7 @@ export default function FinanceOverviewPage() {
       if (!countsForFinance(b, { includeTest: isPreviewHost })) return false;
       if (from && b.date < from) return false;
       if (to && b.date > to) return false;
-      if (branch !== 'all') {
-        const key = b.venueId.startsWith('sw-') ? 'sw' : b.venueId;
-        if (key !== branch) return false;
-      }
+      if (branch !== 'all' && branchKeyOf(b.venueId, venues) !== branch) return false;
       if (channel && channel !== 'all') {
         const ch = b.marketingChannel || 'unknown';
         if (ch !== channel) return false;
@@ -207,7 +226,9 @@ export default function FinanceOverviewPage() {
           cur = `${mm === 12 ? yy + 1 : yy}-${String(mm === 12 ? 1 : mm + 1).padStart(2, '0')}`;
         }
       }
-      const branchKeys = branch === 'all' ? ['cwb', 'sw', 'tst', 'wanchai'] : [branch];
+      const branchKeys = branch === 'all'
+        ? [...LEGACY_BRANCH_KEYS, ...extraBranches.map((b) => b.key)]
+        : [branch];
       const storedExpenses: Array<{ branchKey: string; item: string; amount: number; source: string }> = [];
       for (const bk of branchKeys) {
         for (const m of monthsInRange) {
@@ -850,6 +871,9 @@ export default function FinanceOverviewPage() {
               <option value="wanchai">{locale === 'zh' ? '灣仔店' : 'Wan Chai'}</option>
               <option value="sw">{locale === 'zh' ? '上環海景旗艦店' : 'Sheung Wan'}</option>
               <option value="tst">{locale === 'zh' ? '尖沙咀店' : 'Tsim Sha Tsui'}</option>
+              {extraBranches.map((b) => (
+                <option key={b.key} value={b.key}>{b.name[locale]}</option>
+              ))}
             </select>
           </div>
           <div>
