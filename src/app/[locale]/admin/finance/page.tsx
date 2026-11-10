@@ -14,8 +14,9 @@ import {
 } from '@/types';
 import { channelDisplayLabel, getMarketingChannelOptions, type MarketingChannelOption } from '@/lib/marketingChannels';
 import { listExpenses, getFinanceConfig } from '@/lib/expenses';
-import { commissionForBooking, estimatedKpayFee, splitAmounts, adminDiscountAmount } from '@/lib/bookingMoney';
-import { getMonthClose } from '@/lib/monthClose';
+import { commissionForBooking, splitAmounts, adminDiscountAmount } from '@/lib/bookingMoney';
+import { getMonthClose, listKpayStatements } from '@/lib/monthClose';
+import { reconcileKpayFees, kpayFeeOf, hkDateOf } from '@/lib/kpayReconcile';
 
 // The original four branch group keys. Every other branch comes from the
 // venue registry (分店管理) — see extraBranches below.
@@ -177,9 +178,9 @@ export default function FinanceOverviewPage() {
       });
     }
     for (const p of logged) {
-      const dateStr = typeof p.recordedAt === 'string'
-        ? p.recordedAt.slice(0, 10)
-        : '';
+      // HK calendar day — the same day the KPay statement shows. Slicing
+      // the stored UTC timestamp put a 01:00 HKT payment on the day before.
+      const dateStr = hkDateOf(p.recordedAt);
       const isRefund = (p.amount || 0) < 0;
       tx.push({
         date: dateStr,
@@ -216,6 +217,15 @@ export default function FinanceOverviewPage() {
       // R Returned Deposit | S Remarks — CR+DR on ONE sheet, exactly like
       // the (CWB)2026-2027 Financial Master reference file.
       const cfg = await getFinanceConfig();
+      // KPay fee per booking = the fee of each of its own payments, read
+      // off the statement of the month it was PAID in (same numbers as
+      // 月結). Payments not on an uploaded statement keep the estimate —
+      // also when the statements cannot be read at all.
+      const kpayRecon = reconcileKpayFees(
+        allBookings,
+        await listKpayStatements().catch(() => []),
+        cfg.kpayFeePct,
+      );
       const monthsInRange: string[] = [];
       {
         let cur = from.slice(0, 7);
@@ -270,8 +280,8 @@ export default function FinanceOverviewPage() {
         catSums.shisha += cats.shisha; catSums.cater += cats.cater;
         catSums.drinks += cats.drinks; catSums.extPenalty += cats.extPenalty;
 
-        // Per-booking DR items — commission + estimated KPay fee, exactly
-        // the rows Heidi typed by hand into the Vendor/Amount columns.
+        // Per-booking DR items — commission + KPay fee, exactly the rows
+        // Heidi typed by hand into the Vendor/Amount columns.
         const drItems: Array<{ vendor: string; amount: number }> = [];
         const rule = cfg.commissionRules[b.marketingChannel || ''];
         const comm = commissionForBooking(b, rule);
@@ -279,10 +289,13 @@ export default function FinanceOverviewPage() {
           drItems.push({ vendor: channelDisplayLabel(b, 'zh'), amount: comm });
           totalExpenses += comm;
         }
-        const fee = estimatedKpayFee(b, cfg.kpayFeePct);
-        if (fee > 0) {
-          drItems.push({ vendor: 'Kpay', amount: fee });
-          totalExpenses += fee;
+        const kpayFee = kpayFeeOf(kpayRecon, b.id);
+        if (kpayFee.fee > 0) {
+          // Marked while any payment's fee is still an estimate (its
+          // statement not uploaded yet), so the sheet shows what is final.
+          const partEstimated = kpayFee.lines.some((l) => !l.actual);
+          drItems.push({ vendor: partEstimated ? 'Kpay（含估算）' : 'Kpay', amount: kpayFee.fee });
+          totalExpenses += kpayFee.fee;
         }
         // 折扣優惠/賠償 recorded as a DR expense line so the sales
         // categories stay GROSS while Profit reflects the giveaway

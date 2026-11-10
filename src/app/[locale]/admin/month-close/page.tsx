@@ -6,14 +6,16 @@
 //   P&L        sales − (stored expenses + derived commissions + KPay fee)
 //   分紅        per-branch split defaults, tweakable per month, snapshot
 //              saved on the month_close doc; rows mirror her sheet footer
-//   KPay 對帳   upload the monthly KPay statement → actual fee replaces
-//              the estimate everywhere for that month
+//   KPay 對帳   upload the monthly KPay statements → each booking takes
+//              the actual fee of its own payments, whichever month they
+//              were paid in (lib/kpayReconcile); payments whose statement
+//              is not uploaded yet keep the estimate
 //   Master     financial-year rollup table + Excel export in her
 //              Master-sheet layout
 //
 // All sales/expense numbers stay DERIVED (same shared helpers as the
-// Sales Record export) — the doc stores only splits, the reconciled fee
-// and the closed flag.
+// Sales Record export) — the doc stores only splits and the closed flag;
+// KPay statements are stored once per statement month, for all branches.
 
 import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
@@ -23,9 +25,10 @@ import { branchKey as branchKeyOf, countsForFinance, financeBranches, salesCateg
 import { loadAllVenues } from '@/lib/venueRegistry';
 import { settlementCashTiming } from '@/lib/settlementDebt';
 import { listExpenses, getFinanceConfig, saveFinanceConfig, type FinanceConfig } from '@/lib/expenses';
-import { commissionForBooking, estimatedKpayFee, splitAmounts, adminDiscountAmount } from '@/lib/bookingMoney';
-import { getMonthClose, saveMonthClose } from '@/lib/monthClose';
-import { parseKpayStatement, bookingIdPrefixFromOrderRef, type KpayStatementSummary, type KpayStatementTxn } from '@/lib/kpayStatement';
+import { commissionForBooking, splitAmounts, adminDiscountAmount } from '@/lib/bookingMoney';
+import { getMonthClose, saveMonthClose, listKpayStatements, saveKpayStatement, deleteKpayStatement } from '@/lib/monthClose';
+import { parseKpayStatement, statementMonthOf, type KpayStatementSummary, type KpayStatementTxn, type StoredKpayStatement } from '@/lib/kpayStatement';
+import { reconcileKpayFees, kpayFeeOf, sumKpayFees, type BookingKpayFee, type KpayFeeLine } from '@/lib/kpayReconcile';
 import type { BookingRecord, MonthCloseRecord, ProfitSplitParty, Venue } from '@/types';
 import {
   CalendarCheck, Loader2, Lock, Unlock, Upload, Plus, Trash2,
@@ -79,8 +82,15 @@ interface MonthNumbers {
   commissionByChannel: Record<string, number>;
   /** 折扣優惠/賠償 given on the month's bookings — an expense. */
   discounts: number;
-  kpayFee: number;      // actual when reconciled, else estimate
-  kpayIsActual: boolean;
+  /** KPay fee of this month's bookings: actual for every payment found
+   *  on an uploaded statement + estimate for the rest. */
+  kpayFee: number;
+  kpayActual: number;
+  kpayEstimated: number;
+  kpayActualLines: number;
+  kpayEstimatedLines: number;
+  /** Per-booking breakdown behind kpayFee (bookings with KPay payments). */
+  kpayRows: Array<{ id: string; date: string; name: string; fee: BookingKpayFee }>;
   expenses: number;
   profit: number;
   count: number;
@@ -118,19 +128,24 @@ export default function MonthClosePage() {
 
   // Splits being edited for THIS month.
   const [splits, setSplits] = useState<ProfitSplitParty[]>([]);
-  // KPay statement upload preview (before applying).
+  // Uploaded KPay statements — one per statement month, ALL branches.
+  const [statements, setStatements] = useState<StoredKpayStatement[]>([]);
+  // KPay statement upload preview (before saving).
   interface StmtPreview {
     summary: KpayStatementSummary;
     fileName: string;
-    /** Per-branch fee split matched via booking ids in 外部訂單號. */
-    byBranch: Record<string, { count: number; gross: number; fee: number }>;
+    /** Statement month (交易日期) the file will be stored under. */
+    month: string;
+    transactions: KpayStatementTxn[];
+    /** Rows that found their booking. */
+    matchedCount: number;
     unmatched: KpayStatementTxn[];
-    /** True when no per-txn rows were found — the whole fee then goes to
-     *  the currently selected branch (old single-branch behavior). */
-    singleBranch: boolean;
+    /** A statement for this month is already stored and gets replaced. */
+    replaces: boolean;
   }
-  const [stmtPreview, setStmtPreview] = useState<StmtPreview | null>(null);
+  const [stmtPreviews, setStmtPreviews] = useState<StmtPreview[]>([]);
   const [stmtError, setStmtError] = useState<string | null>(null);
+  const [stmtSaving, setStmtSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   function say(msg: string) {
@@ -140,18 +155,20 @@ export default function MonthClosePage() {
 
   async function load() {
     setLoading(true);
-    setStmtPreview(null); setStmtError(null);
+    setStmtPreviews([]); setStmtError(null);
     try {
       const months = fyMonths(month);
-      const [all, cfg, close, registry] = await Promise.all([
+      const [all, cfg, close, registry, stmts] = await Promise.all([
         getAllBookings(),
         getFinanceConfig(),
         getMonthClose(branch, month),
         // Falls back to the static venues if the registry is unreachable
         // (then only the original four branches are listed).
         loadAllVenues(),
+        listKpayStatements(),
       ]);
       setAllBookings(all);
+      setStatements(stmts);
       setVenues(registry);
       setConfig(cfg);
       setMc(close);
@@ -178,6 +195,17 @@ export default function MonthClosePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canAccess, user, branch, month]);
 
+  // Every booking's KPay fee, from ALL uploaded statements: a booking's
+  // payments are looked up in the statement of the month each was PAID
+  // in, so an October booking paid in August takes its fee from the
+  // August statement. Payments not on any uploaded statement keep the %
+  // estimate. Runs over every booking so a statement row can always find
+  // its booking, whatever month or branch it belongs to.
+  const recon = useMemo(
+    () => reconcileKpayFees(allBookings, statements, config?.kpayFeePct ?? 0),
+    [allBookings, statements, config],
+  );
+
   /** Everything derived for one month, from already-loaded bookings. */
   function computeMonth(m: string): MonthNumbers {
     const rows = allBookings.filter((b) =>
@@ -185,7 +213,8 @@ export default function MonthClosePage() {
       && b.date.startsWith(m)
       && branchKeyOf(b.venueId, venues) === branch);
     const cats = { rent: 0, bbqHotpot: 0, shisha: 0, cater: 0, drinks: 0, extPenalty: 0, lateCollections: 0 };
-    let sales = 0, commissions = 0, kpayEst = 0, discounts = 0;
+    let sales = 0, commissions = 0, discounts = 0;
+    const kpayRows: MonthNumbers['kpayRows'] = [];
     const channelSales: Record<string, number> = {};
     const channelCounts: Record<string, number> = {};
     const commissionByChannel: Record<string, number> = {};
@@ -216,8 +245,9 @@ export default function MonthClosePage() {
           const cch = b.marketingChannel || 'unknown';
           commissionByChannel[cch] = (commissionByChannel[cch] || 0) + comm;
         }
-        kpayEst += estimatedKpayFee(b, config.kpayFeePct);
       }
+      const kf = kpayFeeOf(recon, b.id);
+      if (kf.lines.length > 0) kpayRows.push({ id: b.id, date: b.date, name: b.customerName || '', fee: kf });
       discounts += adminDiscountAmount(b);
       const ch = b.marketingChannel || 'unknown';
       channelSales[ch] = (channelSales[ch] || 0) + total;
@@ -234,13 +264,15 @@ export default function MonthClosePage() {
       }
     }
     sales += cats.lateCollections;
-    const close = fyCloses[m];
-    const kpayIsActual = typeof close?.kpayActualFee === 'number';
-    const kpayFee = kpayIsActual ? (close!.kpayActualFee as number) : kpayEst;
+    kpayRows.sort((a, b) => a.date.localeCompare(b.date));
+    const kpay = sumKpayFees(kpayRows.map((r) => r.fee));
+    const kpayFee = kpay.fee;
     const stored = fyExpenses[m] || 0;
     const expenses = stored + commissions + kpayFee + discounts;
     return {
-      sales, stored, commissions, commissionByChannel, discounts, kpayFee, kpayIsActual,
+      sales, stored, commissions, commissionByChannel, discounts, kpayFee,
+      kpayActual: kpay.actualFee, kpayEstimated: kpay.estimatedFee,
+      kpayActualLines: kpay.actualLines, kpayEstimatedLines: kpay.estimatedLines, kpayRows,
       expenses, profit: sales - expenses, count: rows.length,
       channelSales, channelCounts, cats, uncollected, lateList,
     };
@@ -249,13 +281,13 @@ export default function MonthClosePage() {
   const cur = useMemo(
     () => (loading || !config ? null : computeMonth(month)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [loading, config, allBookings, venues, fyExpenses, fyCloses, month, branch, isPreviewHost],
+    [loading, config, allBookings, venues, fyExpenses, fyCloses, month, branch, isPreviewHost, recon],
   );
 
   const fy = useMemo(
     () => (loading || !config ? [] : fyMonths(month).map((m) => ({ m, n: computeMonth(m) }))),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [loading, config, allBookings, venues, fyExpenses, fyCloses, month, branch, isPreviewHost],
+    [loading, config, allBookings, venues, fyExpenses, fyCloses, month, branch, isPreviewHost, recon],
   );
 
   /** The original four, every active branch in 分店管理, and any branch
@@ -283,78 +315,105 @@ export default function MonthClosePage() {
     }
   }
 
-  async function handleStatementFile(file: File) {
-    setStmtError(null); setStmtPreview(null);
+  /** Read the picked statement files into previews. Nothing is stored
+   *  until 確認儲存 — the preview shows which month each file is for and
+   *  how many of its rows found their booking. */
+  async function handleStatementFiles(files: File[]) {
+    setStmtError(null); setStmtPreviews([]);
+    const zh = locale === 'zh';
+    const previews: StmtPreview[] = [];
+    const errors: string[] = [];
     try {
       const XLSX = await import('xlsx-js-style');
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: 'array' });
-      let summary: KpayStatementSummary | null = null;
-      for (const name of wb.SheetNames) {
-        const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[name], { header: 1, raw: true }) as unknown[][];
-        summary = parseKpayStatement(rows);
-        if (summary) break;
+      for (const file of files) {
+        const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+        let summary: KpayStatementSummary | null = null;
+        for (const name of wb.SheetNames) {
+          const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[name], { header: 1, raw: true }) as unknown[][];
+          summary = parseKpayStatement(rows);
+          if (summary) break;
+        }
+        if (!summary) {
+          errors.push(zh
+            ? `${file.name}：未能認出呢個檔案嘅格式 — 請將 statement 傳俾技術同事對一對欄位名稱。`
+            : `${file.name}: could not recognize this statement format.`);
+          continue;
+        }
+        const transactions = summary.transactions || [];
+        // Fees are matched to bookings row by row; a file with totals only
+        // cannot say which booking a fee belongs to.
+        if (transactions.length === 0) {
+          errors.push(zh
+            ? `${file.name}：呢份檔案冇逐筆交易明細，對唔到訂單。請喺 KPay 匯出有「交易結算」明細嘅月結單。`
+            : `${file.name}: no per-transaction rows, so fees cannot be matched to bookings.`);
+          continue;
+        }
+        const stmtMonth = statementMonthOf(summary);
+        if (!stmtMonth) {
+          errors.push(zh
+            ? `${file.name}：睇唔到呢份結單屬於邊個月（冇「交易日期」同交易時間）。`
+            : `${file.name}: cannot tell which month this statement covers.`);
+          continue;
+        }
+        if (previews.some((p) => p.month === stmtMonth)) {
+          errors.push(zh
+            ? `${file.name}：同一次揀咗兩份 ${monthLabel(stmtMonth)} 嘅結單，只用第一份。`
+            : `${file.name}: a second ${monthLabel(stmtMonth)} statement was picked; only the first is used.`);
+          continue;
+        }
+        const candidate: StoredKpayStatement = {
+          month: stmtMonth, fileName: file.name,
+          rowCount: summary.rowCount, gross: summary.gross, fee: summary.fee, transactions,
+        };
+        const matches = reconcileKpayFees(allBookings, [candidate], 0).matches;
+        previews.push({
+          summary, fileName: file.name, month: stmtMonth, transactions,
+          matchedCount: matches.filter((x) => x.bookingId).length,
+          unmatched: matches.filter((x) => !x.bookingId).map((x) => x.txn),
+          replaces: statements.some((x) => x.month === stmtMonth),
+        });
       }
-      if (!summary) {
-        setStmtError(locale === 'zh'
-          ? '未能認出呢個檔案嘅格式 — 請將 statement 傳俾技術同事對一對欄位名稱。'
-          : 'Could not recognize this statement format.');
-        return;
-      }
-      // The ONLINE merchant account covers ALL branches, so the fee is
-      // split per branch by matching each row's 外部訂單號
-      // (`B<bookingId12>_P<epoch>`) back to its booking (Heidi's pick,
-      // 2026-09-07). Without per-txn rows, everything lands on the
-      // currently selected branch as before.
-      const byBranch: Record<string, { count: number; gross: number; fee: number }> = {};
-      const unmatched: KpayStatementTxn[] = [];
-      const txs = summary.transactions || [];
-      for (const t of txs) {
-        const prefix = bookingIdPrefixFromOrderRef(t.orderRef);
-        const bk = prefix ? allBookings.find((b) => b.id.startsWith(prefix)) : undefined;
-        if (!bk) { unmatched.push(t); continue; }
-        const key = branchKeyOf(bk.venueId, venues);
-        const slot = byBranch[key] || (byBranch[key] = { count: 0, gross: 0, fee: 0 });
-        slot.count++; slot.gross += t.amount; slot.fee += t.fee;
-      }
-      const singleBranch = txs.length === 0;
-      if (singleBranch) {
-        byBranch[branch] = { count: summary.rowCount, gross: summary.gross, fee: summary.fee };
-      }
-      for (const slot of Object.values(byBranch)) {
-        slot.gross = Math.round(slot.gross * 100) / 100;
-        slot.fee = Math.round(slot.fee * 100) / 100;
-      }
-      setStmtPreview({ summary, fileName: file.name, byBranch, unmatched, singleBranch });
     } catch {
-      setStmtError(locale === 'zh' ? '讀取檔案失敗' : 'Failed to read file');
+      errors.push(zh ? '讀取檔案失敗' : 'Failed to read file');
+    }
+    previews.sort((x, y) => x.month.localeCompare(y.month));
+    setStmtPreviews(previews);
+    setStmtError(errors.length ? errors.join('\n') : null);
+  }
+
+  async function applyStatements() {
+    if (!user || stmtPreviews.length === 0) return;
+    setStmtSaving(true);
+    try {
+      for (const p of stmtPreviews) {
+        await saveKpayStatement({
+          month: p.month, fileName: p.fileName,
+          rowCount: p.summary.rowCount, gross: p.summary.gross, fee: p.summary.fee,
+          transactions: p.transactions, uploadedBy: user.uid,
+        });
+      }
+      setStatements(await listKpayStatements());
+      setStmtPreviews([]);
+      say(locale === 'zh' ? '已儲存結單，手續費已按訂單重新對數' : 'Statements saved — fees re-matched per booking');
+    } catch {
+      say(locale === 'zh' ? '儲存失敗' : 'Save failed');
+    } finally {
+      setStmtSaving(false);
     }
   }
 
-  async function applyStatement() {
-    if (!stmtPreview) return;
-    for (const [bk, slot] of Object.entries(stmtPreview.byBranch)) {
-      if (slot.fee <= 0) continue;
-      await saveMonthClose(bk, month, {
-        kpayActualFee: slot.fee,
-        kpayStatement: {
-          fileName: stmtPreview.fileName,
-          rowCount: slot.count,
-          gross: slot.gross,
-          fee: slot.fee,
-          net: Math.round((slot.gross - slot.fee) * 100) / 100,
-        },
-      });
+  async function removeStatement(stmtMonth: string) {
+    const zh = locale === 'zh';
+    if (!window.confirm(zh
+      ? `刪除 ${monthLabel(stmtMonth)} 結單？喺嗰個月俾錢嘅訂單會轉返用估算手續費（所有分店）。`
+      : `Delete the ${monthLabel(stmtMonth)} statement? Payments made that month fall back to the estimated fee (all branches).`)) return;
+    try {
+      await deleteKpayStatement(stmtMonth);
+      setStatements(await listKpayStatements());
+      say(zh ? '已刪除結單' : 'Statement deleted');
+    } catch {
+      say(zh ? '刪除失敗' : 'Delete failed');
     }
-    setStmtPreview(null);
-    say(locale === 'zh' ? '已套用實際 KPay 手續費（已拆分到各分店）' : 'Actual KPay fees applied per branch');
-    load();
-  }
-
-  async function clearStatement() {
-    await saveMonthClose(branch, month, { kpayActualFee: null, kpayStatement: null });
-    say(locale === 'zh' ? '已還原為估算' : 'Reverted to estimate');
-    load();
   }
 
   async function toggleClose() {
@@ -604,6 +663,46 @@ export default function MonthClosePage() {
   const zh = locale === 'zh';
   const splitRows = cur ? splitAmounts(cur.profit, splits) : [];
 
+  /** （實際）/（部分估算）/（估算） next to a month's KPay fee. */
+  function kpayStatusLabel(n: MonthNumbers): string {
+    if (n.kpayEstimatedLines === 0 && n.kpayActualLines > 0) return zh ? '（實際）' : ' (actual)';
+    if (n.kpayEstimatedLines > 0 && n.kpayActualLines > 0) return zh ? '（部分估算）' : ' (part est.)';
+    return zh ? '（估算）' : ' (est.)';
+  }
+  /** Where one fee line came from, in words. */
+  function kpaySourceLabel(l: KpayFeeLine): string {
+    const sm = l.statementMonth ? monthLabel(l.statementMonth) : '';
+    if (l.actual) return zh ? `${sm} 結單` : `${sm} statement`;
+    if (l.reason === 'refund') return zh ? '估算 · 退款' : 'Estimate · refund';
+    if (l.reason === 'not-in-statement') return zh ? `估算 · ${sm} 結單入面搵唔到呢筆` : `Estimate · not on the ${sm} statement`;
+    return sm
+      ? (zh ? `估算 · 未上載 ${sm} 結單` : `Estimate · ${sm} statement not uploaded`)
+      : (zh ? '估算 · 付款日期不明' : 'Estimate · payment date unknown');
+  }
+  // What the KPay 對帳 card needs for the selected month + branch.
+  const kpayLines = cur ? cur.kpayRows.flatMap((r) => r.fee.lines) : [];
+  /** Statement months this month's bookings still wait for → payment count. */
+  const kpayMissing: Record<string, number> = {};
+  for (const l of kpayLines) {
+    if (!l.actual && l.reason === 'statement-missing' && l.statementMonth) {
+      kpayMissing[l.statementMonth] = (kpayMissing[l.statementMonth] || 0) + 1;
+    }
+  }
+  const kpayNotInStatement = kpayLines.filter((l) => !l.actual && l.reason === 'not-in-statement').length;
+  /** Per stored statement: rows that found a booking, rows that did not,
+   *  and rows whose booking is left out of finance (cancelled, test …) —
+   *  KPay still charged those fees, but they sit in no month's P&L. */
+  const stmtMatchStats: Record<string, {
+    matched: number; unmatched: KpayStatementTxn[]; excluded: Array<{ txn: KpayStatementTxn; bookingId: string }>;
+  }> = {};
+  const countedIds = new Set(allBookings.filter((b) => countsForFinance(b, { includeTest: isPreviewHost })).map((b) => b.id));
+  for (const mt of recon.matches) {
+    const st = stmtMatchStats[mt.month] || (stmtMatchStats[mt.month] = { matched: 0, unmatched: [], excluded: [] });
+    if (!mt.bookingId) { st.unmatched.push(mt.txn); continue; }
+    st.matched++;
+    if (!countedIds.has(mt.bookingId)) st.excluded.push({ txn: mt.txn, bookingId: mt.bookingId });
+  }
+
   return (
     <div className="p-4 md:p-8 space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -684,7 +783,7 @@ export default function MonthClosePage() {
                 <div className="text-gray-500">{zh ? '總支出' : 'Total Expenses'}</div>
                 <div className="text-xl font-bold">${fmt(cur.expenses)}</div>
                 <div className="text-xs text-gray-400">
-                  {zh ? '固定/雜項' : 'Stored'} ${fmt(cur.stored)} · {zh ? '佣金' : 'Comm'} ${fmt(cur.commissions)} · KPay ${fmt(cur.kpayFee)}{cur.kpayIsActual ? (zh ? '（實際）' : ' (actual)') : (zh ? '（估算）' : ' (est.)')}{cur.discounts > 0 ? ` · ${zh ? '折扣/賠償' : 'Discounts'} $${fmt(cur.discounts)}` : ''}
+                  {zh ? '固定/雜項' : 'Stored'} ${fmt(cur.stored)} · {zh ? '佣金' : 'Comm'} ${fmt(cur.commissions)} · KPay ${fmt(cur.kpayFee)}{kpayStatusLabel(cur)}{cur.discounts > 0 ? ` · ${zh ? '折扣/賠償' : 'Discounts'} $${fmt(cur.discounts)}` : ''}
                 </div>
               </div>
               <div className="bg-gray-50 rounded-lg p-3">
@@ -795,107 +894,214 @@ export default function MonthClosePage() {
 
           {/* ── KPay 對帳 ── */}
           <div className="bg-white rounded-xl border p-5">
-            <h2 className="font-semibold mb-2">{zh ? 'KPay 對帳' : 'KPay Reconciliation'}</h2>
-            {mc?.kpayStatement ? (
-              <div className="text-sm space-y-1">
-                <div className="text-green-700 flex items-center gap-1.5">
-                  <Check className="w-4 h-4" />
-                  {zh ? '已用實際手續費' : 'Using actual fee'}: <b>${fmt(mc.kpayStatement.fee)}</b>
-                  <span className="text-gray-400">({mc.kpayStatement.fileName} · {mc.kpayStatement.rowCount} {zh ? '筆' : 'rows'} · {zh ? '總額' : 'gross'} ${fmt(mc.kpayStatement.gross)})</span>
-                </div>
-                {isAdminRole && !isClosed && (
-                  <button onClick={clearStatement} className="text-xs text-gray-500 hover:underline">
-                    {zh ? '還原為估算' : 'Revert to estimate'}
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-3 text-sm">
-                <p className="text-gray-500">
-                  {zh
-                    ? `而家用緊估算 KPay 手續費 $${fmt(cur.kpayFee)}（${config?.kpayFeePct}%）。上載 KPay 月結單（Excel/CSV）就會轉用實際數。`
-                    : `Currently using the estimated KPay fee $${fmt(cur.kpayFee)} (${config?.kpayFeePct}%). Upload the monthly statement to use actuals.`}
-                </p>
-                {isAdminRole && !isClosed && (
-                  <label className="inline-flex items-center gap-2 border rounded-lg px-3 py-2 cursor-pointer hover:bg-gray-50">
-                    <Upload className="w-4 h-4" />
-                    {zh ? '上載 KPay 月結單' : 'Upload KPay statement'}
-                    <input
-                      type="file" accept=".xlsx,.xls,.csv" className="hidden"
-                      onChange={(e) => { const f = e.target.files?.[0]; if (f) handleStatementFile(f); e.target.value = ''; }}
-                    />
-                  </label>
-                )}
-                {stmtError && <div className="text-red-600 text-xs">{stmtError}</div>}
-                {stmtPreview && (
-                  <div className="border rounded-lg p-3 bg-gray-50 space-y-2">
-                    <div className="font-medium">{stmtPreview.fileName}</div>
-                    <div className="text-xs text-gray-600">
-                      {stmtPreview.summary.rowCount} {zh ? '筆交易' : 'transactions'} ·
-                      {' '}{zh ? '總額' : 'Gross'} ${fmt(stmtPreview.summary.gross)} ·
-                      {' '}<b>{zh ? '手續費' : 'Fee'} ${fmt(stmtPreview.summary.fee)}</b> ·
-                      {' '}{zh ? '淨結算' : 'Net'} ${fmt(stmtPreview.summary.net)}
-                    </div>
-                    {stmtPreview.summary.statementMonth && stmtPreview.summary.statementMonth !== month && (
-                      <div className="text-xs text-red-600 font-medium">
-                        ⚠️ {zh
-                          ? `呢份 statement 係 ${monthLabel(stmtPreview.summary.statementMonth)}，但你而家揀緊 ${monthLabel(month)} — 套用前請確認月份啱。`
-                          : `Statement is for ${monthLabel(stmtPreview.summary.statementMonth)} but ${monthLabel(month)} is selected.`}
-                      </div>
-                    )}
-                    {stmtPreview.singleBranch ? (
-                      <div className="text-xs text-amber-600">
-                        {zh
-                          ? `呢份檔案冇逐筆明細，成筆手續費會入落 ${branchLabel(branch)}。`
-                          : `No per-transaction rows — the whole fee goes to ${branchLabel(branch)}.`}
-                      </div>
-                    ) : (
-                      <table className="text-xs w-full max-w-md">
-                        <thead>
-                          <tr className="text-gray-500 border-b">
-                            <th className="text-left py-1">{zh ? '分店' : 'Branch'}</th>
-                            <th className="text-right">{zh ? '筆數' : 'Txns'}</th>
-                            <th className="text-right">{zh ? '金額' : 'Gross'}</th>
-                            <th className="text-right">{zh ? '手續費' : 'Fee'}</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {Object.entries(stmtPreview.byBranch).map(([bk, slot]) => (
-                            <tr key={bk} className="border-b last:border-0">
-                              <td className="py-1">{branchLabel(bk)}</td>
-                              <td className="text-right">{slot.count}</td>
-                              <td className="text-right">${fmt(slot.gross)}</td>
-                              <td className="text-right font-semibold">${fmt(slot.fee)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                    {stmtPreview.unmatched.length > 0 && (
-                      <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
-                        ⚠️ {zh
-                          ? `${stmtPreview.unmatched.length} 筆交易對唔到訂單（唔會自動套用，請人手覆核）：`
-                          : `${stmtPreview.unmatched.length} transactions could not be matched to bookings (not applied):`}
-                        <ul className="mt-1 space-y-0.5">
-                          {stmtPreview.unmatched.slice(0, 8).map((t, i) => (
-                            <li key={i} className="font-mono">{t.orderRef || '—'} · ${fmt(t.amount)} ({zh ? '費' : 'fee'} ${fmt(t.fee)})</li>
-                          ))}
-                          {stmtPreview.unmatched.length > 8 && <li>… +{stmtPreview.unmatched.length - 8}</li>}
-                        </ul>
-                      </div>
-                    )}
-                    <div className="text-xs text-gray-400">
-                      {zh ? '認到嘅欄位' : 'Matched columns'}: {[stmtPreview.summary.matched.gross, stmtPreview.summary.matched.fee, stmtPreview.summary.matched.net].filter(Boolean).join(' / ') || '—'}
-                    </div>
-                    <button onClick={applyStatement} className="btn-primary text-sm">
-                      {stmtPreview.singleBranch
-                        ? (zh ? '確認套用' : 'Apply')
-                        : (zh ? '確認套用（自動拆分到各分店）' : 'Apply (split per branch)')}
-                    </button>
-                  </div>
-                )}
+            <h2 className="font-semibold mb-1">{zh ? 'KPay 對帳' : 'KPay Reconciliation'}</h2>
+            <p className="text-xs text-gray-500 mb-3">
+              {zh
+                ? '手續費跟訂單走：每張訂單嘅每筆 KPay 付款，都會去返「俾錢嗰個月」嘅結單度對返嗰筆交易嘅手續費，再加埋。所以 10 月嘅訂單如果 8 月已經俾錢，就用 8 月結單嗰筆數。'
+                : 'Fees follow the booking: each KPay payment of a booking is looked up on the statement of the month it was paid in, and the fees are added up.'}
+            </p>
+
+            <div className="text-sm">
+              {zh ? '本月訂單 KPay 手續費' : 'KPay fee of this month’s bookings'}：<b>${fmt(cur.kpayFee)}</b>{kpayStatusLabel(cur)}
+              {cur.kpayRows.length > 0 && (
+                <span className="text-gray-500">
+                  {' — '}{zh ? '實際' : 'actual'} ${fmt(cur.kpayActual)}（{cur.kpayActualLines} {zh ? '筆' : 'payments'}）
+                  {cur.kpayEstimatedLines > 0 && <> · {zh ? '估算' : 'estimated'} ${fmt(cur.kpayEstimated)}（{cur.kpayEstimatedLines} {zh ? '筆' : 'payments'}，{config?.kpayFeePct}%）</>}
+                </span>
+              )}
+            </div>
+
+            {Object.keys(kpayMissing).length > 0 && (
+              <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                ⚠️ {zh ? '仲未上載以下月份嘅結單，相關付款暫時用估算：' : 'Statements not uploaded yet — these payments use the estimate: '}
+                <b>{Object.keys(kpayMissing).sort().map((sm) => `${monthLabel(sm)}（${kpayMissing[sm]} ${zh ? '筆' : ''}）`).join('、')}</b>
               </div>
             )}
+            {kpayNotInStatement > 0 && (
+              <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                ⚠️ {zh
+                  ? `有 ${kpayNotInStatement} 筆記錄為 KPay 嘅付款，喺已上載嘅結單入面搵唔到（例如唔係經網站收、或者人手記錄嘅付款方式唔啱），暫時用估算 — 請睇下面明細覆核。`
+                  : `${kpayNotInStatement} payment(s) recorded as KPay are not on the uploaded statements; they use the estimate — please review below.`}
+              </div>
+            )}
+            {mc?.kpayStatement && statements.length === 0 && (
+              <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                ⚠️ {zh
+                  ? `呢個月之前上載過「${mc.kpayStatement.fileName}」，但舊做法係將成張結單嘅手續費（$${fmt(mc.kpayStatement.fee)}）入晒落同一個月，已經停用。請喺下面重新上載各月結單一次（可以一次過揀多個檔案）。`
+                  : `“${mc.kpayStatement.fileName}” was uploaded here under the old method (whole statement fee on one month), which is no longer used. Please upload the monthly statements again below.`}
+              </div>
+            )}
+
+            {cur.kpayRows.length > 0 ? (
+              <div className="mt-3 overflow-x-auto">
+                <table className="text-xs w-full min-w-[640px]">
+                  <thead>
+                    <tr className="text-gray-500 border-b">
+                      <th className="text-left py-1">{zh ? '訂單（活動日期）' : 'Booking (event date)'}</th>
+                      <th className="text-left">{zh ? '付款日期' : 'Paid on'}</th>
+                      <th className="text-right">{zh ? 'KPay 收款' : 'Charged'}</th>
+                      <th className="text-right">{zh ? '手續費' : 'Fee'}</th>
+                      <th className="text-left pl-3">{zh ? '手續費來源' : 'Fee source'}</th>
+                      <th className="text-right">{zh ? '訂單合計' : 'Booking total'}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cur.kpayRows.map((r) => r.fee.lines.map((l, i) => (
+                      <tr key={`${r.id}-${i}`} className={i === 0 ? 'border-t' : ''}>
+                        <td className="py-1 pr-2">
+                          {i === 0 && (
+                            <a href={`/${locale}/admin/bookings/${r.id}`} className="underline">
+                              {r.date.slice(5)} · #{r.id.slice(0, 8)}{r.name ? ` · ${r.name}` : ''}
+                            </a>
+                          )}
+                        </td>
+                        <td className="whitespace-nowrap">{l.date || '—'}</td>
+                        <td className="text-right">${fmt(l.amount)}</td>
+                        <td className="text-right">${fmt(l.fee)}</td>
+                        <td className={`pl-3 ${l.actual ? 'text-green-700' : 'text-amber-700'}`}>
+                          {kpaySourceLabel(l)}{l.payMethod ? ` · ${l.payMethod}` : ''}
+                        </td>
+                        <td className="text-right font-semibold">{i === 0 ? `$${fmt(r.fee.fee)}` : ''}</td>
+                      </tr>
+                    )))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-gray-400">{zh ? '本月訂單冇 KPay 付款。' : 'No KPay payments on this month’s bookings.'}</p>
+            )}
+
+            {/* Stored statements — shared by every branch and month. */}
+            <div className="mt-5 pt-4 border-t space-y-3 text-sm">
+              <div className="font-medium">
+                {zh ? '已上載嘅 KPay 月結單' : 'Uploaded KPay statements'}
+                <span className="ml-2 text-xs font-normal text-gray-400">
+                  {zh ? '所有分店、所有月份共用 — 每個月嘅結單上載一次就得' : 'shared by every branch and month — upload each month once'}
+                </span>
+              </div>
+              {statements.length > 0 ? (
+                <table className="text-xs w-full max-w-2xl">
+                  <thead>
+                    <tr className="text-gray-500 border-b">
+                      <th className="text-left py-1">{zh ? '結單月份' : 'Statement'}</th>
+                      <th className="text-right">{zh ? '筆數' : 'Txns'}</th>
+                      <th className="text-right">{zh ? '總額' : 'Gross'}</th>
+                      <th className="text-right">{zh ? '手續費' : 'Fee'}</th>
+                      <th className="text-right">{zh ? '對到訂單' : 'Matched'}</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {statements.map((st) => {
+                      const stat = stmtMatchStats[st.month] || { matched: 0, unmatched: [], excluded: [] };
+                      return (
+                        <tr key={st.month} className="border-b last:border-0 align-top">
+                          <td className="py-1">
+                            <b>{monthLabel(st.month)}</b> <span className="text-gray-400">{st.fileName}</span>
+                            {stat.unmatched.length > 0 && (
+                              <details className="text-amber-700">
+                                <summary className="cursor-pointer">
+                                  {zh ? `${stat.unmatched.length} 筆對唔到訂單（冇計入任何分店）` : `${stat.unmatched.length} not matched to a booking (not counted anywhere)`}
+                                </summary>
+                                <ul className="mt-1 space-y-0.5 font-mono">
+                                  {stat.unmatched.map((t, i) => (
+                                    <li key={i}>{t.date || '—'} · {t.orderRef || '—'} · ${fmt(t.amount)}（{zh ? '費' : 'fee'} ${fmt(t.fee)}）</li>
+                                  ))}
+                                </ul>
+                              </details>
+                            )}
+                            {stat.excluded.length > 0 && (
+                              <details className="text-gray-500">
+                                <summary className="cursor-pointer">
+                                  {zh
+                                    ? `${stat.excluded.length} 筆屬於唔計入財務嘅訂單（已取消／測試等），手續費 $${fmt(stat.excluded.reduce((sum, x) => sum + x.txn.fee, 0))} 冇入任何月份`
+                                    : `${stat.excluded.length} on bookings left out of finance (cancelled / test …), fee $${fmt(stat.excluded.reduce((sum, x) => sum + x.txn.fee, 0))} not in any month`}
+                                </summary>
+                                <ul className="mt-1 space-y-0.5 font-mono">
+                                  {stat.excluded.map((x, i) => (
+                                    <li key={i}>
+                                      {x.txn.date || '—'} · <a href={`/${locale}/admin/bookings/${x.bookingId}`} className="underline">#{x.bookingId.slice(0, 8)}</a> · ${fmt(x.txn.amount)}（{zh ? '費' : 'fee'} ${fmt(x.txn.fee)}）
+                                    </li>
+                                  ))}
+                                </ul>
+                              </details>
+                            )}
+                          </td>
+                          <td className="text-right">{st.rowCount}</td>
+                          <td className="text-right">${fmt(st.gross)}</td>
+                          <td className="text-right font-semibold">${fmt(st.fee)}</td>
+                          <td className="text-right">{stat.matched}/{st.transactions.length}</td>
+                          <td className="text-right pl-2">
+                            {isAdminRole && (
+                              <button onClick={() => removeStatement(st.month)} className="text-gray-300 hover:text-red-500" title={zh ? '刪除結單' : 'Delete statement'}>
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="text-xs text-gray-500">
+                  {zh
+                    ? `未上載任何結單 — 所有 KPay 手續費暫時用估算（${config?.kpayFeePct}%）。`
+                    : `No statements uploaded — all KPay fees use the ${config?.kpayFeePct}% estimate.`}
+                </p>
+              )}
+
+              {isAdminRole && (
+                <label className="inline-flex items-center gap-2 border rounded-lg px-3 py-2 cursor-pointer hover:bg-gray-50">
+                  <Upload className="w-4 h-4" />
+                  {zh ? '上載 KPay 月結單（可以一次揀多個月）' : 'Upload KPay statements (several months at once)'}
+                  <input
+                    type="file" accept=".xlsx,.xls,.csv" multiple className="hidden"
+                    onChange={(e) => { const fs = Array.from(e.target.files || []); if (fs.length) handleStatementFiles(fs); e.target.value = ''; }}
+                  />
+                </label>
+              )}
+              {stmtError && <div className="text-red-600 text-xs whitespace-pre-line">{stmtError}</div>}
+              {stmtPreviews.length > 0 && (
+                <div className="border rounded-lg p-3 bg-gray-50 space-y-3">
+                  {stmtPreviews.map((p) => (
+                    <div key={p.month} className="space-y-1">
+                      <div className="font-medium">{monthLabel(p.month)} <span className="text-xs font-normal text-gray-500">{p.fileName}</span></div>
+                      <div className="text-xs text-gray-600">
+                        {p.summary.rowCount} {zh ? '筆交易' : 'transactions'} ·
+                        {' '}{zh ? '總額' : 'Gross'} ${fmt(p.summary.gross)} ·
+                        {' '}<b>{zh ? '手續費' : 'Fee'} ${fmt(p.summary.fee)}</b> ·
+                        {' '}{zh ? `對到訂單 ${p.matchedCount}/${p.transactions.length} 筆` : `${p.matchedCount}/${p.transactions.length} matched to bookings`}
+                      </div>
+                      {p.replaces && (
+                        <div className="text-xs text-amber-700">
+                          {zh ? `已經有 ${monthLabel(p.month)} 嘅結單，儲存會取代舊嗰份。` : `A ${monthLabel(p.month)} statement is already stored and will be replaced.`}
+                        </div>
+                      )}
+                      {p.unmatched.length > 0 && (
+                        <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+                          ⚠️ {zh
+                            ? `${p.unmatched.length} 筆交易對唔到訂單（唔會計入任何分店，請人手覆核）：`
+                            : `${p.unmatched.length} transactions could not be matched to bookings (not counted):`}
+                          <ul className="mt-1 space-y-0.5">
+                            {p.unmatched.slice(0, 8).map((t, i) => (
+                              <li key={i} className="font-mono">{t.date || '—'} · {t.orderRef || '—'} · ${fmt(t.amount)} ({zh ? '費' : 'fee'} ${fmt(t.fee)})</li>
+                            ))}
+                            {p.unmatched.length > 8 && <li>… +{p.unmatched.length - 8}</li>}
+                          </ul>
+                        </div>
+                      )}
+                      <div className="text-xs text-gray-400">
+                        {zh ? '認到嘅欄位' : 'Matched columns'}: {[p.summary.matched.gross, p.summary.matched.fee, p.summary.matched.net].filter(Boolean).join(' / ') || '—'}
+                      </div>
+                    </div>
+                  ))}
+                  <button onClick={applyStatements} disabled={stmtSaving} className="btn-primary text-sm disabled:opacity-50">
+                    {stmtSaving ? (zh ? '儲存中…' : 'Saving…') : (zh ? `確認儲存（${stmtPreviews.length} 份結單）` : `Save ${stmtPreviews.length} statement(s)`)}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* ── FY Master rollup ── */}

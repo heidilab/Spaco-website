@@ -22,6 +22,28 @@ export interface KpayStatementTxn {
   orderRef: string;
   amount: number;
   fee: number;
+  /** HK date the payment completed (完成時間 → 提交時間 → 清算日期),
+   *  YYYY-MM-DD. Absent when the file carries no usable date column. */
+  date?: string;
+  /** KPay交易號 — the gateway's own id for the charge. */
+  transactionNo?: string;
+  /** 支付方式 (PayMe / 支付寶 / Visa …), shown next to the fee. */
+  payMethod?: string;
+}
+
+/** One uploaded monthly statement as stored for per-booking fee
+ *  reconciliation (lib/kpayReconcile). The ONLINE merchant account
+ *  covers every branch, so there is ONE record per statement month. */
+export interface StoredKpayStatement {
+  /** YYYY-MM the statement covers (its 交易日期). */
+  month: string;
+  fileName: string;
+  rowCount: number;
+  gross: number;
+  fee: number;
+  transactions: KpayStatementTxn[];
+  uploadedAt?: unknown;
+  uploadedBy?: string;
 }
 
 export interface KpayStatementSummary {
@@ -68,6 +90,27 @@ function toMoney(v: unknown): number {
 
 const round2 = (x: number) => Math.round(x * 100) / 100;
 
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** Statement date cell → YYYY-MM-DD. KPay writes `31/10/2026 19:07`
+ *  (day first, HK time) as text; ISO text, Date objects and Excel
+ *  serials are accepted too in case the file was re-saved. */
+function toDateStr(v: unknown): string {
+  if (v instanceof Date && !Number.isNaN(v.getTime())) {
+    return `${v.getFullYear()}-${pad2(v.getMonth() + 1)}-${pad2(v.getDate())}`;
+  }
+  if (typeof v === 'number' && v > 20000 && v < 80000) {
+    const d = new Date(Math.round((v - 25569) * 86400000));
+    return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+  }
+  const s = cellText(v);
+  let m = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/.exec(s);
+  if (m) return `${m[3]}-${pad2(Number(m[2]))}-${pad2(Number(m[1]))}`;
+  m = /^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/.exec(s);
+  if (m) return `${m[1]}-${pad2(Number(m[2]))}-${pad2(Number(m[3]))}`;
+  return '';
+}
+
 /** ① The 「交易對賬匯總」 summary block — count / gross / fee on the row
  *  right under its header. Authoritative when present. */
 function parseSummaryBlock(rows: unknown[][]): KpayStatementSummary | null {
@@ -107,6 +150,11 @@ function parseDetailTable(rows: unknown[][]): KpayStatementSummary | null {
     const statusCol = header.findIndex((h) => h.includes('交易狀態') || h.includes('狀態'));
     const extRefCol = header.findIndex((h) => h.includes('外部訂單號'));
     const merchRefCol = header.findIndex((h) => h.includes('商戶訂單號'));
+    const txnNoCol = header.findIndex((h) => h.includes('KPay交易號'));
+    const methodCol = header.findIndex((h) => h.includes('支付方式'));
+    const dateCols = ['完成時間', '提交時間', '清算日期']
+      .map((label) => header.findIndex((h) => h.includes(label)))
+      .filter((c) => c >= 0);
     let rowCount = 0, gross = 0, fee = 0;
     const transactions: KpayStatementTxn[] = [];
     for (let i = r + 1; i < rows.length; i++) {
@@ -119,11 +167,20 @@ function parseDetailTable(rows: unknown[][]): KpayStatementSummary | null {
         if (st && !st.includes('成功')) continue; // refunds/failures excluded
       }
       rowCount++; gross += g; fee += Math.abs(f);
-      transactions.push({
+      const txn: KpayStatementTxn = {
         orderRef: cellText(extRefCol >= 0 ? row[extRefCol] : '') || cellText(merchRefCol >= 0 ? row[merchRefCol] : ''),
         amount: round2(g),
         fee: round2(Math.abs(f)),
-      });
+      };
+      // Optional fields are only set when present — Firestore rejects
+      // `undefined`, and these rows are stored as-is.
+      const date = dateCols.map((c) => toDateStr(row[c])).find(Boolean);
+      if (date) txn.date = date;
+      const txnNo = txnNoCol >= 0 ? cellText(row[txnNoCol]) : '';
+      if (txnNo) txn.transactionNo = txnNo;
+      const method = methodCol >= 0 ? cellText(row[methodCol]) : '';
+      if (method) txn.payMethod = method;
+      transactions.push(txn);
     }
     if (rowCount === 0) continue;
     return {
@@ -216,4 +273,18 @@ export function parseKpayStatement(rows: unknown[][]): KpayStatementSummary | nu
     : (detail || parseGeneric(rows));
   if (!base) return null;
   return { ...base, statementMonth: scanStatementMonth(rows) };
+}
+
+/** The month a parsed statement covers: its 交易日期 when present, else
+ *  the month most of its rows were paid in. Null when neither is known. */
+export function statementMonthOf(summary: KpayStatementSummary): string | null {
+  if (summary.statementMonth) return summary.statementMonth;
+  const counts = new Map<string, number>();
+  for (const t of summary.transactions || []) {
+    const m = (t.date || '').slice(0, 7);
+    if (m) counts.set(m, (counts.get(m) || 0) + 1);
+  }
+  let best: string | null = null;
+  counts.forEach((n, m) => { if (best === null || n > (counts.get(best) || 0)) best = m; });
+  return best;
 }

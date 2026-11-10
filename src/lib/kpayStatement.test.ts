@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseKpayStatement, bookingIdPrefixFromOrderRef } from './kpayStatement';
+import { parseKpayStatement, bookingIdPrefixFromOrderRef, statementMonthOf } from './kpayStatement';
 import { splitAmounts } from './bookingMoney';
 
 describe('parseKpayStatement — real KPay layout (AUG-2026 statement)', () => {
@@ -58,7 +58,25 @@ describe('parseKpayStatement — real KPay layout (AUG-2026 statement)', () => {
   it('extracts per-transaction rows with 外部訂單號 for branch splitting', () => {
     const s = parseKpayStatement(realShape as unknown[][])!;
     expect(s.transactions).toHaveLength(3);
-    expect(s.transactions![0]).toEqual({ orderRef: 'B4qK_P1', amount: 9250, fee: 138.75 });
+    expect(s.transactions![0]).toEqual({
+      orderRef: 'B4qK_P1', amount: 9250, fee: 138.75,
+      transactionNo: '2026083100391413', payMethod: 'PayMe',
+    });
+  });
+
+  it('reads each row\'s payment date (完成時間, day first) for cross-month matching', () => {
+    const header = [...realShape[8], '批次號', '流水號', '提交時間', '完成時間', '清算日期'];
+    const row = [...realShape[9], null, null, '31/08/2026 23:59', '01/09/2026 00:01', '01/09/2026'];
+    const s = parseKpayStatement([header, row] as unknown[][])!;
+    expect(s.transactions![0].date).toBe('2026-09-01');
+    // No 交易日期 block in this cut-down sheet — the month comes from the rows.
+    expect(statementMonthOf(s)).toBe('2026-09');
+  });
+
+  it('never stores undefined fields (Firestore rejects them)', () => {
+    const s = parseKpayStatement(realShape as unknown[][])!;
+    for (const t of s.transactions!) expect(Object.values(t)).not.toContain(undefined);
+    expect(statementMonthOf(s)).toBe('2026-08');
   });
 
   it('reads the statement month from the merchant block', () => {

@@ -7,8 +7,9 @@
 //   雜項支出  free-form rows (repairs, supplies, …)
 //   佣金      derived live per broker booking (行家 rent-only / Reubird
 //             total, per finance_config), per-booking override editable
-//   KPay 費   estimated % on kpay payments (statement reconciliation
-//             replaces estimates at month close — Phase 3)
+//   KPay 費   per booking: actual fee of each payment found on an
+//             uploaded KPay statement (月結 → KPay 對帳), estimated % for
+//             payments whose statement is not uploaded yet
 //
 // The monthly close (Phase 3) reads: Σ(stored rows) + Σ(derived rows).
 
@@ -25,7 +26,9 @@ import {
   listTemplates, addTemplate, updateTemplate, deleteTemplate, seedRecurring,
   getFinanceConfig, saveFinanceConfig, type FinanceConfig,
 } from '@/lib/expenses';
-import { commissionForBooking, estimatedKpayFee, discountedSubtotal } from '@/lib/bookingMoney';
+import { commissionForBooking, discountedSubtotal } from '@/lib/bookingMoney';
+import { listKpayStatements } from '@/lib/monthClose';
+import { reconcileKpayFees, kpayFeeOf, sumKpayFees, type KpayReconciliation } from '@/lib/kpayReconcile';
 import { channelDisplayLabel, getMarketingChannelOptions, type MarketingChannelOption } from '@/lib/marketingChannels';
 import type { BookingRecord, ExpenseRecord, ExpenseTemplate, Venue } from '@/types';
 import {
@@ -55,6 +58,8 @@ export default function ExpensesPage() {
   const [bookings, setBookings] = useState<BookingRecord[]>([]);
   const [venues, setVenues] = useState<Venue[]>([]);
   const [config, setConfig] = useState<FinanceConfig | null>(null);
+  // KPay fee per booking, reconciled against the uploaded statements.
+  const [kpayRecon, setKpayRecon] = useState<KpayReconciliation | null>(null);
   const [channelNames, setChannelNames] = useState<Map<string, MarketingChannelOption>>(new Map());
   useEffect(() => {
     getMarketingChannelOptions().then((opts) => setChannelNames(new Map(opts.map((o) => [o.id, o])))).catch(() => {});
@@ -88,7 +93,7 @@ export default function ExpensesPage() {
     if (!user) return;
     setLoading(true);
     try {
-      const [exp, tpl, all, cfg, registry] = await Promise.all([
+      const [exp, tpl, all, cfg, registry, statements] = await Promise.all([
         listExpenses(branch, month),
         listTemplates(branch),
         getAllBookings(),
@@ -96,8 +101,11 @@ export default function ExpensesPage() {
         // Falls back to the static venues if the registry is unreachable
         // (then only the original four branches are listed).
         loadAllVenues(),
+        listKpayStatements(),
       ]);
       setVenues(registry);
+      // Over ALL bookings, so every statement row can find its booking.
+      setKpayRecon(reconcileKpayFees(all, statements, cfg.kpayFeePct));
       // Auto-seed missing recurring rows, then re-read if anything seeded.
       const created = await seedRecurring(branch, month, tpl, exp, user.uid);
       setRows(created > 0 ? await listExpenses(branch, month) : exp);
@@ -135,11 +143,13 @@ export default function ExpensesPage() {
   }, [bookings, config]);
 
   const kpayFeeRows = useMemo(() => {
-    if (!config) return [];
+    if (!kpayRecon) return [];
     return bookings
-      .map((b) => ({ booking: b, fee: estimatedKpayFee(b, config.kpayFeePct) }))
-      .filter((r) => r.fee > 0);
-  }, [bookings, config]);
+      .map((b) => ({ booking: b, kpay: kpayFeeOf(kpayRecon, b.id) }))
+      .filter((r) => r.kpay.lines.length > 0)
+      .map((r) => ({ ...r, fee: r.kpay.fee }));
+  }, [bookings, kpayRecon]);
+  const kpayTotals = useMemo(() => sumKpayFees(kpayFeeRows.map((r) => r.kpay)), [kpayFeeRows]);
 
   const recurringRows = rows.filter((r) => r.source === 'recurring');
   const manualRows = rows.filter((r) => r.source === 'manual');
@@ -147,7 +157,7 @@ export default function ExpensesPage() {
     recurring: recurringRows.reduce((s, r) => s + r.amount, 0),
     manual: manualRows.reduce((s, r) => s + r.amount, 0),
     commission: commissionRows.reduce((s, r) => s + r.amount, 0),
-    kpay: kpayFeeRows.reduce((s, r) => s + r.fee, 0),
+    kpay: kpayTotals.fee,
   };
   const grandTotal = totals.recurring + totals.manual + totals.commission + totals.kpay;
 
@@ -248,7 +258,14 @@ export default function ExpensesPage() {
               [locale === 'zh' ? '固定開支' : 'Recurring', totals.recurring],
               [locale === 'zh' ? '雜項' : 'One-offs', totals.manual],
               [locale === 'zh' ? '佣金' : 'Commission', totals.commission],
-              [locale === 'zh' ? 'KPay 費(估)' : 'KPay fee (est.)', totals.kpay],
+              [
+                kpayTotals.estimatedLines === 0 && kpayTotals.actualLines > 0
+                  ? (locale === 'zh' ? 'KPay 費(實際)' : 'KPay fee (actual)')
+                  : kpayTotals.actualLines > 0
+                    ? (locale === 'zh' ? 'KPay 費(部分估算)' : 'KPay fee (part est.)')
+                    : (locale === 'zh' ? 'KPay 費(估)' : 'KPay fee (est.)'),
+                totals.kpay,
+              ],
               [locale === 'zh' ? '總支出' : 'Total', grandTotal],
             ].map(([label, v], i) => (
               <div key={i} className={`glass-card p-4 ${i === 4 ? 'border-2 border-pink/30' : ''}`}>
@@ -401,19 +418,22 @@ export default function ExpensesPage() {
             </div>
           </div>
 
-          {/* KPay 費（估算） */}
+          {/* KPay 手續費 — actual per payment where a statement has it */}
           <div className="glass-card p-6">
-            <h2 className="font-bold mb-1">{locale === 'zh' ? `KPay 手續費（估算 ${config?.kpayFeePct ?? 1.5}%）` : `KPay fees (est. ${config?.kpayFeePct ?? 1.5}%)`}</h2>
+            <h2 className="font-bold mb-1">{locale === 'zh' ? 'KPay 手續費' : 'KPay fees'}</h2>
             <p className="text-xs text-ink-soft mb-3">
               {locale === 'zh'
-                ? '按 KPay 收款金額估算。月結時 upload KPay statement 會用實數取代（Phase 3）。'
-                : 'Estimated on KPay-collected amounts; the monthly statement upload replaces estimates with actuals (Phase 3).'}
+                ? `每張訂單嘅手續費 = 佢每筆 KPay 付款喺「俾錢嗰個月」結單上面嘅實際手續費相加。未上載嗰個月結單嘅付款，暫時按 ${config?.kpayFeePct ?? 1.5}% 估算（標示「含估算」）。結單喺「月結 → KPay 對帳」上載。`
+                : `A booking's fee is the actual fee of each of its KPay payments, read off the statement of the month it was paid in. Payments whose statement is not uploaded yet use the ${config?.kpayFeePct ?? 1.5}% estimate (marked). Upload statements under Month Close → KPay Reconciliation.`}
             </p>
             <div className="space-y-1">
-              {kpayFeeRows.map(({ booking: b, fee }) => (
+              {kpayFeeRows.map(({ booking: b, fee, kpay }) => (
                 <div key={b.id} className="flex items-center gap-2 text-xs text-ink-soft">
                   <span className="w-14">{b.date.slice(5)}</span>
                   <span className="flex-1 truncate">{b.customerName || b.id.slice(0, 8)}</span>
+                  {kpay.lines.some((l) => !l.actual) && (
+                    <span className="text-amber-700">{locale === 'zh' ? '含估算' : 'part est.'}</span>
+                  )}
                   <span className="font-medium text-ink">HK${fee.toLocaleString()}</span>
                 </div>
               ))}

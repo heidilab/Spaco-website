@@ -977,9 +977,13 @@ export interface MonthCloseRecord {
   /** Split snapshot for THIS month — starts from the branch default in
    *  finance_config and stays editable until the month is closed. */
   splits?: ProfitSplitParty[];
-  /** Actual KPay gateway fee from the uploaded monthly statement.
-   *  While null/absent, exports fall back to the estimated fee. */
+  /** @deprecated Legacy (before 2026-11-10): a whole statement's fee
+   *  lumped onto the month it was uploaded under. No longer read — fees
+   *  are now reconciled per booking from the stored statements
+   *  (lib/kpayReconcile, monthClose.listKpayStatements). Left on old
+   *  docs only so 月結 can prompt for a re-upload. */
   kpayActualFee?: number | null;
+  /** @deprecated See kpayActualFee. */
   kpayStatement?: {
     fileName: string;
     rowCount: number;
