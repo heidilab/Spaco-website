@@ -5,7 +5,13 @@ import { Link } from '@/i18n/routing';
 import { useParams } from 'next/navigation';
 import { useState, useMemo, useEffect } from 'react';
 import { getVenueBySlug } from '@/lib/venues';
-import { addOns, calculatePricing, noBBQVenues, freeDrinksVenues, hotpotVenues, bbqStandardPriceByVenue, bbqStandardMenu, bbqPremiumMenu, hotpotStandardMenu, hotpotSeafoodMenu, hotpotSoupBases, calcShishaPrice, SHISHA_STAFF_SETUP_FEE, SHISHA_MAX_PIPES, earlySetupPriceByVenue, subtractHours } from '@/lib/pricing';
+import { addOns, calculatePricing, noBBQVenues, freeDrinksVenues, bbqStandardPriceByVenue, bbqStandardMenu, bbqPremiumMenu, hotpotStandardMenu, hotpotSeafoodMenu, calcShishaPrice, SHISHA_STAFF_SETUP_FEE, SHISHA_MAX_PIPES, earlySetupPriceByVenue, subtractHours } from '@/lib/pricing';
+import {
+  HOTPOT_EXTRA_SOUP_ID, HOTPOT_EXTRA_SOUP_PRICE, HOTPOT_TWO_SOUP_MIN_GUESTS,
+  hotpotPackageEntry, hotpotSelectionError, hotpotSoupSlots, isHotpotPackage,
+  normalizeHotpotAddOns, withHotpotSoups,
+} from '@/lib/hotpot';
+import HotpotSoupPicker from '@/components/booking/HotpotSoupPicker';
 import type { AddOnOptions, Venue, PeakDayConfig } from '@/types';
 import { getPeakDay } from '@/lib/peakDays';
 import { resolvePeakRule, effectiveMinGuests, effectiveMinHours, swSplitBlocked } from '@/lib/peakDayRules';
@@ -29,6 +35,12 @@ import { saveBookingCheckoutDraft } from '@/lib/bookingCheckoutDraft';
 import { isValidHkPhone, formatHkPhone, normalizeHkPhone } from '@/lib/whatsapp';
 import AuthModal from '@/components/auth/AuthModal';
 import { useRouter } from '@/i18n/routing';
+
+/** The two hotpot packages — one card each on the booking form. */
+const HOTPOT_PACKAGE_CARDS = [
+  { id: 'hotpot-standard', title: { zh: '火鍋標準套餐', en: 'Hotpot Standard' }, price: 168, menu: hotpotStandardMenu },
+  { id: 'hotpot-seafood',  title: { zh: '海鮮火鍋套餐', en: 'Seafood Hotpot' },  price: 348, menu: hotpotSeafoodMenu },
+];
 
 /** Venue-resolution wrapper — resolves the venue (static instantly,
  *  registry override / dynamic-only venues async) BEFORE mounting the
@@ -105,7 +117,6 @@ function BookingPageInner({ venue }: { venue: Venue }) {
   const [, setShowGrillWarning] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [expandedMenu, setExpandedMenu] = useState<string | null>(null);
-  const [selectedSoupBases, setSelectedSoupBases] = useState<string[]>([]);
 
   // WhatsApp contact — required for booking confirmation. Pre-filled from
   // the user's saved profile so they can confirm or edit on each new booking.
@@ -320,6 +331,45 @@ function BookingPageInner({ venue }: { venue: Venue }) {
         setSelectedAddOns([...selectedAddOns, { id: 'bbq-grill', quantity: capped }]);
       }
     }
+  };
+
+  // ─── Hotpot soup bases (火鍋湯底) ───
+  // The picks live on the hotpot package's own entry (options.soupBases)
+  // so they travel with the booking to the supplier order. Rules in
+  // lib/hotpot.ts: under 15 guests 1 soup (+$88 for an extra), 15+ two.
+  const hotpotTwoIncluded = guestCount >= HOTPOT_TWO_SOUP_MIN_GUESTS;
+  const hotpotSlots = hotpotSoupSlots(guestCount, selectedAddOns);
+  const hotpotSoupPicks = hotpotPackageEntry(selectedAddOns)?.options?.soupBases || [];
+  const hasExtraSoup = selectedAddOns.some((a) => a.id === HOTPOT_EXTRA_SOUP_ID);
+  // A hotpot package can't go through without one soup picked per pot.
+  const hotpotSoupOK = hotpotSelectionError(selectedAddOns, guestCount) === null;
+
+  // Guest count crossing 15 changes how many soups are included: drop the
+  // paid extra soup once two are free, and trim picks beyond the pots
+  // allowed. Returns the same array when nothing changes (no re-render).
+  useEffect(() => {
+    setSelectedAddOns((prev) => normalizeHotpotAddOns(prev, guestCount));
+  }, [guestCount, selectedAddOns]);
+
+  /** Standard ↔ seafood are mutually exclusive. Switching between them
+   *  keeps the soup picks; unticking the package clears soup + extra soup. */
+  const toggleHotpotPackage = (id: string) => {
+    const current = hotpotPackageEntry(selectedAddOns);
+    const withoutPackage = selectedAddOns.filter((a) => !isHotpotPackage(a.id));
+    if (current?.id === id) {
+      setSelectedAddOns(withoutPackage.filter((a) => a.id !== HOTPOT_EXTRA_SOUP_ID));
+      return;
+    }
+    const soupBases = current?.options?.soupBases;
+    setSelectedAddOns([
+      ...(current ? withoutPackage : withoutPackage.filter((a) => a.id !== HOTPOT_EXTRA_SOUP_ID)),
+      { id, quantity: 1, ...(soupBases ? { options: { soupBases } } : {}) },
+    ]);
+  };
+  const setHotpotSoups = (next: string[]) => setSelectedAddOns(withHotpotSoups(selectedAddOns, next));
+  const toggleExtraSoup = (checked: boolean) => {
+    const rest = selectedAddOns.filter((a) => a.id !== HOTPOT_EXTRA_SOUP_ID);
+    setSelectedAddOns(checked ? [...rest, { id: HOTPOT_EXTRA_SOUP_ID, quantity: 1 }] : rest);
   };
 
   // Early setup access hours (提早入場佈置) — 0-3 hrs before start.
@@ -550,7 +600,7 @@ function BookingPageInner({ venue }: { venue: Venue }) {
   const shishaSetupTimeOK = !shishaStaffSetup || !!shishaStaffSetupTime;
 
   // Can proceed check
-  const canProceed = selectedDate && hours >= minHours && adultEquiv >= minGuests && agreedToTerms && whatsappReady && !lastMinuteBlocker && bbqHelperHoursOK && bbqHelperLeadTimeOK && shishaSetupTimeOK && !splitBlocked;
+  const canProceed = selectedDate && hours >= minHours && adultEquiv >= minGuests && agreedToTerms && whatsappReady && !lastMinuteBlocker && bbqHelperHoursOK && bbqHelperLeadTimeOK && shishaSetupTimeOK && hotpotSoupOK && !splitBlocked;
 
   return (
     <div className="pt-28 pb-20 relative overflow-hidden">
@@ -913,39 +963,26 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                   );
                 })()}
 
-                {/* Hotpot Standard */}
-                {hotpotVenues.includes(venue.id) && (() => {
-                  const isSelected = selectedAddOns.some((a) => a.id === 'hotpot-standard');
-                  const isExpanded = expandedMenu === 'hotpot-standard';
-                  const hasHotpotPackage = selectedAddOns.some((a) => a.id === 'hotpot-standard' || a.id === 'hotpot-seafood');
+                {/* Hotpot packages — offered at EVERY venue. A package needs a
+                 *  soup-base choice before the customer can continue (rules
+                 *  in lib/hotpot.ts): under 15 guests = one of the three
+                 *  soups, +$88 for an extra one; 15 or more = two included,
+                 *  and the two may be the same soup. */}
+                {HOTPOT_PACKAGE_CARDS.map((card) => {
+                  const isSelected = selectedAddOns.some((a) => a.id === card.id);
+                  const isExpanded = expandedMenu === card.id;
                   return (
-                    <div className={`rounded-2xl border transition-all ${isSelected ? 'border-accent bg-accent/5' : 'border-charcoal/5'}`}>
+                    <div key={card.id} className={`rounded-2xl border transition-all ${isSelected ? 'border-accent bg-accent/5' : 'border-charcoal/5'}`}>
                       <div className="flex items-center justify-between p-5">
-                        <div className="flex-1" onClick={() => {
-                          if (isSelected) {
-                            setSelectedAddOns(selectedAddOns.filter((a) => a.id !== 'hotpot-standard' && a.id !== 'hotpot-extra-soup'));
-                            setSelectedSoupBases([]);
-                          } else {
-                            setSelectedAddOns([...selectedAddOns.filter((a) => a.id !== 'hotpot-standard' && a.id !== 'hotpot-seafood' && a.id !== 'hotpot-extra-soup'), { id: 'hotpot-standard', quantity: 1 }]);
-                            setSelectedSoupBases([]);
-                          }
-                        }} role="button">
-                          <p className="font-semibold">{locale === 'zh' ? '火鍋標準套餐' : 'Hotpot Standard'}</p>
-                          <p className="text-sm text-muted mt-1">{locale === 'zh' ? '每位 +$168（須最少三日前預訂）' : '$168/pax (min. 3 days advance)'}</p>
+                        <div className="flex-1" onClick={() => toggleHotpotPackage(card.id)} role="button">
+                          <p className="font-semibold">{card.title[locale]}</p>
+                          <p className="text-sm text-muted mt-1">{locale === 'zh' ? `每位 +$${card.price}（須最少三日前預訂）` : `$${card.price}/pax (min. 3 days advance)`}</p>
                         </div>
                         <div className="flex items-center gap-3">
-                          <button onClick={() => setExpandedMenu(isExpanded ? null : 'hotpot-standard')} className="text-xs text-accent hover:underline">
+                          <button onClick={() => setExpandedMenu(isExpanded ? null : card.id)} className="text-xs text-accent hover:underline">
                             {isExpanded ? (locale === 'zh' ? '收起菜單' : 'Hide') : (locale === 'zh' ? '查看菜單' : 'Menu')}
                           </button>
-                          <div onClick={() => {
-                            if (isSelected) {
-                              setSelectedAddOns(selectedAddOns.filter((a) => a.id !== 'hotpot-standard' && a.id !== 'hotpot-extra-soup'));
-                              setSelectedSoupBases([]);
-                            } else {
-                              setSelectedAddOns([...selectedAddOns.filter((a) => a.id !== 'hotpot-standard' && a.id !== 'hotpot-seafood' && a.id !== 'hotpot-extra-soup'), { id: 'hotpot-standard', quantity: 1 }]);
-                              setSelectedSoupBases([]);
-                            }
-                          }} role="button" className={`w-6 h-6 rounded-full border-2 flex items-center justify-center cursor-pointer ${isSelected ? 'border-accent bg-accent' : 'border-charcoal/20'}`}>
+                          <div onClick={() => toggleHotpotPackage(card.id)} role="button" className={`w-6 h-6 rounded-full border-2 flex items-center justify-center cursor-pointer ${isSelected ? 'border-accent bg-accent' : 'border-charcoal/20'}`}>
                             {isSelected && <Check size={14} className="text-white" />}
                           </div>
                         </div>
@@ -953,174 +990,71 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                       {isExpanded && (
                         <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="px-5 pb-5 border-t border-charcoal/5">
                           <div className="pt-4 grid grid-cols-2 gap-x-4 gap-y-1">
-                            {hotpotStandardMenu[locale].map((item, i) => (
+                            {card.menu[locale].map((item, i) => (
                               <p key={i} className="text-sm text-charcoal/70">• {item}</p>
                             ))}
                           </div>
                           <div className="mt-4 space-y-1">
-                            {hotpotStandardMenu.notes[locale].map((note, i) => (
+                            {card.menu.notes[locale].map((note, i) => (
                               <p key={i} className="text-[11px] text-muted">《{note}》</p>
                             ))}
                           </div>
                         </motion.div>
                       )}
-                      {/* Soup Base Selection */}
+                      {/* Soup Base Selection — required */}
                       {isSelected && (
                         <div className="px-5 pb-5 border-t border-charcoal/5">
-                          <p className="text-sm font-semibold pt-4 mb-3">{locale === 'zh' ? '選擇湯底' : 'Select Soup Base'}</p>
-                          <div className="flex flex-wrap gap-2 mb-3">
-                            {hotpotSoupBases[locale].map((soup, i) => (
-                              <button
-                                key={i}
-                                onClick={() => {
-                                  const maxBases = guestCount >= 15 ? 2 : 1;
-                                  if (selectedSoupBases.includes(soup)) {
-                                    setSelectedSoupBases(selectedSoupBases.filter((s) => s !== soup));
-                                  } else if (selectedSoupBases.length < maxBases) {
-                                    setSelectedSoupBases([...selectedSoupBases, soup]);
-                                  } else if (maxBases === 1) {
-                                    setSelectedSoupBases([soup]);
-                                  }
-                                }}
-                                className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-                                  selectedSoupBases.includes(soup) ? 'bg-charcoal text-cream' : 'bg-cream text-charcoal/70 hover:bg-charcoal/10'
-                                }`}
-                              >
-                                {soup}
-                              </button>
-                            ))}
-                          </div>
-                          <p className="text-xs text-muted">
-                            {guestCount >= 15
-                              ? (locale === 'zh' ? '15人或以上可免費選兩個湯底' : '15+ guests: 2 free soup bases')
-                              : (locale === 'zh' ? '如需第二個湯底，每個 +$108' : 'Extra soup base: +$108 each')}
+                          <p className="text-sm font-semibold pt-4 mb-1">
+                            {locale === 'zh' ? '選擇湯底' : 'Select Soup Base'}
+                            <span className="text-red-500 ml-1">*</span>
                           </p>
-                          {guestCount < 15 && selectedSoupBases.length >= 1 && (
+                          <p className="text-xs text-muted mb-3">
+                            {hotpotTwoIncluded
+                              ? (locale === 'zh'
+                                ? `${HOTPOT_TWO_SOUP_MIN_GUESTS} 人或以上：套餐已包兩個湯底，請揀兩個（可以揀兩個一樣）`
+                                : `${HOTPOT_TWO_SOUP_MIN_GUESTS}+ guests: two soup bases are included — pick two (they can be the same)`)
+                              : hasExtraSoup
+                                ? (locale === 'zh'
+                                  ? '已加購額外湯底：請揀兩個湯底（可以揀兩個一樣）'
+                                  : 'Extra soup base added: pick two soup bases (they can be the same)')
+                                : (locale === 'zh'
+                                  ? `${HOTPOT_TWO_SOUP_MIN_GUESTS} 人以下：湯底三選一。想要多一個湯底可以加購，每個 +$${HOTPOT_EXTRA_SOUP_PRICE}`
+                                  : `Under ${HOTPOT_TWO_SOUP_MIN_GUESTS} guests: choose one of three. An extra soup base is +$${HOTPOT_EXTRA_SOUP_PRICE} each`)}
+                          </p>
+                          <HotpotSoupPicker
+                            slots={hotpotSlots}
+                            value={hotpotSoupPicks}
+                            onChange={setHotpotSoups}
+                            locale={locale}
+                          />
+                          {!hotpotTwoIncluded && (
                             <label className="flex items-center gap-2 mt-3 cursor-pointer">
                               <input
                                 type="checkbox"
-                                checked={selectedAddOns.some((a) => a.id === 'hotpot-extra-soup')}
-                                onChange={(e) => {
-                                  if (e.target.checked) {
-                                    setSelectedAddOns([...selectedAddOns, { id: 'hotpot-extra-soup', quantity: 1 }]);
-                                  } else {
-                                    setSelectedAddOns(selectedAddOns.filter((a) => a.id !== 'hotpot-extra-soup'));
-                                  }
-                                }}
+                                checked={hasExtraSoup}
+                                onChange={(e) => toggleExtraSoup(e.target.checked)}
                                 className="w-4 h-4 accent-accent"
                               />
-                              <span className="text-sm">{locale === 'zh' ? '加購額外湯底 (+$108)' : 'Add extra soup base (+$108)'}</span>
+                              <span className="text-sm">
+                                {locale === 'zh'
+                                  ? `加購額外湯底 (+$${HOTPOT_EXTRA_SOUP_PRICE})`
+                                  : `Add extra soup base (+$${HOTPOT_EXTRA_SOUP_PRICE})`}
+                              </span>
                             </label>
+                          )}
+                          {!hotpotSoupOK && (
+                            <p className="mt-3 text-xs text-rose-600 flex items-start gap-1">
+                              <AlertCircle size={12} className="mt-0.5 shrink-0" />
+                              {locale === 'zh'
+                                ? (hotpotSlots > 1 ? `請揀齊 ${hotpotSlots} 個湯底先可以繼續預訂` : '請揀湯底先可以繼續預訂')
+                                : (hotpotSlots > 1 ? `Please pick all ${hotpotSlots} soup bases to continue` : 'Please pick a soup base to continue')}
+                            </p>
                           )}
                         </div>
                       )}
                     </div>
                   );
-                })()}
-
-                {/* Hotpot Seafood */}
-                {hotpotVenues.includes(venue.id) && (() => {
-                  const isSelected = selectedAddOns.some((a) => a.id === 'hotpot-seafood');
-                  const isExpanded = expandedMenu === 'hotpot-seafood';
-                  return (
-                    <div className={`rounded-2xl border transition-all ${isSelected ? 'border-accent bg-accent/5' : 'border-charcoal/5'}`}>
-                      <div className="flex items-center justify-between p-5">
-                        <div className="flex-1" onClick={() => {
-                          if (isSelected) {
-                            setSelectedAddOns(selectedAddOns.filter((a) => a.id !== 'hotpot-seafood' && a.id !== 'hotpot-extra-soup'));
-                            setSelectedSoupBases([]);
-                          } else {
-                            setSelectedAddOns([...selectedAddOns.filter((a) => a.id !== 'hotpot-standard' && a.id !== 'hotpot-seafood' && a.id !== 'hotpot-extra-soup'), { id: 'hotpot-seafood', quantity: 1 }]);
-                            setSelectedSoupBases([]);
-                          }
-                        }} role="button">
-                          <p className="font-semibold">{locale === 'zh' ? '海鮮火鍋套餐' : 'Seafood Hotpot'}</p>
-                          <p className="text-sm text-muted mt-1">{locale === 'zh' ? '每位 +$348（須最少三日前預訂）' : '$348/pax (min. 3 days advance)'}</p>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <button onClick={() => setExpandedMenu(isExpanded ? null : 'hotpot-seafood')} className="text-xs text-accent hover:underline">
-                            {isExpanded ? (locale === 'zh' ? '收起菜單' : 'Hide') : (locale === 'zh' ? '查看菜單' : 'Menu')}
-                          </button>
-                          <div onClick={() => {
-                            if (isSelected) {
-                              setSelectedAddOns(selectedAddOns.filter((a) => a.id !== 'hotpot-seafood' && a.id !== 'hotpot-extra-soup'));
-                              setSelectedSoupBases([]);
-                            } else {
-                              setSelectedAddOns([...selectedAddOns.filter((a) => a.id !== 'hotpot-standard' && a.id !== 'hotpot-seafood' && a.id !== 'hotpot-extra-soup'), { id: 'hotpot-seafood', quantity: 1 }]);
-                              setSelectedSoupBases([]);
-                            }
-                          }} role="button" className={`w-6 h-6 rounded-full border-2 flex items-center justify-center cursor-pointer ${isSelected ? 'border-accent bg-accent' : 'border-charcoal/20'}`}>
-                            {isSelected && <Check size={14} className="text-white" />}
-                          </div>
-                        </div>
-                      </div>
-                      {isExpanded && (
-                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="px-5 pb-5 border-t border-charcoal/5">
-                          <div className="pt-4 grid grid-cols-2 gap-x-4 gap-y-1">
-                            {hotpotSeafoodMenu[locale].map((item, i) => (
-                              <p key={i} className="text-sm text-charcoal/70">• {item}</p>
-                            ))}
-                          </div>
-                          <div className="mt-4 space-y-1">
-                            {hotpotSeafoodMenu.notes[locale].map((note, i) => (
-                              <p key={i} className="text-[11px] text-muted">《{note}》</p>
-                            ))}
-                          </div>
-                        </motion.div>
-                      )}
-                      {/* Soup Base Selection */}
-                      {isSelected && (
-                        <div className="px-5 pb-5 border-t border-charcoal/5">
-                          <p className="text-sm font-semibold pt-4 mb-3">{locale === 'zh' ? '選擇湯底' : 'Select Soup Base'}</p>
-                          <div className="flex flex-wrap gap-2 mb-3">
-                            {hotpotSoupBases[locale].map((soup, i) => (
-                              <button
-                                key={i}
-                                onClick={() => {
-                                  const maxBases = guestCount >= 15 ? 2 : 1;
-                                  if (selectedSoupBases.includes(soup)) {
-                                    setSelectedSoupBases(selectedSoupBases.filter((s) => s !== soup));
-                                  } else if (selectedSoupBases.length < maxBases) {
-                                    setSelectedSoupBases([...selectedSoupBases, soup]);
-                                  } else if (maxBases === 1) {
-                                    setSelectedSoupBases([soup]);
-                                  }
-                                }}
-                                className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-                                  selectedSoupBases.includes(soup) ? 'bg-charcoal text-cream' : 'bg-cream text-charcoal/70 hover:bg-charcoal/10'
-                                }`}
-                              >
-                                {soup}
-                              </button>
-                            ))}
-                          </div>
-                          <p className="text-xs text-muted">
-                            {guestCount >= 15
-                              ? (locale === 'zh' ? '15人或以上可免費選兩個湯底' : '15+ guests: 2 free soup bases')
-                              : (locale === 'zh' ? '如需第二個湯底，每個 +$108' : 'Extra soup base: +$108 each')}
-                          </p>
-                          {guestCount < 15 && selectedSoupBases.length >= 1 && (
-                            <label className="flex items-center gap-2 mt-3 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={selectedAddOns.some((a) => a.id === 'hotpot-extra-soup')}
-                                onChange={(e) => {
-                                  if (e.target.checked) {
-                                    setSelectedAddOns([...selectedAddOns, { id: 'hotpot-extra-soup', quantity: 1 }]);
-                                  } else {
-                                    setSelectedAddOns(selectedAddOns.filter((a) => a.id !== 'hotpot-extra-soup'));
-                                  }
-                                }}
-                                className="w-4 h-4 accent-accent"
-                              />
-                              <span className="text-sm">{locale === 'zh' ? '加購額外湯底 (+$108)' : 'Add extra soup base (+$108)'}</span>
-                            </label>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
+                })}
 
                 {/* BYO Food */}
                 {!(venue.bbqAvailable === false || (venue.bbqAvailable === undefined && noBBQVenues.includes(venue.id))) && (
@@ -1802,6 +1736,11 @@ function BookingPageInner({ venue }: { venue: Venue }) {
               {selectedDate && !whatsappReady && (
                 <p className="text-xs text-red-400 mt-3 text-center">
                   {locale === 'zh' ? '請填寫並確認 WhatsApp 聯絡號碼' : 'Please fill in and confirm your WhatsApp number'}
+                </p>
+              )}
+              {!hotpotSoupOK && (
+                <p className="text-xs text-red-400 mt-3 text-center">
+                  {locale === 'zh' ? '請先為火鍋套餐揀湯底' : 'Please choose the soup base for your hotpot package'}
                 </p>
               )}
               {!agreedToTerms && selectedDate && whatsappReady && (

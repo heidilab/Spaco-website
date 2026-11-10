@@ -16,6 +16,7 @@ import {
 import { getUserProfile, updateUserWhatsapp } from '@/lib/firestore';
 import { isValidHkPhone, normalizeHkPhone, formatHkPhone } from '@/lib/whatsapp';
 import { addOns as ALL_ADDONS, calculateSecurityDeposit } from '@/lib/pricing';
+import { hotpotSoupSummary, isHotpotPackage } from '@/lib/hotpot';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { venues } from '@/lib/venues';
 import { BookingDraft } from '@/types';
@@ -346,11 +347,16 @@ export default function ClaimBookingPage() {
                 <ul className="space-y-1.5">
                   {selectedAddOns.map((a) => {
                     if (!a) return null;
-                    const qty = draft.addOns.find((x) => x.id === a.id)?.quantity || 1;
+                    const entry = draft.addOns.find((x) => x.id === a.id);
+                    const qty = entry?.quantity || 1;
+                    const soups = isHotpotPackage(a.id) ? hotpotSoupSummary(entry?.options?.soupBases, locale) : '';
                     return (
                       <li key={a.id} className="text-sm text-ink flex items-start gap-2">
                         <Check size={14} className="text-emerald-500 mt-0.5 flex-shrink-0" />
-                        <span>{a.name[locale]}{qty > 1 ? ` × ${qty}` : ''}</span>
+                        <span>
+                          {a.name[locale]}{qty > 1 ? ` × ${qty}` : ''}
+                          {soups ? `（${locale === 'zh' ? '湯底：' : 'Soup base: '}${soups}）` : ''}
+                        </span>
                       </li>
                     );
                   })}

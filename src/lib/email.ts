@@ -3,6 +3,7 @@
 import type { BookingRecord, AddOnOptions } from '@/types';
 import { discountedSubtotal } from './bookingMoney';
 import { calcShishaPrice } from './pricing';
+import { HOTPOT_EXTRA_SOUP_PRICE, hotpotSoupBases, hotpotSoupSlots, hotpotSoupSummary } from './hotpot';
 import { getDecorationById } from './decorations';
 import {
   CATERING_ITEMS,
@@ -779,7 +780,26 @@ export function buildStaffSupplierOrderEmail(params: {
     const lines: string[] = [];
     if (hotpotStd) lines.push(`• 火鍋標準套餐 × ${guestLabel}（每位 $168，總計 HK$${Math.round(168 * adultEquiv).toLocaleString()}）`);
     if (hotpotSea) lines.push(`• 海鮮火鍋套餐 × ${guestLabel}（每位 $348，總計 HK$${Math.round(348 * adultEquiv).toLocaleString()}）`);
-    if (extraSoup) lines.push(`• 加購額外湯底 ×1 (HK$108)`);
+    if (extraSoup) {
+      const qty = Math.max(1, extraSoup.quantity || 1);
+      lines.push(`• 加購額外湯底 ×${qty} (HK$${(HOTPOT_EXTRA_SOUP_PRICE * qty).toLocaleString()})`);
+    }
+    // Soup bases — the supplier needs one per pot. A package without a
+    // complete pick (older bookings, CS links issued before the customer
+    // decided) is flagged so CS chases it before ordering.
+    if (hotpotStd || hotpotSea) {
+      const picks = hotpotSoupBases(booking.addOns);
+      const slots = hotpotSoupSlots(booking.guestCount, booking.addOns);
+      const soupLine = picks.length > 0
+        ? `• 湯底（共 ${slots} 個）：<strong>${hotpotSoupSummary(picks, 'zh')}</strong>`
+        : '';
+      if (soupLine) lines.push(soupLine);
+      if (picks.length < slots) {
+        lines.push(picks.length === 0
+          ? `<i style="color:#991B1B;">⚠️ 客人未揀湯底（應揀 ${slots} 個），須跟進</i>`
+          : `<i style="color:#991B1B;">⚠️ 湯底未揀齊（已揀 ${picks.length} / ${slots} 個），須跟進</i>`);
+      }
+    }
     sections.push(supplierSection('🍲', '火鍋', '須最少 3 日前向供應商落單', lines));
   }
 

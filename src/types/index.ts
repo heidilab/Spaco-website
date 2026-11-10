@@ -106,6 +106,11 @@ export interface AddOnOptions {
    *  staffSetup is true so the supplier can dispatch a staffer on
    *  time. Must fall within the booking session. Heidi 2026-06-22. */
   staffSetupTime?: string;
+  // ── Hotpot packages (id 'hotpot-standard' / 'hotpot-seafood') ──
+  /** Soup-base ids picked for the hotpot, one per pot (duplicates are
+   *  allowed — two pots of the same soup). Rules + ids in lib/hotpot.ts:
+   *  <15 guests = 1 pot (+1 with the paid extra soup base), 15+ = 2. */
+  soupBases?: string[];
   /** Admin-defined name for custom add-on entries (id starts with
    *  `custom-`). Customers can't add these; admin enters their own
    *  description here. Shown on the booking detail page + Google

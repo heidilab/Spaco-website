@@ -31,6 +31,11 @@ import { getHoliday } from '@/lib/hkHolidays';
 import { getPackageBySlug } from '@/lib/packages';
 import { getDecorationById } from '@/lib/decorations';
 import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
+import HotpotSoupPicker from '@/components/booking/HotpotSoupPicker';
+import {
+  HOTPOT_EXTRA_SOUP_PRICE, HOTPOT_TWO_SOUP_MIN_GUESTS,
+  applyHotpotSoups, cleanSoupBases, hotpotSoupBases, hotpotSoupSlots,
+} from '@/lib/hotpot';
 import {
   formatAddOnsForStaff,
   addOns as ADDON_CATALOG,
@@ -173,6 +178,11 @@ export default function AdminBookingDetailPage() {
     staffSetup: boolean;
     staffSetupTime?: string;
   }>({ pipes: 1, flavors: [], staffSetup: false });
+  // 火鍋湯底 picks (soup ids, one per pot — lib/hotpot.ts). Hydrated from
+  // the booking's hotpot package and written back on save: the add-on list
+  // is rebuilt from `addOnQty`, which would otherwise drop the customer's
+  // choice on any add-on edit.
+  const [hotpotSoups, setHotpotSoups] = useState<string[]>([]);
   // Catering modal state. Selection hydrates from the stored
   // catering add-on's options on load; save merges back into addOns.
   const [cateringModalOpen, setCateringModalOpen] = useState(false);
@@ -335,6 +345,7 @@ export default function AdminBookingDetailPage() {
             staffSetupTime: shishaEntry.options?.staffSetupTime,
           });
         }
+        setHotpotSoups(hotpotSoupBases(b.addOns));
         // Hydrate catering selection — admin opens the modal to see/edit.
         const cateringEntry = b.addOns?.find((a) => a.id === 'catering');
         if (cateringEntry?.options) {
@@ -560,7 +571,15 @@ export default function AdminBookingDetailPage() {
     (addOnQty['catering'] || 0) > 0
     && !!cateringSelection
     && cateringLine(cateringSelection) !== cateringLine(storedCateringOptions);
-  const addOnsDirty = qtyDirty || shishaDirty || customDirty || cateringDirty;
+  // Hotpot soup dirty: picking / changing the soup keeps the package's
+  // quantity at 1, so it needs its own diff against the stored picks.
+  const hotpotQtyEntries = Object.entries(addOnQty)
+    .filter(([, q]) => q > 0)
+    .map(([id, quantity]) => ({ id, quantity }));
+  const hotpotSlots = hotpotSoupSlots(guestCount, hotpotQtyEntries);
+  const hotpotDirty = hotpotSlots > 0
+    && cleanSoupBases(hotpotSoups.slice(0, hotpotSlots)).join(',') !== hotpotSoupBases(booking.addOns).join(',');
+  const addOnsDirty = qtyDirty || shishaDirty || customDirty || cateringDirty || hotpotDirty;
 
   const depositOverrideNum = parseFloat(depositOverride);
   const depositDirty =
@@ -647,7 +666,7 @@ export default function AdminBookingDetailPage() {
       // BookingRecord (and the gcal description + price recompute) all
       // see the right tier.
       const newAddOns = addOnsDirty
-        ? [
+        ? applyHotpotSoups([
             ...Object.entries(addOnQty)
               .filter(([, q]) => q > 0)
               .map(([id, quantity]) => {
@@ -682,7 +701,7 @@ export default function AdminBookingDetailPage() {
                   customPrice: Math.max(0, Math.floor(c.price)),
                 },
               })),
-          ]
+          ], hotpotSoups, guestCount)
         : undefined;
       // Snapshot pre-edit values so the followup endpoint can diff and
       // include a "已更改項目" banner in the confirmation email.
@@ -1897,6 +1916,36 @@ export default function AdminBookingDetailPage() {
                  *  staff-setup AFTER the booking was created (Heidi's
                  *  follow-up workflow: customer doesn't pick flavors
                  *  upfront, admin fills them in once they let CS know). */}
+                {/* 火鍋湯底 — one pick per pot (lib/hotpot.ts: 1 under 15
+                 *  guests, +1 per extra soup base, 2 from 15). Staff can
+                 *  leave it blank and fill it in once the customer decides;
+                 *  the supplier order email flags a missing pick. */}
+                {hotpotSlots > 0 && (
+                  <div className="mt-3 rounded-lg border border-accent/30 bg-accent/5 p-3 space-y-2">
+                    <p className="text-xs font-semibold text-ink flex items-center gap-1.5">
+                      <Package size={12} className="text-accent" />
+                      {locale === 'zh' ? `火鍋湯底（${guestCount} 人 · 揀 ${hotpotSlots} 個）` : `Hotpot soup base (${guestCount} guests · pick ${hotpotSlots})`}
+                    </p>
+                    <p className="text-[11px] text-ink-soft">
+                      {locale === 'zh'
+                        ? `${HOTPOT_TWO_SOUP_MIN_GUESTS} 人以下三選一，加購額外湯底每個 +$${HOTPOT_EXTRA_SOUP_PRICE}；${HOTPOT_TWO_SOUP_MIN_GUESTS} 人或以上包兩個，可以揀兩個一樣。`
+                        : `Under ${HOTPOT_TWO_SOUP_MIN_GUESTS}: one of three, extra soup base +$${HOTPOT_EXTRA_SOUP_PRICE} each; ${HOTPOT_TWO_SOUP_MIN_GUESTS}+: two included, may be the same.`}
+                    </p>
+                    <HotpotSoupPicker
+                      slots={hotpotSlots}
+                      value={hotpotSoups}
+                      onChange={setHotpotSoups}
+                      locale={locale}
+                      size="sm"
+                    />
+                    {cleanSoupBases(hotpotSoups.slice(0, hotpotSlots)).length < hotpotSlots && (
+                      <p className="text-[11px] text-amber-700">
+                        {locale === 'zh' ? '⚠️ 湯底未揀齊 — 向供應商落單前要同客人確認。' : '⚠️ Soup base incomplete — confirm with the customer before ordering.'}
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 {(addOnQty['shisha'] || 0) > 0 && (() => {
                   const shishaCfg = ADDON_CATALOG.find((c) => c.id === 'shisha');
                   if (!shishaCfg?.variants) return null;

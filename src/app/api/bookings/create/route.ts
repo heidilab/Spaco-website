@@ -12,6 +12,7 @@ import { calcPromoDiscount } from '@/lib/promoCodes';
 import { getHoliday } from '@/lib/hkHolidays';
 import { BookingInputError, bookingInterval, finiteNumber, pricePackage, validateAddOns, sanitizeAdminDiscount } from '@/lib/bookingSecurity';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
+import { finalizeHotpotAddOns, hotpotSelectionError, normalizeHotpotAddOns } from '@/lib/hotpot';
 import type { PromoCode } from '@/types';
 import { assertNoSettlementDebt } from '@/lib/settlementDebtServer';
 import { overlappingBookings, type OverlapBooking, type OverlapWindow } from '@/lib/bookingOverlap';
@@ -123,7 +124,19 @@ export async function POST(req: NextRequest) {
   const childCount = finiteNumber(rest.childCount ?? 0, 0, guestCount);
   if (!Number.isInteger(guestCount) || !Number.isInteger(childCount)) throw new BookingInputError('INVALID_GUESTS');
   const adultCount = guestCount - childCount;
-  const addOns = draftId ? (rest.addOns || []) : validateAddOns(rest.addOns || [], rest.packageSlug);
+  // Customer self-bookings: hotpot rules are enforced here too (the form
+  // already blocks, this stops a hand-built request). The paid extra soup
+  // base is dropped once the headcount includes two, blank soup picks are
+  // stripped, and a hotpot package without a soup per pot is refused.
+  // CS links (drafts) are exempt — staff may issue one before the
+  // customer has decided, and fill the soup in on the booking later.
+  const addOns = draftId
+    ? (rest.addOns || [])
+    : normalizeHotpotAddOns(finalizeHotpotAddOns(validateAddOns(rest.addOns || [], rest.packageSlug)), guestCount);
+  if (!draftId && !rest.packageSlug) {
+    const hotpotError = hotpotSelectionError(addOns, guestCount);
+    if (hotpotError) throw new BookingInputError(hotpotError);
+  }
   // 特別日子 (peak day) rule — surcharge + raised minimums per date/branch;
   // forceWeekendRate charges a weekday at the weekend tier.
   const peakCfgForDate = await getPeakDayAdmin(date as string);

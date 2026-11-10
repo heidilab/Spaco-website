@@ -4,6 +4,7 @@
 
 import type { BookingRecord, MarketingChannel } from '@/types';
 import { addOns as ADDON_CATALOG, bbqStandardPriceByVenue, calcShishaPrice, calcCateringTotal, earlySetupPriceByVenue } from './pricing';
+import { HOTPOT_EXTRA_SOUP_PRICE } from './hotpot';
 import { venues } from './venues';
 
 export interface FinanceFilter {
@@ -138,7 +139,7 @@ export function addOnRevenueForBooking(
     case 'hotpot-seafood':
       return Math.round(348 * equiv);
     case 'hotpot-extra-soup':
-      return 108 * entry.quantity;
+      return HOTPOT_EXTRA_SOUP_PRICE * entry.quantity;
     case 'drinks':
       return Math.round(25 * equiv);
     case 'shisha': {

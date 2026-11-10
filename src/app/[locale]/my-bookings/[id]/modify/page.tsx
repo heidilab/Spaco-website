@@ -29,6 +29,12 @@ import {
   earlySetupPriceByVenue, calcCateringTotal,
 } from '@/lib/pricing';
 import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
+import HotpotSoupPicker from '@/components/booking/HotpotSoupPicker';
+import {
+  HOTPOT_EXTRA_SOUP_ID, HOTPOT_EXTRA_SOUP_PRICE, HOTPOT_TWO_SOUP_MIN_GUESTS,
+  hotpotPackageEntry, hotpotSelectionError, hotpotSoupSlots, normalizeHotpotAddOns, withHotpotSoups,
+} from '@/lib/hotpot';
+import { paymentErrorMessage } from '@/lib/paymentErrors';
 import { BookingRecord, AddOnOptions } from '@/types';
 import {
   ArrowLeft, Plus, Minus, Check, AlertCircle, Loader2, Info, Clock,
@@ -146,6 +152,29 @@ export default function ModifyBookingPage() {
   // distinct from date. Modify is "extend only" so the overnight flag
   // never changes here — we just need it to compute hours correctly.
   const isOvernight = !!booking?.endDate && booking.endDate !== booking.date;
+
+  // ─── Hotpot soup bases (火鍋湯底) — rules in lib/hotpot.ts ───
+  // A hotpot package must carry one soup pick per pot: 1 under 15 guests
+  // (+1 with the paid extra soup base), 2 from 15 guests. Adding guests
+  // here can move a booking across the 15 line, so the pot count follows
+  // the NEW headcount.
+  const hotpotEntry = hotpotPackageEntry(cart);
+  const hotpotSlots = hotpotSoupSlots(newGuestCount, cart);
+  const hotpotSoupPicks = hotpotEntry?.options?.soupBases || [];
+  const paidExtraSoup = (floor[HOTPOT_EXTRA_SOUP_ID] || 0) > 0;
+  const hotpotSoupOK = isPackage || hotpotSelectionError(cart, newGuestCount) === null;
+  // The extra soup base is only on offer with a hotpot package, and only
+  // while the group is under 15 (two are included from 15). One already
+  // paid for stays visible — add-ons here are never removed.
+  const showExtraSoup = paidExtraSoup
+    || (!!hotpotEntry && newGuestCount < HOTPOT_TWO_SOUP_MIN_GUESTS);
+  useEffect(() => {
+    // Never touch an extra soup base the customer already paid for.
+    setCart((prev) => (paidExtraSoup && !hotpotPackageEntry(prev)
+      ? prev
+      : normalizeHotpotAddOns(prev, newGuestCount, { stripIncludedExtra: !paidExtraSoup })));
+  }, [cart, newGuestCount, paidExtraSoup]);
+
   const newHours = useMemo(() => {
     if (!startTime || !endTime) return booking?.hours ?? 0;
     const endMin = toMin(endTime) + (isOvernight ? 24 * 60 : 0);
@@ -272,7 +301,10 @@ export default function ModifyBookingPage() {
       // only if premium isn't already in the original. Same for premium.
       // For modify, simplest: no mutex enforcement here — the customer
       // already chose at booking time. Just allow stacking.
+      // Respect the catalog cap (e.g. one extra soup base, two grills).
+      const max = addOnCatalog.find((a) => a.id === id)?.maxQuantity;
       if (existing) {
+        if (max !== undefined && existing.quantity >= max) return prev;
         return prev.map((c) => c.id === id ? { ...c, quantity: c.quantity + 1 } : c);
       }
       return [...prev, { id, quantity: 1 }];
@@ -292,7 +324,7 @@ export default function ModifyBookingPage() {
 
   async function handleSave() {
     if (!booking || subtotalDiff <= 0 || !newPricing) return;
-    if (timeConflict) return;
+    if (timeConflict || !hotpotSoupOK) return;
     if (!user) { setError(locale === 'zh' ? '請先登入' : 'Please sign in'); return; }
     setSubmitting(true);
     try {
@@ -336,6 +368,8 @@ export default function ModifyBookingPage() {
           setError(locale === 'zh'
             ? '距離活動少於 48 小時，BBQ／火鍋等唔可以後加。'
             : 'Food add-ons can no longer be added within 48 hours.');
+        } else if (data.error === 'HOTPOT_SOUP_REQUIRED' || data.error === 'HOTPOT_EXTRA_SOUP_INVALID') {
+          setError(paymentErrorMessage(data.error, locale));
         } else {
           setError((locale === 'zh' ? '儲存失敗：' : 'Save failed: ') + (data.error || 'unknown'));
         }
@@ -601,8 +635,10 @@ export default function ModifyBookingPage() {
                   </div>
                 );
               }
+              if (a.id === HOTPOT_EXTRA_SOUP_ID && !showExtraSoup) return null;
+              const showSoupPicker = hotpotEntry?.id === a.id;
               return (
-                <div key={a.id} className={`glass-card p-5 ${qty > (floor[a.id] || 0) ? 'border-accent/40 bg-accent/5' : ''} ${lockedFood ? 'opacity-50' : ''}`}>
+                <div key={a.id} className={`glass-card p-5 ${qty > (floor[a.id] || 0) ? 'border-accent/40 bg-accent/5' : ''} ${lockedFood && !showSoupPicker ? 'opacity-50' : ''}`}>
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold">
@@ -640,6 +676,34 @@ export default function ModifyBookingPage() {
                       </button>
                     </div>
                   </div>
+                  {/* Soup bases for the hotpot package — required. */}
+                  {showSoupPicker && (
+                    <div className="mt-4 pt-4 border-t border-white/40">
+                      <p className="text-sm font-semibold mb-1">
+                        {locale === 'zh' ? '選擇湯底' : 'Select Soup Base'}
+                        <span className="text-red-500 ml-1">*</span>
+                      </p>
+                      <p className="text-xs text-muted mb-3">
+                        {locale === 'zh'
+                          ? `${HOTPOT_TWO_SOUP_MIN_GUESTS} 人以下湯底三選一（可加購額外湯底，每個 +$${HOTPOT_EXTRA_SOUP_PRICE}）；${HOTPOT_TWO_SOUP_MIN_GUESTS} 人或以上可揀兩個，可以揀兩個一樣。`
+                          : `Under ${HOTPOT_TWO_SOUP_MIN_GUESTS} guests: one of three (an extra soup base is +$${HOTPOT_EXTRA_SOUP_PRICE}); ${HOTPOT_TWO_SOUP_MIN_GUESTS}+ guests: pick two, they can be the same.`}
+                      </p>
+                      <HotpotSoupPicker
+                        slots={hotpotSlots}
+                        value={hotpotSoupPicks}
+                        onChange={(next) => setCart((prev) => withHotpotSoups(prev, next))}
+                        locale={locale}
+                      />
+                      {!hotpotSoupOK && (
+                        <p className="mt-3 text-xs text-rose-600 flex items-start gap-1">
+                          <AlertCircle size={12} className="mt-0.5 shrink-0" />
+                          {locale === 'zh'
+                            ? (hotpotSlots > 1 ? `請揀齊 ${hotpotSlots} 個湯底` : '請揀湯底')
+                            : (hotpotSlots > 1 ? `Please pick all ${hotpotSlots} soup bases` : 'Please pick a soup base')}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -669,7 +733,7 @@ export default function ModifyBookingPage() {
             )}
             <button
               onClick={handleSave}
-              disabled={subtotalDiff <= 0 || submitting || !!timeConflict}
+              disabled={subtotalDiff <= 0 || submitting || !!timeConflict || !hotpotSoupOK}
               className="w-full py-3 rounded-xl bg-gradient-pink text-white font-bold text-base disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {submitting ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
@@ -677,7 +741,9 @@ export default function ModifyBookingPage() {
                 ? (locale === 'zh' ? '請先加項目' : 'Add items to continue')
                 : timeConflict
                   ? (locale === 'zh' ? '請先解決時間衝突' : 'Resolve time conflict first')
-                  : (locale === 'zh' ? '確認並付款' : 'Save & Pay')}
+                  : !hotpotSoupOK
+                    ? (locale === 'zh' ? '請先揀火鍋湯底' : 'Choose the hotpot soup base first')
+                    : (locale === 'zh' ? '確認並付款' : 'Save & Pay')}
             </button>
           </div>
         </div>

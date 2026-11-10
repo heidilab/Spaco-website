@@ -16,6 +16,7 @@ import { db } from '@/lib/firebase';
 import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import { getPeakDay } from '@/lib/peakDays';
 import { resolvePeakRule } from '@/lib/peakDayRules';
+import { hotpotSoupSummary, isHotpotPackage } from '@/lib/hotpot';
 import { addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE, calculatePricing, freeDrinksVenues, isWithin2Days } from '@/lib/pricing';
 import { BookingRecord, RefundDetails } from '@/types';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
@@ -690,6 +691,11 @@ export default function ConfirmBookingPage() {
                       <p>
                         • {meta?.name[locale] || a.id} {a.quantity > 1 ? `× ${a.quantity}` : ''}
                       </p>
+                      {isHotpotPackage(a.id) && hotpotSoupSummary(a.options?.soupBases, locale) && (
+                        <p className="text-xs text-ink-soft pl-3 mt-0.5">
+                          {locale === 'zh' ? '湯底：' : 'Soup base: '}{hotpotSoupSummary(a.options?.soupBases, locale)}
+                        </p>
+                      )}
                       {a.id === 'shisha' && (
                         <p className="text-xs text-ink-soft pl-3 mt-0.5">
                           {(() => {

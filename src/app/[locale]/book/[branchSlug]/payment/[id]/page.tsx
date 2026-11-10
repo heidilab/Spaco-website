@@ -17,6 +17,7 @@ import { motion } from 'framer-motion';
 import AuthModal from '@/components/auth/AuthModal';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
 import { addOns as addOnCatalog } from '@/lib/pricing';
+import { hotpotSoupSummary, isHotpotPackage } from '@/lib/hotpot';
 import { getVisitorId, getFirstTouchSource } from '@/lib/attribution';
 import {
   loadBookingCheckoutDraft, clearBookingCheckoutDraft,
@@ -424,7 +425,12 @@ export default function PaymentMethodPage() {
                 {booking.addOns.map((a) => {
                   const meta = addOnCatalog.find((c) => c.id === a.id);
                   return (
-                    <p key={a.id}>• {meta?.name[locale] || a.id}{a.quantity > 1 ? ` × ${a.quantity}` : ''}</p>
+                    <p key={a.id}>
+                      • {meta?.name[locale] || a.id}{a.quantity > 1 ? ` × ${a.quantity}` : ''}
+                      {isHotpotPackage(a.id) && hotpotSoupSummary(a.options?.soupBases, locale)
+                        ? `（${locale === 'zh' ? '湯底：' : 'Soup base: '}${hotpotSoupSummary(a.options?.soupBases, locale)}）`
+                        : ''}
+                    </p>
                   );
                 })}
               </div>

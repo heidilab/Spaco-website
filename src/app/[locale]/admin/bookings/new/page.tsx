@@ -24,6 +24,8 @@ import { ALL_PACKAGES, getPackageBySlug, CATEGORY_LABEL } from '@/lib/packages';
 import { createBookingDraft, buildClaimUrl } from '@/lib/bookingDrafts';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
 import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
+import HotpotSoupPicker from '@/components/booking/HotpotSoupPicker';
+import { applyHotpotSoups, hotpotPackageEntry, hotpotSoupSlots } from '@/lib/hotpot';
 import { calcCateringTotal } from '@/lib/pricing';
 import { getHoliday } from '@/lib/hkHolidays';
 import { normalizeHkPhone, isValidHkPhone, formatHkPhone } from '@/lib/whatsapp';
@@ -111,6 +113,10 @@ export default function AdminNewBookingPage() {
     staffSetup: boolean;
     staffSetupTime?: string;
   }>({ pipes: 1, flavors: [], staffSetup: false });
+  // 火鍋湯底 picks (soup ids, one per pot — lib/hotpot.ts). Optional for
+  // staff: a link can go out before the customer decides, and the soup
+  // gets filled in later on /admin/bookings/[id].
+  const [hotpotSoups, setHotpotSoups] = useState<string[]>([]);
 
   // ── Package selector ───────────────────────────
   // null = à-la-carte (default). When set to a slug, venue + hours lock
@@ -248,7 +254,7 @@ export default function AdminNewBookingPage() {
   // later. Flavor strings can be empty (admin postpones the pick);
   // empty entries are dropped from the saved options array so the
   // booking detail page can show a clean "awaiting flavors" hint.
-  const selectedAddOnList = [
+  const selectedAddOnList = applyHotpotSoups([
     ...Object.entries(addOnQty)
       .filter(([, q]) => q > 0)
       .map(([id, quantity]) => {
@@ -279,7 +285,11 @@ export default function AdminNewBookingPage() {
         quantity: 1,
         options: { customName: c.name.trim(), customPrice: Math.max(0, Math.floor(c.price)) },
       })),
-  ];
+  ], hotpotSoups, guestCount);
+  // Pots to pick soups for (0 = no hotpot package ticked), and which
+  // package row carries the picker.
+  const hotpotSlots = hotpotSoupSlots(guestCount, selectedAddOnList);
+  const hotpotPickerRowId = hotpotPackageEntry(selectedAddOnList)?.id;
 
   // Resolve the picked package (if any) so the venue + hours lock-ins
   // and the override pricing logic share a single source of truth.
@@ -1207,6 +1217,25 @@ export default function AdminNewBookingPage() {
                         </div>
                       )}
                     </div>
+
+                    {/* 火鍋湯底 — one pick per pot (1 under 15 guests, +1
+                     *  per extra soup base, 2 from 15). Optional here. */}
+                    {a.id === hotpotPickerRowId && hotpotSlots > 0 && (
+                      <div className="border-t border-white/60 p-3 space-y-2 bg-white/30">
+                        <p className="text-xs text-ink-soft font-semibold">
+                          {locale === 'zh'
+                            ? `湯底（${guestCount} 人 · 揀 ${hotpotSlots} 個，可以揀一樣；客人未決定可以留空）`
+                            : `Soup base (${guestCount} guests · pick ${hotpotSlots}, may repeat; leave blank if undecided)`}
+                        </p>
+                        <HotpotSoupPicker
+                          slots={hotpotSlots}
+                          value={hotpotSoups}
+                          onChange={setHotpotSoups}
+                          locale={locale}
+                          size="sm"
+                        />
+                      </div>
+                    )}
 
                     {/* Shisha sub-options: pipes (1 or 2) + per-head flavor +
                      *  staff setup. Mirrors the customer booking page so

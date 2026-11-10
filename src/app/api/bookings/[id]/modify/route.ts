@@ -12,6 +12,10 @@ import {
 } from '@/lib/pricing';
 import { calcPromoDiscount } from '@/lib/promoCodes';
 import { computeGrandTotal, computeBalanceDue, paidBase } from '@/lib/bookingMoney';
+import {
+  HOTPOT_EXTRA_SOUP_ID, finalizeHotpotAddOns, hotpotSelectionError, hotpotSoupBases,
+  hotpotSoupSlots, isHotpotPackage, withHotpotSoups,
+} from '@/lib/hotpot';
 import type { BookingRecord, AddOnOptions, PromoCode } from '@/types';
 
 export const runtime = 'nodejs';
@@ -141,13 +145,31 @@ export async function POST(
   // Add-ons — qty per id can't drop below what's booked.
   const floor: Record<string, number> = {};
   for (const a of (booking.addOns || [])) floor[a.id] = a.quantity;
-  const reqAddOns: CartEntry[] = Array.isArray(body.addOns)
+  const parsedAddOns: CartEntry[] = Array.isArray(body.addOns)
     ? body.addOns.map((a: CartEntry) => ({
         id: String(a.id),
         quantity: Math.max(0, Math.floor(Number(a.quantity) || 0)),
         ...(a.options ? { options: a.options } : {}),
       })).filter((a: CartEntry) => a.quantity > 0)
     : (booking.addOns || []);
+  // 火鍋湯底 (lib/hotpot.ts): only real soup ids are stored, never more
+  // than the pots this headcount gets. Nothing is removed from the list —
+  // the add-only floor check below still sees every booked item.
+  const cleanedAddOns = finalizeHotpotAddOns(parsedAddOns);
+  const soupSlots = hotpotSoupSlots(newGuestCount, cleanedAddOns);
+  const soupPicks = hotpotSoupBases(cleanedAddOns);
+  const reqAddOns: CartEntry[] = soupPicks.length > soupSlots
+    ? withHotpotSoups(cleanedAddOns, soupPicks.slice(0, soupSlots))
+    : cleanedAddOns;
+  // Newly ADDING a hotpot package (or an extra soup base) must come with
+  // a complete soup choice; a package booked earlier without one is left
+  // for CS to follow up rather than blocking an unrelated change.
+  const addsHotpot = reqAddOns.some((a) => isHotpotPackage(a.id) && !(floor[a.id] > 0));
+  const addsExtraSoup = reqAddOns.some((a) => a.id === HOTPOT_EXTRA_SOUP_ID && a.quantity > (floor[a.id] || 0));
+  if (addsHotpot || addsExtraSoup) {
+    const hotpotError = hotpotSelectionError(reqAddOns, newGuestCount);
+    if (hotpotError) return NextResponse.json({ error: hotpotError }, { status: 400 });
+  }
   for (const id2 of Object.keys(floor)) {
     const reqQty = reqAddOns.find((a) => a.id === id2)?.quantity ?? 0;
     if (reqQty < floor[id2]) {

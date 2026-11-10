@@ -9,6 +9,12 @@ import {
   CATERING_EXTRA_CUTLERY_SET_FEE,
   CATERING_EXTRA_FOOD_TONG_FEE,
 } from './cateringMenu';
+import {
+  HOTPOT_EXTRA_SOUP_PRICE,
+  HOTPOT_TWO_SOUP_MIN_GUESTS,
+  hotpotSoupSummary,
+  isHotpotPackage,
+} from './hotpot';
 
 /** Catering total = tier base + extras (non-addon dishes beyond tier
  *  count × \$155) + addon dishes (A1-A10 own prices) + delivery
@@ -122,8 +128,8 @@ export const addOns: AddOn[] = [
     pricePerUnit: 168,
     unit: 'person',
     description: {
-      zh: '每位 $168，包含肉類、丸類及蔬菜（須最少三日前預訂）',
-      en: '$168/pax, includes meat, balls & vegetables (min. 3 days advance booking)',
+      zh: '每位 $168，包含肉類、丸類及蔬菜，須揀湯底（須最少三日前預訂）',
+      en: '$168/pax, includes meat, balls & vegetables; soup base required (min. 3 days advance booking)',
     },
   },
   {
@@ -132,19 +138,19 @@ export const addOns: AddOn[] = [
     pricePerUnit: 348,
     unit: 'person',
     description: {
-      zh: '每位 $348，包含海鮮、肉類、丸類及蔬菜（須最少三日前預訂）',
-      en: '$348/pax, includes seafood, meat, balls & vegetables (min. 3 days advance booking)',
+      zh: '每位 $348，包含海鮮、肉類、丸類及蔬菜，須揀湯底（須最少三日前預訂）',
+      en: '$348/pax, includes seafood, meat, balls & vegetables; soup base required (min. 3 days advance booking)',
     },
   },
   {
     id: 'hotpot-extra-soup',
     name: { zh: '加購額外湯底', en: 'Extra Soup Base' },
-    pricePerUnit: 108,
+    pricePerUnit: HOTPOT_EXTRA_SOUP_PRICE,
     unit: 'item',
     maxQuantity: 1,
     description: {
-      zh: '15人以下如需第二個湯底，每個 +$108',
-      en: 'Extra soup base for groups under 15 pax, $108 each',
+      zh: `${HOTPOT_TWO_SOUP_MIN_GUESTS}人以下只包一個湯底，如需加購湯底，每個 +$${HOTPOT_EXTRA_SOUP_PRICE}（${HOTPOT_TWO_SOUP_MIN_GUESTS}人或以上已包兩個湯底）`,
+      en: `Groups under ${HOTPOT_TWO_SOUP_MIN_GUESTS} pax get one soup base; each extra soup base is +$${HOTPOT_EXTRA_SOUP_PRICE} (${HOTPOT_TWO_SOUP_MIN_GUESTS}+ pax already include two)`,
     },
   },
   {
@@ -274,6 +280,15 @@ export function formatAddOnsForStaff(
       // catalog entry (module-level `addOns`, shadowed by the
       // parameter — hence the alias) to know which unit type this is.
       const cfg = addOns.find((x) => x.id === a.id);
+      // Hotpot packages carry the soup-base picks the supplier order
+      // needs; a package with none picked is flagged so CS follows up.
+      if (isHotpotPackage(a.id)) {
+        const soups = hotpotSoupSummary(a.options?.soupBases, locale);
+        const tag = soups
+          ? (locale === 'zh' ? `湯底：${soups}` : `Soup: ${soups}`)
+          : (locale === 'zh' ? '未揀湯底' : 'soup base not chosen');
+        return `${getAddOnLabel(a.id, locale)} (${tag})`;
+      }
       if (cfg?.unit === 'person') return getAddOnLabel(a.id, locale);
       return `${getAddOnLabel(a.id, locale)} ×${a.quantity}`;
     }
@@ -394,14 +409,9 @@ export const noBBQVenues = ['wanchai'];
 // Venues that include free non-alcoholic drinks
 export const freeDrinksVenues = ['tst'];
 
-// Venues that offer hotpot
-export const hotpotVenues = ['cwb', 'sw-b', 'sw-ab'];
-
-// Hotpot soup base options
-export const hotpotSoupBases = {
-  zh: ['蕃茄湯', '豬骨湯', '麻辣湯'],
-  en: ['Tomato Soup', 'Pork Bone Soup', 'Spicy Mala Soup'],
-};
+// Hotpot packages can be ordered at EVERY venue (Heidi 2026-11-10 — the
+// old `hotpotVenues` list hid them everywhere except 銅鑼灣 / 上環 Room B /
+// 上環全層). Soup-base options and the 15-guest rule live in lib/hotpot.ts.
 
 // Hotpot Standard menu
 export const hotpotStandardMenu = {
@@ -470,6 +480,14 @@ export const hotpotSeafoodMenu = {
     ],
   },
 };
+
+/** " · 湯底：蕃茄湯、麻辣湯" for a hotpot package's breakdown line —
+ *  empty until a soup base is picked. */
+function soupSuffix(entry: { options?: AddOnOptions }, locale: 'zh' | 'en'): string {
+  const soups = hotpotSoupSummary(entry.options?.soupBases, locale);
+  if (!soups) return '';
+  return locale === 'zh' ? ` · 湯底：${soups}` : ` · Soup: ${soups}`;
+}
 
 export interface PricingCalculation {
   baseCharge: number;
@@ -641,8 +659,8 @@ export function calculatePricing(
       addOnTotal += cost;
       breakdown.push({
         label: {
-          zh: `火鍋標準套餐 (${guestLabel} x $168)`,
-          en: `Hotpot Standard (${guestLabelEn} x $168)`,
+          zh: `火鍋標準套餐 (${guestLabel} x $168)${soupSuffix(selected, 'zh')}`,
+          en: `Hotpot Standard (${guestLabelEn} x $168)${soupSuffix(selected, 'en')}`,
         },
         amount: cost,
       });
@@ -654,8 +672,8 @@ export function calculatePricing(
       addOnTotal += cost;
       breakdown.push({
         label: {
-          zh: `海鮮火鍋套餐 (${guestLabel} x $348)`,
-          en: `Seafood Hotpot (${guestLabelEn} x $348)`,
+          zh: `海鮮火鍋套餐 (${guestLabel} x $348)${soupSuffix(selected, 'zh')}`,
+          en: `Seafood Hotpot (${guestLabelEn} x $348)${soupSuffix(selected, 'en')}`,
         },
         amount: cost,
       });
@@ -663,12 +681,12 @@ export function calculatePricing(
     }
 
     if (selected.id === 'hotpot-extra-soup') {
-      const cost = 108 * selected.quantity;
+      const cost = HOTPOT_EXTRA_SOUP_PRICE * selected.quantity;
       addOnTotal += cost;
       breakdown.push({
         label: {
-          zh: `加購額外湯底 (${selected.quantity}個 x $108)`,
-          en: `Extra Soup Base (${selected.quantity} x $108)`,
+          zh: `加購額外湯底 (${selected.quantity}個 x $${HOTPOT_EXTRA_SOUP_PRICE})`,
+          en: `Extra Soup Base (${selected.quantity} x $${HOTPOT_EXTRA_SOUP_PRICE})`,
         },
         amount: cost,
       });

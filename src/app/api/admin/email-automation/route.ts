@@ -163,8 +163,8 @@ function buildPreview(key: EmailAutomationKey): { subject: string; html: string 
         isWeekend: false,
         hasBYOFood: false,
         addOns: [
-          { id: 'hotpot-standard', quantity: 1 },
-          { id: 'hotpot-extra-soup', quantity: 1 },
+          // 18 guests → two soup bases included (lib/hotpot.ts).
+          { id: 'hotpot-standard', quantity: 1, options: { soupBases: ['tomato', 'mala'] } },
           { id: 'shisha', quantity: 2, options: { pipes: 2, flavors: ['A', 'D'], staffSetup: true, staffSetupTime: '16:00' } },
           { id: 'bbq-helper', quantity: 2 },
           { id: 'catering', quantity: 1, options: {

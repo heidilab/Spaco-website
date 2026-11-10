@@ -23,6 +23,7 @@ import {
   SHISHA_MAX_PIPES,
 } from '@/lib/pricing';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
+import { HOTPOT_EXTRA_SOUP_PRICE, hotpotSoupSummary, isHotpotPackage } from '@/lib/hotpot';
 import { venues } from '@/lib/venues';
 import {
   BusinessDocument,
@@ -363,7 +364,7 @@ export default function AdminDocumentsPage() {
           quantity = equiv;
           amount = Math.round(unitPrice * equiv);
         } else if (addOn.id === 'hotpot-extra-soup') {
-          unitPrice = 108;
+          unitPrice = HOTPOT_EXTRA_SOUP_PRICE;
           quantity = addOn.quantity;
           amount = unitPrice * quantity;
         } else if (addOn.id === 'drinks') {
@@ -411,6 +412,11 @@ export default function AdminDocumentsPage() {
           const staffSetup = !!addOn.options?.staffSetup;
           const suffix = `(${pipes} pipe${pipes > 1 ? 's' : ''} / ${heads} head${heads > 1 ? 's' : ''}${staffSetup ? ' + staff setup' : ''})`;
           description = `${cfg.name.en} ${cfg.name.zh} ${suffix}`;
+        }
+        // Hotpot: print the soup-base picks under the package line.
+        if (isHotpotPackage(addOn.id)) {
+          const soups = hotpotSoupSummary(addOn.options?.soupBases, 'zh');
+          if (soups) description = `${cfg.name.en} ${cfg.name.zh}\nSoup base 湯底: ${soups}`;
         }
         items.push({
           description,
