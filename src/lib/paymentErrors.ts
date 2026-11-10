@@ -47,7 +47,8 @@ const MESSAGES: Record<string, [string, string]> = {
   INVALID_ADDON: ['有加購項目不適用於此場地或套餐，請返回重新選擇。', 'An add-on is not available for this venue or package. Go back and reselect.'],
   INVALID_QUANTITY: ['加購數量超出上限，請減少數量。', 'An add-on quantity exceeds its limit. Reduce the quantity.'],
   INVALID_OPTIONS: ['加購選項資料不正確，請返回重新設定。', 'An add-on option is not valid. Go back and set it again.'],
-  HOTPOT_SOUP_REQUIRED: ['火鍋套餐必須揀湯底（15 人以下揀一個，15 人或以上揀兩個）。請返回預訂頁揀好湯底再試。', 'A hotpot package needs a soup base (one for under 15 guests, two for 15 or more). Go back and choose it, then try again.'],
+  HOTPOT_SOUP_REQUIRED: ['火鍋套餐必須揀湯底（計價人數 15 位以下揀一個，15 位或以上揀兩個）。請返回預訂頁揀好湯底再試。', 'A hotpot package needs a soup base (one for under 15 charged guests, two for 15 or more). Go back and choose it, then try again.'],
+  HOTPOT_LEAD_TIME: ['火鍋套餐須於活動日期最少 3 日前預訂，呢個日期已經訂唔到。請返回移除火鍋套餐或改期。', 'Hotpot must be ordered at least 3 days before the event. Go back and remove the hotpot package or pick a later date.'],
   HOTPOT_EXTRA_SOUP_INVALID: ['加購湯底必須連同火鍋套餐一齊訂，請返回重新選擇加購。', 'An extra soup base can only be ordered with a hotpot package. Go back and reselect add-ons.'],
   // Packages / CS links
   PACKAGE_UNAVAILABLE: ['此套餐不適用於所選日期、時段或提前日數，請重新選擇。', 'This package is not available for the chosen date, time or notice period. Choose again.'],

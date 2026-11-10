@@ -36,14 +36,14 @@ const SECTIONS: Section[] = [
       zh: [
         '系統一切預訂均屬「先到先得」，以收到全數或預付款項時間為準。系統並不為閣下預留任何時段。',
         '每個場地有最低消費人數及最低租用時數，詳情顯示於各分店頁面。',
-        'BBQ／火鍋／Shisha 等附加服務必須於活動最少 2 日前預訂，逾期將無法加購。',
+        'BBQ／Shisha 等附加服務必須於活動最少 2 日前預訂，火鍋套餐必須於活動最少 3 日前預訂，逾期將無法加購。',
         '小童（1–9 歲）以半位計算最低消費；最終以「成人計價人數」計算。',
         '預訂一經確認，系統將以電郵發送預訂確認信。如未收到請即聯絡 SPACO。',
       ],
       en: [
         'All bookings are first-come-first-served and confirmed only upon receipt of payment. Slots are NOT held by the system.',
         'Each venue has a minimum head count and minimum rental duration; see the branch pages for details.',
-        'BBQ / hotpot / shisha add-ons must be ordered at least 2 days before the event; late orders cannot be accepted.',
+        'BBQ / shisha add-ons must be ordered at least 2 days before the event, and hotpot packages at least 3 days before; late orders cannot be accepted.',
         'Children aged 1–9 count as 0.5 of an adult-equivalent for minimum-charge calculation.',
         'A confirmation email is sent once the booking is confirmed. Please contact SPACO immediately if not received.',
       ],

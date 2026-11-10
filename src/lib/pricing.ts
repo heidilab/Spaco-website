@@ -11,7 +11,7 @@ import {
 } from './cateringMenu';
 import {
   HOTPOT_EXTRA_SOUP_PRICE,
-  HOTPOT_TWO_SOUP_MIN_GUESTS,
+  HOTPOT_TWO_SOUP_MIN_EQUIV,
   hotpotSoupSummary,
   isHotpotPackage,
 } from './hotpot';
@@ -149,8 +149,8 @@ export const addOns: AddOn[] = [
     unit: 'item',
     maxQuantity: 1,
     description: {
-      zh: `${HOTPOT_TWO_SOUP_MIN_GUESTS}人以下只包一個湯底，如需加購湯底，每個 +$${HOTPOT_EXTRA_SOUP_PRICE}（${HOTPOT_TWO_SOUP_MIN_GUESTS}人或以上已包兩個湯底）`,
-      en: `Groups under ${HOTPOT_TWO_SOUP_MIN_GUESTS} pax get one soup base; each extra soup base is +$${HOTPOT_EXTRA_SOUP_PRICE} (${HOTPOT_TWO_SOUP_MIN_GUESTS}+ pax already include two)`,
+      zh: `計價人數 ${HOTPOT_TWO_SOUP_MIN_EQUIV} 位以下（小童計 ½）只包一個湯底，如需加購湯底，每個 +$${HOTPOT_EXTRA_SOUP_PRICE}（${HOTPOT_TWO_SOUP_MIN_EQUIV} 位或以上已包兩個湯底）`,
+      en: `Under ${HOTPOT_TWO_SOUP_MIN_EQUIV} charged guests (kids count ½): one soup base; each extra soup base is +$${HOTPOT_EXTRA_SOUP_PRICE} (${HOTPOT_TWO_SOUP_MIN_EQUIV}+ already include two)`,
     },
   },
   {

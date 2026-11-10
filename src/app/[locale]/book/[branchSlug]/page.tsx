@@ -7,8 +7,8 @@ import { useState, useMemo, useEffect } from 'react';
 import { getVenueBySlug } from '@/lib/venues';
 import { addOns, calculatePricing, noBBQVenues, freeDrinksVenues, bbqStandardPriceByVenue, bbqStandardMenu, bbqPremiumMenu, hotpotStandardMenu, hotpotSeafoodMenu, calcShishaPrice, SHISHA_STAFF_SETUP_FEE, SHISHA_MAX_PIPES, earlySetupPriceByVenue, subtractHours } from '@/lib/pricing';
 import {
-  HOTPOT_EXTRA_SOUP_ID, HOTPOT_EXTRA_SOUP_PRICE, HOTPOT_TWO_SOUP_MIN_GUESTS,
-  hotpotPackageEntry, hotpotSelectionError, hotpotSoupSlots, isHotpotPackage,
+  HOTPOT_EXTRA_SOUP_ID, HOTPOT_EXTRA_SOUP_PRICE, HOTPOT_MIN_ADVANCE_DAYS, HOTPOT_TWO_SOUP_MIN_EQUIV,
+  hotpotPackageEntry, hotpotSelectionError, hotpotSoupSlots, isHotpotAddOn, isHotpotPackage,
   normalizeHotpotAddOns, withHotpotSoups,
 } from '@/lib/hotpot';
 import HotpotSoupPicker from '@/components/booking/HotpotSoupPicker';
@@ -211,6 +211,15 @@ function BookingPageInner({ venue }: { venue: Venue }) {
     setHasBYOFood(false);
   }, [tooSoonForExtras, needsAdvanceIds]);
 
+  // Hotpot needs ONE MORE day than the other food add-ons: at least 3
+  // calendar days before the event (Heidi 2026-11-10). A date inside that
+  // window greys out the hotpot cards and deselects any hotpot item.
+  const tooSoonForHotpot = daysUntilBooking < HOTPOT_MIN_ADVANCE_DAYS;
+  useEffect(() => {
+    if (!tooSoonForHotpot) return;
+    setSelectedAddOns((prev) => (prev.some((a) => isHotpotAddOn(a.id)) ? prev.filter((a) => !isHotpotAddOn(a.id)) : prev));
+  }, [tooSoonForHotpot]);
+
   // Auto-adjust guest count when date changes. Peak days may RAISE the
   // venue's minimums (never lower them).
   const minGuests = effectiveMinGuests(isWeekend ? venue.minGuests.weekend : venue.minGuests.weekday, peakRule);
@@ -336,24 +345,27 @@ function BookingPageInner({ venue }: { venue: Venue }) {
   // ─── Hotpot soup bases (火鍋湯底) ───
   // The picks live on the hotpot package's own entry (options.soupBases)
   // so they travel with the booking to the supplier order. Rules in
-  // lib/hotpot.ts: under 15 guests 1 soup (+$88 for an extra), 15+ two.
-  const hotpotTwoIncluded = guestCount >= HOTPOT_TWO_SOUP_MIN_GUESTS;
-  const hotpotSlots = hotpotSoupSlots(guestCount, selectedAddOns);
+  // lib/hotpot.ts: the CHARGED headcount (adultEquiv — a child counts ½)
+  // decides it: under 15 → 1 soup (+$108 for an extra), 15 or more → two.
+  const hotpotTwoIncluded = adultEquiv >= HOTPOT_TWO_SOUP_MIN_EQUIV;
+  const hotpotSlots = hotpotSoupSlots(adultEquiv, selectedAddOns);
   const hotpotSoupPicks = hotpotPackageEntry(selectedAddOns)?.options?.soupBases || [];
   const hasExtraSoup = selectedAddOns.some((a) => a.id === HOTPOT_EXTRA_SOUP_ID);
   // A hotpot package can't go through without one soup picked per pot.
-  const hotpotSoupOK = hotpotSelectionError(selectedAddOns, guestCount) === null;
+  const hotpotSoupOK = hotpotSelectionError(selectedAddOns, adultEquiv) === null;
 
-  // Guest count crossing 15 changes how many soups are included: drop the
-  // paid extra soup once two are free, and trim picks beyond the pots
-  // allowed. Returns the same array when nothing changes (no re-render).
+  // Nothing is paid yet on this form, so the selection simply follows the
+  // headcount: once it reaches 15 the extra soup base is not charged (two
+  // are included), and picks beyond the pots allowed are trimmed. Returns
+  // the same array when nothing changes (no re-render).
   useEffect(() => {
-    setSelectedAddOns((prev) => normalizeHotpotAddOns(prev, guestCount));
-  }, [guestCount, selectedAddOns]);
+    setSelectedAddOns((prev) => normalizeHotpotAddOns(prev, adultEquiv));
+  }, [adultEquiv, selectedAddOns]);
 
   /** Standard ↔ seafood are mutually exclusive. Switching between them
    *  keeps the soup picks; unticking the package clears soup + extra soup. */
   const toggleHotpotPackage = (id: string) => {
+    if (tooSoonForHotpot) return; // under 3 days' notice — cards are locked
     const current = hotpotPackageEntry(selectedAddOns);
     const withoutPackage = selectedAddOns.filter((a) => !isHotpotPackage(a.id));
     if (current?.id === id) {
@@ -879,8 +891,8 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                   </p>
                   <p className="text-xs leading-relaxed">
                     {locale === 'zh'
-                      ? `BBQ 套餐／火鍋套餐／Shisha 等加購均需於活動日期前最少 2 日訂購。揀返一個 ${new Date(Date.now() + 2 * 86400000).toISOString().split('T')[0]} 之後嘅日期就可以加購。`
-                      : `BBQ packages, hotpot packages and shisha must be ordered at least 2 days in advance. Choose a date on or after ${new Date(Date.now() + 2 * 86400000).toISOString().split('T')[0]} to enable add-ons.`}
+                      ? `BBQ 套餐／Shisha 等加購均需於活動日期前最少 2 日訂購（火鍋套餐須最少 ${HOTPOT_MIN_ADVANCE_DAYS} 日前）。揀返一個 ${new Date(Date.now() + 2 * 86400000).toISOString().split('T')[0]} 之後嘅日期就可以加購。`
+                      : `BBQ packages and shisha must be ordered at least 2 days in advance (hotpot packages at least ${HOTPOT_MIN_ADVANCE_DAYS} days). Choose a date on or after ${new Date(Date.now() + 2 * 86400000).toISOString().split('T')[0]} to enable add-ons.`}
                   </p>
                 </div>
               )}
@@ -965,24 +977,33 @@ function BookingPageInner({ venue }: { venue: Venue }) {
 
                 {/* Hotpot packages — offered at EVERY venue. A package needs a
                  *  soup-base choice before the customer can continue (rules
-                 *  in lib/hotpot.ts): under 15 guests = one of the three
-                 *  soups, +$88 for an extra one; 15 or more = two included,
-                 *  and the two may be the same soup. */}
+                 *  in lib/hotpot.ts): under 15 charged guests (a child counts
+                 *  ½) = one of the three soups, +$108 for an extra one; 15 or
+                 *  more = two included, and the two may be the same soup.
+                 *  Needs 3 days' notice — a closer date locks the cards. */}
                 {HOTPOT_PACKAGE_CARDS.map((card) => {
                   const isSelected = selectedAddOns.some((a) => a.id === card.id);
                   const isExpanded = expandedMenu === card.id;
+                  const hotpotLocked = tooSoonForHotpot && !!selectedDate;
                   return (
                     <div key={card.id} className={`rounded-2xl border transition-all ${isSelected ? 'border-accent bg-accent/5' : 'border-charcoal/5'}`}>
                       <div className="flex items-center justify-between p-5">
-                        <div className="flex-1" onClick={() => toggleHotpotPackage(card.id)} role="button">
+                        <div className={`flex-1 ${hotpotLocked ? 'opacity-50' : ''}`} onClick={() => toggleHotpotPackage(card.id)} role="button" aria-disabled={hotpotLocked}>
                           <p className="font-semibold">{card.title[locale]}</p>
                           <p className="text-sm text-muted mt-1">{locale === 'zh' ? `每位 +$${card.price}（須最少三日前預訂）` : `$${card.price}/pax (min. 3 days advance)`}</p>
+                          {hotpotLocked && (
+                            <p className="text-xs text-rose-600 mt-1.5">
+                              {locale === 'zh'
+                                ? `⏰ 火鍋套餐須於活動日期最少 ${HOTPOT_MIN_ADVANCE_DAYS} 日前預訂，呢個日期已經訂唔到。`
+                                : `⏰ Hotpot must be ordered at least ${HOTPOT_MIN_ADVANCE_DAYS} days before the event — not available for this date.`}
+                            </p>
+                          )}
                         </div>
                         <div className="flex items-center gap-3">
                           <button onClick={() => setExpandedMenu(isExpanded ? null : card.id)} className="text-xs text-accent hover:underline">
                             {isExpanded ? (locale === 'zh' ? '收起菜單' : 'Hide') : (locale === 'zh' ? '查看菜單' : 'Menu')}
                           </button>
-                          <div onClick={() => toggleHotpotPackage(card.id)} role="button" className={`w-6 h-6 rounded-full border-2 flex items-center justify-center cursor-pointer ${isSelected ? 'border-accent bg-accent' : 'border-charcoal/20'}`}>
+                          <div onClick={() => toggleHotpotPackage(card.id)} role="button" aria-disabled={hotpotLocked} className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${hotpotLocked ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'} ${isSelected ? 'border-accent bg-accent' : 'border-charcoal/20'}`}>
                             {isSelected && <Check size={14} className="text-white" />}
                           </div>
                         </div>
@@ -1011,15 +1032,15 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                           <p className="text-xs text-muted mb-3">
                             {hotpotTwoIncluded
                               ? (locale === 'zh'
-                                ? `${HOTPOT_TWO_SOUP_MIN_GUESTS} 人或以上：套餐已包兩個湯底，請揀兩個（可以揀兩個一樣）`
-                                : `${HOTPOT_TWO_SOUP_MIN_GUESTS}+ guests: two soup bases are included — pick two (they can be the same)`)
+                                ? `計價人數 ${HOTPOT_TWO_SOUP_MIN_EQUIV} 位或以上：套餐已包兩個湯底，請揀兩個（可以揀兩個一樣）`
+                                : `${HOTPOT_TWO_SOUP_MIN_EQUIV}+ charged guests: two soup bases are included — pick two (they can be the same)`)
                               : hasExtraSoup
                                 ? (locale === 'zh'
                                   ? '已加購額外湯底：請揀兩個湯底（可以揀兩個一樣）'
                                   : 'Extra soup base added: pick two soup bases (they can be the same)')
                                 : (locale === 'zh'
-                                  ? `${HOTPOT_TWO_SOUP_MIN_GUESTS} 人以下：湯底三選一。想要多一個湯底可以加購，每個 +$${HOTPOT_EXTRA_SOUP_PRICE}`
-                                  : `Under ${HOTPOT_TWO_SOUP_MIN_GUESTS} guests: choose one of three. An extra soup base is +$${HOTPOT_EXTRA_SOUP_PRICE} each`)}
+                                  ? `計價人數 ${HOTPOT_TWO_SOUP_MIN_EQUIV} 位以下（小童計 ½，你而家係 ${adultEquiv} 位）：湯底三選一。想要多一個湯底可以加購，每個 +$${HOTPOT_EXTRA_SOUP_PRICE}`
+                                  : `Under ${HOTPOT_TWO_SOUP_MIN_EQUIV} charged guests (kids count ½ — you have ${adultEquiv}): choose one of three. An extra soup base is +$${HOTPOT_EXTRA_SOUP_PRICE} each`)}
                           </p>
                           <HotpotSoupPicker
                             slots={hotpotSlots}

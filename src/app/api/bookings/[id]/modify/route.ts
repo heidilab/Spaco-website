@@ -13,8 +13,8 @@ import {
 import { calcPromoDiscount } from '@/lib/promoCodes';
 import { computeGrandTotal, computeBalanceDue, paidBase } from '@/lib/bookingMoney';
 import {
-  HOTPOT_EXTRA_SOUP_ID, finalizeHotpotAddOns, hotpotSelectionError, hotpotSoupBases,
-  hotpotSoupSlots, isHotpotPackage, withHotpotSoups,
+  HOTPOT_EXTRA_SOUP_ID, HOTPOT_MIN_ADVANCE_DAYS, finalizeHotpotAddOns, hotpotExtraSoupOffset,
+  hotpotSelectionError, hotpotSoupBases, hotpotSoupSlots, isHotpotPackage, withHotpotSoups,
 } from '@/lib/hotpot';
 import type { BookingRecord, AddOnOptions, PromoCode } from '@/types';
 
@@ -152,25 +152,42 @@ export async function POST(
         ...(a.options ? { options: a.options } : {}),
       })).filter((a: CartEntry) => a.quantity > 0)
     : (booking.addOns || []);
-  // 火鍋湯底 (lib/hotpot.ts): only real soup ids are stored, never more
-  // than the pots this headcount gets. Nothing is removed from the list —
-  // the add-only floor check below still sees every booked item.
+  // 火鍋 (lib/hotpot.ts). The 15 line is the CHARGED headcount — a child
+  // counts ½, same as every per-head price.
+  const newAdultEquiv = adultCount + 0.5 * childCount;
+  const bookedAdultEquiv = adultFloor + 0.5 * childFloor;
   const cleanedAddOns = finalizeHotpotAddOns(parsedAddOns);
-  const soupSlots = hotpotSoupSlots(newGuestCount, cleanedAddOns);
-  const soupPicks = hotpotSoupBases(cleanedAddOns);
-  const reqAddOns: CartEntry[] = soupPicks.length > soupSlots
-    ? withHotpotSoups(cleanedAddOns, soupPicks.slice(0, soupSlots))
+  // Growing from under 15 to 15: the package now includes two soups, so
+  // the extra soup base this booking already paid for comes off the list.
+  // The recompute below therefore nets its price against what the added
+  // guests cost — an offset, not a refund; the customer keeps both soups.
+  // Decided HERE from the stored booking, whatever the client sent. It is
+  // the one booked item allowed to leave the list (floor check below).
+  const extraSoupOffset = isPackage ? 0 : hotpotExtraSoupOffset(booking.addOns, bookedAdultEquiv, newAdultEquiv);
+  const offsetAddOns = extraSoupOffset > 0
+    ? cleanedAddOns.filter((a) => a.id !== HOTPOT_EXTRA_SOUP_ID)
     : cleanedAddOns;
+  // Only real soup ids are stored, never more than the pots allowed.
+  const soupSlots = hotpotSoupSlots(newAdultEquiv, offsetAddOns);
+  const soupPicks = hotpotSoupBases(offsetAddOns);
+  const reqAddOns: CartEntry[] = soupPicks.length > soupSlots
+    ? withHotpotSoups(offsetAddOns, soupPicks.slice(0, soupSlots))
+    : offsetAddOns;
   // Newly ADDING a hotpot package (or an extra soup base) must come with
   // a complete soup choice; a package booked earlier without one is left
   // for CS to follow up rather than blocking an unrelated change.
   const addsHotpot = reqAddOns.some((a) => isHotpotPackage(a.id) && !(floor[a.id] > 0));
   const addsExtraSoup = reqAddOns.some((a) => a.id === HOTPOT_EXTRA_SOUP_ID && a.quantity > (floor[a.id] || 0));
   if (addsHotpot || addsExtraSoup) {
-    const hotpotError = hotpotSelectionError(reqAddOns, newGuestCount);
+    const hotpotError = hotpotSelectionError(reqAddOns, newAdultEquiv);
     if (hotpotError) return NextResponse.json({ error: hotpotError }, { status: 400 });
+    // Hotpot needs 3 days' notice (one more than the other food add-ons).
+    if (hoursUntilStart < HOTPOT_MIN_ADVANCE_DAYS * 24) {
+      return NextResponse.json({ error: 'HOTPOT_LEAD_TIME' }, { status: 400 });
+    }
   }
   for (const id2 of Object.keys(floor)) {
+    if (id2 === HOTPOT_EXTRA_SOUP_ID && extraSoupOffset > 0) continue;
     const reqQty = reqAddOns.find((a) => a.id === id2)?.quantity ?? 0;
     if (reqQty < floor[id2]) {
       return NextResponse.json({ error: 'addon-only-increase' }, { status: 400 });

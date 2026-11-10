@@ -285,10 +285,11 @@ export default function AdminNewBookingPage() {
         quantity: 1,
         options: { customName: c.name.trim(), customPrice: Math.max(0, Math.floor(c.price)) },
       })),
-  ], hotpotSoups, guestCount);
+  ], hotpotSoups, adultEquiv);
   // Pots to pick soups for (0 = no hotpot package ticked), and which
-  // package row carries the picker.
-  const hotpotSlots = hotpotSoupSlots(guestCount, selectedAddOnList);
+  // package row carries the picker. The 15 line is the CHARGED headcount
+  // (adultEquiv — a child counts ½).
+  const hotpotSlots = hotpotSoupSlots(adultEquiv, selectedAddOnList);
   const hotpotPickerRowId = hotpotPackageEntry(selectedAddOnList)?.id;
 
   // Resolve the picked package (if any) so the venue + hours lock-ins
@@ -1224,8 +1225,8 @@ export default function AdminNewBookingPage() {
                       <div className="border-t border-white/60 p-3 space-y-2 bg-white/30">
                         <p className="text-xs text-ink-soft font-semibold">
                           {locale === 'zh'
-                            ? `湯底（${guestCount} 人 · 揀 ${hotpotSlots} 個，可以揀一樣；客人未決定可以留空）`
-                            : `Soup base (${guestCount} guests · pick ${hotpotSlots}, may repeat; leave blank if undecided)`}
+                            ? `湯底（計價 ${adultEquiv} 人 · 揀 ${hotpotSlots} 個，可以揀一樣；客人未決定可以留空）`
+                            : `Soup base (${adultEquiv} charged guests · pick ${hotpotSlots}, may repeat; leave blank if undecided)`}
                         </p>
                         <HotpotSoupPicker
                           slots={hotpotSlots}

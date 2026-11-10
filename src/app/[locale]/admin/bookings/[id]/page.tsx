@@ -33,7 +33,7 @@ import { getDecorationById } from '@/lib/decorations';
 import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
 import HotpotSoupPicker from '@/components/booking/HotpotSoupPicker';
 import {
-  HOTPOT_EXTRA_SOUP_PRICE, HOTPOT_TWO_SOUP_MIN_GUESTS,
+  HOTPOT_EXTRA_SOUP_ID, HOTPOT_EXTRA_SOUP_PRICE, HOTPOT_TWO_SOUP_MIN_EQUIV,
   applyHotpotSoups, cleanSoupBases, hotpotSoupBases, hotpotSoupSlots,
 } from '@/lib/hotpot';
 import {
@@ -576,7 +576,14 @@ export default function AdminBookingDetailPage() {
   const hotpotQtyEntries = Object.entries(addOnQty)
     .filter(([, q]) => q > 0)
     .map(([id, quantity]) => ({ id, quantity }));
-  const hotpotSlots = hotpotSoupSlots(guestCount, hotpotQtyEntries);
+  // The 15 line is the CHARGED headcount (a child counts ½), computed the
+  // same way calculatePricing does.
+  const hotpotEquiv = Math.max(0, guestCount - childCount) + 0.5 * childCount;
+  const hotpotSlots = hotpotSoupSlots(hotpotEquiv, hotpotQtyEntries);
+  // Two soups are included from 15, so an extra soup base ticked there is
+  // a paid THIRD soup — usually a leftover from before the group grew.
+  const hotpotExtraAtTwoIncluded = hotpotEquiv >= HOTPOT_TWO_SOUP_MIN_EQUIV
+    && (addOnQty[HOTPOT_EXTRA_SOUP_ID] || 0) > 0 && hotpotSlots > 0;
   const hotpotDirty = hotpotSlots > 0
     && cleanSoupBases(hotpotSoups.slice(0, hotpotSlots)).join(',') !== hotpotSoupBases(booking.addOns).join(',');
   const addOnsDirty = qtyDirty || shishaDirty || customDirty || cateringDirty || hotpotDirty;
@@ -701,7 +708,7 @@ export default function AdminBookingDetailPage() {
                   customPrice: Math.max(0, Math.floor(c.price)),
                 },
               })),
-          ], hotpotSoups, guestCount)
+          ], hotpotSoups, hotpotEquiv)
         : undefined;
       // Snapshot pre-edit values so the followup endpoint can diff and
       // include a "已更改項目" banner in the confirmation email.
@@ -1924,13 +1931,20 @@ export default function AdminBookingDetailPage() {
                   <div className="mt-3 rounded-lg border border-accent/30 bg-accent/5 p-3 space-y-2">
                     <p className="text-xs font-semibold text-ink flex items-center gap-1.5">
                       <Package size={12} className="text-accent" />
-                      {locale === 'zh' ? `火鍋湯底（${guestCount} 人 · 揀 ${hotpotSlots} 個）` : `Hotpot soup base (${guestCount} guests · pick ${hotpotSlots})`}
+                      {locale === 'zh' ? `火鍋湯底（計價 ${hotpotEquiv} 人 · 揀 ${hotpotSlots} 個）` : `Hotpot soup base (${hotpotEquiv} charged guests · pick ${hotpotSlots})`}
                     </p>
                     <p className="text-[11px] text-ink-soft">
                       {locale === 'zh'
-                        ? `${HOTPOT_TWO_SOUP_MIN_GUESTS} 人以下三選一，加購額外湯底每個 +$${HOTPOT_EXTRA_SOUP_PRICE}；${HOTPOT_TWO_SOUP_MIN_GUESTS} 人或以上包兩個，可以揀兩個一樣。`
-                        : `Under ${HOTPOT_TWO_SOUP_MIN_GUESTS}: one of three, extra soup base +$${HOTPOT_EXTRA_SOUP_PRICE} each; ${HOTPOT_TWO_SOUP_MIN_GUESTS}+: two included, may be the same.`}
+                        ? `計價人數（小童計 ½）${HOTPOT_TWO_SOUP_MIN_EQUIV} 位以下三選一，加購額外湯底每個 +$${HOTPOT_EXTRA_SOUP_PRICE}；${HOTPOT_TWO_SOUP_MIN_EQUIV} 位或以上包兩個，可以揀兩個一樣。`
+                        : `Charged guests (kids ½) under ${HOTPOT_TWO_SOUP_MIN_EQUIV}: one of three, extra soup base +$${HOTPOT_EXTRA_SOUP_PRICE} each; ${HOTPOT_TWO_SOUP_MIN_EQUIV}+: two included, may be the same.`}
                     </p>
+                    {hotpotExtraAtTwoIncluded && (
+                      <p className="text-[11px] text-amber-700">
+                        {locale === 'zh'
+                          ? `⚠️ 計價人數已滿 ${HOTPOT_TWO_SOUP_MIN_EQUIV} 位，套餐已包兩個湯底。如果客人係加人先滿 ${HOTPOT_TWO_SOUP_MIN_EQUIV} 位，請取消剔「加購額外湯底」— 嗰 $${HOTPOT_EXTRA_SOUP_PRICE} 會喺消費小計度抵銷返（湯底照舊兩個）。保留即係收多一個（第三個）湯底。`
+                          : `⚠️ ${HOTPOT_TWO_SOUP_MIN_EQUIV}+ charged guests already include two soup bases. If the group grew to reach ${HOTPOT_TWO_SOUP_MIN_EQUIV}, untick "Extra Soup Base" — the $${HOTPOT_EXTRA_SOUP_PRICE} is then offset in the subtotal (still two soups). Keeping it charges for a third soup.`}
+                      </p>
+                    )}
                     <HotpotSoupPicker
                       slots={hotpotSlots}
                       value={hotpotSoups}

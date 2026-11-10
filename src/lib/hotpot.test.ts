@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   HOTPOT_EXTRA_SOUP_PRICE,
   finalizeHotpotAddOns,
+  hkDaysUntil,
+  hotpotExtraSoupOffset,
+  hotpotTooLate,
   hotpotSelectionError,
   hotpotSoupBases,
   hotpotSoupSlots,
@@ -9,19 +12,29 @@ import {
   normalizeHotpotAddOns,
   withHotpotSoups,
 } from './hotpot';
-import { addOns as catalog, calculatePricing, formatAddOnsForStaff } from './pricing';
+import { addOns as catalog, adultEquivalent, calculatePricing, formatAddOnsForStaff } from './pricing';
 import { addOnRevenueForBooking } from './finance';
 import { bookingNeedsSupplierOrder, buildStaffSupplierOrderEmail } from './email';
 import { venues } from './venues';
 import type { BookingRecord } from '@/types';
 
-// Heidi 2026-11-10: a hotpot package must come with a soup base. Under 15
-// guests pick one of three (an extra soup base is +$88); 15 or more get two
-// included, and the two may be the same soup.
+// Heidi 2026-11-10: a hotpot package must come with a soup base. The 15 line
+// is the CHARGED headcount (a child counts ½). Under 15 pick one of three (an
+// extra soup base is +$108); 15 or more get two included, and the two may be
+// the same soup. Every number passed below is that charged headcount.
 const pkg = (soupBases?: string[]) => ({ id: 'hotpot-standard', quantity: 1, ...(soupBases ? { options: { soupBases } } : {}) });
 const extra = { id: 'hotpot-extra-soup', quantity: 1 };
 
 describe('hotpot soup-base rules', () => {
+  it('counts a child as half: 7 adults + 3 children is 8.5, not 10', () => {
+    expect(hotpotSoupSlots(adultEquivalent(7, 3), [pkg()])).toBe(1);
+    // 16 heads but only 14 charged → still one soup.
+    expect(hotpotSoupSlots(adultEquivalent(12, 4), [pkg()])).toBe(1);
+    // 14 adults + 2 children = 15 charged → two soups.
+    expect(hotpotSoupSlots(adultEquivalent(14, 2), [pkg()])).toBe(2);
+    expect(hotpotSoupSlots(14.5, [pkg()])).toBe(1);
+  });
+
   it('gives one pot under 15 guests, two from 15, plus one per paid extra soup', () => {
     expect(hotpotSoupSlots(14, [pkg()])).toBe(1);
     expect(hotpotSoupSlots(15, [pkg()])).toBe(2);
@@ -88,17 +101,58 @@ describe('hotpot soup-base rules', () => {
   });
 });
 
+describe('a booking that grows to 15 offsets the extra soup it paid for', () => {
+  const booked = [pkg(['tomato', 'mala']), extra, { id: 'drinks', quantity: 1 }];
+
+  it('offsets $108 only when the charged headcount crosses from under 15 to 15', () => {
+    expect(hotpotExtraSoupOffset(booked, 12, 15)).toBe(108);
+    expect(hotpotExtraSoupOffset(booked, 14.5, 15.5)).toBe(108);
+    expect(hotpotExtraSoupOffset(booked, 12, 14)).toBe(0);   // still under 15
+    expect(hotpotExtraSoupOffset(booked, 15, 18)).toBe(0);   // was already 15+
+    expect(hotpotExtraSoupOffset([pkg(['tomato'])], 12, 16)).toBe(0); // no extra soup bought
+    expect(hotpotExtraSoupOffset([extra], 12, 16)).toBe(0);  // no hotpot package
+  });
+
+  it('nets the offset against the added guests and keeps both soups', () => {
+    const cwb = venues.find((v) => v.id === 'cwb')!;
+    const before = calculatePricing(cwb, false, 5, 12, booked);
+    const afterAddOns = normalizeHotpotAddOns(booked, 15);
+    const after = calculatePricing(cwb, false, 5, 15, afterAddOns);
+    const perGuest = cwb.pricing.weekday.perHead * 5 + 168 + 25; // rent + hotpot + drinks
+    expect(after.subtotal - before.subtotal).toBe(3 * perGuest - 108);
+    expect(hotpotSoupBases(afterAddOns)).toEqual(['tomato', 'mala']);
+    expect(hotpotSelectionError(afterAddOns, 15)).toBeNull();
+  });
+});
+
+describe('hotpot needs 3 days notice', () => {
+  const now = Date.parse('2026-11-10T15:00:00+08:00');
+  it('counts whole Hong Kong calendar days', () => {
+    expect(hkDaysUntil('2026-11-10', now)).toBe(0);
+    expect(hkDaysUntil('2026-11-13', now)).toBe(3);
+    // 23:30 HKT is still the 10th in Hong Kong, even though UTC has not rolled over either.
+    expect(hkDaysUntil('2026-11-13', Date.parse('2026-11-10T23:30:00+08:00'))).toBe(3);
+    // 00:30 HKT on the 11th is already the 11th in Hong Kong (the 10th in UTC).
+    expect(hkDaysUntil('2026-11-13', Date.parse('2026-11-11T00:30:00+08:00'))).toBe(2);
+  });
+  it('refuses an event 2 days away and accepts one 3 days away', () => {
+    expect(hotpotTooLate('2026-11-11', now)).toBe(true);
+    expect(hotpotTooLate('2026-11-12', now)).toBe(true);
+    expect(hotpotTooLate('2026-11-13', now)).toBe(false);
+  });
+});
+
 describe('hotpot pricing and staff surfaces', () => {
   const cwb = venues.find((v) => v.id === 'cwb')!;
 
-  it('charges $88 for the extra soup base everywhere money is computed', () => {
-    expect(HOTPOT_EXTRA_SOUP_PRICE).toBe(88);
-    expect(catalog.find((a) => a.id === 'hotpot-extra-soup')?.pricePerUnit).toBe(88);
+  it('charges $108 for the extra soup base everywhere money is computed', () => {
+    expect(HOTPOT_EXTRA_SOUP_PRICE).toBe(108);
+    expect(catalog.find((a) => a.id === 'hotpot-extra-soup')?.pricePerUnit).toBe(108);
     const priced = calculatePricing(cwb, false, 5, 10, [pkg(['tomato', 'mala']), extra]);
-    expect(priced.addOnTotal).toBe(168 * 10 + 88);
-    expect(priced.breakdown.find((b) => b.label.zh.includes('額外湯底'))?.amount).toBe(88);
+    expect(priced.addOnTotal).toBe(168 * 10 + 108);
+    expect(priced.breakdown.find((b) => b.label.zh.includes('額外湯底'))?.amount).toBe(108);
     const booking = { venueId: 'cwb', guestCount: 10, addOns: [pkg(['tomato', 'mala']), extra] } as unknown as BookingRecord;
-    expect(addOnRevenueForBooking(booking, 'hotpot-extra-soup')).toBe(88);
+    expect(addOnRevenueForBooking(booking, 'hotpot-extra-soup')).toBe(108);
   });
 
   it('prices the same at a venue the old list excluded (e.g. 尖沙咀)', () => {

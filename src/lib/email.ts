@@ -789,7 +789,7 @@ export function buildStaffSupplierOrderEmail(params: {
     // decided) is flagged so CS chases it before ordering.
     if (hotpotStd || hotpotSea) {
       const picks = hotpotSoupBases(booking.addOns);
-      const slots = hotpotSoupSlots(booking.guestCount, booking.addOns);
+      const slots = hotpotSoupSlots(adultEquiv, booking.addOns);
       const soupLine = picks.length > 0
         ? `• 湯底（共 ${slots} 個）：<strong>${hotpotSoupSummary(picks, 'zh')}</strong>`
         : '';

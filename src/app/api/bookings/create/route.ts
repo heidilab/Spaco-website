@@ -12,7 +12,7 @@ import { calcPromoDiscount } from '@/lib/promoCodes';
 import { getHoliday } from '@/lib/hkHolidays';
 import { BookingInputError, bookingInterval, finiteNumber, pricePackage, validateAddOns, sanitizeAdminDiscount } from '@/lib/bookingSecurity';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
-import { finalizeHotpotAddOns, hotpotSelectionError, normalizeHotpotAddOns } from '@/lib/hotpot';
+import { finalizeHotpotAddOns, hotpotSelectionError, hotpotTooLate, isHotpotAddOn, normalizeHotpotAddOns } from '@/lib/hotpot';
 import type { PromoCode } from '@/types';
 import { assertNoSettlementDebt } from '@/lib/settlementDebtServer';
 import { overlappingBookings, type OverlapBooking, type OverlapWindow } from '@/lib/bookingOverlap';
@@ -125,17 +125,22 @@ export async function POST(req: NextRequest) {
   if (!Number.isInteger(guestCount) || !Number.isInteger(childCount)) throw new BookingInputError('INVALID_GUESTS');
   const adultCount = guestCount - childCount;
   // Customer self-bookings: hotpot rules are enforced here too (the form
-  // already blocks, this stops a hand-built request). The paid extra soup
-  // base is dropped once the headcount includes two, blank soup picks are
-  // stripped, and a hotpot package without a soup per pot is refused.
-  // CS links (drafts) are exempt — staff may issue one before the
-  // customer has decided, and fill the soup in on the booking later.
+  // already blocks, this stops a hand-built request). The 15 line is the
+  // CHARGED headcount (a child counts ½). The extra soup base is dropped
+  // once that headcount includes two, blank soup picks are stripped, a
+  // hotpot package without a soup per pot is refused, and hotpot needs 3
+  // days' notice. CS links (drafts) are exempt — staff may issue one
+  // before the customer has decided, or closer to the date by arrangement.
+  const hotpotEquiv = adultEquivalent(adultCount, childCount);
   const addOns = draftId
     ? (rest.addOns || [])
-    : normalizeHotpotAddOns(finalizeHotpotAddOns(validateAddOns(rest.addOns || [], rest.packageSlug)), guestCount);
+    : normalizeHotpotAddOns(finalizeHotpotAddOns(validateAddOns(rest.addOns || [], rest.packageSlug)), hotpotEquiv);
   if (!draftId && !rest.packageSlug) {
-    const hotpotError = hotpotSelectionError(addOns, guestCount);
+    const hotpotError = hotpotSelectionError(addOns, hotpotEquiv);
     if (hotpotError) throw new BookingInputError(hotpotError);
+    if (addOns.some((a: { id: string }) => isHotpotAddOn(a.id)) && hotpotTooLate(String(date))) {
+      throw new BookingInputError('HOTPOT_LEAD_TIME');
+    }
   }
   // 特別日子 (peak day) rule — surcharge + raised minimums per date/branch;
   // forceWeekendRate charges a weekday at the weekend tier.

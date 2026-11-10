@@ -31,8 +31,9 @@ import {
 import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
 import HotpotSoupPicker from '@/components/booking/HotpotSoupPicker';
 import {
-  HOTPOT_EXTRA_SOUP_ID, HOTPOT_EXTRA_SOUP_PRICE, HOTPOT_TWO_SOUP_MIN_GUESTS,
-  hotpotPackageEntry, hotpotSelectionError, hotpotSoupSlots, normalizeHotpotAddOns, withHotpotSoups,
+  HOTPOT_EXTRA_SOUP_ID, HOTPOT_EXTRA_SOUP_PRICE, HOTPOT_MIN_ADVANCE_DAYS, HOTPOT_TWO_SOUP_MIN_EQUIV,
+  hotpotExtraSoupOffset, hotpotPackageEntry, hotpotSelectionError, hotpotSoupSlots, isHotpotAddOn,
+  normalizeHotpotAddOns, withHotpotSoups,
 } from '@/lib/hotpot';
 import { paymentErrorMessage } from '@/lib/paymentErrors';
 import { BookingRecord, AddOnOptions } from '@/types';
@@ -121,6 +122,8 @@ export default function ModifyBookingPage() {
   const hoursUntilStart = booking ? (startMs - Date.now()) / 3600000 : Infinity;
   const canModify = !!booking && (booking.status === 'confirmed' || booking.status === 'awaiting_payment') && hoursUntilStart >= 24;
   const canAddFood = hoursUntilStart >= 48;
+  // Hotpot needs one more day than the other food add-ons (3 days).
+  const canAddHotpot = hoursUntilStart >= HOTPOT_MIN_ADVANCE_DAYS * 24;
 
   // Package bookings: flat price — only early-setup can be self-added.
   const isPackage = !!booking?.packageSlug;
@@ -154,26 +157,42 @@ export default function ModifyBookingPage() {
   const isOvernight = !!booking?.endDate && booking.endDate !== booking.date;
 
   // ─── Hotpot soup bases (火鍋湯底) — rules in lib/hotpot.ts ───
-  // A hotpot package must carry one soup pick per pot: 1 under 15 guests
-  // (+1 with the paid extra soup base), 2 from 15 guests. Adding guests
-  // here can move a booking across the 15 line, so the pot count follows
-  // the NEW headcount.
+  // A hotpot package must carry one soup pick per pot. The 15 line is the
+  // CHARGED headcount (a child counts ½): 1 pot under 15 (+1 with the
+  // paid extra soup base), 2 from 15. Adding guests here can move a
+  // booking across that line, so the pot count follows the NEW headcount.
+  const newAdultEquiv = adultCount + 0.5 * childCount;
+  const bookedAdultEquiv = adultFloor + 0.5 * childFloor;
   const hotpotEntry = hotpotPackageEntry(cart);
-  const hotpotSlots = hotpotSoupSlots(newGuestCount, cart);
+  const hotpotSlots = hotpotSoupSlots(newAdultEquiv, cart);
   const hotpotSoupPicks = hotpotEntry?.options?.soupBases || [];
-  const paidExtraSoup = (floor[HOTPOT_EXTRA_SOUP_ID] || 0) > 0;
-  const hotpotSoupOK = isPackage || hotpotSelectionError(cart, newGuestCount) === null;
+  const paidExtraSoupQty = floor[HOTPOT_EXTRA_SOUP_ID] || 0;
+  const hotpotSoupOK = isPackage || hotpotSelectionError(cart, newAdultEquiv) === null;
+  // Growing from under 15 to 15: two soups are now included, so the extra
+  // soup base already paid for comes off the bill — its price is offset
+  // against what the added guests cost. The customer keeps both soups.
+  const extraSoupOffset = isPackage ? 0 : hotpotExtraSoupOffset(booking?.addOns, bookedAdultEquiv, newAdultEquiv);
   // The extra soup base is only on offer with a hotpot package, and only
-  // while the group is under 15 (two are included from 15). One already
-  // paid for stays visible — add-ons here are never removed.
-  const showExtraSoup = paidExtraSoup
-    || (!!hotpotEntry && newGuestCount < HOTPOT_TWO_SOUP_MIN_GUESTS);
+  // while the group is under 15. One already paid for stays visible.
+  const showExtraSoup = extraSoupOffset === 0
+    && (paidExtraSoupQty > 0 || (!!hotpotEntry && newAdultEquiv < HOTPOT_TWO_SOUP_MIN_EQUIV));
   useEffect(() => {
-    // Never touch an extra soup base the customer already paid for.
-    setCart((prev) => (paidExtraSoup && !hotpotPackageEntry(prev)
-      ? prev
-      : normalizeHotpotAddOns(prev, newGuestCount, { stripIncludedExtra: !paidExtraSoup })));
-  }, [cart, newGuestCount, paidExtraSoup]);
+    setCart((prev) => {
+      if (extraSoupOffset > 0) return normalizeHotpotAddOns(prev, newAdultEquiv);
+      if (paidExtraSoupQty > 0) {
+        // Back under 15 on this form (the added guests were taken off
+        // again): the paid extra soup base returns. Otherwise never touch
+        // an extra soup base the customer already paid for.
+        const next = prev.some((a) => a.id === HOTPOT_EXTRA_SOUP_ID)
+          ? prev
+          : [...prev, { id: HOTPOT_EXTRA_SOUP_ID, quantity: paidExtraSoupQty }];
+        return hotpotPackageEntry(next)
+          ? normalizeHotpotAddOns(next, newAdultEquiv, { stripIncludedExtra: false })
+          : next;
+      }
+      return normalizeHotpotAddOns(prev, newAdultEquiv);
+    });
+  }, [cart, newAdultEquiv, paidExtraSoupQty, extraSoupOffset]);
 
   const newHours = useMemo(() => {
     if (!startTime || !endTime) return booking?.hours ?? 0;
@@ -368,7 +387,7 @@ export default function ModifyBookingPage() {
           setError(locale === 'zh'
             ? '距離活動少於 48 小時，BBQ／火鍋等唔可以後加。'
             : 'Food add-ons can no longer be added within 48 hours.');
-        } else if (data.error === 'HOTPOT_SOUP_REQUIRED' || data.error === 'HOTPOT_EXTRA_SOUP_INVALID') {
+        } else if (data.error === 'HOTPOT_SOUP_REQUIRED' || data.error === 'HOTPOT_EXTRA_SOUP_INVALID' || data.error === 'HOTPOT_LEAD_TIME') {
           setError(paymentErrorMessage(data.error, locale));
         } else {
           setError((locale === 'zh' ? '儲存失敗：' : 'Save failed: ') + (data.error || 'unknown'));
@@ -594,7 +613,8 @@ export default function ModifyBookingPage() {
               const qty = getQty(a.id);
               const atFloor = isFloor(a.id, qty);
               const isFood = FOOD_IDS.has(a.id);
-              const lockedFood = isFood && !canAddFood && qty === floor[a.id];
+              const hotpotLate = isHotpotAddOn(a.id) && !canAddHotpot;
+              const lockedFood = isFood && (!canAddFood || hotpotLate) && qty === (floor[a.id] || 0);
               // Catering — options-driven, opens the picker modal instead
               // of a quantity stepper. Add/expand only (≥48h lead time).
               if (a.id === 'catering') {
@@ -655,6 +675,13 @@ export default function ModifyBookingPage() {
                           {locale === 'zh' ? `已預訂 × ${floor[a.id]}（不可減少）` : `Already booked × ${floor[a.id]} (locked)`}
                         </p>
                       )}
+                      {hotpotLate && canAddFood && !(floor[a.id] > 0) && (
+                        <p className="text-[11px] text-amber-700 mt-1">
+                          {locale === 'zh'
+                            ? `距離活動少於 ${HOTPOT_MIN_ADVANCE_DAYS} 日，火鍋唔可以後加`
+                            : `Hotpot cannot be added within ${HOTPOT_MIN_ADVANCE_DAYS} days of the event`}
+                        </p>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <button
@@ -685,8 +712,8 @@ export default function ModifyBookingPage() {
                       </p>
                       <p className="text-xs text-muted mb-3">
                         {locale === 'zh'
-                          ? `${HOTPOT_TWO_SOUP_MIN_GUESTS} 人以下湯底三選一（可加購額外湯底，每個 +$${HOTPOT_EXTRA_SOUP_PRICE}）；${HOTPOT_TWO_SOUP_MIN_GUESTS} 人或以上可揀兩個，可以揀兩個一樣。`
-                          : `Under ${HOTPOT_TWO_SOUP_MIN_GUESTS} guests: one of three (an extra soup base is +$${HOTPOT_EXTRA_SOUP_PRICE}); ${HOTPOT_TWO_SOUP_MIN_GUESTS}+ guests: pick two, they can be the same.`}
+                          ? `計價人數（小童計 ½）${HOTPOT_TWO_SOUP_MIN_EQUIV} 位以下湯底三選一（可加購額外湯底，每個 +$${HOTPOT_EXTRA_SOUP_PRICE}）；${HOTPOT_TWO_SOUP_MIN_EQUIV} 位或以上可揀兩個，可以揀兩個一樣。`
+                          : `Under ${HOTPOT_TWO_SOUP_MIN_EQUIV} charged guests (kids count ½): one of three (an extra soup base is +$${HOTPOT_EXTRA_SOUP_PRICE}); ${HOTPOT_TWO_SOUP_MIN_EQUIV}+: pick two, they can be the same.`}
                       </p>
                       <HotpotSoupPicker
                         slots={hotpotSlots}
@@ -719,6 +746,16 @@ export default function ModifyBookingPage() {
               <span className="text-sm text-ink-soft">{locale === 'zh' ? '新小計' : 'New subtotal'}</span>
               <span className="text-sm font-semibold">HK${(isPackage ? booking.pricing.subtotal + subtotalDiff : (newPricing?.subtotal || 0)).toLocaleString()}</span>
             </div>
+            {extraSoupOffset > 0 && (
+              <div className="flex items-start justify-between gap-3 mb-3 text-emerald-700">
+                <span className="text-xs leading-relaxed">
+                  {locale === 'zh'
+                    ? `計價人數滿 ${HOTPOT_TWO_SOUP_MIN_EQUIV} 位，火鍋套餐已包兩個湯底 — 之前加購湯底嘅費用已喺新小計入面抵銷（湯底照舊兩個）`
+                    : `${HOTPOT_TWO_SOUP_MIN_EQUIV}+ charged guests: the hotpot package now includes two soup bases, so the extra soup base you paid for is offset in the new subtotal (you keep both soups)`}
+                </span>
+                <span className="text-sm font-semibold whitespace-nowrap">−HK${extraSoupOffset.toLocaleString()}</span>
+              </div>
+            )}
             <div className="flex items-center justify-between mb-4 pt-3 border-t border-white/40">
               <span className="font-bold">{locale === 'zh' ? '需補付' : 'Top-up'}</span>
               <span className="font-bold text-2xl text-gradient-pink">HK${subtotalDiff.toLocaleString()}</span>
