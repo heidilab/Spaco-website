@@ -3,7 +3,9 @@ import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { sendEmail, buildBonusProgressEmail, buildBonusAchievedEmail } from '@/lib/email';
 import { getStaffNotificationRecipients } from '@/lib/emailAutomations';
-import { countsForFinance, branchKey as branchKeyOf } from '@/lib/finance';
+import { countsForFinance } from '@/lib/finance';
+import { loadAllVenuesServer } from '@/lib/venueRegistryServer';
+import { salesBranchKey, salesBranches } from '@/lib/bonusBranches';
 import { evaluateBonus, sortedTiers } from '@/lib/bonusMath';
 import type { BookingRecord, BonusConfig } from '@/types';
 
@@ -42,17 +44,21 @@ export async function GET(request: NextRequest) {
     .where('date', '>=', `${month}-01`)
     .where('date', '<=', `${month}-31`)
     .get();
+  // Branch roll-up + names come from the venue registry (lib/bonusBranches),
+  // the same source as the CS 獎金 page — a branch added in 分店管理 (e.g.
+  // 尖沙咀 HART, three rooms → one branch) is covered without a code change.
+  const venues = await loadAllVenuesServer();
   const salesByBranch: Record<string, number> = {};
   for (const d of snap.docs) {
     const b = { id: d.id, ...d.data() } as BookingRecord;
     if (!countsForFinance(b)) continue;   // prod basis: test bookings excluded
-    const key = branchKeyOf(b.venueId);
+    const key = salesBranchKey(b.venueId, venues);
     salesByBranch[key] = (salesByBranch[key] || 0) + (b.pricing?.subtotal || 0);
   }
 
-  const BRANCH_NAMES: Record<string, string> = {
-    cwb: '銅鑼灣店', sw: '上環店', tst: '尖沙咀店', wanchai: '灣仔店',
-  };
+  const BRANCH_NAMES: Record<string, string> = Object.fromEntries(
+    salesBranches(venues, branchEntries.map(([bk]) => bk)).map((b) => [b.key, b.name.zh]),
+  );
   // Recipients come from the live staff roster (admin + cs accounts in
   // 員工管理) — nothing to configure on the bonus page (Heidi 2026-09-07).
   const recipients = await getStaffNotificationRecipients();

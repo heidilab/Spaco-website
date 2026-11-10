@@ -14,13 +14,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllBookings } from '@/lib/firestore';
-import { branchKey as branchKeyOf, countsForFinance } from '@/lib/finance';
+import { countsForFinance } from '@/lib/finance';
+import { loadAllVenues } from '@/lib/venueRegistry';
+import { salesBranchKey, salesBranches, type SalesBranch } from '@/lib/bonusBranches';
 import { getBonusConfig, saveBonusConfig } from '@/lib/bonus';
 import { evaluateBonus, sortedTiers } from '@/lib/bonusMath';
-import type { BookingRecord, BonusConfig, BonusTier } from '@/types';
+import type { BookingRecord, BonusConfig, BonusTier, Venue } from '@/types';
 import { Award, Loader2, Plus, Trash2, Check, Settings2 } from 'lucide-react';
 
-const BRANCHES = ['cwb', 'sw', 'tst', 'wanchai'];
+// Branches come from the venue registry (lib/bonusBranches) so one added in
+// 分店管理 gets a card + target settings here. These are just the short
+// labels the original four have always shown; new branches use their
+// 分店管理 name.
 const BRANCH_LABELS: Record<string, { zh: string; en: string }> = {
   cwb: { zh: '銅鑼灣', en: 'CWB' },
   sw: { zh: '上環', en: 'SW' },
@@ -56,6 +61,7 @@ export default function BonusPage() {
 
   const [allBookings, setAllBookings] = useState<BookingRecord[]>([]);
   const [cfg, setCfg] = useState<BonusConfig | null>(null);
+  const [venues, setVenues] = useState<Venue[]>([]);
   const [loading, setLoading] = useState(true);
   const [flash, setFlash] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -68,8 +74,9 @@ export default function BonusPage() {
 
   useEffect(() => {
     if (!canAccess || !user) { setLoading(false); return; }
-    Promise.all([getAllBookings(), getBonusConfig()])
-      .then(([all, c]) => { setAllBookings(all); setCfg(c); })
+    // loadAllVenues falls back to the static four if the registry is unreachable.
+    Promise.all([getAllBookings(), getBonusConfig(), loadAllVenues()])
+      .then(([all, c, v]) => { setAllBookings(all); setCfg(c); setVenues(v); })
       .finally(() => setLoading(false));
   }, [canAccess, user]);
 
@@ -86,12 +93,22 @@ export default function BonusPage() {
       if (cache.has(key)) return cache.get(key)!;
       const v = allBookings
         .filter((b) => countsForFinance(b, { includeTest: isPreviewHost })
-          && b.date.startsWith(month) && branchKeyOf(b.venueId) === bk)
+          && b.date.startsWith(month) && salesBranchKey(b.venueId, venues) === bk)
         .reduce((s, b) => s + (b.pricing.subtotal || 0), 0);
       cache.set(key, v);
       return v;
     };
-  }, [allBookings, isPreviewHost]);
+  }, [allBookings, isPreviewHost, venues]);
+
+  /** The original four + every active branch in 分店管理 (and any branch
+   *  that already has saved targets). */
+  const branches = useMemo<SalesBranch[]>(() => {
+    const configured = Object.entries(cfg?.branches || {})
+      .filter(([, b]) => (b.tiers || []).length > 0)
+      .map(([key]) => key);
+    return salesBranches(venues, configured);
+  }, [venues, cfg]);
+  const labelOf = (b: SalesBranch) => BRANCH_LABELS[b.key]?.[locale] ?? b.name[locale];
 
   // ── Settings edits (drafts held locally, saved as one doc) ──
   function updateBranchTiers(bk: string, tiers: BonusTier[]) {
@@ -162,11 +179,12 @@ export default function BonusPage() {
           {settingsOpen && isAdminRole && (
             <div className="bg-white rounded-xl border p-5 space-y-5">
               <h2 className="font-semibold">{zh ? '目標與通知設定' : 'Targets & Notifications'}</h2>
-              {BRANCHES.map((bk) => {
+              {branches.map((branch) => {
+                const bk = branch.key;
                 const b = cfg.branches[bk] || { tiers: [] };
                 return (
                   <div key={bk} className="border rounded-lg p-4 space-y-3">
-                    <div className="font-medium">{BRANCH_LABELS[bk][locale]}</div>
+                    <div className="font-medium">{labelOf(branch)}</div>
                     {(b.tiers.length ? b.tiers : []).map((t, i) => (
                       <div key={i} className="flex items-center gap-2 text-sm flex-wrap">
                         <span className="text-gray-500 w-14">{zh ? `第 ${i + 1} 層` : `Tier ${i + 1}`}</span>
@@ -209,7 +227,8 @@ export default function BonusPage() {
 
           {/* ── This month's progress ── */}
           <div className="grid md:grid-cols-2 gap-4">
-            {BRANCHES.map((bk) => {
+            {branches.map((branch) => {
+              const bk = branch.key;
               const tiers = sortedTiers((cfg.branches[bk]?.tiers || []).filter((t) => t.target > 0));
               const sales = salesFor(bk, month);
               const ev = evaluateBonus(sales, tiers);
@@ -218,7 +237,7 @@ export default function BonusPage() {
               return (
                 <div key={bk} className="bg-white rounded-xl border p-5 space-y-3">
                   <div className="flex items-center justify-between">
-                    <div className="font-semibold">{BRANCH_LABELS[bk][locale]}</div>
+                    <div className="font-semibold">{labelOf(branch)}</div>
                     {ev.totalBonus > 0 && (
                       <span className="text-xs bg-green-100 text-green-800 rounded-full px-2 py-0.5 font-semibold">
                         🎉 {zh ? '獎金' : 'Bonus'} ${fmt(ev.totalBonus)}
@@ -282,8 +301,8 @@ export default function BonusPage() {
               <thead>
                 <tr className="text-gray-500 border-b">
                   <th className="text-left py-2">{zh ? '月份' : 'Month'}</th>
-                  {BRANCHES.map((bk) => (
-                    <th key={bk} className="text-right">{BRANCH_LABELS[bk][locale]}</th>
+                  {branches.map((branch) => (
+                    <th key={branch.key} className="text-right pl-3">{labelOf(branch)}</th>
                   ))}
                   <th className="text-right font-semibold">{zh ? '合共' : 'Total'}</th>
                 </tr>
@@ -291,7 +310,7 @@ export default function BonusPage() {
               <tbody>
                 {history.map((m) => {
                   let rowTotal = 0;
-                  const cells = BRANCHES.map((bk) => {
+                  const cells = branches.map(({ key: bk }) => {
                     const tiers = (cfg.branches[bk]?.tiers || []).filter((t) => t.target > 0);
                     if (!tiers.length) return { bonus: 0, sales: 0 };
                     const sales = salesFor(bk, m);
