@@ -32,6 +32,7 @@ import { getPackageBySlug } from '@/lib/packages';
 import { getDecorationById } from '@/lib/decorations';
 import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
 import HotpotSoupPicker from '@/components/booking/HotpotSoupPicker';
+import { shishaAddOnOptions, shishaOptionsChanged } from '@/lib/shishaOptions';
 import {
   HOTPOT_EXTRA_SOUP_ID, HOTPOT_EXTRA_SOUP_PRICE, HOTPOT_TWO_SOUP_MIN_EQUIV,
   applyHotpotSoups, cleanSoupBases, hotpotSoupBases, hotpotSoupSlots,
@@ -405,19 +406,7 @@ export default function AdminBookingDetailPage() {
         .filter(([, q]) => q > 0)
         .map(([id, quantity]) => {
           if (id === 'shisha') {
-            const flavors = (shishaOptions.flavors || []).filter((f) => !!f);
-            return {
-              id,
-              quantity,
-              options: {
-                pipes: shishaOptions.pipes,
-                flavors,
-                staffSetup: shishaOptions.staffSetup,
-                ...(shishaOptions.staffSetup && shishaOptions.staffSetupTime
-                  ? { staffSetupTime: shishaOptions.staffSetupTime }
-                  : {}),
-              },
-            };
+            return { id, quantity, options: shishaAddOnOptions(shishaOptions) };
           }
           if (id === 'catering' && cateringSelection) {
             return { id, quantity: 1, options: cateringSelection };
@@ -527,17 +516,12 @@ export default function AdminBookingDetailPage() {
   // without changing qty, so we need a separate check that diffs pipes
   // / per-head flavors / staff-setup against what's stored on the
   // booking's existing shisha entry.
+  // The staff-setup TIME counts too — changing only the time used to be
+  // invisible here, so it could not be saved on its own.
   const storedShisha = booking.addOns?.find((a) => a.id === 'shisha');
-  const storedFlavors = storedShisha?.options?.flavors || [];
-  const flavorsLine = (arr: string[]) =>
-    arr.map((f) => f || '').join(',');
   const shishaDirty =
     (addOnQty['shisha'] || 0) > 0
-    && (
-      (storedShisha?.options?.pipes ?? 1) !== shishaOptions.pipes
-      || !!storedShisha?.options?.staffSetup !== shishaOptions.staffSetup
-      || flavorsLine(storedFlavors) !== flavorsLine(shishaOptions.flavors)
-    );
+    && shishaOptionsChanged(storedShisha?.options, shishaOptions);
   // Custom add-ons dirty: compare current customAddOns array against
   // what's stored. Any add / remove / rename / reprice flips dirty.
   const storedCustomLine = (b: BookingRecord) =>
@@ -678,16 +662,9 @@ export default function AdminBookingDetailPage() {
               .filter(([, q]) => q > 0)
               .map(([id, quantity]) => {
                 if (id === 'shisha') {
-                  const flavors = (shishaOptions.flavors || []).filter((f) => !!f);
-                  return {
-                    id,
-                    quantity,
-                    options: {
-                      pipes: shishaOptions.pipes,
-                      flavors,
-                      staffSetup: shishaOptions.staffSetup,
-                    },
-                  };
+                  // Shared builder — keeps the customer's staff-setup
+                  // TIME, which this save path used to drop.
+                  return { id, quantity, options: shishaAddOnOptions(shishaOptions) };
                 }
                 if (id === 'catering' && cateringSelection) {
                   return { id, quantity: 1, options: cateringSelection };
@@ -2123,16 +2100,7 @@ export default function AdminBookingDetailPage() {
                       .filter(([, q]) => q > 0)
                       .map(([id, quantity]) => {
                         if (id === 'shisha') {
-                          const flavors = (shishaOptions.flavors || []).filter((f) => !!f);
-                          return {
-                            id,
-                            quantity,
-                            options: {
-                              pipes: shishaOptions.pipes,
-                              flavors,
-                              staffSetup: shishaOptions.staffSetup,
-                            },
-                          };
+                          return { id, quantity, options: shishaAddOnOptions(shishaOptions) };
                         }
                         if (id === 'catering' && cateringSelection) {
                           return { id, quantity: 1, options: cateringSelection };
