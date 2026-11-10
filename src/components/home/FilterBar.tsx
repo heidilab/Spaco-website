@@ -93,7 +93,7 @@ export default function FilterBar({ onFilterChange }: FilterBarProps) {
               <ChevronDown size={16} className={`transition-transform ${openDropdown === 'capacity' ? 'rotate-180' : ''}`} />
             </button>
             {openDropdown === 'capacity' && (
-              <div className="absolute top-full left-0 right-0 mt-2 glass-strong rounded-3xl z-20 overflow-hidden p-1.5">
+              <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-charcoal/10 shadow-glass-lg rounded-3xl z-20 overflow-hidden p-1.5">
                 {capacityOptions.map((opt) => (
                   <button
                     key={opt}
@@ -101,7 +101,7 @@ export default function FilterBar({ onFilterChange }: FilterBarProps) {
                     className={`w-full px-4 py-3 text-left text-sm rounded-2xl transition-colors ${
                       filters.capacity === opt
                         ? 'bg-gradient-pink text-white font-semibold'
-                        : 'hover:bg-white/60 text-ink'
+                        : 'hover:bg-pink/10 text-ink'
                     }`}
                   >
                     {t(`capacityOptions.${opt}`)}
@@ -129,7 +129,7 @@ export default function FilterBar({ onFilterChange }: FilterBarProps) {
               <ChevronDown size={16} className={`transition-transform ${openDropdown === 'vibe' ? 'rotate-180' : ''}`} />
             </button>
             {openDropdown === 'vibe' && (
-              <div className="absolute top-full left-0 right-0 mt-2 glass-strong rounded-3xl z-20 overflow-hidden p-1.5">
+              <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-charcoal/10 shadow-glass-lg rounded-3xl z-20 overflow-hidden p-1.5">
                 {vibeOptions.map((opt) => (
                   <button
                     key={opt}
@@ -137,7 +137,7 @@ export default function FilterBar({ onFilterChange }: FilterBarProps) {
                     className={`w-full px-4 py-3 text-left text-sm rounded-2xl transition-colors ${
                       filters.vibe === opt
                         ? 'bg-gradient-cool text-white font-semibold'
-                        : 'hover:bg-white/60 text-ink'
+                        : 'hover:bg-pink/10 text-ink'
                     }`}
                   >
                     {t(`vibeOptions.${opt}`)}

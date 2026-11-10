@@ -126,8 +126,10 @@ export default function CollectionSection() {
           </div>
         </motion.div>
 
-        {/* Filter Bar */}
-        <div className="mb-10">
+        {/* Filter Bar — lifted above the venue grid so its dropdowns are
+         *  not covered by the cards below (the 4th capacity option used to
+         *  sit hidden behind the first row of cards). */}
+        <div className="mb-10 relative z-20">
           <FilterBar onFilterChange={handleFilterChange} />
         </div>
 

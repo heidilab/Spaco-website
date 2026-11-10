@@ -97,7 +97,12 @@ export default function Header() {
                 {spacesOpen && (
                   <div
                     onMouseLeave={() => setSpacesOpen(false)}
-                    className="absolute top-full left-1/2 -translate-x-1/2 mt-3 min-w-[260px] glass-strong rounded-2xl shadow-glass-lg p-2"
+                    // Solid panel, not glass: a backdrop blur nested inside
+                    // the header pill (itself a blurred glass layer) does
+                    // not blur the page behind it, so the old 60%-white
+                    // panel let the hero text show straight through the
+                    // options (Heidi 2026-11-11).
+                    className="absolute top-full left-1/2 -translate-x-1/2 mt-3 min-w-[260px] bg-white rounded-2xl border border-charcoal/10 shadow-glass-lg p-2"
                     role="menu"
                   >
                     {/* "All spaces" link first */}
@@ -109,13 +114,13 @@ export default function Header() {
                     >
                       {locale === 'zh' ? '🌟 所有派對空間' : '🌟 All Party Spaces'}
                     </Link>
-                    <div className="my-1 border-t border-white/50" />
+                    <div className="my-1 border-t border-charcoal/10" />
                     {BRANCH_LINKS.map((b) => (
                       <Link
                         key={b.slug}
                         href={`/branches/${b.slug}`}
                         onClick={() => setSpacesOpen(false)}
-                        className="block px-4 py-2.5 rounded-xl text-sm text-ink-soft hover:bg-white/70 hover:text-ink transition-colors"
+                        className="block px-4 py-2.5 rounded-xl text-sm text-ink hover:bg-pink/10 hover:text-pink transition-colors"
                         role="menuitem"
                       >
                         {b.label[locale]}
