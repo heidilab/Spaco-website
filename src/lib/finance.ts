@@ -264,8 +264,11 @@ export interface MonthCloseSales {
   shisha: number;
   cater: number;
   drinks: number;
-  /** 會員積分優惠 — points redeemed against the bill, as a NEGATIVE. */
-  points: number;
+  /** 會員積分 / 優惠碼 — points redeemed and promo-code discount taken
+   *  off the bill, together, as a NEGATIVE (Heidi 2026-11-13: one column
+   *  for both). A free-drinks promo is NOT here: the drinks it gave away
+   *  are simply left out of Drinks, as she books them by hand. */
+  pointsPromo: number;
   /** 信用卡手續費 — the card surcharge the customer paid on top. Income:
    *  the gateway's full fee on those payments is an expense (KPay 對帳). */
   cardSurcharge: number;
@@ -283,7 +286,7 @@ export interface MonthCloseSales {
  * were listed beside the total but never added into it).
  *
  *   Total = bill (pricing.subtotal) + deposit deductions kept
- *           + card surcharge received − points redeemed
+ *           + card surcharge received − points redeemed − promo-code discount
  *
  * `excludedFromEventMonth` is settlement debt not received by month end
  * (settlementDebt.settlementCashTiming): it comes off 加時/罰款 first,
@@ -303,15 +306,22 @@ export function monthCloseSales(b: BookingRecord, excludedFromEventMonth = 0): M
   const rentCut = Math.min(c.rent, excluded - fromPenalty);
   const rent = c.rent - rentCut;
   const extPenalty = other + penalty - fromPenalty;
-  const points = -(b.pointsDiscount || 0);
+  // Free-drinks promo (marked by promoFreeDrinksCost): she does not enter
+  // the drinks at all rather than booking them and discounting them back.
+  // Whatever the code discounts beyond the drinks (a combined % + free
+  // drinks code) still goes to the promo column.
+  const promo = b.promoDiscount || 0;
+  const freeDrinks = (b.promoFreeDrinksCost || 0) > 0 ? Math.min(c.drinks, promo) : 0;
+  const drinks = c.drinks - freeDrinks;
+  const pointsPromo = 0 - ((b.pointsDiscount || 0) + promo - freeDrinks); // 0 − x, never −0
   const cardSurcharge = (b.payments || []).reduce((s, p) => s + (p.cardSurcharge || 0), 0);
   const out = {
-    rent: r2(rent), bbqHotpot: r2(c.bbqHotpot), shisha: r2(c.shisha), cater: r2(c.cater), drinks: r2(c.drinks),
-    points: r2(points), cardSurcharge: r2(cardSurcharge), extPenalty: r2(extPenalty),
+    rent: r2(rent), bbqHotpot: r2(c.bbqHotpot), shisha: r2(c.shisha), cater: r2(c.cater), drinks: r2(drinks),
+    pointsPromo: r2(pointsPromo), cardSurcharge: r2(cardSurcharge), extPenalty: r2(extPenalty),
   };
   return {
     ...out,
-    total: r2(out.rent + out.bbqHotpot + out.shisha + out.cater + out.drinks + out.points + out.cardSurcharge + out.extPenalty),
+    total: r2(out.rent + out.bbqHotpot + out.shisha + out.cater + out.drinks + out.pointsPromo + out.cardSurcharge + out.extPenalty),
   };
 }
 

@@ -3,11 +3,13 @@
 // PURE module (no xlsx, no firebase): it lays the sheet out as plain
 // cells with formulas and a style tag each; 月結 turns that into a real
 // worksheet. Calibrated against her own file
-// (CWB2026-2027 Financial Master.xlsx, tabs SEP-2026 / OCT-2026):
+// (CWB2026-2027 Financial Master.xlsx, tabs SEP-2026 / OCT-2026). Her
+// column I reads 會員積分優惠; it now also carries promo-code discounts,
+// hence 會員積分 / 優惠碼 (her call, 2026-11-13):
 //
 //   A Date | B Time | C ppl
 //   D Rent | E BBQ/ Hotpot | F Shisha | G 到會 | H Drinks
-//   I 會員積分優惠 | J 信用卡手續費 | K 加時/罰款 | L Total (=SUM(D:K))
+//   I 會員積分 / 優惠碼 | J 信用卡手續費 | K 加時/罰款 | L Total (=SUM(D:K))
 //   M Date | N Payment Methods | O Amount | P Total      (Transaction)
 //   Q Vendor | R Amount                                   (DR / Expenses)
 //   S Source | T Returned Deposit | U Remarks
@@ -27,7 +29,8 @@ export interface MasterSheetBooking {
   shisha: number;
   cater: number;
   drinks: number;
-  points: number;
+  /** 會員積分 / 優惠碼 — negative. */
+  pointsPromo: number;
   cardSurcharge: number;
   extPenalty: number;
   transactions: Array<{ date: string; method: string; amount: number }>;
@@ -109,7 +112,7 @@ export function buildMasterMonthSheet(input: MasterSheetInput): MasterSheet {
   put(3, 12, 'Transaction', 'group'); merge(3, 12, 3, 15);
   const headers = [
     'Date', 'Time', 'ppl', 'Rent', 'BBQ/ Hotpot', 'Shisha', '到會', 'Drinks',
-    '會員積分優惠', '信用卡手續費', '加時/罰款', 'Total ',
+    '會員積分 / 優惠碼', '信用卡手續費', '加時/罰款', 'Total ',
     'Date', 'Payment Methods', 'Amount', 'Total', 'Vendor', 'Amount',
   ];
   headers.forEach((h, c) => put(4, c, h, 'header'));
@@ -126,7 +129,7 @@ export function buildMasterMonthSheet(input: MasterSheetInput): MasterSheet {
     put(r, 1, b.time, 'text');
     put(r, 2, b.ppl, 'text');
     // Zero columns stay blank, as on her sheet.
-    const salesCols = [b.rent, b.bbqHotpot, b.shisha, b.cater, b.drinks, b.points, b.cardSurcharge, b.extPenalty];
+    const salesCols = [b.rent, b.bbqHotpot, b.shisha, b.cater, b.drinks, b.pointsPromo, b.cardSurcharge, b.extPenalty];
     salesCols.forEach((v, i) => put(r, 3 + i, v || '', 'money'));
     const total = r2(salesCols.reduce((s, v) => s + v, 0));
     put(r, 11, total, 'moneyBold', `SUM(${ref(r, 3)}:${ref(r, 10)})`);
@@ -174,7 +177,7 @@ export function buildMasterMonthSheet(input: MasterSheetInput): MasterSheet {
     r2(input.bookings.reduce((s, b) => s + pick(b), 0));
   const colSums = [
     sumOf((b) => b.rent), sumOf((b) => b.bbqHotpot), sumOf((b) => b.shisha), sumOf((b) => b.cater),
-    sumOf((b) => b.drinks), sumOf((b) => b.points), sumOf((b) => b.cardSurcharge), sumOf((b) => b.extPenalty),
+    sumOf((b) => b.drinks), sumOf((b) => b.pointsPromo), sumOf((b) => b.cardSurcharge), sumOf((b) => b.extPenalty),
   ];
   colSums.forEach((v, i) => put(r, 3 + i, v, 'sum', `SUM(${ref(FIRST, 3 + i)}:${ref(LAST, 3 + i)})`));
   sales = r2(sales); expenses = r2(expenses); returned = r2(returned);

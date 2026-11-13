@@ -24,14 +24,20 @@ sheet; she wanted the workbook she keeps by hand
 - `finance.monthCloseSales(booking, excluded)` — one booking's Sales columns in
   her terms, always adding up to Total:
   `Total = bill (pricing.subtotal) + deposit deductions kept
-  + card surcharge received − points redeemed`.
-  Columns: Rent, BBQ/Hotpot, Shisha, 到會, Drinks, 會員積分優惠 (negative),
-  信用卡手續費, 加時/罰款. Anything on the bill outside the five product columns
+  + card surcharge received − points redeemed − promo-code discount`.
+  Columns: Rent, BBQ/Hotpot, Shisha, 到會, Drinks, 會員積分 / 優惠碼 (negative),
+  信用卡手續費, 加時/罰款. Her sheet's column is 會員積分優惠; she confirmed it
+  is a negative and asked for promo-code discounts to share it, renamed
+  會員積分 / 優惠碼 (2026-11-13). 月結 sales were gross of promo codes before.
+  A free-drinks code is the exception, also her call: the drinks it gave away
+  are left out of Drinks (as she books them by hand), not booked and
+  discounted back; only what such a code discounts beyond the drinks goes to
+  the promo column. Anything on the bill outside the five product columns
   (custom items, early set-up) rides in 加時/罰款 so a row never fails to add up.
   Settlement debt not received by month end still comes off 加時/罰款 first,
   then rent.
 - 月結 uses it for Total Sales, the channel sales and the Sales Income
-  Proportion rows (which now add up to Total Sales, with 會員積分優惠 and
+  Proportion rows (which now add up to Total Sales, with 會員積分 / 優惠碼 and
   信用卡手續費 rows as in her Master).
 - KPay fee ESTIMATE (payments whose statement is not uploaded) is now
   `% × credited amount + card surcharge`, so booking the surcharge as income
@@ -50,7 +56,7 @@ sheet; she wanted the workbook she keeps by hand
 ## Effect on existing numbers
 
 月結 Total Sales, Profit and split amounts change for any month with deposit
-deductions, card-surcharge payments or points redeemed — closed months
+deductions, card-surcharge payments, points redeemed or a promo code — closed months
 included, since all of this is derived live. Compare against her own sheets on
 the test site before release.
 
@@ -64,7 +70,5 @@ the test site before release.
   日之苑 …) are stored expenses in the system with no booking link, so they
   list with the month's expenses at the bottom of the tab, not beside the
   booking. Totals are the same.
-- Promo-code discounts: 月結 sales stay gross of promo codes, as before. Her
-  sheet has no column for them. Open question for her.
 - 財務總覽 → Sales Record export keeps its 19-column layout and totals.
 - Not exercised in the browser against live data in this session.

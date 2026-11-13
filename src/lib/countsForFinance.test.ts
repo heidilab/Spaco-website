@@ -86,10 +86,43 @@ describe('monthCloseSales', () => {
     expect(monthCloseSales(oct31).total).toBe(10440);
   });
 
-  it('takes 會員積分優惠 off as a negative column', () => {
+  it('takes points redeemed off as a negative in 會員積分 / 優惠碼', () => {
     const s = monthCloseSales(booking({ pricing: { baseCharge: 5000, subtotal: 5000 }, pointsDiscount: 150 }));
-    expect(s.points).toBe(-150);
+    expect(s.pointsPromo).toBe(-150);
     expect(s.total).toBe(4850);
+  });
+
+  it('takes a promo-code discount off in the same column', () => {
+    const promo = monthCloseSales(booking({ pricing: { baseCharge: 5000, subtotal: 5000 }, promoDiscount: 500 }));
+    expect(promo).toEqual(expect.objectContaining({ rent: 5000, pointsPromo: -500, total: 4500 }));
+    // Both on one booking: one figure, the two added together.
+    const both = monthCloseSales(booking({ pricing: { baseCharge: 5000, subtotal: 5000 }, promoDiscount: 500, pointsDiscount: 150 }));
+    expect(both.pointsPromo).toBe(-650);
+    expect(both.total).toBe(4350);
+  });
+
+  it('leaves free-drinks promo drinks out of Drinks instead of discounting them back', () => {
+    // 20 guests, drinks add-on $25 each = $500, given free by the code.
+    const free = booking({
+      guestCount: 20, addOns: [{ id: 'drinks', quantity: 1 }],
+      pricing: { baseCharge: 6960, addOnTotal: 500, subtotal: 7460 },
+      promoDiscount: 500, promoFreeDrinksCost: 500,
+    });
+    const paidDrinks = monthCloseSales(booking({
+      guestCount: 20, addOns: [{ id: 'drinks', quantity: 1 }],
+      pricing: { baseCharge: 6960, addOnTotal: 500, subtotal: 7460 },
+    })).drinks;
+    expect(paidDrinks).toBeGreaterThan(0); // the same booking without a code books its drinks
+    const s = monthCloseSales(free);
+    expect(s).toEqual(expect.objectContaining({ rent: 6960, drinks: 0, pointsPromo: 0, total: 6960 }));
+    // A combined code (free drinks + money off): only the rest is in the promo column.
+    const combo = monthCloseSales(booking({
+      guestCount: 20, addOns: [{ id: 'drinks', quantity: 1 }],
+      pricing: { baseCharge: 6960, addOnTotal: 500, subtotal: 7460 },
+      promoDiscount: paidDrinks + 300, promoFreeDrinksCost: paidDrinks + 300,
+    }));
+    expect(combo).toEqual(expect.objectContaining({ drinks: 0, pointsPromo: -300 }));
+    expect(combo.total).toBe(7460 - paidDrinks - 300);
   });
 
   it('every row adds up, with bill items outside the five columns in 加時/罰款', () => {
@@ -97,7 +130,7 @@ describe('monthCloseSales', () => {
     const s = monthCloseSales(booking({ pricing: { baseCharge: 6000, addOnTotal: 500, subtotal: 6500 } }));
     expect(s.extPenalty).toBe(500);
     expect(s.total).toBe(6500);
-    expect(s.rent + s.bbqHotpot + s.shisha + s.cater + s.drinks + s.points + s.cardSurcharge + s.extPenalty).toBe(s.total);
+    expect(s.rent + s.bbqHotpot + s.shisha + s.cater + s.drinks + s.pointsPromo + s.cardSurcharge + s.extPenalty).toBe(s.total);
   });
 
   it('leaves out settlement debt not received: 加時/罰款 first, then rent', () => {

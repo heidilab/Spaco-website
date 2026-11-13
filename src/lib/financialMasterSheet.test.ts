@@ -5,7 +5,7 @@ const bk = (
   date: string, time: string, ppl: number | string, sales: Partial<MasterSheetBooking>,
   transactions: Array<[string, string, number]>, expenses: Array<[string, number]>, source: string, returnedDeposit: number,
 ): MasterSheetBooking => ({
-  date, time, ppl, rent: 0, bbqHotpot: 0, shisha: 0, cater: 0, drinks: 0, points: 0, cardSurcharge: 0, extPenalty: 0,
+  date, time, ppl, rent: 0, bbqHotpot: 0, shisha: 0, cater: 0, drinks: 0, pointsPromo: 0, cardSurcharge: 0, extPenalty: 0,
   ...sales,
   transactions: transactions.map(([d, method, amount]) => ({ date: d, method, amount })),
   expenses: expenses.map(([vendor, amount]) => ({ vendor, amount })),
@@ -43,11 +43,11 @@ describe('buildMasterMonthSheet — her OCT-2026 (CWB) tab', () => {
     expect(sheet.totals).toEqual({ sales: 66142.37, expenses: 58654.91, profit: 7487.46, returned: 12100 });
   });
 
-  it('uses her 21 columns, with 會員積分優惠 and 信用卡手續費 before 加時/罰款', () => {
+  it('uses her 21 columns, with 會員積分 / 優惠碼 and 信用卡手續費 before 加時/罰款', () => {
     const header = sheet.cells.filter((x) => x.r === 4).sort((a, b) => a.c - b.c).map((x) => x.v);
     expect(header).toEqual([
       'Date', 'Time', 'ppl', 'Rent', 'BBQ/ Hotpot', 'Shisha', '到會', 'Drinks',
-      '會員積分優惠', '信用卡手續費', '加時/罰款', 'Total ',
+      '會員積分 / 優惠碼', '信用卡手續費', '加時/罰款', 'Total ',
       'Date', 'Payment Methods', 'Amount', 'Total', 'Vendor', 'Amount',
     ]);
     expect(at('S2')?.v).toBe('Source');

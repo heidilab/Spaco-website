@@ -111,8 +111,9 @@ interface MonthNumbers {
   channelSales: Record<string, number>;
   channelCounts: Record<string, number>;
   /** Sales by column of her monthly sheet — they add up to `sales`.
-   *  points is negative (會員積分優惠); cardSurcharge is 信用卡手續費. */
-  cats: { rent: number; bbqHotpot: number; shisha: number; cater: number; drinks: number; points: number; cardSurcharge: number; extPenalty: number; lateCollections: number };
+   *  pointsPromo is negative (會員積分 / 優惠碼: points redeemed + promo
+   *  codes); cardSurcharge is 信用卡手續費. */
+  cats: { rent: number; bbqHotpot: number; shisha: number; cater: number; drinks: number; pointsPromo: number; cardSurcharge: number; extPenalty: number; lateCollections: number };
   /** The month's rows as they go on the Financial Master monthly tab. */
   sheetBookings: MasterSheetBooking[];
   /** This month's bookings with settlement debt not received by month end. */
@@ -235,7 +236,7 @@ export default function MonthClosePage() {
       countsForFinance(b, { includeTest: isPreviewHost })
       && b.date.startsWith(m)
       && branchKeyOf(b.venueId, venues) === branch);
-    const cats = { rent: 0, bbqHotpot: 0, shisha: 0, cater: 0, drinks: 0, points: 0, cardSurcharge: 0, extPenalty: 0, lateCollections: 0 };
+    const cats = { rent: 0, bbqHotpot: 0, shisha: 0, cater: 0, drinks: 0, pointsPromo: 0, cardSurcharge: 0, extPenalty: 0, lateCollections: 0 };
     let sales = 0, commissions = 0, discounts = 0;
     const kpayRows: MonthNumbers['kpayRows'] = [];
     const sheetBookings: MasterSheetBooking[] = [];
@@ -258,7 +259,7 @@ export default function MonthClosePage() {
       sales += total;
       cats.rent += c.rent; cats.bbqHotpot += c.bbqHotpot; cats.shisha += c.shisha;
       cats.cater += c.cater; cats.drinks += c.drinks; cats.extPenalty += c.extPenalty;
-      cats.points += c.points; cats.cardSurcharge += c.cardSurcharge;
+      cats.pointsPromo += c.pointsPromo; cats.cardSurcharge += c.cardSurcharge;
       // DR lines of this booking — the Vendor / Amount rows beside it.
       const drItems: Array<{ vendor: string; amount: number }> = [];
       if (config) {
@@ -295,7 +296,7 @@ export default function MonthClosePage() {
         time: `${b.startTime}-${b.endTime}`,
         ppl: kids > 0 ? adults + 0.5 * kids : b.guestCount,
         rent: c.rent, bbqHotpot: c.bbqHotpot, shisha: c.shisha, cater: c.cater, drinks: c.drinks,
-        points: c.points, cardSurcharge: c.cardSurcharge, extPenalty: c.extPenalty,
+        pointsPromo: c.pointsPromo, cardSurcharge: c.cardSurcharge, extPenalty: c.extPenalty,
         // What actually moved: credited amount + any card surcharge on top
         // (the figure on the KPay statement).
         transactions: bookingTransactions(b).map((t) => ({
@@ -319,7 +320,7 @@ export default function MonthClosePage() {
         lateList.push({ id: b.id, eventMonth: b.date.slice(0, 7), amount: l.amount });
         sheetBookings.push({
           date: b.date, time: '補收舊單欠款', ppl: '',
-          rent: 0, bbqHotpot: 0, shisha: 0, cater: 0, drinks: 0, points: 0, cardSurcharge: 0, extPenalty: l.amount,
+          rent: 0, bbqHotpot: 0, shisha: 0, cater: 0, drinks: 0, pointsPromo: 0, cardSurcharge: 0, extPenalty: l.amount,
           transactions: [], expenses: [], source: '', returnedDeposit: null,
           remarks: `#${b.id.slice(0, 8)} ${b.customerName || ''} 原月份 ${monthLabel(b.date.slice(0, 7))}，今個月先收到`.replace(/\s+/g, ' '),
         });
@@ -655,7 +656,7 @@ export default function MonthClosePage() {
       const catKeys: Array<[keyof MonthNumbers['cats'], string]> = [
         ['rent', 'Rent'], ['bbqHotpot', 'BBQ/Hotpot'], ['shisha', 'Shisha'],
         ['cater', '到會'], ['drinks', 'Drinks'],
-        ['points', '會員積分優惠'], ['cardSurcharge', '信用卡手續費'],
+        ['pointsPromo', '會員積分 / 優惠碼'], ['cardSurcharge', '信用卡手續費'],
         ['extPenalty', '加時/罰款'],
         ['lateCollections', '補收舊單欠款'],
       ];
