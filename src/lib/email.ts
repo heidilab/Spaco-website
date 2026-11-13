@@ -2,7 +2,7 @@
 
 import type { BookingRecord, AddOnOptions } from '@/types';
 import { discountedSubtotal } from './bookingMoney';
-import { addOnPartialPax, calcShishaPrice } from './pricing';
+import { addOnEntryUnitPrice, addOnPartialPax, calcShishaPrice } from './pricing';
 import { HOTPOT_EXTRA_SOUP_PRICE, hotpotSoupBases, hotpotSoupSlots, hotpotSoupSummary } from './hotpot';
 import { getDecorationById } from './decorations';
 import {
@@ -746,7 +746,9 @@ export function buildStaffBookingNotificationEmail(params: {
 
 /** Detect whether a booking has any supplier-triggering add-on. */
 export function bookingNeedsSupplierOrder(booking: BookingRecord): boolean {
-  const SUPPLIER_IDS = new Set(['hotpot-standard', 'hotpot-seafood', 'hotpot-extra-soup', 'shisha', 'bbq-helper', 'catering']);
+  // bbq-premium (BBQ 豪華套餐): its food is ordered from a supplier per
+  // booking (Heidi 2026-11-13) — the standard BBQ package is not.
+  const SUPPLIER_IDS = new Set(['hotpot-standard', 'hotpot-seafood', 'hotpot-extra-soup', 'shisha', 'bbq-helper', 'bbq-premium', 'catering']);
   if ((booking.addOns || []).some((a) => SUPPLIER_IDS.has(a.id))) return true;
   if (booking.decorationStyle) return true;
   return false;
@@ -805,6 +807,20 @@ export function buildStaffSupplierOrderEmail(params: {
       }
     }
     sections.push(supplierSection('🍲', '火鍋', '須最少 3 日前向供應商落單', lines));
+  }
+
+  // ── BBQ 豪華套餐 ──
+  const bbqPremium = booking.addOns?.find((a) => a.id === 'bbq-premium');
+  if (bbqPremium) {
+    // Portions actually sold: the whole group, unless staff set the
+    // package for part of it. Price = what this booking was sold at.
+    const pax = addOnPartialPax(bbqPremium);
+    const heads = pax ?? adultEquiv;
+    const unit = addOnEntryUnitPrice(bbqPremium, { id: booking.venueId });
+    sections.push(supplierSection('🍖', 'BBQ 豪華套餐', '須最少 2 日前向供應商落單', [
+      `• BBQ 豪華套餐 × ${pax ? `${pax}位` : guestLabel}（每位 $${unit}，總計 HK$${Math.round(unit * heads).toLocaleString()}）`,
+      `• 時段：${booking.startTime} – ${booking.endTime}（${booking.hours} 小時）`,
+    ]));
   }
 
   // ── Shisha ──
