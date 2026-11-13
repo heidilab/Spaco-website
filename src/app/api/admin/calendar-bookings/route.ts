@@ -13,7 +13,8 @@ export async function GET(req: NextRequest) {
     if (canManage) return { ...data, id: doc.id };
     // Calendar-only staff get operational fields, never financials, customer contacts or passcodes.
     const result: Record<string, unknown> = { id: doc.id, userId: '' };
-    for (const key of ['venueId', 'date', 'endDate', 'startTime', 'endTime', 'hours', 'guestCount', 'status', 'isTest']) {
+    // staffRemark is the note staff write FOR the cleaner — operational, not customer data.
+    for (const key of ['venueId', 'date', 'endDate', 'startTime', 'endTime', 'hours', 'guestCount', 'status', 'isTest', 'staffRemark']) {
       if (data[key] !== undefined) result[key] = data[key];
     }
     return result;

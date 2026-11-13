@@ -493,6 +493,13 @@ export interface BookingRecord {
   draftId?: string;
   /** Google Calendar event id once this booking has been pushed (sync direction A). */
   googleEventId?: string;
+  /** 內部備註 — a remark staff write for colleagues and the cleaner (things
+   *  to prepare, things to watch). Never shown to the customer. Saved via
+   *  /api/admin/booking-remark, which also rewrites the Google Calendar
+   *  event so the cleaner sees it there. */
+  staffRemark?: string;
+  staffRemarkUpdatedAt?: unknown;
+  staffRemarkUpdatedBy?: string;
   createdAt: unknown;
   updatedAt: unknown;
   depositRefund: {

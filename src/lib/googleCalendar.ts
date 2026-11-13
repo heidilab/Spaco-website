@@ -454,6 +454,9 @@ function buildEventDescription(b: BookingRecord, customerName?: string, notes?: 
     const dueDate = b.balanceDueDate ? `（限期 ${b.balanceDueDate}）` : '';
     lines.push(`⚠️ 未找清尾數 HK$${b.balanceDue.toLocaleString()}${dueDate}`, '');
   }
+  // Staff remark (內部備註) — written on the admin calendar for colleagues
+  // and the cleaner, who reads Google Calendar only. Kept at the top.
+  if (b.staffRemark) lines.push(`📝 備註 Remark: ${b.staffRemark}`, '');
   lines.push(`Booking ID: ${b.id}`);
   if (customerName) lines.push(`姓名: ${customerName}`);
   if (b.whatsappPhone) lines.push(`WhatsApp: ${formatPhone(b.whatsappPhone)}`);

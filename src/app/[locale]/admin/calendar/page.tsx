@@ -17,6 +17,7 @@ import { venues as staticVenues } from '@/lib/venues';
 import { loadAllVenues, venuesSnapshot } from '@/lib/venueRegistry';
 import type { Venue } from '@/types';
 import { formatAddOnsForStaff } from '@/lib/pricing';
+import StaffRemarkEditor from '@/components/booking/StaffRemarkEditor';
 import {
   ChevronLeft, ChevronRight, Lock, Calendar, Eye, Truck, Trash2,
   ExternalLink, Plus, X, Package,
@@ -575,6 +576,12 @@ export default function AdminCalendarPage() {
           submitting={submitting}
           onClose={() => setDetailsModal(null)}
           onDelete={canSchedule ? handleDeleteItem : undefined}
+          onRemarkSaved={(bookingId, remark) => {
+            // Show the new remark at once in the day list and this pop-up.
+            const patch = (b: BookingRecord) => (b.id === bookingId ? { ...b, staffRemark: remark || undefined } : b);
+            setBookings((prev) => prev.map(patch));
+            setDetailsModal((prev) => (prev && prev.kind === 'booking' ? { ...prev, data: patch(prev.data) } : prev));
+          }}
         />
       )}
     </div>
@@ -785,6 +792,11 @@ function SummaryItemMeta({ item, locale }: { item: DayItem; locale: 'zh' | 'en' 
             <span className="line-clamp-2">{addOnsLine}</span>
           </p>
         )}
+        {b.staffRemark && (
+          <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 mt-1 whitespace-pre-wrap">
+            📝 {b.staffRemark}
+          </p>
+        )}
       </>
     );
   }
@@ -954,13 +966,15 @@ function TypeTab({
 // ──────────────────────────────────────────────────────────
 
 function DetailsModal({
-  item, locale, submitting, onClose, onDelete,
+  item, locale, submitting, onClose, onDelete, onRemarkSaved,
 }: {
   item: DayItem;
   locale: 'zh' | 'en';
   submitting: boolean;
   onClose: () => void;
   onDelete?: () => void;
+  /** A booking's staff remark was saved — refresh it in the lists behind. */
+  onRemarkSaved: (bookingId: string, remark: string) => void;
 }) {
   const venueName = (venueId: string) =>
     venuesSnapshot().find((v) => v.id === venueId)?.name[locale] || venueId;
@@ -970,7 +984,7 @@ function DetailsModal({
       <div className="fixed inset-0 bg-charcoal/50 z-[70]" onClick={onClose} />
       <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[70] glass-strong rounded-3xl p-8 shadow-glass-lg w-full max-w-md mx-4">
         {item.kind === 'booking' && (
-          <BookingDetails booking={item.data} venueName={venueName} locale={locale} onClose={onClose} />
+          <BookingDetails booking={item.data} venueName={venueName} locale={locale} onClose={onClose} onRemarkSaved={onRemarkSaved} />
         )}
         {item.kind === 'block' && (
           <BlockDetails slot={item.data} venueName={venueName} locale={locale} submitting={submitting} onClose={onClose} onDelete={onDelete} />
@@ -987,12 +1001,13 @@ function DetailsModal({
 }
 
 function BookingDetails({
-  booking, venueName, locale, onClose,
+  booking, venueName, locale, onClose, onRemarkSaved,
 }: {
   booking: BookingRecord;
   venueName: (id: string) => string;
   locale: 'zh' | 'en';
   onClose: () => void;
+  onRemarkSaved: (bookingId: string, remark: string) => void;
 }) {
   const { hasPermission } = useAuth();
   const statusLabel = booking.status === 'confirmed' ? (locale === 'zh' ? '已確認' : 'Confirmed')
@@ -1009,6 +1024,16 @@ function BookingDetails({
       <Row label={locale === 'zh' ? '人數' : 'Guests'}>{booking.guestCount}</Row>
       <Row label={locale === 'zh' ? '狀態' : 'Status'}>{statusLabel}</Row>
       {booking.whatsappPhone && <Row label="WhatsApp">{booking.whatsappPhone}</Row>}
+      {/* 內部備註 — CS / admin write it here; it also goes to Google Calendar. */}
+      <div className="mt-4">
+        <StaffRemarkEditor
+          bookingId={booking.id}
+          remark={booking.staffRemark}
+          locale={locale}
+          canEdit={hasPermission('bookings')}
+          onSaved={(remark) => onRemarkSaved(booking.id, remark)}
+        />
+      </div>
       <div className="flex gap-3 mt-5">
         {hasPermission('bookings') && <Link href={`/${locale}/admin/bookings/${booking.id}`} className="flex-1 btn-primary justify-center">
           <ExternalLink size={14} />
