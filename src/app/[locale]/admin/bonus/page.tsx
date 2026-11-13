@@ -104,7 +104,7 @@ export default function BonusPage() {
    *  that already has saved targets). */
   const branches = useMemo<SalesBranch[]>(() => {
     const configured = Object.entries(cfg?.branches || {})
-      .filter(([, b]) => (b.tiers || []).length > 0)
+      .filter(([, b]) => (b.tiers || []).length > 0 || (b.baseSalary || 0) > 0)
       .map(([key]) => key);
     return salesBranches(venues, configured);
   }, [venues, cfg]);
@@ -113,7 +113,11 @@ export default function BonusPage() {
   // ── Settings edits (drafts held locally, saved as one doc) ──
   function updateBranchTiers(bk: string, tiers: BonusTier[]) {
     if (!cfg) return;
-    setCfg({ ...cfg, branches: { ...cfg.branches, [bk]: { tiers } } });
+    setCfg({ ...cfg, branches: { ...cfg.branches, [bk]: { ...(cfg.branches[bk] || {}), tiers } } });
+  }
+  function updateBaseSalary(bk: string, baseSalary: number) {
+    if (!cfg) return;
+    setCfg({ ...cfg, branches: { ...cfg.branches, [bk]: { tiers: cfg.branches[bk]?.tiers || [], baseSalary } } });
   }
   async function handleSave() {
     if (!cfg) return;
@@ -123,6 +127,7 @@ export default function BonusPage() {
       const cleaned: BonusConfig = {
         branches: Object.fromEntries(Object.entries(cfg.branches).map(([bk, b]) => [bk, {
           tiers: sortedTiers((b.tiers || []).filter((t) => t.target > 0 && t.bonus > 0)),
+          baseSalary: Math.max(0, Number(b.baseSalary) || 0),
         }])),
       };
       await saveBonusConfig(cleaned);
@@ -185,6 +190,20 @@ export default function BonusPage() {
                 return (
                   <div key={bk} className="border rounded-lg p-4 space-y-3">
                     <div className="font-medium">{labelOf(branch)}</div>
+                    {/* 底薪: month close books base + the month's bonus as the
+                        branch's Sales Salary expense (Heidi 2026-11-13). */}
+                    <div className="flex items-center gap-2 text-sm flex-wrap">
+                      <span className="text-gray-500 w-14">{zh ? '底薪' : 'Base pay'}</span>
+                      <span className="text-gray-400">{zh ? '每月' : 'Monthly'} $</span>
+                      <input
+                        type="number" min={0} value={b.baseSalary || ''}
+                        onChange={(e) => updateBaseSalary(bk, Number(e.target.value))}
+                        className="border rounded px-2 py-1 w-28 text-right"
+                      />
+                      <span className="text-xs text-gray-400">
+                        {zh ? '月結會將「底薪 + 當月獎金」當成呢間分店嘅 Sales Salary 支出' : 'Month close books base + this month\'s bonus as the branch\'s Sales Salary expense'}
+                      </span>
+                    </div>
                     {(b.tiers.length ? b.tiers : []).map((t, i) => (
                       <div key={i} className="flex items-center gap-2 text-sm flex-wrap">
                         <span className="text-gray-500 w-14">{zh ? `第 ${i + 1} 層` : `Tier ${i + 1}`}</span>

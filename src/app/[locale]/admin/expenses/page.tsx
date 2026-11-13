@@ -23,10 +23,10 @@ import { branchKey as branchKeyOf, branchGroupName, countsForFinance, financeBra
 import { loadAllVenues } from '@/lib/venueRegistry';
 import {
   listExpenses, addExpense, updateExpense, deleteExpense,
-  listTemplates, addTemplate, updateTemplate, deleteTemplate, seedRecurring,
+  listTemplates, addTemplate, updateTemplate, deleteTemplate, seedRecurring, sameExpenseItem,
   getFinanceConfig, saveFinanceConfig, type FinanceConfig,
 } from '@/lib/expenses';
-import { commissionForBooking, discountedSubtotal } from '@/lib/bookingMoney';
+import { commissionForBooking, commissionBase, depositDeductionsKept } from '@/lib/bookingMoney';
 import { listKpayStatements } from '@/lib/monthClose';
 import { reconcileKpayFees, kpayFeeOf, sumKpayFees, type KpayReconciliation } from '@/lib/kpayReconcile';
 import { channelDisplayLabel, getMarketingChannelOptions, type MarketingChannelOption } from '@/lib/marketingChannels';
@@ -187,20 +187,27 @@ export default function ExpensesPage() {
     await load();
   }
 
-  async function saveOverride(b: BookingRecord) {
-    const draft = overrideDrafts[b.id];
-    if (draft === undefined) return;
-    const trimmed = draft.trim();
-    const v = trimmed === '' ? null : parseFloat(trimmed);
-    if (v !== null && (!Number.isFinite(v) || v < 0)) return;
-    await updateDoc(doc(db, 'bookings', b.id), {
-      ...(v === null ? { commissionOverride: null } : { commissionOverride: v }),
-      updatedAt: serverTimestamp(),
-    });
-    setFlash(locale === 'zh' ? '✓ 佣金已更新' : '✓ Commission updated');
-    setTimeout(() => setFlash(null), 1500);
-    await load();
+  /** Save the typed commission for one booking (null = back to auto). A
+   *  typed amount equal to the auto amount is stored anyway: she wants
+   *  「呢張單就係呢個數」 to stick even if the rule changes later. */
+  async function saveOverride(b: BookingRecord, value: number | null) {
+    setSavingOverride(b.id);
+    try {
+      await updateDoc(doc(db, 'bookings', b.id), {
+        commissionOverride: value,
+        updatedAt: serverTimestamp(),
+      });
+      setOverrideDrafts((p) => { const n = { ...p }; delete n[b.id]; return n; });
+      setFlash(value === null
+        ? (locale === 'zh' ? '✓ 已還原自動計算' : '✓ Back to auto')
+        : (locale === 'zh' ? `✓ 佣金已儲存：HK$${value.toLocaleString()}` : `✓ Commission saved: HK$${value.toLocaleString()}`));
+      setTimeout(() => setFlash(null), 2000);
+      await load();
+    } finally {
+      setSavingOverride(null);
+    }
   }
+  const [savingOverride, setSavingOverride] = useState<string | null>(null);
 
   if (!canAccess) {
     return <div className="text-center py-20 text-ink-soft">{locale === 'zh' ? '無權限存取' : 'Access Denied'}</div>;
@@ -302,8 +309,13 @@ export default function ExpensesPage() {
                         {t.active ? (locale === 'zh' ? '生效中' : 'Active') : (locale === 'zh' ? '已停用' : 'Off')}
                       </button>
                       <button onClick={async () => {
-                        if (!window.confirm(locale === 'zh' ? `刪除固定項目「${t.name}」？（已入帳嘅月份唔受影響）` : `Delete template "${t.name}"?`)) return;
-                        await deleteTemplate(t.id); await load();
+                        if (!window.confirm(locale === 'zh'
+                          ? `刪除固定項目「${t.name}」？\n\n${month} 同之後月份已入帳嘅「${t.name}」會一併刪除；${month} 之前嘅月份唔受影響。`
+                          : `Delete template "${t.name}"?\n\nIts rows in ${month} and later months are removed too; earlier months are untouched.`)) return;
+                        const removed = await deleteTemplate(t.id, month);
+                        setFlash(locale === 'zh' ? `✓ 已刪除「${t.name}」${removed > 0 ? `，連同 ${removed} 個月份嘅入帳` : ''}` : `✓ Deleted "${t.name}"${removed > 0 ? ` and ${removed} month row(s)` : ''}`);
+                        setTimeout(() => setFlash(null), 2500);
+                        await load();
                       }} className="w-7 h-7 rounded-lg hover:bg-rose-50 text-rose-400 flex items-center justify-center">
                         <Trash2 size={12} />
                       </button>
@@ -329,9 +341,26 @@ export default function ExpensesPage() {
             )}
 
             <div className="space-y-1.5">
-              {recurringRows.map((r) => (
+              {recurringRows.map((r, idx) => {
+                const orphan = !!r.templateId && !templates.some((t) => t.id === r.templateId);
+                const duplicate = recurringRows.findIndex((o) => sameExpenseItem(o.item, r.item)) < idx;
+                return (
                 <div key={r.id} className="flex items-center gap-2 text-sm">
-                  <span className="flex-1">{r.item}</span>
+                  <span className="flex-1">
+                    {r.item}
+                    {orphan && (
+                      <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded-pill border bg-amber-50 text-amber-700 border-amber-200 whitespace-nowrap"
+                        title={locale === 'zh' ? '呢個固定項目已經刪除；呢行係之前入咗帳嘅，唔要就撳垃圾桶' : 'Its template was deleted; this row was seeded earlier — delete it if not wanted'}>
+                        {locale === 'zh' ? '固定項目已刪除' : 'Template deleted'}
+                      </span>
+                    )}
+                    {duplicate && (
+                      <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded-pill border bg-rose-50 text-rose-600 border-rose-200 whitespace-nowrap"
+                        title={locale === 'zh' ? '同名項目本月出現多過一次' : 'Same item appears more than once this month'}>
+                        {locale === 'zh' ? '重複' : 'Duplicate'}
+                      </span>
+                    )}
+                  </span>
                   <input
                     type="number"
                     value={amountDrafts[r.id] ?? String(r.amount)}
@@ -344,7 +373,8 @@ export default function ExpensesPage() {
                     await deleteExpense(r.id); await load();
                   }} className="w-7 h-7 rounded-lg hover:bg-rose-50 text-rose-400 flex items-center justify-center"><Trash2 size={12} /></button>
                 </div>
-              ))}
+                );
+              })}
               {recurringRows.length === 0 && (
                 <p className="text-xs text-ink-soft italic">{locale === 'zh' ? '本月未有固定開支 — 先喺「設定固定項目」加項目。' : 'None this month — define templates first.'}</p>
               )}
@@ -388,32 +418,63 @@ export default function ExpensesPage() {
 
           {/* 佣金（自動） */}
           <div className="glass-card p-6">
-            <h2 className="font-bold mb-1">{locale === 'zh' ? '佣金（自動計算）' : 'Commissions (auto)'}</h2>
+            <h2 className="font-bold mb-1">{locale === 'zh' ? '佣金（自動計算，可手動改）' : 'Commissions (auto, editable)'}</h2>
             <p className="text-xs text-ink-soft mb-3">
               {locale === 'zh'
-                ? '按渠道規則自動計：行家 = 只計場租（食品飲品豁免）；Reubird = 全單消費。每單可以直接改金額（議價單）。'
-                : 'Per channel rules: 行家 = rent only (F&B exempt); Reubird = full consumption. Override any booking inline.'}
+                ? '按渠道規則自動計，計埋扣按金嘅加時／罰款：行家 = 場租 + 加時/罰款（食品飲品豁免）；Reubird = 全單 + 加時/罰款。金額有出入就直接改個數，撳「儲存」— 儲存咗嘅數以後都用返呢個，月結亦跟呢個。'
+                : 'Per channel rules, including 加時/罰款 kept from the deposit: 行家 = rent + extras (F&B exempt); Reubird = full bill + extras. Type a different amount and press Save — the saved figure is what month close uses.'}
             </p>
             <div className="space-y-1.5">
-              {commissionRows.map(({ booking: b, rule, amount, channel }) => (
-                <div key={b.id} className="flex items-center gap-2 text-sm flex-wrap">
-                  <span className="text-xs text-ink-soft w-14">{b.date.slice(5)}</span>
-                  <span className="flex-1 min-w-[140px] truncate">
-                    {b.customerName || '—'} · <span className="text-xs text-ink-soft">{channelDisplayLabel(b, locale)}</span>
-                  </span>
-                  <span className="text-[11px] text-ink-soft whitespace-nowrap">
-                    {rule ? `${rule.pct}% × ${rule.base === 'rent' ? (locale === 'zh' ? '場租' : 'rent') : (locale === 'zh' ? '全單' : 'total')} $${(rule.base === 'rent' ? (b.pricing.baseCharge || 0) : discountedSubtotal(b.pricing.subtotal, b.promoDiscount)).toLocaleString()}` : (locale === 'zh' ? '手動' : 'manual')}
-                  </span>
-                  <input
-                    type="number"
-                    value={overrideDrafts[b.id] ?? String(typeof b.commissionOverride === 'number' ? b.commissionOverride : amount)}
-                    onChange={(e) => setOverrideDrafts((p) => ({ ...p, [b.id]: e.target.value }))}
-                    onBlur={() => saveOverride(b)}
-                    className={`w-28 text-right ${inputCls} ${typeof b.commissionOverride === 'number' ? 'border-amber-300 bg-amber-50' : ''}`}
-                    title={locale === 'zh' ? '改金額 = 手動覆蓋自動計算' : 'Editing overrides the auto amount'}
-                  />
-                </div>
-              ))}
+              {commissionRows.map(({ booking: b, rule, amount }) => {
+                const manual = typeof b.commissionOverride === 'number';
+                const auto = rule ? Math.round(commissionBase(b, rule.base) * (rule.pct / 100) * 100) / 100 : 0;
+                const extras = depositDeductionsKept(b);
+                const shown = overrideDrafts[b.id] ?? String(manual ? b.commissionOverride : amount);
+                const typed = shown.trim() === '' ? NaN : parseFloat(shown);
+                const current = manual ? (b.commissionOverride as number) : amount;
+                const dirty = overrideDrafts[b.id] !== undefined && Number.isFinite(typed) && typed >= 0 && typed !== current;
+                const busy = savingOverride === b.id;
+                return (
+                  <div key={b.id} className="flex items-center gap-2 text-sm flex-wrap">
+                    <span className="text-xs text-ink-soft w-14">{b.date.slice(5)}</span>
+                    <span className="flex-1 min-w-[140px] truncate">
+                      {b.customerName || '—'} · <span className="text-xs text-ink-soft">{channelDisplayLabel(b, locale)}</span>
+                    </span>
+                    <span className="text-[11px] text-ink-soft whitespace-nowrap">
+                      {rule
+                        ? `${rule.pct}% × ${rule.base === 'rent' ? (locale === 'zh' ? '場租' : 'rent') : (locale === 'zh' ? '全單' : 'total')} $${commissionBase(b, rule.base).toLocaleString()}${extras > 0 ? (locale === 'zh' ? `（含加時/罰款 $${extras.toLocaleString()}）` : ` (incl. extras $${extras.toLocaleString()})`) : ''} = $${auto.toLocaleString()}`
+                        : (locale === 'zh' ? '手動' : 'manual')}
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={shown}
+                      onChange={(e) => setOverrideDrafts((p) => ({ ...p, [b.id]: e.target.value }))}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && dirty && !busy) saveOverride(b, typed); }}
+                      className={`w-28 text-right ${inputCls} ${manual ? 'border-amber-300 bg-amber-50' : ''}`}
+                      title={manual ? (locale === 'zh' ? '手動儲存嘅佣金' : 'Manually saved commission') : (locale === 'zh' ? '自動計算' : 'Auto')}
+                    />
+                    <button
+                      onClick={() => saveOverride(b, typed)}
+                      disabled={!dirty || busy}
+                      className="btn-primary text-xs px-3 py-1.5 flex items-center gap-1 disabled:opacity-40"
+                    >
+                      {busy ? <Loader2 size={12} className="animate-spin" /> : null}
+                      {locale === 'zh' ? '儲存' : 'Save'}
+                    </button>
+                    {manual && (
+                      <button
+                        onClick={() => saveOverride(b, null)}
+                        disabled={busy}
+                        title={locale === 'zh' ? `還原自動計算（$${auto.toLocaleString()}）` : `Back to auto ($${auto.toLocaleString()})`}
+                        className="text-[11px] px-2 py-1 rounded-lg border border-charcoal/15 bg-white hover:bg-cream whitespace-nowrap disabled:opacity-40"
+                      >
+                        {locale === 'zh' ? '還原自動' : 'Auto'}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
               {commissionRows.length === 0 && <p className="text-xs text-ink-soft italic">{locale === 'zh' ? '本月冇行家/平台訂單。' : 'No broker bookings this month.'}</p>}
             </div>
           </div>

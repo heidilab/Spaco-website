@@ -280,12 +280,41 @@ export interface CommissionRuleShape {
 }
 
 /**
+ * 加時/罰款 kept out of the deposit at settlement — the deductions staff
+ * entered (overtime, damage, cleaning…). 0 until the booking is settled.
+ */
+export function depositDeductionsKept(booking: MoneyBooking): number {
+  const r = booking.depositRefund as { deductions?: Array<{ amount?: number }> } | null | undefined;
+  return (r?.deductions || []).reduce((s, d) => s + Math.max(0, d.amount || 0), 0);
+}
+
+/**
+ * The amount a channel's percentage is taken of.
+ *
+ * Heidi 2026-11-13: commission is on the WHOLE bill the customer ends up
+ * paying — including what was charged on top after the event (加時,
+ * 罰款, taken out of the deposit) — not just the bill as booked. So both
+ * bases add the deposit deductions kept:
+ *   'rent'  (行家)   rent − discounts + 加時/罰款   (food & drinks exempt)
+ *   'total' (平台)   consumption − discounts + 加時/罰款
+ * The refundable part of the deposit never counts; neither does the card
+ * surcharge (a fee pass-through, not spend).
+ */
+export function commissionBase(booking: MoneyBooking, base: 'rent' | 'total'): number {
+  const extras = depositDeductionsKept(booking);
+  const core = base === 'rent'
+    ? Math.max(0, (booking.pricing?.baseCharge || 0) - (booking.promoDiscount || 0) - (booking.pointsDiscount || 0))
+    : netConsumption(booking);
+  return Math.round((core + extras) * 100) / 100;
+}
+
+/**
  * Commission owed on a booking under a channel rule, in HK$.
  *
  * Heidi's rules (2026-09): default 10%; 行家 (agent) commission is
  * charged on the RENT ONLY — food/drinks add-ons are exempt; every
  * booking may carry a negotiated override (booking.commissionOverride)
- * which wins outright. Deposit never enters any base (it is refundable).
+ * which wins outright. The base is `commissionBase` (bill incl. 加時/罰款).
  */
 export function commissionForBooking(
   booking: MoneyBooking & { commissionOverride?: number },
@@ -295,10 +324,7 @@ export function commissionForBooking(
     return Math.max(0, booking.commissionOverride);
   }
   if (!rule || rule.pct <= 0) return 0;
-  const base = rule.base === 'rent'
-    ? Math.max(0, (booking.pricing?.baseCharge || 0) - (booking.promoDiscount || 0) - (booking.pointsDiscount || 0))
-    : netConsumption(booking);
-  return Math.round(base * (rule.pct / 100) * 100) / 100;
+  return Math.round(commissionBase(booking, rule.base) * (rule.pct / 100) * 100) / 100;
 }
 
 /**

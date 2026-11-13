@@ -132,8 +132,48 @@ export async function updateTemplate(id: string, patch: Partial<Omit<ExpenseTemp
   await updateDoc(doc(db, 'expense_templates', id), patch);
 }
 
-export async function deleteTemplate(id: string): Promise<void> {
+/** Same item name, ignoring case and spaces — 「HGC寬頻」 twice is one item. */
+export function sameExpenseItem(a: string, b: string): boolean {
+  const norm = (s: string) => (s || '').replace(/\s+/g, '').toLowerCase();
+  return norm(a) === norm(b) && norm(a) !== '';
+}
+
+/** The recurring rows a deleted template takes with it: its own rows in
+ *  `fromMonth` and every later month. Earlier months are closed books
+ *  and keep theirs. */
+export function rowsRemovedWithTemplate<T extends Pick<ExpenseRecord, 'templateId' | 'month' | 'source'>>(
+  rows: T[], templateId: string, fromMonth: string,
+): T[] {
+  return rows.filter((r) => r.source === 'recurring' && r.templateId === templateId && r.month >= fromMonth);
+}
+
+/** Templates still to seed into a month: skips one already seeded (by
+ *  id) AND one whose name is already on the month's recurring rows — a
+ *  template deleted and added again used to seed a second 「寬頻」 row
+ *  (Heidi 2026-11-13). */
+export function templatesToSeed(templates: ExpenseTemplate[], existing: Array<Pick<ExpenseRecord, 'templateId' | 'item' | 'source'>>): ExpenseTemplate[] {
+  const seeded = new Set(existing.filter((e) => e.templateId).map((e) => e.templateId));
+  const names = existing.filter((e) => e.source === 'recurring').map((e) => e.item);
+  return templates.filter((t) => t.active && !seeded.has(t.id) && !names.some((n) => sameExpenseItem(n, t.name)));
+}
+
+/**
+ * Delete a template. With `fromMonth`, its rows already seeded into that
+ * month and later months go too (she deleted 「寬頻」 and the month still
+ * showed it); earlier months are left as they were.
+ */
+export async function deleteTemplate(id: string, fromMonth?: string): Promise<number> {
+  let removed = 0;
+  if (fromMonth) {
+    const snap = await getDocs(query(collection(db, 'expenses'), where('templateId', '==', id)));
+    const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() } as ExpenseRecord));
+    for (const r of rowsRemovedWithTemplate(rows, id, fromMonth)) {
+      await deleteDoc(doc(db, 'expenses', r.id));
+      removed++;
+    }
+  }
   await deleteDoc(doc(db, 'expense_templates', id));
+  return removed;
 }
 
 /**
@@ -149,10 +189,8 @@ export async function seedRecurring(
   existing: ExpenseRecord[],
   uid: string,
 ): Promise<number> {
-  const seeded = new Set(existing.filter((e) => e.templateId).map((e) => e.templateId));
   let created = 0;
-  for (const t of templates) {
-    if (!t.active || seeded.has(t.id)) continue;
+  for (const t of templatesToSeed(templates, existing)) {
     await addExpense({
       branchKey,
       month,

@@ -14,7 +14,7 @@ import {
   grossSubtotal, computeGrandTotal, netConsumption, displayBillTotal, discountedSubtotal,
   paidBase, surchargePaid, paidGateway, computeBalanceDue,
   amountOwed, hasOutstanding, isSettlementOverflow,
-  commissionForBooking, estimatedKpayFee,
+  commissionForBooking, commissionBase, depositDeductionsKept, estimatedKpayFee,
   adminDiscountAmount, initialAmountDue,
 } from './bookingMoney';
 
@@ -292,6 +292,32 @@ describe('commissionForBooking — broker rules (Finance Phase 2)', () => {
 
   it('deposit never enters the base', () => {
     expect(commissionForBooking({ pricing: { baseCharge: 0, addOnTotal: 0, securityDeposit: 2000 } }, { pct: 10, base: 'total' })).toBe(0);
+  });
+
+  // Heidi 2026-11-13: the 10% is of the whole bill the customer ends up
+  // paying — 加時 / 罰款 taken out of the deposit count too.
+  describe('加時/罰款 kept from the deposit count towards the base', () => {
+    const settled = {
+      ...broker,
+      depositRefund: { amount: 800, deductions: [{ label: '加時', amount: 1000 }, { label: '清潔', amount: 200 }], refundedAt: null },
+    };
+    it('行家: rent + 加時/罰款', () => {
+      expect(commissionBase(settled, 'rent')).toBe(11200);
+      expect(commissionForBooking(settled, { pct: 10, base: 'rent' })).toBe(1120);
+    });
+    it('platform: full consumption + 加時/罰款', () => {
+      expect(commissionBase(settled, 'total')).toBe(14360);
+      expect(commissionForBooking(settled, { pct: 10, base: 'total' })).toBe(1436);
+    });
+    it('the refunded part of the deposit still never counts', () => {
+      const refundedInFull = { ...broker, depositRefund: { amount: 2000, deductions: [], refundedAt: null } };
+      expect(commissionForBooking(refundedInFull, { pct: 10, base: 'total' })).toBe(1316);
+      expect(depositDeductionsKept(refundedInFull)).toBe(0);
+      expect(depositDeductionsKept(broker)).toBe(0);
+    });
+    it('a manual amount still wins', () => {
+      expect(commissionForBooking({ ...settled, commissionOverride: 1000 }, { pct: 10, base: 'total' })).toBe(1000);
+    });
   });
 });
 

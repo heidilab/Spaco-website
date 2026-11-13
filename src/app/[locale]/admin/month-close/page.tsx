@@ -31,11 +31,13 @@ import { channelDisplayLabel } from '@/lib/marketingChannels';
 import { loadAllVenues } from '@/lib/venueRegistry';
 import { settlementCashTiming } from '@/lib/settlementDebt';
 import { listExpenses, getFinanceConfig, saveFinanceConfig, type FinanceConfig } from '@/lib/expenses';
+import { getBonusConfig } from '@/lib/bonus';
+import { salesSalaryForMonth, salesSalaryLabel, type SalesSalary } from '@/lib/salesSalary';
 import { commissionForBooking, splitAmounts, adminDiscountAmount } from '@/lib/bookingMoney';
 import { getMonthClose, saveMonthClose, listKpayStatements, saveKpayStatement, deleteKpayStatement } from '@/lib/monthClose';
 import { parseKpayStatement, statementMonthOf, type KpayStatementSummary, type KpayStatementTxn, type StoredKpayStatement } from '@/lib/kpayStatement';
 import { reconcileKpayFees, kpayFeeOf, sumKpayFees, type BookingKpayFee, type KpayFeeLine } from '@/lib/kpayReconcile';
-import type { BookingRecord, ExpenseRecord, MonthCloseRecord, ProfitSplitParty, Venue } from '@/types';
+import type { BookingRecord, BonusConfig, ExpenseRecord, MonthCloseRecord, ProfitSplitParty, Venue } from '@/types';
 import {
   CalendarCheck, Loader2, Lock, Unlock, Upload, Plus, Trash2,
   FileSpreadsheet, Check,
@@ -92,6 +94,9 @@ function masterMethodLabel(m: string): string {
 interface MonthNumbers {
   sales: number;
   stored: number;
+  /** Sales staff pay of the branch this month: 底薪 (CS 獎金 page) + the
+   *  bonus tier reached — one expense line (Heidi 2026-11-13). */
+  salary: SalesSalary;
   commissions: number;
   commissionByChannel: Record<string, number>;
   /** 折扣優惠/賠償 given on the month's bookings — an expense. */
@@ -134,6 +139,7 @@ export default function MonthClosePage() {
   const [allBookings, setAllBookings] = useState<BookingRecord[]>([]);
   const [venues, setVenues] = useState<Venue[]>([]);
   const [config, setConfig] = useState<FinanceConfig | null>(null);
+  const [bonusCfg, setBonusCfg] = useState<BonusConfig>({ branches: {} });
   const [mc, setMc] = useState<MonthCloseRecord | null>(null);
   // Stored expense rows of each FY month (totals for the P&L, the rows
   // themselves for the monthly tabs of the export).
@@ -198,6 +204,7 @@ export default function MonthClosePage() {
       setVenues(registry);
       setConfig(cfg);
       setMc(close);
+      setBonusCfg(await getBonusConfig());
       setSplits(close?.splits?.length ? close.splits : (cfg.profitSplits[branch] || []));
       // FY stored expenses + closes (for the Master table and export).
       const expEntries = await Promise.all(months.map(async (m) => {
@@ -331,9 +338,13 @@ export default function MonthClosePage() {
     const kpay = sumKpayFees(kpayRows.map((r) => r.fee));
     const kpayFee = kpay.fee;
     const stored = fyExpenses[m] || 0;
-    const expenses = stored + commissions + kpayFee + discounts;
+    // Sales pay: 底薪 + the bonus tier reached on the same sales basis as
+    // the CS 獎金 page (Σ pricing.subtotal of the month's bookings).
+    const bonusSales = rows.reduce((s, b) => s + (b.pricing.subtotal || 0), 0);
+    const salary = salesSalaryForMonth(bonusSales, bonusCfg.branches[branch]);
+    const expenses = stored + salary.total + commissions + kpayFee + discounts;
     return {
-      sales, stored, commissions, commissionByChannel, discounts, kpayFee,
+      sales, stored, salary, commissions, commissionByChannel, discounts, kpayFee,
       kpayActual: kpay.actualFee, kpayEstimated: kpay.estimatedFee,
       kpayActualLines: kpay.actualLines, kpayEstimatedLines: kpay.estimatedLines, kpayRows,
       expenses, profit: sales - expenses, count: rows.length,
@@ -344,13 +355,13 @@ export default function MonthClosePage() {
   const cur = useMemo(
     () => (loading || !config ? null : computeMonth(month)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [loading, config, allBookings, venues, fyExpenses, fyCloses, month, branch, isPreviewHost, recon],
+    [loading, config, allBookings, venues, fyExpenses, fyCloses, month, branch, isPreviewHost, recon, bonusCfg],
   );
 
   const fy = useMemo(
     () => (loading || !config ? [] : fyMonths(month).map((m) => ({ m, n: computeMonth(m) }))),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [loading, config, allBookings, venues, fyExpenses, fyCloses, month, branch, isPreviewHost, recon],
+    [loading, config, allBookings, venues, fyExpenses, fyCloses, month, branch, isPreviewHost, recon, bonusCfg],
   );
 
   /** The original four, every active branch in 分店管理, and any branch
@@ -722,13 +733,17 @@ export default function MonthClosePage() {
       // Total Sales / Total Expenses / Profit equal its Master row.
       for (const { m, n } of [...fy].reverse()) {
         const storedRows = fyExpenseRows[m] || [];
-        if (n.sheetBookings.length === 0 && storedRows.length === 0) continue;
+        if (n.sheetBookings.length === 0 && storedRows.length === 0 && n.salary.total === 0) continue;
         const [yy, mm] = m.split('-').map(Number);
         const c = fyCloses[m];
         const sheet = buildMasterMonthSheet({
           title: ` ${MONTH_NAMES_EN[mm - 1]}- ${yy} (${bl})`,
           bookings: n.sheetBookings,
-          storedExpenses: storedRows.map((e) => ({ vendor: e.item, amount: e.amount || 0 })),
+          storedExpenses: [
+            ...storedRows.map((e) => ({ vendor: e.item, amount: e.amount || 0 })),
+            // Sales Salary（底薪 + 獎金）as its own expense row.
+            ...(n.salary.total > 0 ? [{ vendor: salesSalaryLabel(n.salary), amount: n.salary.total }] : []),
+          ],
           splits: c?.splits?.length ? c.splits : (config?.profitSplits[branch] || []),
         });
         XLSX.utils.book_append_sheet(wb, masterSheetToWorksheet(XLSX, sheet), monthLabel(m));
@@ -866,7 +881,7 @@ export default function MonthClosePage() {
                 <div className="text-gray-500">{zh ? '總支出' : 'Total Expenses'}</div>
                 <div className="text-xl font-bold">${fmt(cur.expenses)}</div>
                 <div className="text-xs text-gray-400">
-                  {zh ? '固定/雜項' : 'Stored'} ${fmt(cur.stored)} · {zh ? '佣金' : 'Comm'} ${fmt(cur.commissions)} · KPay ${fmt(cur.kpayFee)}{kpayStatusLabel(cur)}{cur.discounts > 0 ? ` · ${zh ? '折扣/賠償' : 'Discounts'} $${fmt(cur.discounts)}` : ''}
+                  {zh ? '固定/雜項' : 'Stored'} ${fmt(cur.stored)}{cur.salary.total > 0 ? ` · ${zh ? 'Sales 人工' : 'Sales pay'} $${fmt(cur.salary.total)}${cur.salary.bonus > 0 ? (zh ? `（底薪 $${fmt(cur.salary.base)} + 獎金 $${fmt(cur.salary.bonus)}）` : ` (base $${fmt(cur.salary.base)} + bonus $${fmt(cur.salary.bonus)})`) : ''}` : ''} · {zh ? '佣金' : 'Comm'} ${fmt(cur.commissions)} · KPay ${fmt(cur.kpayFee)}{kpayStatusLabel(cur)}{cur.discounts > 0 ? ` · ${zh ? '折扣/賠償' : 'Discounts'} $${fmt(cur.discounts)}` : ''}
                 </div>
               </div>
               <div className="bg-gray-50 rounded-lg p-3">

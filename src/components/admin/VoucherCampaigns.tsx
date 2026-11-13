@@ -206,6 +206,24 @@ export default function VoucherCampaigns({
     }
   }
 
+  /** Delete every code of a campaign. Bookings that redeemed one keep
+   *  their discount and the code text; only the admin record goes. */
+  async function deleteCampaign(name: string, list: PromoCode[]) {
+    const used = list.reduce((s, c) => s + (c.totalUsageCount || 0), 0);
+    const msg = locale === 'zh'
+      ? `刪除整個 campaign「${name}」？\n\n會刪除佢嘅 ${list.length} 個 code${used > 0 ? `（已經用咗 ${used} 次 — 用咗嘅訂單唔受影響，但呢度嘅記錄會冇咗）` : ''}，刪除後呢啲 code 即時用唔到。`
+      : `Delete the whole campaign "${name}"?\n\nIts ${list.length} code(s) are removed${used > 0 ? ` (${used} redemption(s) so far — those bookings keep their discount; only this record goes)` : ''} and stop working at once.`;
+    if (!window.confirm(msg)) return;
+    setDeletingCampaign(name);
+    try {
+      for (const c of list) await deletePromoCode(c.id);
+      onChanged();
+    } finally {
+      setDeletingCampaign(null);
+    }
+  }
+  const [deletingCampaign, setDeletingCampaign] = useState<string | null>(null);
+
   async function toggleEnabled(c: PromoCode) {
     setToggling(c.id);
     try {
@@ -399,6 +417,14 @@ export default function VoucherCampaigns({
                         {locale === 'zh' ? `改為一個共用 code（可用 ${convertible.length} 次）` : `Make it one code (${convertible.length} uses)`}
                       </button>
                     )}
+                    <button
+                      onClick={() => deleteCampaign(name, list)}
+                      disabled={deletingCampaign === name}
+                      className="text-xs flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-rose-200 bg-white hover:bg-rose-50 text-rose-600 disabled:opacity-50"
+                    >
+                      {deletingCampaign === name ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                      {locale === 'zh' ? '刪除整個 campaign' : 'Delete campaign'}
+                    </button>
                     <button
                       onClick={() => copyUnused(name, list)}
                       className="text-xs flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-charcoal/15 bg-white hover:bg-cream"

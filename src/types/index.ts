@@ -992,6 +992,10 @@ export interface BonusTier {
  *  roster (Heidi 2026-09-07). */
 export interface BranchBonusConfig {
   tiers: BonusTier[];
+  /** 底薪 — the sales staff's fixed monthly pay for this branch (HK$).
+   *  Month close books base + the month's bonus as one expense line
+   *  (lib/salesSalary; Heidi 2026-11-13). */
+  baseSalary?: number;
 }
 
 /** system/bonus_config — admin-write, staff-read (Firestore rules). */
