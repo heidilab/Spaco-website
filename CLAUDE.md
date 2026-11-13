@@ -11,7 +11,7 @@ Never hand her a random Vercel deployment hostname
 (`spaco-website-git-<branch>-…`). Staff sign in with Google, and Firebase Auth
 only accepts hostnames on its authorized-domains list; a new hostname means
 she has to add a domain in the Firebase console again. `spaco-test.vercel.app`
-is already on that list (owner decision 2026-11-13).
+is the one address she agreed to authorize, once (2026-11-13).
 
 How:
 
