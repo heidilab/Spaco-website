@@ -89,11 +89,14 @@ describe('reconcileKpayFees — fee follows the booking, not the statement month
 });
 
 describe('reconcileKpayFees — statements not uploaded yet', () => {
-  it('with no statements every booking equals the old estimate', () => {
+  it('with no statements every booking is the % estimate plus the surcharge collected', () => {
     const rec = reconcileKpayFees(cwbOct, [], 1.5);
     for (const b of cwbOct) {
       const f = kpayFeeOf(rec, b.id);
-      expect(f.fee).toBe(estimatedKpayFee(b, 1.5));
+      // 月結 books the card surcharge as income, so the estimated fee
+      // carries it: the net effect on profit stays % × credited amount.
+      const surcharge = Math.round((b.payments || []).reduce((s, p) => s + ((p as { cardSurcharge?: number }).cardSurcharge || 0), 0) * 100) / 100;
+      expect(f.fee).toBe(Math.round((estimatedKpayFee(b, 1.5) + surcharge) * 100) / 100);
       expect(f.actualFee).toBe(0);
     }
   });
@@ -107,11 +110,13 @@ describe('reconcileKpayFees — statements not uploaded yet', () => {
     expect(f.lines[1]).toEqual(expect.objectContaining({ actual: true, statementMonth: '2026-10' }));
   });
 
-  it('estimates on the credited amount, not on the customer surcharge', () => {
+  it('estimates a card payment as % of the credited amount plus its surcharge', () => {
     const rec = reconcileKpayFees([oct10], [OCT], 1.5);
     const sepLine = kpayFeeOf(rec, oct10.id).lines[0];
     expect(sepLine.amount).toBe(9373.53);   // what KPay charged
-    expect(sepLine.fee).toBe(138.53);       // 1.5% × 9,235 credited
+    // 1.5% × 9,235 credited + the 138.53 surcharge the customer paid
+    // (KPay's actual fee on this payment was 263.46).
+    expect(sepLine.fee).toBe(277.06);
   });
 
   it('flags a KPay payment that an uploaded statement does not contain', () => {

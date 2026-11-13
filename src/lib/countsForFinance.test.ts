@@ -49,3 +49,61 @@ describe('countsForFinance', () => {
     expect(countsForFinance(mk({ status: 'confirmed', date: '2027-01-01', payments: [{ amount: 2000 }] } as never))).toBe(true);
   });
 });
+
+// ── monthCloseSales — her Financial Master's Sales columns ──
+import { monthCloseSales } from './finance';
+
+describe('monthCloseSales', () => {
+  const booking = (over: Record<string, unknown>) => ({
+    id: 'b', venueId: 'cwb', date: '2026-10-30', status: 'completed', guestCount: 10,
+    pricing: { baseCharge: 0, addOnTotal: 0, subtotal: 0, securityDeposit: 2000, deposit: 0 },
+    payments: [],
+    ...over,
+  }) as unknown as BookingRecord;
+
+  // Heidi's CWB OCT-2026 sheet, the three rows that 月結 used to get wrong.
+  const oct10 = booking({
+    pricing: { baseCharge: 13224, addOnTotal: 0, subtotal: 13224 },
+    payments: [{ amount: 9235, cardSurcharge: 138.53, method: 'kpay' }, { amount: 6989, cardSurcharge: 104.84, method: 'kpay' }],
+  });
+  const oct30 = booking({
+    pricing: { baseCharge: 15370, addOnTotal: 0, subtotal: 15370 },
+    depositRefund: { amount: 2840, deductions: [{ label: '加時', amount: 1160 }] },
+  });
+  const oct31 = booking({
+    pricing: { baseCharge: 8700, addOnTotal: 0, subtotal: 8700 },
+    depositRefund: { amount: 260, deductions: [{ label: '加時', amount: 1740 }] },
+  });
+
+  it('counts 信用卡手續費 the customer paid as sales', () => {
+    const s = monthCloseSales(oct10);
+    expect(s.cardSurcharge).toBe(243.37);
+    expect(s.total).toBe(13467.37);
+  });
+
+  it('counts deposit deductions kept (加時/罰款) as sales', () => {
+    expect(monthCloseSales(oct30)).toEqual(expect.objectContaining({ rent: 15370, extPenalty: 1160, total: 16530 }));
+    expect(monthCloseSales(oct31).total).toBe(10440);
+  });
+
+  it('takes 會員積分優惠 off as a negative column', () => {
+    const s = monthCloseSales(booking({ pricing: { baseCharge: 5000, subtotal: 5000 }, pointsDiscount: 150 }));
+    expect(s.points).toBe(-150);
+    expect(s.total).toBe(4850);
+  });
+
+  it('every row adds up, with bill items outside the five columns in 加時/罰款', () => {
+    // A $500 custom item on the bill: not Rent/BBQ/Shisha/到會/Drinks.
+    const s = monthCloseSales(booking({ pricing: { baseCharge: 6000, addOnTotal: 500, subtotal: 6500 } }));
+    expect(s.extPenalty).toBe(500);
+    expect(s.total).toBe(6500);
+    expect(s.rent + s.bbqHotpot + s.shisha + s.cater + s.drinks + s.points + s.cardSurcharge + s.extPenalty).toBe(s.total);
+  });
+
+  it('leaves out settlement debt not received: 加時/罰款 first, then rent', () => {
+    // $1,740 deducted, $500 of it still owed at month end.
+    expect(monthCloseSales(oct31, 500)).toEqual(expect.objectContaining({ rent: 8700, extPenalty: 1240, total: 9940 }));
+    // More owed than was deducted: the rest comes off rent.
+    expect(monthCloseSales(oct31, 2000)).toEqual(expect.objectContaining({ rent: 8440, extPenalty: 0, total: 8440 }));
+  });
+});

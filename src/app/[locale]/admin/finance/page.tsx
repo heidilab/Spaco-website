@@ -16,7 +16,8 @@ import { channelDisplayLabel, getMarketingChannelOptions, type MarketingChannelO
 import { listExpenses, getFinanceConfig } from '@/lib/expenses';
 import { commissionForBooking, splitAmounts, adminDiscountAmount } from '@/lib/bookingMoney';
 import { getMonthClose, listKpayStatements } from '@/lib/monthClose';
-import { reconcileKpayFees, kpayFeeOf, hkDateOf } from '@/lib/kpayReconcile';
+import { reconcileKpayFees, kpayFeeOf } from '@/lib/kpayReconcile';
+import { bookingTransactions } from '@/lib/salesRecord';
 
 // The original four branch group keys. Every other branch comes from the
 // venue registry (分店管理) — see extraBranches below.
@@ -155,42 +156,7 @@ export default function FinanceOverviewPage() {
     }).sort((a, b2) => a.date.localeCompare(b2.date));
   }
 
-  /** Combine the synthetic initial payment with the audit log so each
-   *  booking surfaces every transaction as its own row in the export. */
-  function transactionsFor(b: BookingRecord): Array<{ date: string; method: string; amount: number; note?: string }> {
-    const tx: Array<{ date: string; method: string; amount: number; note?: string }> = [];
-    const logged = b.payments || [];
-    // Synthetic-initial derivation counts only money IN — a refund
-    // entry must not resurrect a phantom initial-payment row.
-    const loggedAmount = logged.reduce((s, p) => s + Math.max(0, p.amount || 0), 0);
-    const totalPaid = b.pricing.deposit || 0;
-    // Synthetic initial row covers LEGACY paid bookings whose deposit
-    // predates the payments[] freeze. Never fabricate one for a booking
-    // with no paid status — that's how unpaid ghosts grew fake FPS rows.
-    const isPaid = b.status === 'confirmed' || b.status === 'completed' || !!b.paymentVerifiedAt;
-    const initial = isPaid ? Math.max(0, totalPaid - loggedAmount) : 0;
-    if (initial > 0) {
-      tx.push({
-        date: b.date,  // use booking date as proxy when createdAt isn't easily extractable here
-        method: b.paymentMethod || 'stripe',
-        amount: initial,
-        note: 'Initial confirmation',
-      });
-    }
-    for (const p of logged) {
-      // HK calendar day — the same day the KPay statement shows. Slicing
-      // the stored UTC timestamp put a 01:00 HKT payment on the day before.
-      const dateStr = hkDateOf(p.recordedAt);
-      const isRefund = (p.amount || 0) < 0;
-      tx.push({
-        date: dateStr,
-        method: isRefund ? `退款(${p.method})` : p.method,
-        amount: p.amount || 0,
-        note: p.note || undefined,
-      });
-    }
-    return tx;
-  }
+  const transactionsFor = bookingTransactions;
 
   /** `2026-09-04` → `2026-09-04 (五)` — Heidi wants weekdays visible. */
   function withWeekday(dateStr: string): string {

@@ -22,10 +22,14 @@
 //      amount" against KPay payments still unmatched — only when exactly
 //      one payment fits, never a guess.
 //
-// A KPay payment with no statement row keeps the ESTIMATED fee (% of the
-// credited amount, as before) and says why: that month's statement is not
-// uploaded yet, or it is uploaded but has no such row (e.g. a payment
-// taken on another KPay account and recorded by hand).
+// A KPay payment with no statement row keeps an ESTIMATED fee and says
+// why: that month's statement is not uploaded yet, or it is uploaded but
+// has no such row (e.g. a payment taken on another KPay account and
+// recorded by hand). The estimate is % of the credited amount PLUS the
+// card surcharge the customer paid: 月結 counts that surcharge as income
+// (信用卡手續費), and it exists precisely to cover the card's higher fee,
+// so the estimate has to carry it too. (On the 2026-09/10 card payments:
+// actual fee $263.46 on $9,373.53 — estimate $277.06.)
 
 import { bookingIdPrefixFromOrderRef, type KpayStatementTxn, type StoredKpayStatement } from './kpayStatement';
 
@@ -249,10 +253,10 @@ export function reconcileKpayFees(
   }
 
   // ── fee lines per booking ──
-  const acc = new Map<string, { lines: KpayFeeLine[]; actual: number; estBase: number }>();
+  const acc = new Map<string, { lines: KpayFeeLine[]; actual: number; estBase: number; estSurcharge: number }>();
   const slot = (id: string) => {
     let s = acc.get(id);
-    if (!s) { s = { lines: [], actual: 0, estBase: 0 }; acc.set(id, s); }
+    if (!s) { s = { lines: [], actual: 0, estBase: 0, estSurcharge: 0 }; acc.set(id, s); }
     return s;
   };
   for (const row of rows) {
@@ -269,9 +273,11 @@ export function reconcileKpayFees(
     if (pay.matched) continue;
     const s = slot(pay.bookingId);
     const month = pay.date.slice(0, 7);
+    const surcharge = round2(pay.gateway - pay.base);
     s.estBase += pay.base;
+    s.estSurcharge += surcharge;
     s.lines.push({
-      date: pay.date, amount: pay.gateway, fee: round2(pay.base * pct / 100),
+      date: pay.date, amount: pay.gateway, fee: round2(pay.base * pct / 100 + surcharge),
       actual: false, statementMonth: month,
       reason: month && uploaded.has(month) ? 'not-in-statement' : 'statement-missing',
     });
@@ -290,9 +296,9 @@ export function reconcileKpayFees(
   const byBooking = new Map<string, BookingKpayFee>();
   acc.forEach((s, id) => {
     const actualFee = round2(s.actual);
-    // One rounding over the whole estimated base — identical to
-    // bookingMoney.estimatedKpayFee when nothing is matched.
-    const estimatedFee = round2(s.estBase * pct / 100);
+    // One rounding over the whole estimated base — with nothing matched
+    // this is bookingMoney.estimatedKpayFee + the surcharge collected.
+    const estimatedFee = round2(s.estBase * pct / 100 + s.estSurcharge);
     s.lines.sort((a, b) => a.date.localeCompare(b.date));
     byBooking.set(id, { fee: round2(actualFee + estimatedFee), actualFee, estimatedFee, lines: s.lines });
   });

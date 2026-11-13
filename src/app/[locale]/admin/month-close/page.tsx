@@ -10,8 +10,10 @@
 //              the actual fee of its own payments, whichever month they
 //              were paid in (lib/kpayReconcile); payments whose statement
 //              is not uploaded yet keep the estimate
-//   Master     financial-year rollup table + Excel export in her
-//              Master-sheet layout
+//   Master     financial-year rollup table + Excel export shaped like
+//              her Financial Master workbook: the Master tab, then one
+//              tab per month (OCT-2026, SEP-2026 …) in her monthly layout
+//              (lib/financialMasterSheet)
 //
 // All sales/expense numbers stay DERIVED (same shared helpers as the
 // Sales Record export) — the doc stores only splits and the closed flag;
@@ -21,7 +23,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllBookings } from '@/lib/firestore';
-import { branchKey as branchKeyOf, countsForFinance, financeBranches, salesCategoryBreakdown } from '@/lib/finance';
+import { branchKey as branchKeyOf, countsForFinance, financeBranches, monthCloseSales } from '@/lib/finance';
+import { buildMasterMonthSheet, type MasterSheetBooking } from '@/lib/financialMasterSheet';
+import { masterSheetToWorksheet } from '@/lib/financialMasterXlsx';
+import { bookingTransactions } from '@/lib/salesRecord';
+import { channelDisplayLabel } from '@/lib/marketingChannels';
 import { loadAllVenues } from '@/lib/venueRegistry';
 import { settlementCashTiming } from '@/lib/settlementDebt';
 import { listExpenses, getFinanceConfig, saveFinanceConfig, type FinanceConfig } from '@/lib/expenses';
@@ -29,7 +35,7 @@ import { commissionForBooking, splitAmounts, adminDiscountAmount } from '@/lib/b
 import { getMonthClose, saveMonthClose, listKpayStatements, saveKpayStatement, deleteKpayStatement } from '@/lib/monthClose';
 import { parseKpayStatement, statementMonthOf, type KpayStatementSummary, type KpayStatementTxn, type StoredKpayStatement } from '@/lib/kpayStatement';
 import { reconcileKpayFees, kpayFeeOf, sumKpayFees, type BookingKpayFee, type KpayFeeLine } from '@/lib/kpayReconcile';
-import type { BookingRecord, MonthCloseRecord, ProfitSplitParty, Venue } from '@/types';
+import type { BookingRecord, ExpenseRecord, MonthCloseRecord, ProfitSplitParty, Venue } from '@/types';
 import {
   CalendarCheck, Loader2, Lock, Unlock, Upload, Plus, Trash2,
   FileSpreadsheet, Check,
@@ -75,6 +81,14 @@ function fmt(n: number): string {
   return n.toLocaleString('en-HK', { maximumFractionDigits: 2 });
 }
 
+/** Payment rail as her sheet writes it (FPS / Kpay …). */
+function masterMethodLabel(m: string): string {
+  const refund = /^退款\((.+)\)$/.exec(m);
+  if (refund) return `退款(${masterMethodLabel(refund[1])})`;
+  const labels: Record<string, string> = { kpay: 'Kpay', fps: 'FPS', bank: 'Bank', cash: 'Cash', stripe: 'Stripe', other: 'Other' };
+  return labels[m] || m;
+}
+
 interface MonthNumbers {
   sales: number;
   stored: number;
@@ -96,7 +110,11 @@ interface MonthNumbers {
   count: number;
   channelSales: Record<string, number>;
   channelCounts: Record<string, number>;
-  cats: { rent: number; bbqHotpot: number; shisha: number; cater: number; drinks: number; extPenalty: number; lateCollections: number };
+  /** Sales by column of her monthly sheet — they add up to `sales`.
+   *  points is negative (會員積分優惠); cardSurcharge is 信用卡手續費. */
+  cats: { rent: number; bbqHotpot: number; shisha: number; cater: number; drinks: number; points: number; cardSurcharge: number; extPenalty: number; lateCollections: number };
+  /** The month's rows as they go on the Financial Master monthly tab. */
+  sheetBookings: MasterSheetBooking[];
   /** This month's bookings with settlement debt not received by month end. */
   uncollected: Array<{ id: string; amount: number }>;
   /** Earlier months' settlement debt received in this month (補收舊單欠款). */
@@ -116,7 +134,14 @@ export default function MonthClosePage() {
   const [venues, setVenues] = useState<Venue[]>([]);
   const [config, setConfig] = useState<FinanceConfig | null>(null);
   const [mc, setMc] = useState<MonthCloseRecord | null>(null);
-  const [fyExpenses, setFyExpenses] = useState<Record<string, number>>({});
+  // Stored expense rows of each FY month (totals for the P&L, the rows
+  // themselves for the monthly tabs of the export).
+  const [fyExpenseRows, setFyExpenseRows] = useState<Record<string, ExpenseRecord[]>>({});
+  const fyExpenses = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const [m, rows] of Object.entries(fyExpenseRows)) out[m] = rows.reduce((sum, r) => sum + (r.amount || 0), 0);
+    return out;
+  }, [fyExpenseRows]);
   const [fyCloses, setFyCloses] = useState<Record<string, MonthCloseRecord | null>>({});
   const [loading, setLoading] = useState(true);
   const [flash, setFlash] = useState<string | null>(null);
@@ -173,14 +198,12 @@ export default function MonthClosePage() {
       setConfig(cfg);
       setMc(close);
       setSplits(close?.splits?.length ? close.splits : (cfg.profitSplits[branch] || []));
-      // FY stored-expense totals + closes (for the Master table).
+      // FY stored expenses + closes (for the Master table and export).
       const expEntries = await Promise.all(months.map(async (m) => {
-        try {
-          const rows = await listExpenses(branch, m);
-          return [m, rows.reduce((s, r) => s + (r.amount || 0), 0)] as const;
-        } catch { return [m, 0] as const; }
+        try { return [m, await listExpenses(branch, m)] as const; }
+        catch { return [m, [] as ExpenseRecord[]] as const; }
       }));
-      setFyExpenses(Object.fromEntries(expEntries));
+      setFyExpenseRows(Object.fromEntries(expEntries));
       const closeEntries = await Promise.all(months.map(async (m) => {
         try { return [m, m === month ? close : await getMonthClose(branch, m)] as const; }
         catch { return [m, null] as const; }
@@ -212,46 +235,79 @@ export default function MonthClosePage() {
       countsForFinance(b, { includeTest: isPreviewHost })
       && b.date.startsWith(m)
       && branchKeyOf(b.venueId, venues) === branch);
-    const cats = { rent: 0, bbqHotpot: 0, shisha: 0, cater: 0, drinks: 0, extPenalty: 0, lateCollections: 0 };
+    const cats = { rent: 0, bbqHotpot: 0, shisha: 0, cater: 0, drinks: 0, points: 0, cardSurcharge: 0, extPenalty: 0, lateCollections: 0 };
     let sales = 0, commissions = 0, discounts = 0;
     const kpayRows: MonthNumbers['kpayRows'] = [];
+    const sheetBookings: MasterSheetBooking[] = [];
+    rows.sort((a, b) => a.date.localeCompare(b.date) || (a.startTime || '').localeCompare(b.startTime || ''));
     const channelSales: Record<string, number> = {};
     const channelCounts: Record<string, number> = {};
     const commissionByChannel: Record<string, number> = {};
     const uncollected: Array<{ id: string; amount: number }> = [];
     const lateList: Array<{ id: string; eventMonth: string; amount: number }> = [];
     for (const b of rows) {
-      const c = salesCategoryBreakdown(b);
       // 收到先計 (Heidi 2026-10-18): settlement debt still unpaid, or paid
       // only after this month ended, is not this month's revenue. It comes
       // off 加時/罰款 first (where deductions sit), then off rent.
       const timing = settlementCashTiming(b, { includeTest: isPreviewHost });
-      let rentCut = 0;
-      if (timing.excludedFromEventMonth > 0) {
-        const fromPenalty = Math.min(c.extPenalty, timing.excludedFromEventMonth);
-        c.extPenalty -= fromPenalty;
-        rentCut = Math.min(c.rent, timing.excludedFromEventMonth - fromPenalty);
-        c.rent -= rentCut;
-        uncollected.push({ id: b.id, amount: timing.excludedFromEventMonth });
-      }
-      const total = (b.pricing.subtotal || 0) - rentCut;
+      if (timing.excludedFromEventMonth > 0) uncollected.push({ id: b.id, amount: timing.excludedFromEventMonth });
+      // Her monthly sheet's Sales columns; Total is their sum, so it
+      // includes 加時/罰款 and 信用卡手續費 (Heidi 2026-11-13).
+      const c = monthCloseSales(b, timing.excludedFromEventMonth);
+      const total = c.total;
       sales += total;
       cats.rent += c.rent; cats.bbqHotpot += c.bbqHotpot; cats.shisha += c.shisha;
       cats.cater += c.cater; cats.drinks += c.drinks; cats.extPenalty += c.extPenalty;
+      cats.points += c.points; cats.cardSurcharge += c.cardSurcharge;
+      // DR lines of this booking — the Vendor / Amount rows beside it.
+      const drItems: Array<{ vendor: string; amount: number }> = [];
       if (config) {
         const comm = commissionForBooking(b, config.commissionRules[b.marketingChannel || '']);
         commissions += comm;
         if (comm > 0) {
           const cch = b.marketingChannel || 'unknown';
           commissionByChannel[cch] = (commissionByChannel[cch] || 0) + comm;
+          drItems.push({ vendor: channelDisplayLabel(b, 'zh') || cch, amount: comm });
         }
       }
       const kf = kpayFeeOf(recon, b.id);
-      if (kf.lines.length > 0) kpayRows.push({ id: b.id, date: b.date, name: b.customerName || '', fee: kf });
-      discounts += adminDiscountAmount(b);
+      if (kf.lines.length > 0) {
+        kpayRows.push({ id: b.id, date: b.date, name: b.customerName || '', fee: kf });
+        if (kf.fee !== 0) drItems.push({ vendor: kf.lines.some((l) => !l.actual) ? 'Kpay（含估算）' : 'Kpay', amount: kf.fee });
+      }
+      const disc = adminDiscountAmount(b);
+      discounts += disc;
+      if (disc > 0) drItems.push({ vendor: `折扣優惠${b.adminDiscount?.note ? `（${b.adminDiscount.note}）` : ''}`, amount: disc });
       const ch = b.marketingChannel || 'unknown';
       channelSales[ch] = (channelSales[ch] || 0) + total;
       channelCounts[ch] = (channelCounts[ch] || 0) + 1;
+
+      const kids = b.childCount ?? 0;
+      const adults = b.adultCount ?? b.guestCount;
+      const refund = b.depositRefund as { amount?: number } | undefined;
+      const remarks: string[] = [`#${b.id.slice(0, 8)}`];
+      if (b.customerName) remarks.push(b.customerName);
+      for (const p of (b.payments || [])) if (p.note) remarks.push(`「${p.note}」`);
+      if (b.endDate && b.endDate !== b.date) remarks.push(`過夜→${b.endDate}`);
+      if (timing.excludedFromEventMonth > 0) remarks.push(`結算欠款 $${fmt(timing.excludedFromEventMonth)} 未收，未計入本月`);
+      sheetBookings.push({
+        date: b.date,
+        time: `${b.startTime}-${b.endTime}`,
+        ppl: kids > 0 ? adults + 0.5 * kids : b.guestCount,
+        rent: c.rent, bbqHotpot: c.bbqHotpot, shisha: c.shisha, cater: c.cater, drinks: c.drinks,
+        points: c.points, cardSurcharge: c.cardSurcharge, extPenalty: c.extPenalty,
+        // What actually moved: credited amount + any card surcharge on top
+        // (the figure on the KPay statement).
+        transactions: bookingTransactions(b).map((t) => ({
+          date: t.date, method: masterMethodLabel(t.method), amount: Math.round((t.amount + t.surcharge) * 100) / 100,
+        })),
+        expenses: drItems,
+        source: b.marketingChannel === 'loyalty_member'
+          ? 'Loyalty Member'
+          : channelDisplayLabel(b, 'zh') + (b.marketingChannelOther ? `: ${b.marketingChannelOther}` : ''),
+        returnedDeposit: typeof refund?.amount === 'number' ? refund.amount : null,
+        remarks: remarks.join(' '),
+      });
     }
     // Settlement debt from EARLIER months received in this month: income of
     // this month, listed with the original booking and month.
@@ -261,6 +317,12 @@ export default function MonthClosePage() {
         if (l.month !== m) continue;
         cats.lateCollections += l.amount;
         lateList.push({ id: b.id, eventMonth: b.date.slice(0, 7), amount: l.amount });
+        sheetBookings.push({
+          date: b.date, time: '補收舊單欠款', ppl: '',
+          rent: 0, bbqHotpot: 0, shisha: 0, cater: 0, drinks: 0, points: 0, cardSurcharge: 0, extPenalty: l.amount,
+          transactions: [], expenses: [], source: '', returnedDeposit: null,
+          remarks: `#${b.id.slice(0, 8)} ${b.customerName || ''} 原月份 ${monthLabel(b.date.slice(0, 7))}，今個月先收到`.replace(/\s+/g, ' '),
+        });
       }
     }
     sales += cats.lateCollections;
@@ -274,7 +336,7 @@ export default function MonthClosePage() {
       kpayActual: kpay.actualFee, kpayEstimated: kpay.estimatedFee,
       kpayActualLines: kpay.actualLines, kpayEstimatedLines: kpay.estimatedLines, kpayRows,
       expenses, profit: sales - expenses, count: rows.length,
-      channelSales, channelCounts, cats, uncollected, lateList,
+      channelSales, channelCounts, cats, uncollected, lateList, sheetBookings,
     };
   }
 
@@ -589,9 +651,12 @@ export default function MonthClosePage() {
       const t4Start = aoa.length;
       headerRows.add(aoa.length);
       aoa.push([`${bl} Sales Income Proportion`, ...months.map(monthLabel)]);
+      // Rows in her Master's order; they add up to each month's Total Sales.
       const catKeys: Array<[keyof MonthNumbers['cats'], string]> = [
         ['rent', 'Rent'], ['bbqHotpot', 'BBQ/Hotpot'], ['shisha', 'Shisha'],
-        ['cater', '到會'], ['drinks', 'Drinks'], ['extPenalty', '加時/罰款'],
+        ['cater', '到會'], ['drinks', 'Drinks'],
+        ['points', '會員積分優惠'], ['cardSurcharge', '信用卡手續費'],
+        ['extPenalty', '加時/罰款'],
         ['lateCollections', '補收舊單欠款'],
       ];
       for (const [k, label] of catKeys) {
@@ -650,6 +715,23 @@ export default function MonthClosePage() {
         }
       }
       XLSX.utils.book_append_sheet(wb, ws, 'Master');
+
+      // ── One tab per month, newest first — her OCT-2026 / SEP-2026 … tabs.
+      // Built from the same rows as the figures above, so each tab's
+      // Total Sales / Total Expenses / Profit equal its Master row.
+      for (const { m, n } of [...fy].reverse()) {
+        const storedRows = fyExpenseRows[m] || [];
+        if (n.sheetBookings.length === 0 && storedRows.length === 0) continue;
+        const [yy, mm] = m.split('-').map(Number);
+        const c = fyCloses[m];
+        const sheet = buildMasterMonthSheet({
+          title: ` ${MONTH_NAMES_EN[mm - 1]}- ${yy} (${bl})`,
+          bookings: n.sheetBookings,
+          storedExpenses: storedRows.map((e) => ({ vendor: e.item, amount: e.amount || 0 })),
+          splits: c?.splits?.length ? c.splits : (config?.profitSplits[branch] || []),
+        });
+        XLSX.utils.book_append_sheet(wb, masterSheetToWorksheet(XLSX, sheet), monthLabel(m));
+      }
       XLSX.writeFile(wb, `SPACO-${bl}-${fyStartY}-${Number(fyStartY) + 1}-Master.xlsx`);
     } finally {
       setExporting(false);

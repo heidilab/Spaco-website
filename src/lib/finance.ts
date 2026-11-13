@@ -256,6 +256,65 @@ export function salesCategoryBreakdown(b: BookingRecord) {
   return { rent, shisha, bbqHotpot, cater, drinks, extPenalty: extensions + penalty };
 }
 
+/** One booking's row on the month-close sheet — the Sales columns of
+ *  Heidi's Financial Master monthly tab, which always add up to Total. */
+export interface MonthCloseSales {
+  rent: number;
+  bbqHotpot: number;
+  shisha: number;
+  cater: number;
+  drinks: number;
+  /** 會員積分優惠 — points redeemed against the bill, as a NEGATIVE. */
+  points: number;
+  /** 信用卡手續費 — the card surcharge the customer paid on top. Income:
+   *  the gateway's full fee on those payments is an expense (KPay 對帳). */
+  cardSurcharge: number;
+  /** 加時/罰款 — deposit deductions kept, plus anything on the bill that
+   *  is not one of the five columns above (custom items, early set-up). */
+  extPenalty: number;
+  /** = the sum of the eight columns. */
+  total: number;
+}
+
+/**
+ * Month-close sales of one booking, in her Financial Master's terms
+ * (Heidi 2026-11-13: her OCT-2026 CWB sheet reads $66,142.37 where 月結
+ * showed $62,999 — the $2,900 of 加時/罰款 and the $243.37 of 信用卡手續費
+ * were listed beside the total but never added into it).
+ *
+ *   Total = bill (pricing.subtotal) + deposit deductions kept
+ *           + card surcharge received − points redeemed
+ *
+ * `excludedFromEventMonth` is settlement debt not received by month end
+ * (settlementDebt.settlementCashTiming): it comes off 加時/罰款 first,
+ * where deductions sit, then off rent.
+ */
+export function monthCloseSales(b: BookingRecord, excludedFromEventMonth = 0): MonthCloseSales {
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  const c = salesCategoryBreakdown(b);
+  const five = c.rent + c.bbqHotpot + c.shisha + c.cater + c.drinks;
+  const refund = b.depositRefund as { deductions?: { amount: number }[] } | undefined;
+  const penalty = (refund?.deductions || []).reduce((s, d) => s + (d.amount || 0), 0);
+  // The stored bill is the truth; whatever of it the five columns do not
+  // explain rides in 加時/罰款 so the row still adds up.
+  const other = (b.pricing.subtotal || 0) - five;
+  const excluded = Math.max(0, excludedFromEventMonth);
+  const fromPenalty = Math.min(penalty, excluded);
+  const rentCut = Math.min(c.rent, excluded - fromPenalty);
+  const rent = c.rent - rentCut;
+  const extPenalty = other + penalty - fromPenalty;
+  const points = -(b.pointsDiscount || 0);
+  const cardSurcharge = (b.payments || []).reduce((s, p) => s + (p.cardSurcharge || 0), 0);
+  const out = {
+    rent: r2(rent), bbqHotpot: r2(c.bbqHotpot), shisha: r2(c.shisha), cater: r2(c.cater), drinks: r2(c.drinks),
+    points: r2(points), cardSurcharge: r2(cardSurcharge), extPenalty: r2(extPenalty),
+  };
+  return {
+    ...out,
+    total: r2(out.rent + out.bbqHotpot + out.shisha + out.cater + out.drinks + out.points + out.cardSurcharge + out.extPenalty),
+  };
+}
+
 export function countsForFinance(b: BookingRecord, opts?: { includeTest?: boolean }): boolean {
   if (b.status === 'cancelled' || b.status === 'pending' || b.status === 'payment_not_completed') return false;
   // Preview deployments auto-stamp every booking isTest, so the TEST
