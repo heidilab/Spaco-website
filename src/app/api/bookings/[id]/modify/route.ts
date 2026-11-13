@@ -9,6 +9,7 @@ import { getVenueByIdServer, venuesSharingSpaceServer } from '@/lib/venueRegistr
 import {
   calculatePricing, calculateDeposit, freeDrinksVenues, subtractHours,
   earlySetupPriceByVenue, calcCateringTotal,
+  fixedRentOf,
 } from '@/lib/pricing';
 import { calcPromoDiscount } from '@/lib/promoCodes';
 import { computeGrandTotal, computeBalanceDue, paidBase } from '@/lib/bookingMoney';
@@ -340,6 +341,7 @@ export async function POST(
   const computed = calculatePricing(
     venue, booking.isWeekend, hours, newGuestCount, reqAddOns, childCount,
     peakRule?.surchargePerHead || 0, booking.peakSurchargeOverride,
+    fixedRentOf(booking), // 商業租場 keeps its agreed rent
   );
 
   // Recompute the promo against the NEW pax / subtotal by reloading the

@@ -539,6 +539,16 @@ export function adultEquivalent(adults: number, children: number): number {
   return adults + 0.5 * Math.max(0, children);
 }
 
+/** The typed rent of a 商業租場 booking, to pass as calculatePricing's
+ *  `fixedRent`; undefined for every other booking (formula applies).
+ *  Every re-pricing of an EXISTING booking must pass this, or an edit
+ *  would replace the agreed rent with the per-head formula. */
+export function fixedRentOf(
+  booking: { isCommercial?: boolean; pricing?: { baseCharge?: number } } | null | undefined,
+): number | undefined {
+  return booking?.isCommercial ? (booking.pricing?.baseCharge || 0) : undefined;
+}
+
 export function calculatePricing(
   venue: Venue,
   isWeekend: boolean,
@@ -557,14 +567,22 @@ export function calculatePricing(
    *  e.g. a WhatsApp-negotiated discount). When a number, it replaces
    *  the rule-derived amount outright; null/undefined follows the rule. */
   peakSurchargeOverride?: number | null,
+  /** 商業租場使用: the rent staff typed (see fixedRentOf). When a number it
+   *  IS the venue charge — no per-head formula and no peak surcharge;
+   *  add-ons are priced as usual. */
+  fixedRent?: number | null,
 ): PricingCalculation {
   const tier = isWeekend ? venue.pricing.weekend : venue.pricing.weekday;
   const adults = Math.max(0, guests - childCount);
   const equiv = adultEquivalent(adults, childCount);
-  const peakSurcharge = typeof peakSurchargeOverride === 'number'
-    ? Math.max(0, Math.round(peakSurchargeOverride))
-    : peakSurchargePerHead > 0 ? Math.round(peakSurchargePerHead * equiv) : 0;
-  const baseCharge = Math.round(tier.perHead * equiv * hours) + peakSurcharge;
+  const hasFixedRent = typeof fixedRent === 'number';
+  const peakSurcharge = hasFixedRent ? 0
+    : typeof peakSurchargeOverride === 'number'
+      ? Math.max(0, Math.round(peakSurchargeOverride))
+      : peakSurchargePerHead > 0 ? Math.round(peakSurchargePerHead * equiv) : 0;
+  const baseCharge = hasFixedRent
+    ? Math.max(0, Math.round(fixedRent as number))
+    : Math.round(tier.perHead * equiv * hours) + peakSurcharge;
   const guestLabel = childCount > 0
     ? `${adults}成人 + ${childCount}小童`
     : `${guests}人`;
@@ -573,10 +591,12 @@ export function calculatePricing(
     : `${guests} pax`;
   const breakdown: { label: { zh: string; en: string }; amount: number }[] = [
     {
-      label: {
-        zh: `場地費 (${guestLabel} x ${hours}小時 x $${tier.perHead})`,
-        en: `Venue (${guestLabelEn} x ${hours}hrs x $${tier.perHead})`,
-      },
+      label: hasFixedRent
+        ? { zh: `場租（商業租場，${hours}小時）`, en: `Venue hire (commercial, ${hours}hrs)` }
+        : {
+            zh: `場地費 (${guestLabel} x ${hours}小時 x $${tier.perHead})`,
+            en: `Venue (${guestLabelEn} x ${hours}hrs x $${tier.perHead})`,
+          },
       amount: baseCharge - peakSurcharge,
     },
   ];

@@ -294,7 +294,7 @@ export default function MonthClosePage() {
       sheetBookings.push({
         date: b.date,
         time: `${b.startTime}-${b.endTime}`,
-        ppl: kids > 0 ? adults + 0.5 * kids : b.guestCount,
+        ppl: kids > 0 ? adults + 0.5 * kids : (b.guestCount || ''),
         rent: c.rent, bbqHotpot: c.bbqHotpot, shisha: c.shisha, cater: c.cater, drinks: c.drinks,
         pointsPromo: c.pointsPromo, cardSurcharge: c.cardSurcharge, extPenalty: c.extPenalty,
         // What actually moved: credited amount + any card surcharge on top

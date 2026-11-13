@@ -46,6 +46,7 @@ import {
   earlySetupPriceByVenue,
   PARTIAL_PAX_ADDON_IDS,
   addOnPartialPax,
+  fixedRentOf,
 } from '@/lib/pricing';
 import { depositSettlementAmounts, amountOwed, paidBase, isSettlementOverflow, computeGrandTotal, netConsumption, discountedSubtotal, computeBalanceDue, adminDiscountAmount } from '@/lib/bookingMoney';
 
@@ -478,6 +479,7 @@ export default function AdminBookingDetailPage() {
         childCount,
         resolvePeakRule(editPeakCfg, venueId)?.surchargePerHead || 0,
         bookingForFormula?.peakSurchargeOverride,
+        fixedRentOf(bookingForFormula),
       );
       // Display the effective (post-promo) subtotal — see hydrate
       // comment above. Storage stays pre-promo. Promo recomputes for
@@ -2211,6 +2213,7 @@ export default function AdminBookingDetailPage() {
                         childCount,
                         resolvePeakRule(bookingPeakCfg, booking.venueId)?.surchargePerHead || 0,
                         booking.peakSurchargeOverride,
+                        fixedRentOf(booking),
                       );
                       suggestedSubtotalGross = live.subtotal;
                       // Effective subtotal = formula − promo − 折扣優惠.

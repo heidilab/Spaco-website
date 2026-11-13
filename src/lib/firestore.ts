@@ -19,7 +19,7 @@ import { adminApiFetch } from './adminApiFetch';
 import { BookingRecord, BlockedSlot, BusinessDocument, DocumentType, DocumentRevision, CalendarEvent, AddOnOptions, PromoCode } from '@/types';
 import { venuesSharingSpace, getVenueById } from './venues';
 import { loadAllVenues, conflictIdsFor } from './venueRegistry';
-import { calculatePricing, calculateDeposit, freeDrinksVenues } from './pricing';
+import { calculatePricing, calculateDeposit, fixedRentOf, freeDrinksVenues } from './pricing';
 import { getPeakDay } from './peakDays';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { resolvePeakRule } from './peakDayRules';
@@ -511,6 +511,9 @@ export async function updateBookingDateTime(
         children,
         peakRule?.surchargePerHead || 0,
         booking.peakSurchargeOverride,
+        // 商業租場: the agreed rent stays; only add-ons follow the formula.
+        // (Changing it = editing 消費小計, which folds into baseCharge.)
+        fixedRentOf(booking),
       );
 
       // Preserve any promo discount the customer had applied. We re-apply
@@ -643,7 +646,8 @@ export async function updateBookingDateTime(
       const stickyDeposit =
         typeof next.securityDepositOverride === 'number'
           ? Math.max(0, next.securityDepositOverride)
-          : wasPaid && typeof booking.pricing.securityDeposit === 'number'
+          // 商業租場: the 按金 was typed by staff, never tier-derived.
+          : (wasPaid || booking.isCommercial) && typeof booking.pricing.securityDeposit === 'number'
             ? booking.pricing.securityDeposit
             : computed.securityDeposit;
       // CANONICAL grand total: gross subtotal minus promo AND points,

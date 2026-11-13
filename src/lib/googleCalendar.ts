@@ -422,7 +422,8 @@ function buildEventSummary(b: BookingRecord, customerName?: string): string {
   const venueLabel = venue ? `${swTag}${venue.branch}` : b.venueId;
   const phone = b.whatsappPhone ? ` ${formatPhone(b.whatsappPhone)}` : '';
   const name = customerName ? ` · ${customerName}${phone}` : phone ? ` ·${phone}` : '';
-  const guestSuffix = ` (${b.guestCount}人)`;
+  // 商業租場 bookings may have no head count (0) — leave the suffix off.
+  const guestSuffix = b.guestCount > 0 ? ` (${b.guestCount}人)` : '';
   return `${venueLabel}${name}${guestSuffix}`;
 }
 

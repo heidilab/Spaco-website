@@ -334,7 +334,7 @@ export default function ClaimBookingPage() {
                 <dt className="text-xs uppercase tracking-wider text-ink-soft font-semibold mb-1 flex items-center gap-1">
                   <Users size={11} /> {locale === 'zh' ? '人數' : 'Guests'}
                 </dt>
-                <dd className="font-bold text-ink">{draft.guestCount}</dd>
+                <dd className="font-bold text-ink">{draft.guestCount > 0 ? draft.guestCount : '—'}</dd>
               </div>
             </dl>
 

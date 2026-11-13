@@ -346,6 +346,12 @@ export interface BookingRecord {
    *  totals, NO security deposit; 按金結算 becomes extra-charge chasing
    *  (deductions overflow straight into balanceDue). */
   isAirbnb?: boolean;
+  /** 商業租場使用 (Heidi 2026-11-13): a commercial hire quoted by CS — not
+   *  a package, never offered on the public site. `pricing.baseCharge` is
+   *  the rent staff typed and `pricing.securityDeposit` the 按金 they
+   *  typed; re-pricing keeps both (pricing.fixedRentOf). The head count
+   *  is optional — 0 means "not given". */
+  isCommercial?: boolean;
   /** Admin-granted per-booking discount (e.g. headcount-milestone deal
    *  promised on WhatsApp). Deducted like a promo in bookingMoney's
    *  netConsumption — 'rent' scope caps the base at the rental portion. */
@@ -588,6 +594,8 @@ export interface BookingDraft {
    *  fixed duration). The admin form locks venue + duration + price to
    *  the chosen package — see /lib/packages.ts. */
   packageSlug?: string;
+  /** 商業租場使用 — see BookingRecord.isCommercial. */
+  isCommercial?: boolean;
   /** Staff-granted 折扣優惠 typed into the link generator (Heidi
    *  2026-10-31: private WhatsApp deals — cash off, % off rent, % off
    *  the whole bill). Same shape as BookingRecord.adminDiscount; copied

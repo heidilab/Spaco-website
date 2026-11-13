@@ -210,6 +210,7 @@ export async function recreateBookingDraft(
     ...(typeof oldDraft.promoDiscount === 'number' ? { promoDiscount: oldDraft.promoDiscount } : {}),
     ...(typeof oldDraft.promoFreeDrinksCost === 'number' ? { promoFreeDrinksCost: oldDraft.promoFreeDrinksCost } : {}),
     ...(oldDraft.packageSlug ? { packageSlug: oldDraft.packageSlug } : {}),
+    ...(oldDraft.isCommercial ? { isCommercial: true } : {}),
     ...(oldDraft.adminDiscount ? { adminDiscount: oldDraft.adminDiscount } : {}),
   });
 }

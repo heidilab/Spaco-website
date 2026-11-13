@@ -757,7 +757,7 @@ function SummaryItemTitle({ item, locale, userNames }: { item: DayItem; locale: 
       const ss = `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
       return <span className="text-amber-700"> · 🎈{ss}-{item.data.startTime} {locale === 'zh' ? '提早入場佈置' : 'early setup'}</span>;
     })() : null;
-    return <>{item.data.isTest ? '🧪 ' : ''}{timeRange}  <span className="font-semibold">{venueTag(item.data.venueId)}</span>  · {bookingIdent(item.data, userNames)}  · {item.data.guestCount}p{setupTag}</>;
+    return <>{item.data.isTest ? '🧪 ' : ''}{timeRange}  <span className="font-semibold">{venueTag(item.data.venueId)}</span>  · {bookingIdent(item.data, userNames)}{item.data.guestCount > 0 ? `  · ${item.data.guestCount}p` : ''}{setupTag}</>;
   }
   if (item.kind === 'block') {
     return <>{timeRange}  <span className="font-semibold">{venueTag(item.data.venueId)}</span>  · {locale === 'zh' ? '人手封鎖' : 'Manual block'}</>;

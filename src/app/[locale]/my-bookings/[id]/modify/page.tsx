@@ -27,6 +27,7 @@ import { loadAllVenues, conflictIdsFor } from '@/lib/venueRegistry';
 import {
   addOns as addOnCatalog, calculatePricing, noBBQVenues, freeDrinksVenues,
   earlySetupPriceByVenue, calcCateringTotal,
+  fixedRentOf,
 } from '@/lib/pricing';
 import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
 import HotpotSoupPicker from '@/components/booking/HotpotSoupPicker';
@@ -210,6 +211,7 @@ export default function ModifyBookingPage() {
       childCount,
       resolvePeakRule(peakCfg, booking.venueId)?.surchargePerHead || 0,
       booking.peakSurchargeOverride,
+      fixedRentOf(booking),
     );
   }, [venue, booking, cart, newGuestCount, childCount, newHours, peakCfg]);
 

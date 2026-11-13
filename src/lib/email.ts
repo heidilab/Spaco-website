@@ -377,7 +377,7 @@ export function buildBookingConfirmationEmail(params: {
 }) {
   const peopleLine = (params.childCount ?? 0) > 0
     ? `${params.guestCount} 人 (${params.adultCount ?? params.guestCount} 成人 + ${params.childCount} 小童)`
-    : `${params.guestCount} 人`;
+    : params.guestCount > 0 ? `${params.guestCount} 人` : '未提供';
   const addOnsRow = params.addOnsLine
     ? `<tr><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; color: #999; font-size: 13px; vertical-align: top;">附加服務</td><td style="padding: 10px 0; border-bottom: 1px solid #F0E8E1; text-align: right; font-weight: 600; color: #6D28D9; max-width: 380px;">${params.addOnsLine}</td></tr>`
     : '';
@@ -768,7 +768,7 @@ export function buildStaffSupplierOrderEmail(params: {
   const adultEquiv = adults + 0.5 * children;
   const guestLabel = children > 0
     ? `${booking.guestCount} 人（${adults} 成人 + ${children} 小童）`
-    : `${booking.guestCount} 人`;
+    : booking.guestCount > 0 ? `${booking.guestCount} 人` : '未提供';
 
   const sections: string[] = [];
 

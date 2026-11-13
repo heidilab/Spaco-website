@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
   const {
     venueId, branchSlug, date, startTime, endTime, endDate,
     hours, guestCount, adultCount, childCount, isWeekend,
-    addOns, hasBYOFood, pricing, peakSurchargeOverride, isAirbnb, packageSlug,
+    addOns, hasBYOFood, pricing, peakSurchargeOverride, isAirbnb, isCommercial, packageSlug,
     customerName, whatsappPhone, customerEmail, notes,
     marketingChannel, marketingChannelLabel,
     payments, adminDiscount: rawAdminDiscount,
@@ -178,6 +178,7 @@ export async function POST(req: NextRequest) {
         createdVia: 'admin-direct',
       ...(typeof peakSurchargeOverride === 'number' ? { peakSurchargeOverride: Math.max(0, peakSurchargeOverride) } : {}),
       ...(isAirbnb === true ? { isAirbnb: true } : {}),
+      ...(isCommercial === true ? { isCommercial: true } : {}),
         createdBy: gate.uid,
         venueId,
         branchSlug: branchSlug ?? null,
@@ -188,8 +189,9 @@ export async function POST(req: NextRequest) {
         hours: hours ?? Math.max(1, Math.round(
           (new Date(`${resolvedEndDate}T${endTime}:00+08:00`).getTime()
             - new Date(`${date}T${startTime}:00+08:00`).getTime()) / 3600000)),
-        guestCount: guestCount ?? 1,
-        adultCount: adultCount ?? guestCount ?? 1,
+        // 商業租場: the head count is optional — 0 = not given.
+        guestCount: guestCount ?? (isCommercial === true ? 0 : 1),
+        adultCount: adultCount ?? guestCount ?? (isCommercial === true ? 0 : 1),
         childCount: childCount ?? 0,
         isWeekend: !!isWeekend,
         addOns: Array.isArray(addOns) ? addOns : [],

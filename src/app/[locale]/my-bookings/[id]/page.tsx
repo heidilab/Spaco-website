@@ -115,7 +115,7 @@ export default function MyBookingDetailPage() {
     ? (locale === 'zh'
         ? `${booking.guestCount} 人 (${booking.adultCount ?? booking.guestCount} 成人 + ${booking.childCount} 小童)`
         : `${booking.guestCount} pax (${booking.adultCount ?? booking.guestCount} adults + ${booking.childCount} kids)`)
-    : `${booking.guestCount} ${locale === 'zh' ? '人' : 'pax'}`;
+    : booking.guestCount > 0 ? `${booking.guestCount} ${locale === 'zh' ? '人' : 'pax'}` : '—';
 
   // Modification eligibility: must be confirmed (or balance still owed),
   // and at least 24h before start, and not in the past.

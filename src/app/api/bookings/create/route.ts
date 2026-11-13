@@ -120,7 +120,10 @@ export async function POST(req: NextRequest) {
   if (!venue || venue.active === false) {
     return NextResponse.json({ error: 'VENUE_OFFLINE' }, { status: 400 });
   }
-  const guestCount = finiteNumber(rest.guestCount, 1, venue.capacity.max);
+  // A 商業租場 link (staff-issued draft only) may carry no head count: the
+  // rent is a typed amount, not per head. 0 = not given.
+  const isCommercial = !!draftId && rest.isCommercial === true;
+  const guestCount = finiteNumber(rest.guestCount, isCommercial ? 0 : 1, venue.capacity.max);
   const childCount = finiteNumber(rest.childCount ?? 0, 0, guestCount);
   if (!Number.isInteger(guestCount) || !Number.isInteger(childCount)) throw new BookingInputError('INVALID_GUESTS');
   const adultCount = guestCount - childCount;
@@ -476,6 +479,7 @@ export async function POST(req: NextRequest) {
         ...(rest.marketingChannelLabel ? { marketingChannelLabel: rest.marketingChannelLabel } : {}),
         ...(rest.marketingChannelOther ? { marketingChannelOther: rest.marketingChannelOther } : {}),
         ...(rest.packageSlug ? { packageSlug: rest.packageSlug } : {}),
+        ...(isCommercial ? { isCommercial: true } : {}),
         ...(typeof rest.visitorId === 'string' && rest.visitorId
           ? { visitorId: String(rest.visitorId).slice(0, 64) } : {}),
         ...(typeof rest.firstTouchSource === 'string' && rest.firstTouchSource

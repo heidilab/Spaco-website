@@ -129,6 +129,17 @@ export default function AdminNewBookingPage() {
   const [isAirbnb, setIsAirbnb] = useState(false);
   const [airbnbRent, setAirbnbRent] = useState('');
   const [airbnbExtras, setAirbnbExtras] = useState('');
+  // 商業租場使用 (Heidi 2026-11-13): a commercial hire quoted by CS — NOT a
+  // package and never offered on the public site. Any venue; staff type
+  // the rent and the 按金 themselves, the head count is optional (it does
+  // not drive the rent) and add-ons work as usual. Stored as
+  // `isCommercial` so later edits keep the typed rent instead of
+  // re-deriving it from the per-head formula.
+  const [isCommercial, setIsCommercial] = useState(false);
+  const [commercialRent, setCommercialRent] = useState('');
+  const [commercialDeposit, setCommercialDeposit] = useState('');
+  const commercialRentNum = Math.max(0, parseFloat(commercialRent) || 0);
+  const commercialDepositNum = Math.max(0, parseFloat(commercialDeposit) || 0);
 
   // ── Promo code (validated via /api/promo/validate) ────────────────
   const [promoInput, setPromoInput] = useState('');
@@ -317,7 +328,8 @@ export default function AdminNewBookingPage() {
   // 特別日子剔咗「假日價」→ 平日照計週末 tier。
   const isWeekend = calendarWeekend || peakRule?.forceWeekendRate === true;
   const pricing = venue
-    ? calculatePricing(venue, isWeekend, hours, guestCount, selectedAddOnList, childCount, peakRule?.surchargePerHead || 0, peakOverride)
+    ? calculatePricing(venue, isWeekend, hours, guestCount, selectedAddOnList, childCount, peakRule?.surchargePerHead || 0, peakOverride,
+        isCommercial ? commercialRentNum : undefined)
     : null;
 
   // Mirror the customer-facing pricing flow exactly so admin-issued
@@ -348,9 +360,11 @@ export default function AdminNewBookingPage() {
   const subtotalAfterPackage = isAirbnb
     ? airbnbSubtotal
     : pricing
-      ? (selectedPackage
-          ? selectedPackage.price + extraPaxCharge + pricing.addOnTotal
-          : pricing.subtotal)
+      ? (isCommercial
+          ? commercialRentNum + pricing.addOnTotal
+          : selectedPackage
+            ? selectedPackage.price + extraPaxCharge + pricing.addOnTotal
+            : pricing.subtotal)
       : 0;
   const adminDiscount = (() => {
     const raw = Math.max(0, parseFloat(discValue) || 0);
@@ -368,6 +382,7 @@ export default function AdminNewBookingPage() {
   // here equals what the claim page, create route and receipts compute.
   const discountBaseCharge = isAirbnb
     ? airbnbRentNum
+    : isCommercial ? commercialRentNum
     : selectedPackage ? selectedPackage.price + extraPaxCharge : (pricing?.baseCharge || 0);
   const discountAddOnTotal = isAirbnb ? airbnbExtrasNum : (pricing?.addOnTotal || 0);
   const adminDiscountHkd = adminDiscountAmount({
@@ -398,7 +413,8 @@ export default function AdminNewBookingPage() {
   const securityDepositAuto = selectedPackage?.deposit ?? calculateSecurityDeposit(subtotalAfterPackage);
   // Airbnb bookings carry NO security deposit — the platform handles
   // damage claims; extra charges are chased via 按金結算's overflow path.
-  const securityDeposit = isAirbnb ? 0 : (securityDepositOverrideNum ?? securityDepositAuto);
+  // Commercial hire: the 按金 is whatever staff typed, nothing derived.
+  const securityDeposit = isAirbnb ? 0 : isCommercial ? commercialDepositNum : (securityDepositOverrideNum ?? securityDepositAuto);
   const grandTotal = effectiveSubtotal + securityDeposit;
   const deposit = isAirbnb ? grandTotal : calculateDeposit(grandTotal, date || undefined);
   const balanceDue = Math.max(0, grandTotal - deposit);
@@ -423,7 +439,7 @@ export default function AdminNewBookingPage() {
 
   // Validation
   const whatsappValid = !customerWhatsapp || isValidHkPhone(customerWhatsapp);
-  const canSubmit = !!user && !!date && !!startTime && hours > 0 && guestCount > 0 && !!venue && !!pricing && whatsappValid && !submitting && (!isAirbnb || airbnbSubtotal > 0);
+  const canSubmit = !!user && !!date && !!startTime && hours > 0 && (isCommercial ? commercialRentNum > 0 : guestCount > 0) && !!venue && !!pricing && whatsappValid && !submitting && (!isAirbnb || airbnbSubtotal > 0);
 
   async function handleApplyPromo() {
     const code = promoInput.trim().toUpperCase();
@@ -543,13 +559,14 @@ export default function AdminNewBookingPage() {
                 deposit: airbnbSubtotal,
               }
             : {
-                baseCharge: selectedPackage ? selectedPackage.price + extraPaxCharge : pricing.baseCharge,
+                baseCharge: isCommercial ? commercialRentNum : selectedPackage ? selectedPackage.price + extraPaxCharge : pricing.baseCharge,
                 addOnTotal: pricing.addOnTotal,
                 subtotal: subtotalAfterPackage,
                 securityDeposit,
                 deposit,
               },
           ...(isAirbnb ? { isAirbnb: true } : {}),
+          ...(isCommercial ? { isCommercial: true } : {}),
           ...(packageSlug ? { packageSlug } : {}),
           customerName: customerName.trim(),
           ...(customerWhatsapp ? { whatsappPhone: normalizeHkPhone(customerWhatsapp) || customerWhatsapp } : {}),
@@ -596,8 +613,9 @@ export default function AdminNewBookingPage() {
         hasBYOFood,
         ...(peakOverride !== null ? { peakSurchargeOverride: peakOverride } : {}),
         pricing: {
-          // Packages: flat package portion, NOT the per-head artifact
-          baseCharge: selectedPackage ? selectedPackage.price + extraPaxCharge : pricing.baseCharge,
+          // Packages: flat package portion, NOT the per-head artifact.
+          // Commercial hire: the rent staff typed.
+          baseCharge: isCommercial ? commercialRentNum : selectedPackage ? selectedPackage.price + extraPaxCharge : pricing.baseCharge,
           addOnTotal: pricing.addOnTotal,
           // PRE-promo subtotal (baseCharge + addOnTotal + package extras).
           // This is the convention every other flow uses: venue page
@@ -619,6 +637,7 @@ export default function AdminNewBookingPage() {
         ...(customerEmail ? { customerEmail } : {}),
         ...(notes ? { notes } : {}),
         ...(packageSlug ? { packageSlug } : {}),
+        ...(isCommercial ? { isCommercial: true } : {}),
         ...(promo
           ? {
               promoCode: promo.code,
@@ -862,9 +881,9 @@ export default function AdminNewBookingPage() {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => { setPackageSlug(null); setIsAirbnb(false); }}
+                onClick={() => { setPackageSlug(null); setIsAirbnb(false); setIsCommercial(false); }}
                 className={`px-3 py-2 rounded-xl text-sm font-medium transition-all border-2 ${
-                  !packageSlug
+                  !packageSlug && !isAirbnb && !isCommercial
                     ? 'bg-gradient-pink text-white border-transparent shadow-glow'
                     : 'bg-white/85 text-ink border-charcoal/15 hover:border-pink/60'
                 }`}
@@ -874,7 +893,7 @@ export default function AdminNewBookingPage() {
               {mode === 'direct' && (
                 <button
                   type="button"
-                  onClick={() => { setIsAirbnb(true); setPackageSlug(null); }}
+                  onClick={() => { setIsAirbnb(true); setPackageSlug(null); setIsCommercial(false); }}
                   className={`px-3 py-2 rounded-xl text-sm font-medium transition-all border-2 ${
                     isAirbnb
                       ? 'bg-gradient-pink text-white border-transparent shadow-glow'
@@ -884,11 +903,27 @@ export default function AdminNewBookingPage() {
                   🏠 Airbnb {locale === 'zh' ? '訂單' : 'order'}
                 </button>
               )}
+              {/* Staff-only: not a package, never on the public site. */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCommercial(true); setPackageSlug(null); setIsAirbnb(false);
+                  // Head count is optional here — start blank, not at the default 15.
+                  setAdultCount(0); setChildCount(0);
+                }}
+                className={`px-3 py-2 rounded-xl text-sm font-medium transition-all border-2 ${
+                  isCommercial
+                    ? 'bg-gradient-pink text-white border-transparent shadow-glow'
+                    : 'bg-white/85 text-ink border-charcoal/15 hover:border-pink/60'
+                }`}
+              >
+                🏢 {locale === 'zh' ? '商業租場使用' : 'Commercial hire'}
+              </button>
               {ALL_PACKAGES.map((p) => (
                 <button
                   key={p.slug}
                   type="button"
-                  onClick={() => { setPackageSlug(p.slug); setIsAirbnb(false); }}
+                  onClick={() => { setPackageSlug(p.slug); setIsAirbnb(false); setIsCommercial(false); }}
                   className={`px-3 py-2 rounded-xl text-sm font-medium transition-all border-2 ${
                     packageSlug === p.slug
                       ? 'bg-gradient-pink text-white border-transparent shadow-glow'
@@ -906,6 +941,38 @@ export default function AdminNewBookingPage() {
                   ? `已鎖定：${selectedPackage.name.zh}．${selectedPackage.durationHours} 小時．場地 ${venue?.name.zh}`
                   : `Locked: ${selectedPackage.name.en} · ${selectedPackage.durationHours}h · ${venue?.name.en}`}
               </p>
+            )}
+            {isCommercial && (
+              <div className="mt-4 rounded-xl border-2 border-sky-200 bg-sky-50/60 p-4 space-y-3">
+                <p className="text-sm font-bold text-ink">🏢 {locale === 'zh' ? '商業租場 — 場租同按金自行輸入' : 'Commercial hire — type the rent and deposit'}</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-ink-soft mb-1 block">{locale === 'zh' ? '場租 (HK$)' : 'Rent (HK$)'}</label>
+                    <input
+                      type="number" min={0}
+                      value={commercialRent}
+                      onChange={(e) => setCommercialRent(e.target.value)}
+                      placeholder="0"
+                      className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-ink-soft mb-1 block">{locale === 'zh' ? '按金 (HK$)' : 'Security deposit (HK$)'}</label>
+                    <input
+                      type="number" min={0}
+                      value={commercialDeposit}
+                      onChange={(e) => setCommercialDeposit(e.target.value)}
+                      placeholder="0"
+                      className="w-full px-3 py-2 rounded-xl border-2 border-charcoal/15 text-sm bg-white font-bold"
+                    />
+                  </div>
+                </div>
+                <p className="text-[11px] text-ink-soft">
+                  {locale === 'zh'
+                    ? '任何分店都用得。場租唔按人頭計，人數可以唔填；附加服務照常加（按人頭嘅項目要填人數先計到）。呢個選項只喺後台有，客人喺網站揀唔到。'
+                    : 'Any venue. Rent is not per head, so the head count is optional; add-ons work as usual (per-head items need a head count). Staff-only — never offered on the public site.'}
+                </p>
+              </div>
             )}
             {isAirbnb && (
               <div className="mt-4 rounded-xl border-2 border-rose-200 bg-rose-50/50 p-4 space-y-3">
@@ -1139,7 +1206,14 @@ export default function AdminNewBookingPage() {
               <span>{locale === 'zh' ? `總人數 ${guestCount}` : `Total ${guestCount}`}</span>
               <span>{locale === 'zh' ? `計價 ${adultEquiv} 人` : `Charged ${adultEquiv}`}</span>
             </div>
-            {venue && adultEquiv < venue.capacity.min && (
+            {isCommercial && (
+              <p className="text-xs text-sky-700 mt-2">
+                {locale === 'zh'
+                  ? '商業租場：人數可以唔填（0）。場租唔受人數影響。'
+                  : 'Commercial hire: the head count is optional (0). It does not affect the rent.'}
+              </p>
+            )}
+            {venue && !isCommercial && adultEquiv < venue.capacity.min && (
               <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
                 <AlertCircle size={12} />
                 {locale === 'zh'
@@ -1499,6 +1573,7 @@ export default function AdminNewBookingPage() {
            *  (Heidi 2026-06-22: "有時 admin 會評估客人比較麻煩而
            *  決定增加按金銀碼"). Leave empty to use the auto
            *  calculation; type a number to override. */}
+          {!isCommercial && (
           <div className="glass-card p-6 space-y-3">
             <h3 className="text-base font-bold text-ink flex items-center gap-2">
               <Calculator size={16} className="text-pink" />
@@ -1548,6 +1623,7 @@ export default function AdminNewBookingPage() {
                 : 'Use to bump the deposit for higher-risk customers (large groups, prior disputes, etc.).'}
             </p>
           </div>
+          )}
 
           {/* Promo code — validated against /api/promo/validate just like
               the customer confirm page. Applied promo persists to the draft
