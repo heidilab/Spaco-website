@@ -129,17 +129,22 @@ export default function ExpensesPage() {
   }, [canAccess, user, branch, month]);
 
   // ── Derived auto items ──
+  // A broker / platform booking whose channel has NO rule is listed too,
+  // flagged 「未設佣金規則」, instead of vanishing: a booking moved to
+  // Common Room (#C7xSBqCw, 2026-11-13) earned nothing and nothing said
+  // why. Its amount can still be typed by hand.
   const commissionRows = useMemo(() => {
     if (!config) return [];
+    const BROKER_CHANNELS = ['agent', 'reubird', 'commonroom'];
     return bookings
       .map((b) => {
         const ch = b.marketingChannel || '';
         const rule = config.commissionRules[ch];
         const amount = commissionForBooking(b, rule);
-        return { booking: b, rule, amount, channel: ch };
+        return { booking: b, rule, amount, channel: ch, noRule: !rule && BROKER_CHANNELS.includes(ch) };
       })
-      .filter((r) => r.rule || typeof r.booking.commissionOverride === 'number')
-      .filter((r) => r.amount > 0 || typeof r.booking.commissionOverride === 'number');
+      .filter((r) => r.rule || r.noRule || typeof r.booking.commissionOverride === 'number')
+      .filter((r) => r.amount > 0 || r.noRule || typeof r.booking.commissionOverride === 'number');
   }, [bookings, config]);
 
   const kpayFeeRows = useMemo(() => {
@@ -425,7 +430,7 @@ export default function ExpensesPage() {
                 : 'Per channel rules, including 加時/罰款 kept from the deposit: 行家 = rent + extras (F&B exempt); Reubird = full bill + extras. Type a different amount and press Save — the saved figure is what month close uses.'}
             </p>
             <div className="space-y-1.5">
-              {commissionRows.map(({ booking: b, rule, amount }) => {
+              {commissionRows.map(({ booking: b, rule, amount, noRule }) => {
                 const manual = typeof b.commissionOverride === 'number';
                 const auto = rule ? Math.round(commissionBase(b, rule.base) * (rule.pct / 100) * 100) / 100 : 0;
                 const extras = depositDeductionsKept(b);
@@ -443,7 +448,11 @@ export default function ExpensesPage() {
                     <span className="text-[11px] text-ink-soft whitespace-nowrap">
                       {rule
                         ? `${rule.pct}% × ${rule.base === 'rent' ? (locale === 'zh' ? '場租' : 'rent') : (locale === 'zh' ? '全單' : 'total')} $${commissionBase(b, rule.base).toLocaleString()}${extras > 0 ? (locale === 'zh' ? `（含加時/罰款 $${extras.toLocaleString()}）` : ` (incl. extras $${extras.toLocaleString()})`) : ''} = $${auto.toLocaleString()}`
-                        : (locale === 'zh' ? '手動' : 'manual')}
+                        : noRule && !manual
+                          ? <span className="text-amber-700 font-semibold" title={locale === 'zh' ? '去 內容管理 → 系統設定 → 來源渠道選項，喺呢個渠道剔「佣金」並儲存' : 'Tick 佣金 for this channel under 系統設定 → 來源渠道選項 and save'}>
+                              {locale === 'zh' ? `⚠ 「${channelDisplayLabel(b, locale)}」未設佣金規則` : `⚠ no commission rule for "${channelDisplayLabel(b, locale)}"`}
+                            </span>
+                          : (locale === 'zh' ? '手動' : 'manual')}
                     </span>
                     <input
                       type="number"
