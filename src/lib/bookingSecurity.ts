@@ -44,7 +44,12 @@ export function validateAddOns(value: unknown, packageSlug?: string): BookingRec
       else if (v && typeof v === 'object') Object.values(v).forEach(x => validateOptions(x, depth + 1));
     };
     validateOptions(a.options);
-    return { id: a.id, quantity, ...(a.options ? { options: a.options as AddOnOptions } : {}) };
+    // options.pax (a per-person package charged for part of the group) is
+    // a staff concession. A customer who could send it would pay for 1
+    // guest's BBQ instead of everyone's — drop it from customer requests.
+    const options = a.options && typeof a.options === 'object' ? { ...(a.options as AddOnOptions) } : undefined;
+    if (options) delete options.pax;
+    return { id: a.id, quantity, ...(options ? { options } : {}) };
   });
 }
 export function pricePackage(input: {

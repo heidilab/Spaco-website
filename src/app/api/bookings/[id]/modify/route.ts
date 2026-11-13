@@ -145,12 +145,22 @@ export async function POST(
   // Add-ons — qty per id can't drop below what's booked.
   const floor: Record<string, number> = {};
   for (const a of (booking.addOns || [])) floor[a.id] = a.quantity;
+  // options.pax (package charged for part of the group) is set by staff
+  // only: keep what is STORED on the booking, never what the client sends.
+  const storedPax = new Map((booking.addOns || []).map((a) => [a.id, a.options?.pax]));
   const parsedAddOns: CartEntry[] = Array.isArray(body.addOns)
-    ? body.addOns.map((a: CartEntry) => ({
-        id: String(a.id),
-        quantity: Math.max(0, Math.floor(Number(a.quantity) || 0)),
-        ...(a.options ? { options: a.options } : {}),
-      })).filter((a: CartEntry) => a.quantity > 0)
+    ? body.addOns.map((a: CartEntry) => {
+        const id = String(a.id);
+        const clientOptions = { ...(a.options || {}) } as NonNullable<CartEntry['options']>;
+        delete clientOptions.pax;
+        const pax = storedPax.get(id);
+        const options = { ...clientOptions, ...(typeof pax === 'number' && pax > 0 ? { pax } : {}) };
+        return {
+          id,
+          quantity: Math.max(0, Math.floor(Number(a.quantity) || 0)),
+          ...(a.options || Object.keys(options).length > 0 ? { options } : {}),
+        };
+      }).filter((a: CartEntry) => a.quantity > 0)
     : (booking.addOns || []);
   // 火鍋 (lib/hotpot.ts). The 15 line is the CHARGED headcount — a child
   // counts ½, same as every per-head price.

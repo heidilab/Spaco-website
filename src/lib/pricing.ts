@@ -258,6 +258,21 @@ export function getShishaFlavorLabel(variantId: string, locale: 'zh' | 'en' = 'e
  *  e.g. "BBQ Standard Package ×4, Drinks Package ×4". For Shisha, also
  *  surface pipe count + flavor breakdown + setup option:
  *  "Shisha 水煙 (2支/3頭: A·芒果菠蘿×2, C·提子×1, +人手setup)". */
+/** Per-person food packages staff can charge for only part of the group
+ *  (Heidi 2026-11-13). Drinks stay whole-group: free-drinks promos and
+ *  included-drinks venues are computed off the full head count. */
+export const PARTIAL_PAX_ADDON_IDS = ['bbq-standard', 'bbq-premium', 'hotpot-standard', 'hotpot-seafood'] as const;
+
+/** The partial head count on a per-person package entry (options.pax),
+ *  or null when it is charged for the whole group. */
+export function addOnPartialPax(
+  entry: { id: string; options?: AddOnOptions } | undefined,
+): number | null {
+  if (!entry || !(PARTIAL_PAX_ADDON_IDS as readonly string[]).includes(entry.id)) return null;
+  const pax = Number(entry.options?.pax);
+  return Number.isFinite(pax) && pax > 0 ? pax : null;
+}
+
 export function formatAddOnsForStaff(
   bookingAddOns: { id: string; quantity: number; options?: AddOnOptions }[] | undefined,
   locale: 'zh' | 'en' = 'en',
@@ -287,9 +302,17 @@ export function formatAddOnsForStaff(
         const tag = soups
           ? (locale === 'zh' ? `湯底：${soups}` : `Soup: ${soups}`)
           : (locale === 'zh' ? '未揀湯底' : 'soup base not chosen');
-        return `${getAddOnLabel(a.id, locale)} (${tag})`;
+        const part = addOnPartialPax(a);
+        const count = part ? (locale === 'zh' ? `${part}位，` : `${part} pax, `) : '';
+        return `${getAddOnLabel(a.id, locale)} (${count}${tag})`;
       }
-      if (cfg?.unit === 'person') return getAddOnLabel(a.id, locale);
+      if (cfg?.unit === 'person') {
+        // Only part of the group — the cleaner and the supplier need the number.
+        const part = addOnPartialPax(a);
+        return part
+          ? `${getAddOnLabel(a.id, locale)} ×${part}${locale === 'zh' ? '位' : ' pax'}`
+          : getAddOnLabel(a.id, locale);
+      }
       return `${getAddOnLabel(a.id, locale)} ×${a.quantity}`;
     }
     // Shisha: pipes/heads + flavor breakdown + setup flag.
@@ -564,15 +587,21 @@ export function calculatePricing(
   );
 
   for (const selected of selectedAddOns) {
+    // Per-person food packages: the whole group (children at half rate)
+    // unless staff set the number of guests it is for (options.pax).
+    const partPax = addOnPartialPax(selected);
+    const heads = partPax ?? equiv;
+    const headsZh = partPax ? `${partPax}位` : guestLabel;
+    const headsEn = partPax ? `${partPax} pax` : guestLabelEn;
     if (selected.id === 'bbq-standard') {
-      // Use venue-specific BBQ standard price; children at half rate.
+      // Use venue-specific BBQ standard price.
       const price = venue.bbqStandardPrice ?? bbqStandardPriceByVenue[venue.id] ?? 158;
-      const cost = Math.round(price * equiv);
+      const cost = Math.round(price * heads);
       addOnTotal += cost;
       breakdown.push({
         label: {
-          zh: `BBQ 標準套餐 (${guestLabel} x $${price})`,
-          en: `BBQ Standard (${guestLabelEn} x $${price})`,
+          zh: `BBQ 標準套餐 (${headsZh} x $${price})`,
+          en: `BBQ Standard (${headsEn} x $${price})`,
         },
         amount: cost,
       });
@@ -580,12 +609,12 @@ export function calculatePricing(
     }
 
     if (selected.id === 'bbq-premium') {
-      const cost = Math.round(328 * equiv);
+      const cost = Math.round(328 * heads);
       addOnTotal += cost;
       breakdown.push({
         label: {
-          zh: `BBQ 豪華套餐 (${guestLabel} x $328)`,
-          en: `BBQ Premium (${guestLabelEn} x $328)`,
+          zh: `BBQ 豪華套餐 (${headsZh} x $328)`,
+          en: `BBQ Premium (${headsEn} x $328)`,
         },
         amount: cost,
       });
@@ -655,12 +684,12 @@ export function calculatePricing(
     }
 
     if (selected.id === 'hotpot-standard') {
-      const cost = Math.round(168 * equiv);
+      const cost = Math.round(168 * heads);
       addOnTotal += cost;
       breakdown.push({
         label: {
-          zh: `火鍋標準套餐 (${guestLabel} x $168)${soupSuffix(selected, 'zh')}`,
-          en: `Hotpot Standard (${guestLabelEn} x $168)${soupSuffix(selected, 'en')}`,
+          zh: `火鍋標準套餐 (${headsZh} x $168)${soupSuffix(selected, 'zh')}`,
+          en: `Hotpot Standard (${headsEn} x $168)${soupSuffix(selected, 'en')}`,
         },
         amount: cost,
       });
@@ -668,12 +697,12 @@ export function calculatePricing(
     }
 
     if (selected.id === 'hotpot-seafood') {
-      const cost = Math.round(348 * equiv);
+      const cost = Math.round(348 * heads);
       addOnTotal += cost;
       breakdown.push({
         label: {
-          zh: `海鮮火鍋套餐 (${guestLabel} x $348)${soupSuffix(selected, 'zh')}`,
-          en: `Seafood Hotpot (${guestLabelEn} x $348)${soupSuffix(selected, 'en')}`,
+          zh: `海鮮火鍋套餐 (${headsZh} x $348)${soupSuffix(selected, 'zh')}`,
+          en: `Seafood Hotpot (${headsEn} x $348)${soupSuffix(selected, 'en')}`,
         },
         amount: cost,
       });

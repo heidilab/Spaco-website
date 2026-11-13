@@ -3,7 +3,7 @@
 // functions: caller fetches the data, this file does the math.
 
 import type { BookingRecord, MarketingChannel, Venue } from '@/types';
-import { addOns as ADDON_CATALOG, bbqStandardPriceByVenue, calcShishaPrice, calcCateringTotal, earlySetupPriceByVenue } from './pricing';
+import { addOns as ADDON_CATALOG, addOnPartialPax, bbqStandardPriceByVenue, calcShishaPrice, calcCateringTotal, earlySetupPriceByVenue } from './pricing';
 import { HOTPOT_EXTRA_SOUP_PRICE } from './hotpot';
 import { venues } from './venues';
 import { salesBranchKey, salesBranches } from './bonusBranches';
@@ -138,7 +138,9 @@ export function addOnRevenueForBooking(
   if (!entry) return 0;
   const adults = booking.adultCount ?? booking.guestCount;
   const kids = booking.childCount ?? 0;
-  const equiv = adults + 0.5 * kids;
+  // Per-person packages staff set for only part of the group (options.pax)
+  // are priced on that number — so the money lands in its own column.
+  const equiv = addOnPartialPax(entry) ?? (adults + 0.5 * kids);
 
   // Custom items (admin free-form rows, id `custom-<ts>-<idx>`): the price
   // lives on the entry itself. Without this branch the finance page showed

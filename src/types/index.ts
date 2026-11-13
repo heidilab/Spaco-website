@@ -96,6 +96,12 @@ export interface AddOn {
  *  store `quantity = total head count` so the existing display surfaces
  *  (×N suffix) keep working; `pipes` lives on options. */
 export interface AddOnOptions {
+  /** Per-person food packages (BBQ / hotpot) only: the number of guests
+   *  the package is charged for when that is NOT the whole group — staff
+   *  agree "BBQ for 20 of the 39" with a customer. Absent = everyone.
+   *  Set by staff only; customer requests have it stripped
+   *  (bookingSecurity.validateAddOns, the modify route). */
+  pax?: number;
   /** How many shisha pipes (1 or 2). Constrained by venue (max 2). */
   pipes?: number;
   /** Flavor variant ids picked, one per head (so length === quantity). */

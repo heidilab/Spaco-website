@@ -21,6 +21,7 @@ import {
   adultEquivalent,
   calcShishaPrice,
   SHISHA_MAX_PIPES,
+  addOnPartialPax,
 } from '@/lib/pricing';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { HOTPOT_EXTRA_SOUP_PRICE, hotpotSoupSummary, isHotpotPackage } from '@/lib/hotpot';
@@ -340,15 +341,18 @@ export default function AdminDocumentsPage() {
         let quantity: number;
         let amount: number;
 
+        // Per-person packages: the whole group unless staff set a number
+        // of guests for it (options.pax).
+        const heads = addOnPartialPax(addOn) ?? equiv;
         if (addOn.id === 'bbq-standard') {
           // Per-head, venue-specific. SW: $158, TST: $138, CWB: $158.
           unitPrice = bbqStandardPriceByVenue[b.venueId] || cfg.pricePerUnit;
-          quantity = equiv;
-          amount = Math.round(unitPrice * equiv);
+          quantity = heads;
+          amount = Math.round(unitPrice * heads);
         } else if (addOn.id === 'bbq-premium') {
           unitPrice = 328;
-          quantity = equiv;
-          amount = Math.round(unitPrice * equiv);
+          quantity = heads;
+          amount = Math.round(unitPrice * heads);
         } else if (addOn.id === 'bbq-grill') {
           // Grill rental is bundled when a BBQ package is also selected.
           if (hasBBQPackage) continue;
@@ -357,12 +361,12 @@ export default function AdminDocumentsPage() {
           amount = unitPrice * quantity;
         } else if (addOn.id === 'hotpot-standard') {
           unitPrice = 168;
-          quantity = equiv;
-          amount = Math.round(unitPrice * equiv);
+          quantity = heads;
+          amount = Math.round(unitPrice * heads);
         } else if (addOn.id === 'hotpot-seafood') {
           unitPrice = 348;
-          quantity = equiv;
-          amount = Math.round(unitPrice * equiv);
+          quantity = heads;
+          amount = Math.round(unitPrice * heads);
         } else if (addOn.id === 'hotpot-extra-soup') {
           unitPrice = HOTPOT_EXTRA_SOUP_PRICE;
           quantity = addOn.quantity;

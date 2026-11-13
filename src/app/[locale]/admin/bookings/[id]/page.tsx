@@ -44,6 +44,8 @@ import {
   calcCateringTotal,
   freeDrinksVenues,
   earlySetupPriceByVenue,
+  PARTIAL_PAX_ADDON_IDS,
+  addOnPartialPax,
 } from '@/lib/pricing';
 import { depositSettlementAmounts, amountOwed, paidBase, isSettlementOverflow, computeGrandTotal, netConsumption, discountedSubtotal, computeBalanceDue, adminDiscountAmount } from '@/lib/bookingMoney';
 
@@ -164,6 +166,21 @@ export default function AdminBookingDetailPage() {
   // recompute in lib/firestore.ts so the booking's subtotal /
   // securityDeposit / balanceDue all reflect the change.
   const [addOnQty, setAddOnQty] = useState<Record<string, number>>({});
+  // Per-person food packages (BBQ / hotpot) can be charged for only part
+  // of the group: the head count typed per add-on id, '' = everyone.
+  // Stored as `options.pax` on the add-on entry (Heidi 2026-11-13 — staff
+  // were typing "BBQ Package for 20ppl" as a custom item, which put the
+  // money in the wrong column at month close).
+  const [addOnPax, setAddOnPax] = useState<Record<string, string>>({});
+  const partialPaxOf = (id: string): number => {
+    const n = Number(addOnPax[id]);
+    return (PARTIAL_PAX_ADDON_IDS as readonly string[]).includes(id) && Number.isFinite(n) && n > 0 ? n : 0;
+  };
+  /** A plain add-on entry, with its partial head count when one is set. */
+  const paxEntry = (id: string, quantity: number) => {
+    const pax = partialPaxOf(id);
+    return pax > 0 ? { id, quantity, options: { pax } } : { id, quantity };
+  };
   // Admin-defined custom add-ons (name + price). Each entry has a
   // unique `id` of the form `custom-<timestamp>` so the booking can
   // hold multiple in parallel. Customers never see these (they're not
@@ -308,6 +325,7 @@ export default function AdminBookingDetailPage() {
         // Hydrate add-on quantities from the booking so the edit panel
         // reflects what the customer originally booked.
         const initialQty: Record<string, number> = {};
+        const initialPax: Record<string, string> = {};
         const initialCustom: Array<{ id: string; name: string; price: number }> = [];
         for (const a of b.addOns || []) {
           if (a.id.startsWith('custom-')) {
@@ -318,9 +336,12 @@ export default function AdminBookingDetailPage() {
             });
           } else {
             initialQty[a.id] = a.quantity;
+            const part = addOnPartialPax(a);
+            if (part) initialPax[a.id] = String(part);
           }
         }
         setAddOnQty(initialQty);
+        setAddOnPax(initialPax);
         setCustomAddOns(initialCustom);
         // Hydrate the deposit override input from the stored value so
         // saving with no edits leaves the deposit alone.
@@ -414,7 +435,7 @@ export default function AdminBookingDetailPage() {
           if (id === 'catering' && cateringSelection) {
             return { id, quantity: 1, options: cateringSelection };
           }
-          return { id, quantity };
+          return paxEntry(id, quantity);
         }),
       ...customAddOns
         .filter((c) => c.name.trim() !== '' && c.price >= 0)
@@ -485,7 +506,7 @@ export default function AdminBookingDetailPage() {
     // capture is safe because it's the most recent booking from state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    addOnQty, customAddOns, shishaOptions, guestCount, childCount, venueId,
+    addOnQty, addOnPax, customAddOns, shishaOptions, guestCount, childCount, venueId,
     date, startTime, endTime, endDate,
     bookingForFormula, editPeakCfg,
   ]);
@@ -573,7 +594,12 @@ export default function AdminBookingDetailPage() {
     && (addOnQty[HOTPOT_EXTRA_SOUP_ID] || 0) > 0 && hotpotSlots > 0;
   const hotpotDirty = hotpotSlots > 0
     && cleanSoupBases(hotpotSoups.slice(0, hotpotSlots)).join(',') !== hotpotSoupBases(booking.addOns).join(',');
-  const addOnsDirty = qtyDirty || shishaDirty || customDirty || cateringDirty || hotpotDirty;
+  // A package's head count changed (its quantity stays 1, so qtyDirty
+  // would not see it).
+  const paxDirty = PARTIAL_PAX_ADDON_IDS.some((id) =>
+    (addOnQty[id] || 0) > 0
+    && partialPaxOf(id) !== (addOnPartialPax(booking.addOns?.find((a) => a.id === id)) || 0));
+  const addOnsDirty = qtyDirty || paxDirty || shishaDirty || customDirty || cateringDirty || hotpotDirty;
 
   const depositOverrideNum = parseFloat(depositOverride);
   const depositDirty =
@@ -672,7 +698,7 @@ export default function AdminBookingDetailPage() {
                 if (id === 'catering' && cateringSelection) {
                   return { id, quantity: 1, options: cateringSelection };
                 }
-                return { id, quantity };
+                return paxEntry(id, quantity);
               }),
             // Admin-defined custom add-ons get appended with their
             // name + price baked into `options`. We drop entries whose
@@ -1769,12 +1795,34 @@ export default function AdminBookingDetailPage() {
                                   : `$${cfg.pricePerUnit}${isPerHead ? '/位' : ''}`}
                             </span>
                           </div>
-                          {enabled && isPerHead && (
+                          {enabled && isPerHead && !(PARTIAL_PAX_ADDON_IDS as readonly string[]).includes(cfg.id) && (
                             <p className="text-[11px] text-ink-soft mt-1">
                               {locale === 'zh'
                                 ? `全部 ${guestCount} 人，自動按人數計`
                                 : `Applied to all ${guestCount} guests`}
                             </p>
+                          )}
+                          {/* BBQ / hotpot packages: everyone by default, or only
+                           *  the number of guests staff agreed with the customer. */}
+                          {enabled && isPerHead && (PARTIAL_PAX_ADDON_IDS as readonly string[]).includes(cfg.id) && (
+                            <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-ink-soft" onClick={(e) => e.preventDefault()}>
+                              <span>{locale === 'zh' ? '加幾多位' : 'For how many'}</span>
+                              <input
+                                type="number" min={1} step={0.5} inputMode="decimal"
+                                value={addOnPax[cfg.id] || ''}
+                                placeholder={locale === 'zh' ? `全部 ${guestCount} 人` : `all ${guestCount}`}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) => setAddOnPax((prev) => ({ ...prev, [cfg.id]: e.target.value }))}
+                                className="w-24 rounded-lg border border-charcoal/15 bg-white px-2 py-1 text-xs text-ink"
+                              />
+                              <span>
+                                {partialPaxOf(cfg.id) > 0
+                                  ? (locale === 'zh'
+                                    ? `只計 ${partialPaxOf(cfg.id)} 位`
+                                    : `charged for ${partialPaxOf(cfg.id)}`)
+                                  : (locale === 'zh' ? '留空＝全部人（小童半價）' : 'blank = everyone (children half)')}
+                              </span>
+                            </div>
                           )}
                           {enabled && !isPerHead && (
                             <div className="flex items-center gap-1.5 mt-1.5">
@@ -2124,7 +2172,7 @@ export default function AdminBookingDetailPage() {
                         if (id === 'catering' && cateringSelection) {
                           return { id, quantity: 1, options: cateringSelection };
                         }
-                        return { id, quantity };
+                        return paxEntry(id, quantity);
                       }),
                     ...customAddOns
                       .filter((c) => c.name.trim() !== '' && c.price >= 0)

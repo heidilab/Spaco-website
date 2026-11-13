@@ -2,7 +2,7 @@
 
 import type { BookingRecord, AddOnOptions } from '@/types';
 import { discountedSubtotal } from './bookingMoney';
-import { calcShishaPrice } from './pricing';
+import { addOnPartialPax, calcShishaPrice } from './pricing';
 import { HOTPOT_EXTRA_SOUP_PRICE, hotpotSoupBases, hotpotSoupSlots, hotpotSoupSummary } from './hotpot';
 import { getDecorationById } from './decorations';
 import {
@@ -778,8 +778,12 @@ export function buildStaffSupplierOrderEmail(params: {
   const extraSoup  = booking.addOns?.find((a) => a.id === 'hotpot-extra-soup');
   if (hotpotStd || hotpotSea || extraSoup) {
     const lines: string[] = [];
-    if (hotpotStd) lines.push(`• 火鍋標準套餐 × ${guestLabel}（每位 $168，總計 HK$${Math.round(168 * adultEquiv).toLocaleString()}）`);
-    if (hotpotSea) lines.push(`• 海鮮火鍋套餐 × ${guestLabel}（每位 $348，總計 HK$${Math.round(348 * adultEquiv).toLocaleString()}）`);
+    // The supplier is ordered the number of portions actually sold — the
+    // whole group, unless staff set the package for part of it.
+    const stdPax = addOnPartialPax(hotpotStd);
+    const seaPax = addOnPartialPax(hotpotSea);
+    if (hotpotStd) lines.push(`• 火鍋標準套餐 × ${stdPax ? `${stdPax}位` : guestLabel}（每位 $168，總計 HK$${Math.round(168 * (stdPax ?? adultEquiv)).toLocaleString()}）`);
+    if (hotpotSea) lines.push(`• 海鮮火鍋套餐 × ${seaPax ? `${seaPax}位` : guestLabel}（每位 $348，總計 HK$${Math.round(348 * (seaPax ?? adultEquiv)).toLocaleString()}）`);
     if (extraSoup) {
       const qty = Math.max(1, extraSoup.quantity || 1);
       lines.push(`• 加購額外湯底 ×${qty} (HK$${(HOTPOT_EXTRA_SOUP_PRICE * qty).toLocaleString()})`);
