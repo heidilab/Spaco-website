@@ -5,6 +5,7 @@ import { sendAutomatedEmail } from '@/lib/emailAutomations';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
 import { getVenueById } from '@/lib/venues';
 import { initialAmountDue } from '@/lib/bookingMoney';
+import { requireBookingAccess } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -18,6 +19,8 @@ export async function POST(req: NextRequest) {
   try {
     const { bookingId } = await req.json();
     if (!bookingId) return NextResponse.json({ error: 'bookingId required' }, { status: 400 });
+    const access = await requireBookingAccess(req, bookingId);
+    if (!access.ok) return access.res;
 
     const snap = await adminDb.collection('bookings').doc(bookingId).get();
     if (!snap.exists) return NextResponse.json({ error: 'booking not found' }, { status: 404 });

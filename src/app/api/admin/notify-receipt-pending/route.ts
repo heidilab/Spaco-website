@@ -3,6 +3,7 @@ import { adminDb } from '@/lib/firebaseAdmin';
 import { sendStaffReceiptPendingNotification } from '@/lib/emailAutomations';
 import { getVenueById } from '@/lib/venues';
 import type { BookingRecord, UserProfile } from '@/types';
+import { requireBookingAccess } from '@/lib/adminAuth';
 
 // POST /api/admin/notify-receipt-pending { bookingId }
 // Fired the moment a customer uploads an offline-payment receipt — the
@@ -18,6 +19,8 @@ export async function POST(req: NextRequest) {
     if (!bookingId) {
       return NextResponse.json({ error: 'Missing bookingId' }, { status: 400 });
     }
+    const access = await requireBookingAccess(req, bookingId);
+    if (!access.ok) return access.res;
 
     const snap = await adminDb.collection('bookings').doc(bookingId).get();
     if (!snap.exists) {

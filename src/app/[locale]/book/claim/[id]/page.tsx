@@ -14,6 +14,7 @@ import {
   claimBookingDraft, isDraftExpired, DRAFT_TTL_HOURS,
 } from '@/lib/bookingDrafts';
 import { getUserProfile, updateUserWhatsapp } from '@/lib/firestore';
+import { adminApiFetch } from '@/lib/adminApiFetch';
 import { isValidHkPhone, normalizeHkPhone, formatHkPhone } from '@/lib/whatsapp';
 import { addOns as ALL_ADDONS, calculateSecurityDeposit } from '@/lib/pricing';
 import { hotpotSoupSummary, isHotpotPackage } from '@/lib/hotpot';
@@ -101,7 +102,7 @@ export default function ClaimBookingPage() {
       try { await updateUserWhatsapp(user.uid, phoneE164); } catch { /* non-blocking */ }
       const bookingId = await claimBookingDraft(draft, user.uid, phoneE164);
       // Fire-and-forget push to Google Calendar (don't block the redirect).
-      fetch('/api/google/push-booking', {
+      adminApiFetch('/api/google/push-booking', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

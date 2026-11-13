@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireCronSecret } from '@/lib/adminAuth';
 import { syncCalendars } from '@/lib/googleCalendar';
 
 export const runtime = 'nodejs';
@@ -15,10 +16,8 @@ export const maxDuration = 60;
  * sites (Stripe webhook, admin approve, admin date/time edit).
  */
 export async function GET(request: NextRequest) {
-  const auth = request.headers.get('authorization');
-  if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const denied = requireCronSecret(request);
+  if (denied) return denied;
 
   try {
     const origin = request.nextUrl.origin;

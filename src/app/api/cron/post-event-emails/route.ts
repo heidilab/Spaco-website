@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireCronSecret } from '@/lib/adminAuth';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { buildPostEventEmail } from '@/lib/email';
@@ -21,10 +22,8 @@ export const dynamic = 'force-dynamic';
  * Suggested cron schedule: once per day (e.g. 0 3 * * *).
  */
 export async function GET(request: NextRequest) {
-  const auth = request.headers.get('authorization');
-  if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const denied = requireCronSecret(request);
+  if (denied) return denied;
 
   // Compute "3 days ago" in HKT (UTC+8) → YYYY-MM-DD
   const now = new Date();

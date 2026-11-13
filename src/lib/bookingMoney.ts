@@ -65,7 +65,7 @@ export interface MoneyBooking {
   promoDiscount?: number;
   pointsDiscount?: number;
   balanceDue?: number;
-  payments?: Array<{ amount?: number; cardSurcharge?: number }>;
+  payments?: Array<{ amount?: number; cardSurcharge?: number; isRefund?: boolean; kind?: string }>;
   depositRefund?: unknown;
   adminDiscount?: {
     type: 'percent' | 'cash';
@@ -184,7 +184,16 @@ export function initialAmountDue(booking: MoneyBooking): number {
  * errors into new saves (#hlJJh9K5).
  */
 export function paidBase(booking: MoneyBooking): number {
-  return (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+  // Refunds (money OUT, recorded as negative entries / isRefund) are not
+  // part of what the customer paid towards the bill: counting them made
+  // a compensated customer a debtor (site review 2026-11-13 #7). Finance
+  // still nets them off through the payments list itself.
+  return (booking.payments || []).reduce((s, p) => s + (isRefundEntry(p) ? 0 : (p.amount || 0)), 0);
+}
+
+/** A payments[] entry that is money going back to the customer. */
+export function isRefundEntry(p: { amount?: number; isRefund?: boolean; kind?: string }): boolean {
+  return p.isRefund === true || p.kind === 'refund' || (p.amount || 0) < 0;
 }
 
 /** Cumulative settlement entitlement, before any refund is paid out.

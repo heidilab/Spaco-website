@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
 import { getUserBookings, updateBookingReceiptUploaded } from '@/lib/firestore';
+import { adminApiFetch } from '@/lib/adminApiFetch';
 import { storage } from '@/lib/firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { BookingRecord } from '@/types';
@@ -173,7 +174,7 @@ function BookingCard({
       await uploadBytes(ref, file);
       const url = await getDownloadURL(ref);
       await updateBookingReceiptUploaded(booking.id, url);
-      fetch('/api/admin/notify-receipt-pending', {
+      adminApiFetch('/api/admin/notify-receipt-pending', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bookingId: booking.id }),

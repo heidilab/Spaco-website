@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { requireCronSecret } from '@/lib/adminAuth';
 import { removeBookingFromCalendar } from '@/lib/googleCalendar';
 
 export const runtime = 'nodejs';
@@ -34,11 +35,8 @@ export const dynamic = 'force-dynamic';
  * same expired booking is a no-op (status check filters them out).
  */
 export async function GET(request: NextRequest) {
-  // Vercel cron sends an Authorization: Bearer ${CRON_SECRET} header.
-  const auth = request.headers.get('authorization');
-  if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const denied = requireCronSecret(request);
+  if (denied) return denied;
 
   const now = Date.now();
 
@@ -74,16 +72,21 @@ export async function GET(request: NextRequest) {
     const p = d.data().payments;
     return Array.isArray(p) && p.length > 0;
   };
+  // An offline order staff entered (直接落單) with no money received yet
+  // is a real order being chased, not a lapsed online hold: it has no
+  // deadline and must never be swept (site review 2026-11-13 #1 — they
+  // were cancelled within 15 minutes and their time resold).
+  const isStaffOrder = (d: { data: () => { createdVia?: string } }) => d.data().createdVia === 'admin-direct';
 
   const flipped: string[] = [];
   const candidates = [
-    ...pendingSnap.docs.filter((d) => isExpired(d) && !isPaid(d)),
+    ...pendingSnap.docs.filter((d) => isExpired(d) && !isPaid(d) && !isStaffOrder(d)),
     // Sweep ANY paymentMethod (incl. Stripe — its checkout session
     // expires at the same 30-min mark). Skip when the customer already
     // uploaded an offline receipt (goes to /admin/receipts review) OR
     // when any payment is already recorded on the booking.
     ...offlineAwaitingSnap.docs.filter(
-      (d) => isExpired(d) && !d.data().receiptUrl && !isPaid(d),
+      (d) => isExpired(d) && !d.data().receiptUrl && !isPaid(d) && !isStaffOrder(d),
     ),
   ];
 
@@ -96,7 +99,7 @@ export async function GET(request: NextRequest) {
         const fresh = await tx.get(docSnap.ref);
         const current = fresh.data();
         if (!current || !['pending', 'awaiting_payment'].includes(current.status)
-          || current.receiptUrl || current.payments?.length
+          || current.receiptUrl || current.payments?.length || current.createdVia === 'admin-direct'
           || (typeof current.pendingExpiresAt === 'number' && current.pendingExpiresAt > now)) return null;
         const slots = await tx.get(adminDb.collection('blocked_slots').where('bookingId', '==', bookingId));
         tx.update(docSnap.ref, { status: 'payment_not_completed', updatedAt: FieldValue.serverTimestamp() });

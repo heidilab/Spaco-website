@@ -9,8 +9,6 @@ import { adminApiFetch } from '@/lib/adminApiFetch';
 import { normalizeMemberEmail } from '@/lib/memberEmail';
 import { BookingRecord } from '@/types';
 import { Search, CalendarDays, Award, ChevronRight, ArrowLeft, Clock, Download, Users } from 'lucide-react';
-import { doc, updateDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
 
 interface MemberData {
   uid: string;
@@ -221,8 +219,19 @@ export default function AdminMembersPage() {
 
   const adjustPoints = async () => {
     if (!selectedMember || pointsAdjust === 0) return;
+    // Through the audited server route — the client SDK write was always
+    // refused by the users rule, silently (site review 2026-11-13 #19).
+    const res = await adminApiFetch('/api/admin/loyalty-adjust', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: selectedMember.uid, amount: pointsAdjust }),
+    });
+    const d = await res.json().catch(() => ({})) as { ok?: boolean; error?: string };
+    if (!res.ok || !d.ok) {
+      alert((locale === 'zh' ? '調整積分失敗：' : 'Adjust failed: ') + (d.error || (!res.ok ? `HTTP ${res.status}` : (locale === 'zh' ? '積分不足以扣減' : 'not enough points'))));
+      return;
+    }
     const newPoints = (selectedMember.loyaltyPoints || 0) + pointsAdjust;
-    await updateDoc(doc(db, 'users', selectedMember.uid), { loyaltyPoints: Math.max(0, newPoints) });
     setSelectedMember({ ...selectedMember, loyaltyPoints: Math.max(0, newPoints) });
     setPointsAdjust(0);
     // Refresh list

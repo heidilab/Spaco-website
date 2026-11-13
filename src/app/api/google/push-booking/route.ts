@@ -4,15 +4,17 @@ import {
   pushBookingToCalendar, updateBookingOnCalendar, removeBookingFromCalendar,
 } from '@/lib/googleCalendar';
 import { BookingRecord, UserProfile } from '@/types';
+import { requireBookingAccess } from '@/lib/adminAuth';
 
 // POST /api/google/push-booking { bookingId } → push booking to gcal,
 // update booking with returned eventId.
 //
 // DELETE /api/google/push-booking?bookingId=... → remove from gcal.
 //
-// Uses Firebase Admin SDK (server-side, bypasses Firestore rules) because
-// the route is invoked by client fetch() calls without forwarded auth tokens.
-// This is consistent with how the Stripe webhook handles bookings.
+// Callers send the Firebase ID token (adminApiFetch): staff with the
+// bookings permission, or the booking's own customer (after claiming a
+// draft). Before 2026-11-13 anyone with a booking id could delete its
+// calendar event or push text into it (site review #11).
 
 export const runtime = 'nodejs';
 
@@ -28,6 +30,8 @@ export async function POST(req: NextRequest) {
     if (!bookingId) {
       return NextResponse.json({ error: 'Missing bookingId' }, { status: 400 });
     }
+    const access = await requireBookingAccess(req, bookingId);
+    if (!access.ok) return access.res;
     const booking = await loadBooking(bookingId);
     if (!booking) {
       return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
@@ -88,6 +92,8 @@ export async function DELETE(req: NextRequest) {
     if (!bookingId) {
       return NextResponse.json({ error: 'Missing bookingId' }, { status: 400 });
     }
+    const access = await requireBookingAccess(req, bookingId);
+    if (!access.ok) return access.res;
     const booking = await loadBooking(bookingId);
     if (!booking) {
       return NextResponse.json({ error: 'Booking not found' }, { status: 404 });

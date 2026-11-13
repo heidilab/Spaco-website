@@ -18,6 +18,7 @@ import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './firebase';
 import { getBooking, updateBookingStatus, deleteBlockedSlotsByBooking } from './firestore';
 import { revokeLockPasscode } from './lockPasscodeClient';
+import { adminApiFetch } from './adminApiFetch';
 
 export interface CancelActor {
   uid?: string;
@@ -48,11 +49,11 @@ export async function cancelBooking(
   await deleteBlockedSlotsByBooking(bookingId);
 
   // Best-effort side effects — never block the cancel itself.
-  fetch(`/api/google/push-booking?bookingId=${encodeURIComponent(bookingId)}`, {
+  adminApiFetch(`/api/google/push-booking?bookingId=${encodeURIComponent(bookingId)}`, {
     method: 'DELETE',
   }).catch(() => { /* gcal disconnected — fine */ });
 
-  fetch('/api/email/booking-cancelled', {
+  adminApiFetch('/api/email/booking-cancelled', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ bookingId }),

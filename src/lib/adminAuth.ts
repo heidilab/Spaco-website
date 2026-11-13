@@ -46,6 +46,45 @@ export async function requireAdmin(
 }
 
 /**
+ * Gate a booking-scoped route on the signed-in user being EITHER a staff
+ * member with the `bookings` permission OR the booking's own customer.
+ * For the routes the customer's browser calls about their own booking
+ * (receipt uploaded, FPS chosen, Google Calendar push after claiming a
+ * draft) and the staff cancel flow. Site review 2026-11-13 (#11): these
+ * used to take any bookingId from anyone.
+ */
+export async function requireBookingAccess(
+  req: Request,
+  bookingId: string,
+): Promise<
+  | { ok: true; uid: string; staff: boolean; booking: FirebaseFirestore.DocumentData & { id: string } }
+  | { ok: false; res: NextResponse }
+> {
+  const authHeader = req.headers.get('authorization') || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  if (!token) return { ok: false, res: NextResponse.json({ error: 'missing-token' }, { status: 401 }) };
+  let uid: string;
+  try {
+    uid = (await adminVerifyIdToken(token)).uid;
+  } catch {
+    return { ok: false, res: NextResponse.json({ error: 'invalid-token' }, { status: 401 }) };
+  }
+  if (typeof bookingId !== 'string' || !bookingId || bookingId.includes('/')) {
+    return { ok: false, res: NextResponse.json({ error: 'bookingId required' }, { status: 400 }) };
+  }
+  const snap = await adminDb.collection('bookings').doc(bookingId).get();
+  if (!snap.exists) return { ok: false, res: NextResponse.json({ error: 'Booking not found' }, { status: 404 }) };
+  const booking = { id: snap.id, ...snap.data() } as FirebaseFirestore.DocumentData & { id: string };
+  const role = await getStaffRoleAdmin(uid);
+  const perms = role ? ROLE_PERMISSIONS[role as keyof typeof ROLE_PERMISSIONS] : null;
+  const staff = Array.isArray(perms) && perms.includes('bookings');
+  if (!staff && booking.userId !== uid) {
+    return { ok: false, res: NextResponse.json({ error: 'forbidden' }, { status: 403 }) };
+  }
+  return { ok: true, uid, staff, booking };
+}
+
+/**
  * Gate a manual/diagnostic route on the shared CRON_SECRET (sent as
  * `Authorization: Bearer <CRON_SECRET>`). For endpoints not driven by
  * the admin UI — closes them to the public without needing a Firebase

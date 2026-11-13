@@ -535,8 +535,11 @@ export async function POST(
         }
       }
       const vid = booking.venueId;
+      // Keep the test stamp on rebuilt slots — without it a test booking
+      // edited on the preview site blocked real customers on production
+      // until the daily hygiene run (site review 2026-11-13 #14).
       const addSlot = (data: Record<string, unknown>) =>
-        t.create(adminDb.collection('blocked_slots').doc(), data);
+        t.create(adminDb.collection('blocked_slots').doc(), booking.isTest ? { ...data, isTest: true } : data);
       if (isOvernight) {
         addSlot({ venueId: vid, date: booking.date, startTime, endTime: '23:59', reason: 'booking', bookingId: id });
         addSlot({ venueId: vid, date: endDate, startTime: '00:00', endTime, reason: 'booking', bookingId: id });

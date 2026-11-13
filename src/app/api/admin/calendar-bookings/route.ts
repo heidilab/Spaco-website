@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin, adminUserHasBookingsPerm } from '@/lib/adminAuth';
 import { adminDb } from '@/lib/firebaseAdmin';
+import { loadGcalDetailsForMonth } from '@/lib/googleCalendar';
 export async function GET(req: NextRequest) {
   const gate = await requireAdmin(req, 'calendar');
   if (!gate.ok) return gate.res;
@@ -19,5 +20,9 @@ export async function GET(req: NextRequest) {
     }
     return result;
   });
-  return NextResponse.json({ bookings, canManage });
+  // Google Calendar event text for the month's mirrored slots (staff-only
+  // collection; the public slot rows carry none).
+  let gcalDetails: Record<string, { title: string; description: string }> = {};
+  try { gcalDetails = await loadGcalDetailsForMonth(month); } catch (err) { console.warn('[calendar-bookings] gcal details failed', err); }
+  return NextResponse.json({ bookings, canManage, gcalDetails });
 }

@@ -5,6 +5,7 @@ import type { BookingRecord } from '@/types';
 import { requireAdmin } from '@/lib/adminAuth';
 import { computeGrandTotal, restoreBlockedSlotsIfMissing } from '@/lib/finalizeBooking';
 import { amountOwed } from '@/lib/bookingMoney';
+import { consumeBookingRewards } from '@/lib/bookingRewards';
 
 export const runtime = 'nodejs';
 
@@ -81,9 +82,16 @@ export async function POST(req: NextRequest) {
     // itself is already covered), so grandTotal − paid is ≤ 0 and the old
     // formula cleared ANY partial payment to zero — which would also lift
     // the booking block (Heidi 2026-10-18). Reduce the actual debt instead.
-    const newBalanceDue = booking.depositRefund && !body.isRefund
-      ? Math.max(0, Math.round((amountOwed(booking) - signedTotal) * 100) / 100)
-      : Math.max(0, grandTotal - loggedSum - signedTotal);
+    // A refund (money OUT: compensation, goodwill) never raises what the
+    // customer owes — before 2026-11-13 it did, and a customer given
+    // HK$300 back was blocked from booking and chased for the HK$300
+    // (site review #7). Refund entries are excluded from paidBase, so the
+    // owed figures stay as they were; the entry still nets off in finance.
+    const newBalanceDue = body.isRefund
+      ? (booking.balanceDue ?? 0)
+      : booking.depositRefund
+        ? Math.max(0, Math.round((amountOwed(booking) - signedTotal) * 100) / 100)
+        : Math.max(0, grandTotal - loggedSum - signedTotal);
 
     // Status advancement (mirrors booking-edit-followup):
     // only from upstream states; never downgrade confirmed/completed.
@@ -167,6 +175,13 @@ export async function POST(req: NextRequest) {
         if (slotsRestored) console.warn('[record-offline-payment] restored blocked_slots for', bookingId);
       } catch (err) {
         console.error('[record-offline-payment] blocked_slots restore failed:', err);
+      }
+      // Points redeemed and the promo code are consumed the moment the
+      // booking is confirmed, whichever path confirmed it (site review #6).
+      try {
+        await consumeBookingRewards(bookingId);
+      } catch (err) {
+        console.error('[record-offline-payment] rewards consumption failed:', err);
       }
     }
 

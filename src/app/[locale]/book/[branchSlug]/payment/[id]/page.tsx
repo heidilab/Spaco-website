@@ -310,7 +310,7 @@ export default function PaymentMethodPage() {
         // FPS / bank transfer stays OFF KPay: customer transfers
         // directly and uploads the receipt; admin verifies by hand.
         const id = await ensureBooking('fps');
-        fetch('/api/email/offline-pending', {
+        adminApiFetch('/api/email/offline-pending', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ bookingId: id }),

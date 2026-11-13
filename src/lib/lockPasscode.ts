@@ -462,7 +462,16 @@ export async function revokeBookingPasscode(bookingId: string): Promise<void> {
         keyboardPwdId: b.lockPasscode.ttlockPwdId as number,
       });
     } catch (err) {
-      console.warn('[lockPasscode] revoke failed for', bookingId, err);
+      // The code is still live on the door. Keep it on the booking so it
+      // stays visible and can be revoked again — clearing it here hid a
+      // working passcode from everyone (site review 2026-11-13, lock #1).
+      console.error('[lockPasscode] revoke failed for', bookingId, err);
+      await ref.update({
+        'lockPasscode.revokeFailedAt': FieldValue.serverTimestamp(),
+        'lockPasscode.revokeError': err instanceof Error ? err.message.slice(0, 300) : String(err).slice(0, 300),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      throw err;
     }
   }
 

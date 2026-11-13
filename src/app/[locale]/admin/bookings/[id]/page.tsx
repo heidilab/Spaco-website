@@ -16,6 +16,7 @@ import {
   getUserProfile,
   updateBookingDateTime,
   updateBookingStatus,
+  deleteBlockedSlotsByBooking,
   updateBookingDepositRefund,
   creditLoyaltyPoints,
   redeemLoyaltyPoints,
@@ -1282,7 +1283,7 @@ export default function AdminBookingDetailPage() {
     setPushing(true);
     setPushMsg(null);
     try {
-      const res = await fetch('/api/google/push-booking', {
+      const res = await adminApiFetch('/api/google/push-booking', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bookingId: booking.id }),
@@ -1340,6 +1341,22 @@ export default function AdminBookingDetailPage() {
         });
       } else {
         await updateBookingStatus(booking.id, next);
+        if (next === 'confirmed') {
+          // Rebuild slots the expiry cron removed (with a conflict check)
+          // and consume points / promo — server side, once.
+          try {
+            const r = await adminApiFetch('/api/admin/booking-confirmed', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ bookingId: booking.id }),
+            });
+            const d = await r.json().catch(() => ({}));
+            if (d?.slots === false && d?.rewards) { /* slots existed or were flagged; nothing to say */ }
+          } catch (err) { console.warn('[booking-confirmed] failed:', err); }
+        } else if (next === 'payment_not_completed') {
+          // A dead booking must not keep blocking the calendar.
+          try { await deleteBlockedSlotsByBooking(booking.id); } catch (err) { console.warn('[status-change] slot release failed:', err); }
+        }
         // Sync gcal so the event description reflects the new status
         // (e.g. payment_not_completed should drop the booking from the
         // active calendar surface; awaiting_review hints CS to review).

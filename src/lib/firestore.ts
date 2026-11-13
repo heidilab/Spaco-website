@@ -364,6 +364,9 @@ export async function updateBookingDateTime(
     await deleteDoc(b.ref);
   }
   const vid = targetVenueId;
+  // Rebuilt slots keep the test stamp (site review 2026-11-13 #14).
+  const createBlockedSlot = (data: Omit<BlockedSlot, 'id'>) =>
+    createBlockedSlotRaw(booking.isTest ? { ...data, isTest: true } as Omit<BlockedSlot, 'id'> : data);
   if (overnight) {
     // Day 1: from start → 23:59
     await createBlockedSlot({
@@ -787,6 +790,7 @@ export async function createBlockedSlot(
   const ref = await addDoc(collection(db, 'blocked_slots'), data);
   return ref.id;
 }
+const createBlockedSlotRaw = createBlockedSlot;
 
 /**
  * Create a blocked slot for an admin manual block. Earlier versions

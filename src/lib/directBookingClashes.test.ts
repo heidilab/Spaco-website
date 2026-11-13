@@ -19,7 +19,7 @@ describe('a Google Calendar entry never stops an offline order', () => {
   it('is reported, but needs no confirmation', () => {
     const clashes = slotClashes(evening, [gcal()], { production: true });
     expect(clashes).toEqual([
-      { kind: 'calendar', date: '2026-11-20', startTime: '18:00', endTime: '23:00', label: '行家 Amy 20人' },
+      { kind: 'calendar', date: '2026-11-20', startTime: '18:00', endTime: '23:00', label: '行家 Amy 20人', googleEventId: 'ev1' },
     ]);
     expect(clashesNeedingConfirmation(clashes)).toEqual([]);
   });

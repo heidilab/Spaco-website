@@ -218,11 +218,18 @@ export default function AdminBookingsPage() {
       tryGenerateLockPasscode(bookingId).catch((err) =>
         console.warn('[ttlock] post-confirm generate failed:', err),
       );
-      fetch('/api/google/push-booking', {
+      adminApiFetch('/api/google/push-booking', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bookingId }),
       }).catch(() => { /* gcal disconnected — fine */ });
+      // Rebuild the slots if the expiry cron removed them (with a
+      // conflict check) and consume points / promo — server side.
+      adminApiFetch('/api/admin/booking-confirmed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookingId }),
+      }).catch((err) => console.warn('[booking-confirmed] failed:', err));
       adminApiFetch('/api/admin/notify-booking', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

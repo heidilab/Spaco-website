@@ -86,14 +86,10 @@ async function upsertUserProfile(user: User) {
     });
     // Send the welcome email asynchronously — failure must not block sign-up.
     if (user.email) {
-      fetch('/api/email/welcome', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: user.email,
-          customerName: user.displayName || user.email.split('@')[0],
-        }),
-      }).catch((err) => console.warn('[welcome email] non-blocking failure:', err));
+      // The route reads the address from the signed-in profile.
+      user.getIdToken()
+        .then((token) => fetch('/api/email/welcome', { method: 'POST', headers: { Authorization: `Bearer ${token}` } }))
+        .catch((err) => console.warn('[welcome email] non-blocking failure:', err));
     }
   } else {
     // The name used to be written only when the doc was first created, so

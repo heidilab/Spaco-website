@@ -629,9 +629,14 @@ export interface BlockedSlot {
   googleEventId?: string;
   /** Calendar ID that hosted the source event ('cwb' | 'wc' | 'sw' | 'tst'). */
   googleCalendarKey?: string;
-  /** Original event title from Google Calendar (only for reason='gcal'). */
+  /** Hash of the event's title + description, so the sync can tell when
+   *  the text changed without storing it here (2026-11-13). */
+  googleEventDetailsHash?: string;
+  /** Event title. NOT stored on the slot since 2026-11-13 (blocked_slots
+   *  is world-readable); the admin calendar fills it in from
+   *  `blocked_slot_details` via /api/admin/calendar-bookings. */
   googleEventTitle?: string;
-  /** Original event description from Google Calendar (only for reason='gcal'). */
+  /** Event description — same as googleEventTitle. */
   googleEventDescription?: string;
 }
 

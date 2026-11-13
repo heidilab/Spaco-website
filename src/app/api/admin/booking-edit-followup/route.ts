@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { consumeBookingRewards } from '@/lib/bookingRewards';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -187,6 +188,9 @@ export async function POST(req: NextRequest) {
       }
       await bookingRef.update(update);
       updatedBalance = newBalance;
+      if (nextStatus === 'confirmed' && booking.status !== 'confirmed') {
+        try { await consumeBookingRewards(bookingId); } catch (err) { console.error('[booking-edit-followup] rewards consumption failed:', err); }
+      }
     }
 
     // 2. Re-send confirmation email so customer sees the new schedule.

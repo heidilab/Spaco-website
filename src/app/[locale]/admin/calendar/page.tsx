@@ -153,48 +153,53 @@ export default function AdminCalendarPage() {
       }
       return map;
     });
+    // Bookings of the month, plus the Google Calendar event text for the
+    // month's mirrored slots (the slot rows themselves carry none since
+    // 2026-11-13 — they are world-readable for availability).
+    const monthData = adminApiFetch(`/api/admin/calendar-bookings?month=${currentMonth}`).then(async (r) => {
+      if (!r.ok) throw new Error('CALENDAR_ACCESS_FAILED');
+      return (await r.json()) as { bookings: BookingRecord[]; gcalDetails?: Record<string, { title: string; description: string }> };
+    });
+    const withEventText = async (slots: BlockedSlot[]): Promise<BlockedSlot[]> => {
+      const details = (await monthData).gcalDetails || {};
+      return slots.map((s) => {
+        const d = s.reason === 'gcal' ? details[s.id] : undefined;
+        return d ? { ...s, googleEventTitle: d.title, googleEventDescription: d.description } : s;
+      });
+    };
     if (selectedVenue === 'all') {
       const [bookingData, allSlots, eventData, names] = await Promise.all([
-        adminApiFetch(`/api/admin/calendar-bookings?month=${currentMonth}`).then(async r => {
-          if (!r.ok) throw new Error('CALENDAR_ACCESS_FAILED');
-          return (await r.json()).bookings as BookingRecord[];
-        }),
+        monthData.then((m) => m.bookings),
         Promise.all(venues.map((v) => getBlockedSlotsForMonth(v.id, currentMonth))),
         getCalendarEventsForMonth(currentMonth),
         namesPromise,
       ]);
       setBookings(bookingData);
-      setBlockedSlots(allSlots.flat());
+      setBlockedSlots(await withEventText(allSlots.flat()));
       setCalendarEvents(eventData);
       setUserNames(names);
     } else if (isGroupFilter(selectedVenue)) {
       // A multi-room branch: every room's slots, bookings and events.
       const ids = filterVenueIds(filterOptions, selectedVenue);
       const [bookingData, groupSlots, eventData, names] = await Promise.all([
-        adminApiFetch(`/api/admin/calendar-bookings?month=${currentMonth}`).then(async r => {
-          if (!r.ok) throw new Error('CALENDAR_ACCESS_FAILED');
-          return (await r.json()).bookings as BookingRecord[];
-        }),
+        monthData.then((m) => m.bookings),
         Promise.all(ids.map((vid) => getBlockedSlotsForMonth(vid, currentMonth))),
         getCalendarEventsForMonth(currentMonth),
         namesPromise,
       ]);
       setBookings(bookingData.filter((b) => ids.includes(b.venueId)));
-      setBlockedSlots(groupSlots.flat());
+      setBlockedSlots(await withEventText(groupSlots.flat()));
       setCalendarEvents(eventData.filter((e) => ids.includes(e.venueId)));
       setUserNames(names);
     } else {
       const [bookingData, slotData, eventData, names] = await Promise.all([
-        adminApiFetch(`/api/admin/calendar-bookings?month=${currentMonth}`).then(async r => {
-          if (!r.ok) throw new Error('CALENDAR_ACCESS_FAILED');
-          return (await r.json()).bookings as BookingRecord[];
-        }),
+        monthData.then((m) => m.bookings),
         getBlockedSlotsForMonth(selectedVenue, currentMonth),
         getCalendarEventsForMonth(currentMonth),
         namesPromise,
       ]);
       setBookings(bookingData.filter((b) => b.venueId === selectedVenue));
-      setBlockedSlots(slotData);
+      setBlockedSlots(await withEventText(slotData));
       setCalendarEvents(eventData.filter((e) => e.venueId === selectedVenue));
       setUserNames(names);
     }

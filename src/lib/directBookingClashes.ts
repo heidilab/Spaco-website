@@ -46,6 +46,8 @@ export interface DirectBookingClash {
   /** Event title, or what the buffer is. */
   label: string;
   bookingId?: string;
+  /** For a calendar clash: the Google event, so the API can name it. */
+  googleEventId?: string;
 }
 
 const toMin = (t: string) => {
@@ -73,7 +75,7 @@ export function slotClashes(
       const key = `cal:${slot.googleEventId || `${slot.date}${slot.startTime}${slot.endTime}`}`;
       if (seen.has(key)) continue; // one event mirrors onto every room of a shared space
       seen.add(key);
-      out.push({ kind: 'calendar', ...base, label: slot.googleEventTitle || 'Google Calendar' });
+      out.push({ kind: 'calendar', ...base, label: slot.googleEventTitle || 'Google Calendar', googleEventId: slot.googleEventId });
     } else if (slot.reason === 'admin_block') {
       const key = `block:${slot.date}${slot.startTime}${slot.endTime}`;
       if (seen.has(key)) continue;

@@ -87,7 +87,7 @@ export default function CalendarSyncPage() {
   const handleConnect = async () => {
     setBusy('connect');
     try {
-      const res = await fetch('/api/google/auth');
+      const res = await adminApiFetch('/api/google/auth');
       const data = await res.json();
       if (data.url) window.location.href = data.url;
       else throw new Error(data.error || 'Failed');

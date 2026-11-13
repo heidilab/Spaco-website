@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireCronSecret } from '@/lib/adminAuth';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { sendEmail, buildBonusProgressEmail, buildBonusAchievedEmail } from '@/lib/email';
@@ -24,10 +25,8 @@ export const dynamic = 'force-dynamic';
  * the sweep is idempotent and the month resets itself on the 1st.
  */
 export async function GET(request: NextRequest) {
-  const auth = request.headers.get('authorization');
-  if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const denied = requireCronSecret(request);
+  if (denied) return denied;
 
   const cfgSnap = await adminDb.collection('system').doc('bonus_config').get();
   if (!cfgSnap.exists) return NextResponse.json({ ok: true, skipped: 'no config' });

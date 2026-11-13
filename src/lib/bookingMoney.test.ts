@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import {
   depositSettlementAmounts, POINTS_PER_HKD, pointsToHkd, hkdToPoints,
   grossSubtotal, computeGrandTotal, netConsumption, displayBillTotal, discountedSubtotal,
-  paidBase, surchargePaid, paidGateway, computeBalanceDue,
+  paidBase, surchargePaid, paidGateway, computeBalanceDue, isRefundEntry,
   amountOwed, hasOutstanding, isSettlementOverflow,
   commissionForBooking, commissionBase, depositDeductionsKept, estimatedKpayFee,
   adminDiscountAmount, initialAmountDue,
@@ -379,5 +379,23 @@ describe('Paid addon cancellation becomes refundable credit', () => {
   it('ignores negative deductions and rounds currency cents', () => {
     expect(depositSettlementAmounts(booking, -100).refund).toBe(1390);
     expect(depositSettlementAmounts(booking, 0.1 + 0.2).refund).toBe(1389.7);
+  });
+});
+
+describe('refunds are not part of what the customer paid (site review 2026-11-13 #7)', () => {
+  const paid = {
+    pricing: { baseCharge: 2000, addOnTotal: 0, securityDeposit: 1000 },
+    payments: [{ amount: 3000, kind: 'initial' }],
+  };
+  it('a compensation refund leaves the balance and the owed amount at zero', () => {
+    const refunded = { ...paid, payments: [...paid.payments, { amount: -300, kind: 'refund', isRefund: true }] };
+    expect(paidBase(refunded)).toBe(3000);
+    expect(computeBalanceDue(refunded)).toBe(0);
+    expect(amountOwed(refunded)).toBe(0);
+  });
+  it('a legacy negative entry without the flag is a refund too', () => {
+    expect(paidBase({ ...paid, payments: [...paid.payments, { amount: -300 }] })).toBe(3000);
+    expect(isRefundEntry({ amount: -300 })).toBe(true);
+    expect(isRefundEntry({ amount: 300 })).toBe(false);
   });
 });

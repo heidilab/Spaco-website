@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAdmin } from '@/lib/adminAuth';
 
 // Translation API. Tries providers in order:
 //   1. Claude Haiku (highest quality, needs ANTHROPIC_API_KEY)
@@ -7,6 +8,9 @@ import { NextRequest, NextResponse } from 'next/server';
 // of silently writing garbage / Chinese text into the EN field.
 
 export async function POST(request: NextRequest) {
+  // Content editors only — the route spends the site's AI quota.
+  const gate = await requireAdmin(request, 'content');
+  if (!gate.ok) return gate.res;
   try {
     const { text, from, to } = await request.json();
     if (!text || !from || !to) {

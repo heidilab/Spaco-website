@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { consumeBookingRewards } from '@/lib/bookingRewards';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import type { BookingRecord } from '@/types';
@@ -108,6 +109,10 @@ export async function POST(req: NextRequest) {
       }),
       updatedAt: FieldValue.serverTimestamp(),
     });
+
+    // Balance settled on a confirmed booking: make sure its rewards were
+    // consumed (no-op when they already were).
+    try { await consumeBookingRewards(bookingId); } catch (err) { console.error('[booking-settle-balance] rewards consumption failed:', err); }
 
     return NextResponse.json({ ok: true, amountSettled: balance });
   } catch (err) {

@@ -6,23 +6,35 @@ import { computeGrandTotal, computeBalanceDue, paidBase } from '@/lib/bookingMon
 import { BookingInputError, sanitizeAdminDiscount } from '@/lib/bookingSecurity';
 import { overlappingBookings, type OverlapBooking, type OverlapWindow } from '@/lib/bookingOverlap';
 import { slotClashes, clashesNeedingConfirmation, type ClashSlot, type DirectBookingClash } from '@/lib/directBookingClashes';
+import { getVenueByIdServer, venuesSharingSpaceServer } from '@/lib/venueRegistryServer';
+import { gcalEventTitle } from '@/lib/googleCalendar';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// Mirrors venues.ts VENUE_CONFLICTS — keep in sync with new shared spaces.
-const VENUE_CONFLICTS: Record<string, string[]> = {
-  'sw-a':  ['sw-a', 'sw-ab'],
-  'sw-b':  ['sw-b', 'sw-ab'],
-  'sw-ab': ['sw-a', 'sw-b', 'sw-ab'],
-};
-const venuesSharingSpace = (v: string) => VENUE_CONFLICTS[v] || [v];
+// Which rooms share a space, and the lock document a booking contends
+// on, come from the venue registry (分店管理) — the same source as
+// /api/bookings/create. A hard-coded Sheung Wan table here never knew
+// HART's rooms, so a full-floor offline order did not see a Room A
+// booking (site review 2026-11-13 #2).
 const physicalSpaceLockKey = (v: string) =>
   new Set(['sw-a', 'sw-b', 'sw-ab']).has(v) ? 'sw-physical' : v;
 const toMin = (t: string) => {
   const [h, m] = t.split(':').map(Number);
   return h * 60 + (m || 0);
 };
+
+/** Slot rows no longer carry the Google event's title; name the
+ *  calendar clashes from the staff-only details collection. */
+async function withEventTitles(clashes: DirectBookingClash[]): Promise<DirectBookingClash[]> {
+  return Promise.all(clashes.map(async (c) => {
+    if (c.kind !== 'calendar' || c.label !== 'Google Calendar' || !c.googleEventId) return c;
+    try {
+      const title = await gcalEventTitle(c.googleEventId);
+      return title ? { ...c, label: title } : c;
+    } catch { return c; }
+  }));
+}
 
 interface DirectPayment {
   date: string;                 // YYYY-MM-DD the money was received
@@ -102,8 +114,9 @@ export async function POST(req: NextRequest) {
     ? '23:59'
     : `${String(bufferEndH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
 
-  const sharedVenues = venuesSharingSpace(venueId);
-  const lockKey = physicalSpaceLockKey(venueId);
+  const venueDoc = await getVenueByIdServer(venueId);
+  const sharedVenues = await venuesSharingSpaceServer(venueId);
+  const lockKey = venueDoc?.spaceGroup ?? physicalSpaceLockKey(venueId);
   const lockDates = resolvedEndDate !== date ? [date, resolvedEndDate] : [date];
   const checkWindows = overnight
     ? [
@@ -260,13 +273,14 @@ export async function POST(req: NextRequest) {
 
     // `overlaps`: what the order sits on top of (e.g. the Google Calendar
     // entry a part-timer made for it) so staff can tidy up.
-    return NextResponse.json({ bookingId, grandTotal, paid, balanceDue, overlaps: clashes });
+    return NextResponse.json({ bookingId, grandTotal, paid, balanceDue, overlaps: await withEventTitles(clashes) });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg === 'SLOT_CONFLICT') {
       // `conflicts` lets the form say what is in the way and offer
       // 「照樣加入」 (resubmit with allowOverlap: true).
-      return NextResponse.json({ error: 'SLOT_CONFLICT', conflicts: clashesNeedingConfirmation(clashes), overlaps: clashes }, { status: 409 });
+      const named = await withEventTitles(clashes);
+      return NextResponse.json({ error: 'SLOT_CONFLICT', conflicts: clashesNeedingConfirmation(named), overlaps: named }, { status: 409 });
     }
     console.error('[/api/admin/booking-direct]', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

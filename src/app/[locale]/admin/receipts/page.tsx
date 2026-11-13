@@ -224,6 +224,14 @@ export default function AdminReceiptsPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ bookingId, syncOnly: true }),
     }).catch((err) => console.warn('[gcal sync] failed:', err));
+    // Slots rebuilt if the hold had lapsed (conflict-checked) and points /
+    // promo consumed — the payment-confirmed email route does the same,
+    // this covers approvals that send no email.
+    adminApiFetch('/api/admin/booking-confirmed', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bookingId }),
+    }).catch((err) => console.warn('[booking-confirmed] failed:', err));
     // Trigger TTLock passcode generation. The API does eligibility checking,
     // so this no-ops when the booking is > 2 days out (cron picks it up).
     // Failures are non-fatal — admin can retry from the booking detail page.

@@ -329,6 +329,14 @@ export async function syncCalendars(redirectUri: string): Promise<SyncResult> {
         seenKeys.add(seenKey);
         const existing = existingByEventVenue.get(seenKey);
 
+        // The slot carries only what availability needs. The event's
+        // title / description (customer names and phone numbers typed
+        // into the staff calendar) go to `blocked_slot_details`, which
+        // no Firestore rule opens — blocked_slots is readable by every
+        // visitor so the booking page can show availability (site
+        // review 2026-11-13 #9). The admin calendar gets the text
+        // through /api/admin/calendar-bookings.
+        const detailsHash = textHash(`${eventTitle}\n${eventDescription}`);
         const slotPayload: Omit<BlockedSlot, 'id'> = {
           venueId,
           date,
@@ -338,23 +346,29 @@ export async function syncCalendars(redirectUri: string): Promise<SyncResult> {
           bookingId: null,
           googleEventId: eventId,
           googleCalendarKey: calKey,
-          googleEventTitle: eventTitle,
-          googleEventDescription: eventDescription,
+          googleEventDetailsHash: detailsHash,
         };
+        const details = { venueId, date, googleEventId: eventId, title: eventTitle, description: eventDescription };
 
         if (!existing) {
           // Add new
-          await adminDb.collection('blocked_slots').add(slotPayload);
+          const ref = await adminDb.collection('blocked_slots').add(slotPayload);
+          await adminDb.collection('blocked_slot_details').doc(ref.id).set(details);
           result.added++;
         } else if (
           existing.date !== date ||
           existing.startTime !== startTime ||
           existing.endTime !== endTime ||
-          existing.googleEventTitle !== eventTitle ||
-          existing.googleEventDescription !== eventDescription
+          existing.googleEventDetailsHash !== detailsHash ||
+          // Rows written before 2026-11-13 still carry the text: rewrite
+          // them once so it moves out of the public collection.
+          existing.googleEventTitle !== undefined ||
+          existing.googleEventDescription !== undefined
         ) {
-          // Update timing or details
+          // Update timing or details (set() replaces the row, so legacy
+          // title / description fields are dropped).
           await adminDb.collection('blocked_slots').doc(existing.id).set(slotPayload);
+          await adminDb.collection('blocked_slot_details').doc(existing.id).set(details);
           result.updated++;
         }
       }
@@ -372,11 +386,15 @@ export async function syncCalendars(redirectUri: string): Promise<SyncResult> {
   // same backlog then failed every later run, so a deleted Google event
   // kept blocking its slot indefinitely (Heidi 2026-11-13: still
   // "conflicting" two hours after the event was deleted).
-  for (let i = 0; i < toRemove.length; i += 400) {
+  // Two deletes per slot (the slot and its details row) — 200 slots a batch.
+  for (let i = 0; i < toRemove.length; i += 200) {
     const batch = adminDb.batch();
-    for (const id of toRemove.slice(i, i + 400)) batch.delete(adminDb.collection('blocked_slots').doc(id));
+    for (const id of toRemove.slice(i, i + 200)) {
+      batch.delete(adminDb.collection('blocked_slots').doc(id));
+      batch.delete(adminDb.collection('blocked_slot_details').doc(id));
+    }
     await batch.commit();
-    result.removed += Math.min(400, toRemove.length - i);
+    result.removed += Math.min(200, toRemove.length - i);
   }
 
   // Persist sync metadata
@@ -390,6 +408,38 @@ export async function syncCalendars(redirectUri: string): Promise<SyncResult> {
   });
 
   return result;
+}
+
+/** Short stable hash of the event text, kept on the public slot row so
+ *  the sync can tell whether the (private) details changed. */
+function textHash(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
+export interface GcalSlotDetails { title: string; description: string }
+
+/** Title / description of the Google Calendar events mirrored onto the
+ *  month's slots, keyed by blocked_slots id. Staff-only (Admin SDK). */
+export async function loadGcalDetailsForMonth(month: string): Promise<Record<string, GcalSlotDetails>> {
+  const snap = await adminDb.collection('blocked_slot_details')
+    .where('date', '>=', `${month}-01`)
+    .where('date', '<=', `${month}-31`)
+    .get();
+  const out: Record<string, GcalSlotDetails> = {};
+  for (const d of snap.docs) {
+    const data = d.data() as Partial<GcalSlotDetails>;
+    out[d.id] = { title: data.title || '', description: data.description || '' };
+  }
+  return out;
+}
+
+/** The title of a mirrored event, for a slot row that no longer carries it. */
+export async function gcalEventTitle(googleEventId: string): Promise<string> {
+  const snap = await adminDb.collection('blocked_slot_details')
+    .where('googleEventId', '==', googleEventId).limit(1).get();
+  return snap.empty ? '' : ((snap.docs[0].data() as Partial<GcalSlotDetails>).title || '');
 }
 
 export async function getSyncMeta() {

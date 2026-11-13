@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireCronSecret } from '@/lib/adminAuth';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { removeBookingFromCalendar } from '@/lib/googleCalendar';
 import { restoreBlockedSlotsIfMissing } from '@/lib/finalizeBooking';
@@ -20,10 +21,8 @@ export const maxDuration = 60;
  * Idempotent — safe to run daily.
  */
 export async function GET(request: NextRequest) {
-  const auth = request.headers.get('authorization');
-  if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const denied = requireCronSecret(request);
+  if (denied) return denied;
 
   const snap = await adminDb.collection('bookings')
     .where('isTest', '==', true)

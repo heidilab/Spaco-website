@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation';
 import { useRouter } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
 import { getBooking, updateBookingReceiptUploaded } from '@/lib/firestore';
+import { adminApiFetch } from '@/lib/adminApiFetch';
 import { storage } from '@/lib/firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { BookingRecord } from '@/types';
@@ -116,7 +117,7 @@ export default function PayOfflinePage() {
       await updateBookingReceiptUploaded(booking.id, url);
       // Fire-and-forget — admin/CS get an email so they know to review the
       // receipt. Failure shouldn't block the customer-facing success state.
-      fetch('/api/admin/notify-receipt-pending', {
+      adminApiFetch('/api/admin/notify-receipt-pending', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bookingId: booking.id }),

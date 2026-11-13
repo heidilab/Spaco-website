@@ -1,3 +1,5 @@
+import { adminApiFetch } from './adminApiFetch';
+
 // Calls /api/translate. Throws on failure so callers can show an error
 // instead of silently writing the original Chinese (or a `[...]` prefix)
 // into the EN field.
@@ -9,7 +11,7 @@ export async function translateZhToEn(text: string): Promise<string> {
 export async function translate(
   text: string, from: string, to: string,
 ): Promise<string> {
-  const res = await fetch('/api/translate', {
+  const res = await adminApiFetch('/api/translate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text, from, to }),

@@ -6,8 +6,7 @@ import { sendAutomatedEmail } from '@/lib/emailAutomations';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
 import { getVenueById } from '@/lib/venues';
 import { formatAddOnsForStaff } from '@/lib/pricing';
-import { deductLoyaltyPoints } from '@/lib/loyaltyServer';
-import { FieldValue } from 'firebase-admin/firestore';
+import { consumeBookingRewards } from '@/lib/bookingRewards';
 import type { BookingRecord } from '@/types';
 import { requireAdmin } from '@/lib/adminAuth';
 import { restoreBlockedSlotsIfMissing } from '@/lib/finalizeBooking';
@@ -42,6 +41,15 @@ export async function POST(req: NextRequest) {
       if (await restoreBlockedSlotsIfMissing(booking)) console.warn('[payment-confirmed] restored blocked_slots for', bookingId);
     } catch (err) {
       console.error('[payment-confirmed] blocked_slots restore failed:', err);
+    }
+
+    // Points and promo code: consumed once, in a transaction, BEFORE the
+    // email — the old block sat after an early return for customers with
+    // no email, so their rewards were never consumed (site review #6).
+    try {
+      await consumeBookingRewards(bookingId);
+    } catch (err) {
+      console.warn('[payment-confirmed] rewards consumption failed:', err);
     }
 
     const userSnap = await adminDb.collection('users').doc(booking.userId).get();
@@ -87,30 +95,6 @@ export async function POST(req: NextRequest) {
       html: tpl.html,
     });
 
-    // Deduct loyalty points + increment promo usage (idempotent).
-    if (booking.pointsUsed && booking.pointsUsed > 0 && !booking.pointsRedeemedAt) {
-      try {
-        const deducted = await deductLoyaltyPoints(booking.userId, booking.pointsUsed);
-        await adminDb.collection('bookings').doc(bookingId).update({
-          pointsRedeemedAt: FieldValue.serverTimestamp(),
-          pointsActuallyDeducted: deducted,
-        });
-      } catch (err) {
-        console.warn('[payment-confirmed] points deduction failed:', err);
-      }
-    }
-    if (booking.promoCodeId && !booking.promoRedeemedAt) {
-      try {
-        await adminDb.collection('promo_codes').doc(booking.promoCodeId).update({
-          totalUsageCount: FieldValue.increment(1),
-        });
-        await adminDb.collection('bookings').doc(bookingId).update({
-          promoRedeemedAt: FieldValue.serverTimestamp(),
-        });
-      } catch (err) {
-        console.warn('[payment-confirmed] promo increment failed:', err);
-      }
-    }
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error('[payment-confirmed] failed:', err);

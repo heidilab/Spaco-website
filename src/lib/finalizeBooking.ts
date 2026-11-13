@@ -9,6 +9,9 @@ import { getVenueById } from '@/lib/venues';
 import { processBookingForLockAccess } from '@/lib/lockPasscode';
 import { pushBookingToCalendar, updateBookingOnCalendar } from '@/lib/googleCalendar';
 import { formatAddOnsForStaff } from '@/lib/pricing';
+import { venuesSharingSpaceServer } from '@/lib/venueRegistryServer';
+import { bookingWindows, windowsOverlap } from '@/lib/bookingOverlap';
+import { FieldValue } from 'firebase-admin/firestore';
 import type { BookingRecord, UserProfile } from '@/types';
 
 /**
@@ -36,12 +39,42 @@ export { computeGrandTotal, computeBalanceDue } from './bookingMoney';
  */
 export async function restoreBlockedSlotsIfMissing(booking: BookingRecord): Promise<boolean> {
   const bookingId = booking.id;
+  // Rooms that share this booking's space (分店管理), read outside the
+  // transaction (cached registry).
+  const sharedVenues = await venuesSharingSpaceServer(booking.venueId).catch(() => [booking.venueId]);
+  const production = process.env.VERCEL_ENV === 'production';
   return adminDb.runTransaction(async tx => {
   const current = await tx.get(adminDb.collection('bookings').doc(bookingId));
   if (!current.exists || !['confirmed', 'completed'].includes(current.data()!.status) || current.data()!.paymentReviewRequired) return false;
   booking = { ...current.data(), id: bookingId } as BookingRecord;
   const existing = await tx.get(adminDb.collection('blocked_slots').where('bookingId', '==', bookingId));
   if (!existing.empty) return false;
+
+  // The time may have been resold while the booking was expired (an FPS
+  // hold lapsed, another customer paid, then staff recorded the late
+  // FPS). Never silently stack two confirmed bookings on one slot: flag
+  // the booking for review instead (site review 2026-11-13 #5).
+  const windows = bookingWindows(booking);
+  const dates = Array.from(new Set(windows.map((w) => w.date)));
+  for (const vid of sharedVenues) {
+    for (const d of dates) {
+      const slots = await tx.get(adminDb.collection('blocked_slots').where('venueId', '==', vid).where('date', '==', d));
+      for (const s of slots.docs) {
+        const slot = s.data() as { bookingId?: string | null; startTime: string; endTime: string; date: string; isTest?: boolean; reason?: string };
+        if (slot.bookingId === bookingId) continue;
+        if (slot.isTest && production) continue;
+        if (windows.some((w) => windowsOverlap(w, { date: slot.date, startTime: slot.startTime, endTime: slot.endTime }))) {
+          tx.update(adminDb.collection('bookings').doc(bookingId), {
+            paymentReviewRequired: true,
+            paymentReviewReason: 'slot_taken_on_restore',
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+          console.error('[finalizeBooking] slot already taken, booking flagged for review', bookingId, vid, d, slot.reason);
+          return false;
+        }
+      }
+    }
+  }
 
   const overnight = !!booking.endDate && booking.endDate !== booking.date;
   const endDate = overnight ? (booking.endDate as string) : booking.date;
@@ -51,8 +84,10 @@ export async function restoreBlockedSlotsIfMissing(booking: BookingRecord): Prom
     bufferEndH >= 24
       ? '23:59'
       : `${String(bufferEndH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+  // Test bookings stamp their slots so production ignores them.
+  const stamp = booking.isTest ? { isTest: true } : {};
   const newSlot = (data: object) =>
-    tx.create(adminDb.collection('blocked_slots').doc(), data);
+    tx.create(adminDb.collection('blocked_slots').doc(), { ...data, ...stamp });
   if (overnight) {
     newSlot({ venueId: booking.venueId, date: booking.date, startTime: booking.startTime, endTime: '23:59', reason: 'booking', bookingId });
     newSlot({ venueId: booking.venueId, date: endDate, startTime: '00:00', endTime: booking.endTime, reason: 'booking', bookingId });
