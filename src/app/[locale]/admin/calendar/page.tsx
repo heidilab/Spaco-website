@@ -15,6 +15,7 @@ import {
 import { BookingRecord, BlockedSlot, CalendarEvent } from '@/types';
 import { venues as staticVenues } from '@/lib/venues';
 import { loadAllVenues, venuesSnapshot } from '@/lib/venueRegistry';
+import { calendarFilterOptions, filterOption, filterVenueIds, isGroupFilter, preferredGcalRow } from '@/lib/calendarBranchFilter';
 import type { Venue } from '@/types';
 import { formatAddOnsForStaff } from '@/lib/pricing';
 import StaffRemarkEditor from '@/components/booking/StaffRemarkEditor';
@@ -33,16 +34,12 @@ const timeSlots = Array.from({ length: 14 * 4 }, (_, i) => {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 });
 
-// Sheung Wan group — sw-a / sw-b / sw-ab share one physical floor.
-// Heidi's 2026-06 ask: collapse to a single 上環店 filter so the day view
-// shows all three rooms' bookings together (otherwise picking sw-a hides
-// any sw-b or sw-ab booking on the same day, which is misleading since
-// they all reserve the same physical space).
-const SW_GROUP_ID = 'sw-group';
-const SW_GROUP_IDS = ['sw-a', 'sw-b', 'sw-ab'];
-function isSwGroupVenue(id: string): boolean {
-  return SW_GROUP_IDS.includes(id);
-}
+// Branch filter: one entry per branch (lib/calendarBranchFilter). A
+// multi-room branch — 上環 Room A / B / 全層 (Heidi 2026-06), 尖沙咀 HART
+// Room A / B / A+B (Heidi 2026-11-13) — is ONE entry whose day view shows
+// every room's bookings together: picking one room would hide the others'
+// bookings on the same day, misleading since they reserve one physical
+// space.
 
 type AddType = 'block' | 'site_visit' | 'delivery';
 
@@ -86,6 +83,9 @@ export default function AdminCalendarPage() {
   // first paint; Firestore overrides so new/edited venues appear.
   const [venues, setVenues] = useState<Venue[]>(staticVenues);
   useEffect(() => { loadAllVenues().then(setVenues).catch(() => {}); }, []);
+  // The filter's entries: single spaces by venue id, multi-room branches
+  // as `group:<branchKey>` (上環店, 尖沙咀 HART).
+  const filterOptions = useMemo(() => calendarFilterOptions(venues.filter((v) => v.active !== false)), [venues]);
   const locale = useLocale() as 'zh' | 'en';
   // 🧪 test bookings are fake: the PRODUCTION master calendar hides them
   // from EVERYONE (admin included — Heidi 2026-09-15: "我仲係見到").
@@ -100,6 +100,7 @@ export default function AdminCalendarPage() {
   const [currentMonth, setCurrentMonth] = useState<string>('');
   const [todayStr, setTodayStr] = useState<string>('');
   const [selectedVenue, setSelectedVenue] = useState('all');
+  const selectedOption = filterOption(filterOptions, selectedVenue);
   const [bookings, setBookings] = useState<BookingRecord[]>([]);
   const [blockedSlots, setBlockedSlots] = useState<BlockedSlot[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
@@ -166,20 +167,21 @@ export default function AdminCalendarPage() {
       setBlockedSlots(allSlots.flat());
       setCalendarEvents(eventData);
       setUserNames(names);
-    } else if (selectedVenue === SW_GROUP_ID) {
-      // 上環店 (group): pull all 3 sub-rooms' slots + filter bookings/events.
-      const [bookingData, swSlots, eventData, names] = await Promise.all([
+    } else if (isGroupFilter(selectedVenue)) {
+      // A multi-room branch: every room's slots, bookings and events.
+      const ids = filterVenueIds(filterOptions, selectedVenue);
+      const [bookingData, groupSlots, eventData, names] = await Promise.all([
         adminApiFetch(`/api/admin/calendar-bookings?month=${currentMonth}`).then(async r => {
           if (!r.ok) throw new Error('CALENDAR_ACCESS_FAILED');
           return (await r.json()).bookings as BookingRecord[];
         }),
-        Promise.all(SW_GROUP_IDS.map((vid) => getBlockedSlotsForMonth(vid, currentMonth))),
+        Promise.all(ids.map((vid) => getBlockedSlotsForMonth(vid, currentMonth))),
         getCalendarEventsForMonth(currentMonth),
         namesPromise,
       ]);
-      setBookings(bookingData.filter((b) => isSwGroupVenue(b.venueId)));
-      setBlockedSlots(swSlots.flat());
-      setCalendarEvents(eventData.filter((e) => isSwGroupVenue(e.venueId)));
+      setBookings(bookingData.filter((b) => ids.includes(b.venueId)));
+      setBlockedSlots(groupSlots.flat());
+      setCalendarEvents(eventData.filter((e) => ids.includes(e.venueId)));
       setUserNames(names);
     } else {
       const [bookingData, slotData, eventData, names] = await Promise.all([
@@ -248,24 +250,18 @@ export default function AdminCalendarPage() {
         .filter((s) => s.date === date && s.reason === 'admin_block')
         .forEach((s) => items.push({ kind: 'block', sortTime: s.startTime, data: s }));
 
-      // Dedupe gcal: one row per googleEventId. Prefer the sw-ab variant for
-      // SW (full floor) so the venue label is most informative; otherwise
-      // take the first occurrence.
-      const gcalByEventId = new Map<string, BlockedSlot>();
+      // Dedupe gcal: one row per googleEventId (one Google event is
+      // mirrored onto every room of a shared space). Show the whole-floor
+      // room's copy when there is one, so the label says the branch was
+      // taken.
+      const gcalByEventId = new Map<string, BlockedSlot[]>();
       blockedSlots
         .filter((s) => s.date === date && s.reason === 'gcal' && s.googleEventId)
-        .forEach((s) => {
-          const existing = gcalByEventId.get(s.googleEventId!);
-          if (!existing) {
-            gcalByEventId.set(s.googleEventId!, s);
-          } else if (s.venueId === 'sw-ab') {
-            // Prefer the full-floor variant as the representative row
-            gcalByEventId.set(s.googleEventId!, s);
-          }
-        });
-      gcalByEventId.forEach((s) =>
-        items.push({ kind: 'gcal', sortTime: s.startTime, data: s }),
-      );
+        .forEach((s) => gcalByEventId.set(s.googleEventId!, [...(gcalByEventId.get(s.googleEventId!) || []), s]));
+      gcalByEventId.forEach((rows) => {
+        const s = preferredGcalRow(rows, venues);
+        items.push({ kind: 'gcal', sortTime: s.startTime, data: s });
+      });
 
       calendarEvents
         .filter((e) => e.date === date)
@@ -273,7 +269,7 @@ export default function AdminCalendarPage() {
 
       return items.sort((a, b) => a.sortTime.localeCompare(b.sortTime));
     };
-  }, [bookings, blockedSlots, calendarEvents, isPreviewHost]);
+  }, [bookings, blockedSlots, calendarEvents, isPreviewHost, venues]);
 
   const navigateMonth = (delta: number) => {
     if (!currentMonth) return;
@@ -304,12 +300,12 @@ export default function AdminCalendarPage() {
     setAddType('block');
     setAddStart('10:00');
     setAddEnd('14:00');
-    // For the SW group filter, default the new-block target to sw-ab
-    // (full floor) since blocking the whole space is most common; admin
-    // can pick a sub-room from the venue picker. 'all' falls back to CWB.
+    // For a multi-room branch, default the new-block target to its
+    // whole-floor room (blocking the whole space is most common); admin
+    // can pick a room from the venue picker. 'all' falls back to CWB.
     setAddVenue(
       selectedVenue === 'all' ? 'cwb'
-        : selectedVenue === SW_GROUP_ID ? 'sw-ab'
+        : selectedOption ? selectedOption.defaultVenueId
           : selectedVenue,
     );
     setAddNotes('');
@@ -325,10 +321,10 @@ export default function AdminCalendarPage() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      // 'sw-group' isn't a real venue id — admin picks a specific sub-room
-      // via addVenue from the dropdown below (which always shows for SW group).
+      // 'group:…' isn't a real venue id — admin picks a specific room
+      // via addVenue from the dropdown below (always shown for a group).
       const targetVenue =
-        selectedVenue === 'all' || selectedVenue === SW_GROUP_ID
+        selectedVenue === 'all' || isGroupFilter(selectedVenue)
           ? addVenue
           : selectedVenue;
       // Date list. Multi-day is BLOCKS only (site visits / deliveries are
@@ -437,14 +433,11 @@ export default function AdminCalendarPage() {
           className="px-5 py-3 rounded-pill bg-white/70 backdrop-blur-md border border-white/80 text-ink focus:outline-none focus:border-pink/50 focus:bg-white"
         >
           <option value="all">{locale === 'zh' ? '全部分店' : 'All Venues'}</option>
-          {/* Hide the 3 SW sub-rooms — they're shown as a single 上環店 entry
-              below since they share one physical floor (Heidi 2026-06). */}
-          {venues
-            .filter((v) => !isSwGroupVenue(v.id))
-            .map((v) => (
-              <option key={v.id} value={v.id}>{v.name[locale]}</option>
-            ))}
-          <option value={SW_GROUP_ID}>{locale === 'zh' ? '上環店' : 'Sheung Wan'}</option>
+          {/* One entry per branch — the rooms of 上環 / 尖沙咀 HART are one
+              entry each, since they share one physical floor. */}
+          {filterOptions.map((o) => (
+            <option key={o.value} value={o.value}>{o.name[locale] || o.name.zh}</option>
+          ))}
         </select>
 
         <div className="flex items-center gap-4 ml-auto">
@@ -549,6 +542,7 @@ export default function AdminCalendarPage() {
           date={addModal.date}
           locale={locale}
           selectedVenue={selectedVenue}
+          groupVenueIds={isGroupFilter(selectedVenue) ? filterVenueIds(filterOptions, selectedVenue) : []}
           addType={addType}
           setAddType={setAddType}
           addStart={addStart}
@@ -616,7 +610,7 @@ function DayItemPill({ item, userNames }: { item: DayItem; userNames?: Record<st
   }
   if (item.kind === 'gcal') {
     const s = item.data;
-    const venueLabel = s.venueId === 'sw-ab' ? 'SW' : venueTag(s.venueId);
+    const venueLabel = venueTag(s.venueId);
     return (
       <div className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 flex items-center gap-1 truncate" title={s.googleEventTitle || 'Google Calendar'}>
         <Calendar size={8} className="shrink-0" />
@@ -764,7 +758,7 @@ function SummaryItemTitle({ item, locale, userNames }: { item: DayItem; locale: 
   }
   if (item.kind === 'gcal') {
     const s = item.data;
-    const venueLabel = s.venueId === 'sw-ab' ? 'SW' : venueTag(s.venueId);
+    const venueLabel = venueTag(s.venueId);
     return <>{timeRange}  <span className="font-semibold">{venueLabel}</span>  · {s.googleEventTitle || 'Google Calendar'}</>;
   }
   // event
@@ -821,6 +815,8 @@ function AddModal(props: {
   date: string;
   locale: 'zh' | 'en';
   selectedVenue: string;
+  /** Rooms of the selected multi-room branch ([] otherwise). */
+  groupVenueIds: string[];
   addType: AddType; setAddType: (t: AddType) => void;
   addStart: string;  setAddStart: (s: string) => void;
   addEnd: string;    setAddEnd: (s: string) => void;
@@ -833,7 +829,7 @@ function AddModal(props: {
   onClose: () => void;
 }) {
   const {
-    date, locale, selectedVenue,
+    date, locale, selectedVenue, groupVenueIds,
     addType, setAddType, addStart, setAddStart, addEnd, setAddEnd,
     addEndDate, setAddEndDate,
     addVenue, setAddVenue, addNotes, setAddNotes,
@@ -855,14 +851,14 @@ function AddModal(props: {
           <TypeTab active={addType === 'delivery'} onClick={() => { setAddType('delivery'); setAddEndDate(''); }} icon={<Truck size={14} />} label="Delivery" />
         </div>
 
-        {(selectedVenue === 'all' || selectedVenue === SW_GROUP_ID) && (
+        {(selectedVenue === 'all' || isGroupFilter(selectedVenue)) && (
           <div className="mb-4">
             <label className="text-sm text-ink-soft mb-1 block">{locale === 'zh' ? '分店' : 'Venue'}</label>
             <select value={addVenue} onChange={(e) => setAddVenue(e.target.value)} className="w-full px-4 py-2.5 rounded-pill bg-white/70 backdrop-blur-md border border-white/80 text-ink">
-              {/* When 上環店 filter is active, narrow the picker to the 3 SW
-                  sub-rooms so admin chooses A / B / A+B for the manual block. */}
+              {/* With a multi-room branch selected, narrow the picker to its
+                  rooms so admin chooses A / B / A+B for the manual block. */}
               {venuesSnapshot()
-                .filter((v) => selectedVenue === SW_GROUP_ID ? isSwGroupVenue(v.id) : true)
+                .filter((v) => v.active !== false && (groupVenueIds.length === 0 || groupVenueIds.includes(v.id)))
                 .map((v) => (
                   <option key={v.id} value={v.id}>{v.name[locale]}</option>
                 ))}
@@ -1086,7 +1082,7 @@ function GcalDetails({
   locale: 'zh' | 'en';
   onClose: () => void;
 }) {
-  const venueLabel = slot.venueId === 'sw-ab' ? (venuesSnapshot().find((v) => v.id === 'sw-ab')?.name[locale] || 'SW') : venueName(slot.venueId);
+  const venueLabel = venueName(slot.venueId);
   return (
     <>
       <h3 className="text-lg font-bold font-display mb-1 text-ink flex items-center gap-2">
