@@ -7,7 +7,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { adminVerifyIdToken } from '@/lib/adminAuth';
 import { getVenueById } from '@/lib/venues';
 import { getVenueByIdServer, venuesSharingSpaceServer } from '@/lib/venueRegistryServer';
-import { calculatePricing, calculateDeposit, adultEquivalent, freeDrinksVenues, subtractHours, stampAddOnPrices,
+import { calculatePricing, calculateDeposit, adultEquivalent, venueDrinksIncluded, subtractHours, stampAddOnPrices,
 } from '@/lib/pricing';
 import { loadAddOnConfigServer } from '@/lib/addOnConfigServer';
 import { addOnBlockedBySettings } from '@/lib/addOnConfig';
@@ -232,7 +232,7 @@ export async function POST(req: NextRequest) {
         const pc = { id: pcSnap.id, ...pcSnap.data() } as PromoCode;
         if (promoEligibilityReason(pc, {venueId,date,endDate,packageSlug:rest.packageSlug})) throw new BookingInputError('PROMO_NOT_APPLICABLE');
         const equiv = adultEquivalent(Math.max(0, guestCount - childCount), childCount);
-        const drinksCost = isPackage || freeDrinksVenues.includes(venueId) || !addOns.some((a: { id: string }) => a.id === 'drinks') ? 0 : Math.round(25 * equiv);
+        const drinksCost = isPackage || venueDrinksIncluded(venue, venueId) || !addOns.some((a: { id: string }) => a.id === 'drinks') ? 0 : Math.round(25 * equiv);
         const d = calcPromoDiscount(pc, { subtotal: sanitizedPricing.subtotal, baseCharge: sanitizedPricing.baseCharge, adultEquiv: equiv, drinksCost, venueId, date, endDate, packageSlug: rest.packageSlug });
         const withinTotal = pc.totalUsageLimit == null || pc.totalUsageCount < pc.totalUsageLimit;
         let withinUser = true;

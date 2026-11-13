@@ -8,7 +8,7 @@ import { adminApiFetch } from '@/lib/adminApiFetch';
 import { storage } from '@/lib/firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { BookingRecord } from '@/types';
-import { venues } from '@/lib/venues';
+import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import { displayBillTotal, paidGateway, initialAmountDue } from '@/lib/bookingMoney';
 import { generateWhatsAppLink } from '@/lib/email';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
@@ -39,6 +39,8 @@ const statusLabels: Record<string, { zh: string; en: string }> = {
 
 export default function MyBookingsPage() {
   const { user, loading: authLoading } = useAuth();
+  // 分店管理 venues (registry-first; the built-in list is the fallback).
+  useVenueRegistryReady();
   const locale = useLocale() as 'zh' | 'en';
   const [bookings, setBookings] = useState<BookingRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -157,7 +159,7 @@ function BookingCard({
   locale: 'zh' | 'en';
   onChange: () => void;
 }) {
-  const venue = venues.find((v) => v.id === booking.venueId);
+  const venue = findVenueNow(booking.venueId);
 
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);

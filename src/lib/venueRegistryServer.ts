@@ -35,6 +35,27 @@ export async function getVenueByIdServer(id: string): Promise<Venue | undefined>
   return (await loadAllVenuesServer()).find((v) => v.id === id);
 }
 
+/**
+ * The venue every server-side email, calendar title and passcode should
+ * name: 分店管理 first, the built-in list only as a fallback. Before
+ * 2026-11-13 these read the built-in list alone, so a branch added in
+ * 分店管理 showed up in customer emails as its id with no address (site
+ * review, phase 2).
+ */
+export async function resolveVenueServer(id: string | undefined | null): Promise<Venue | undefined> {
+  if (!id) return undefined;
+  return (await getVenueByIdServer(id)) ?? staticVenues.find((v) => v.id === id);
+}
+
+/** 「尖沙咀 HART 店 Room B」-style label for staff surfaces: the branch's
+ *  short tag plus the room label of a multi-room branch. */
+export function venueStaffLabel(venue: Venue | undefined, venueId: string, lang: 'zh' | 'en' = 'en'): string {
+  if (!venue) return venueId;
+  const room = venue.roomLabel?.[lang] || venue.roomLabel?.zh;
+  const base = venue.branch || venue.branchName?.[lang] || venue.name[lang] || venue.name.zh;
+  return room ? `[${room}] ${base}` : base;
+}
+
 export async function getVenueBySlugServer(slug: string): Promise<Venue | undefined> {
   return (await loadAllVenuesServer()).find((v) => v.slug === slug);
 }

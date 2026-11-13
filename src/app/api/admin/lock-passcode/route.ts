@@ -19,7 +19,7 @@ import { processBookingForLockAccess, revokeBookingPasscode, setManualPasscode, 
 import { buildLockPasscodeEmail } from '@/lib/email';
 import { lockConfirmKey } from '@/lib/lockConfirmKey';
 import { sendAutomatedEmail } from '@/lib/emailAutomations';
-import { getVenueById } from '@/lib/venues';
+import { resolveVenueServer } from '@/lib/venueRegistryServer';
 import type { BookingRecord, UserProfile } from '@/types';
 import { requireAdmin } from '@/lib/adminAuth';
 import { sweepUpcomingBookings } from '@/lib/lockPasscode';
@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'user-not-found' }, { status: 404 });
       }
       const profile = userSnap.data() as UserProfile;
-      const venue = getVenueById(b.venueId);
+      const venue = await resolveVenueServer(b.venueId);
       const lockGuideImageUrl = await getLockGuideUrlForVenue(b.venueId);
       const tpl = buildLockPasscodeEmail({
         customerName: profile.displayName || profile.email.split('@')[0],
@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
         endTime:      b.endTime,
         endDate:      b.endDate,
         passcode:     b.lockPasscode.passcode,
-        confirmKey:   lockConfirmKey(b.venueId),
+        confirmKey:   lockConfirmKey(b.venueId, venue),
         validFromMs:  b.lockPasscode.validFrom,
         validToMs:    b.lockPasscode.validTo,
         whatsappLink: 'https://wa.me/85292823060',

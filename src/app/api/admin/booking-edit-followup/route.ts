@@ -10,7 +10,7 @@ import { sendAutomatedEmail } from '@/lib/emailAutomations';
 import {
   updateBookingOnCalendar, pushBookingToCalendar,
 } from '@/lib/googleCalendar';
-import { getVenueById } from '@/lib/venues';
+import { venues as staticVenues } from '@/lib/venues';
 import { loadAllVenuesServer } from '@/lib/venueRegistryServer';
 import { formatAddOnsForStaff } from '@/lib/pricing';
 import type { BookingRecord, UserProfile } from '@/types';
@@ -213,7 +213,7 @@ export async function POST(req: NextRequest) {
     // Registry first — HART rooms only exist in 分店管理, so the static
     // lookup alone named them by slug in the customer's update email.
     const registryVenues = await loadAllVenuesServer();
-    const findVenue = (id: string) => registryVenues.find((v) => v.id === id) ?? getVenueById(id);
+    const findVenue = (id: string) => registryVenues.find((v) => v.id === id) ?? staticVenues.find((v) => v.id === id);
     const venue = findVenue(fresh.venueId);
     const venueName = venue?.name.zh || fresh.branchSlug;
 

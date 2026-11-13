@@ -22,11 +22,23 @@ type JsonLdNode = Record<string, unknown>;
 // Organization (rendered on home; the canonical brand entity)
 // ────────────────────────────────────────────────────────────
 
-export function buildOrganizationLd(locale: 'zh' | 'en'): JsonLdNode {
+/** A branch as the Organization lists it; built from 分店管理 by the
+ *  layout (`groupBranches`), the fixed BRANCH_INFO being the fallback. */
+export interface OrganizationBranch {
+  name: { zh: string; en: string };
+  streetAddress: { zh: string; en: string };
+  district?: { zh: string; en: string };
+}
+
+export function buildOrganizationLd(locale: 'zh' | 'en', branches?: OrganizationBranch[]): JsonLdNode {
   const name = locale === 'zh' ? 'SPACO' : 'SPACO';
+  const list: OrganizationBranch[] = branches && branches.length > 0
+    ? branches
+    : BRANCH_INFO.map((b) => ({ name: b.name, streetAddress: b.streetAddress, district: b.district }));
+  const count = list.length;
   const description = locale === 'zh'
-    ? '香港高級全自助多功能活動空間，銅鑼灣、灣仔、上環、尖沙咀四間分店。'
-    : 'Hong Kong premium self-service multifunctional event space — four branches in Causeway Bay, Wan Chai, Sheung Wan, and Tsim Sha Tsui.';
+    ? `香港高級全自助多功能活動空間，銅鑼灣、灣仔、上環、尖沙咀共 ${count} 間分店。`
+    : `Hong Kong premium self-service multifunctional event space — ${count} branches across Causeway Bay, Wan Chai, Sheung Wan and Tsim Sha Tsui.`;
 
   return {
     '@context': 'https://schema.org',
@@ -51,13 +63,13 @@ export function buildOrganizationLd(locale: 'zh' | 'en'): JsonLdNode {
       addressCountry: 'HK',
       addressRegion: 'Hong Kong',
     },
-    location: BRANCH_INFO.map((b) => ({
+    location: list.map((b) => ({
       '@type': 'Place',
       name: b.name[locale],
       address: {
         '@type': 'PostalAddress',
         streetAddress: b.streetAddress[locale],
-        addressLocality: b.district[locale],
+        ...(b.district?.[locale] ? { addressLocality: b.district[locale] } : {}),
         addressRegion: 'Hong Kong',
         addressCountry: 'HK',
       },

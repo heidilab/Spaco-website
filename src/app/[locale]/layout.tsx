@@ -10,7 +10,8 @@ import { AuthProvider } from '@/contexts/AuthContext';
 import VisitTracker from '@/components/VisitTracker';
 import SettlementDebtNotice from '@/components/account/SettlementDebtNotice';
 import JsonLd from '@/components/seo/JsonLd';
-import { buildOrganizationLd } from '@/lib/jsonLd';
+import { buildOrganizationLd, type OrganizationBranch } from '@/lib/jsonLd';
+import { groupBranches } from '@/lib/branchGrouping';
 import { buildMetadata } from '@/lib/seo';
 
 export function generateStaticParams() {
@@ -42,6 +43,17 @@ export default async function LocaleLayout({
   }
 
   const messages = await getMessages();
+
+  // Branches for the Organization schema — 分店管理 first, the fixed list
+  // if the registry cannot be read.
+  let orgBranches: OrganizationBranch[] | undefined;
+  try {
+    const { loadActiveVenuesServer } = await import('@/lib/venueRegistryServer');
+    orgBranches = groupBranches(await loadActiveVenuesServer()).map((b) => ({
+      name: b.name,
+      streetAddress: { zh: b.rooms[0].address?.zh || '', en: b.rooms[0].address?.en || b.rooms[0].address?.zh || '' },
+    }));
+  } catch { /* fallback inside buildOrganizationLd */ }
 
   // Google Ads / Analytics gtag — only emitted when the env var is set.
   // We use NEXT_PUBLIC_GOOGLE_ADS_ID (e.g. "AW-1234567890" or "G-XXXX")
@@ -104,7 +116,7 @@ export default async function LocaleLayout({
              *  least this JSON-LD node so schema coverage is 100%
              *  (AI-friendliness audit 2026-08). Page-specific nodes
              *  (LocalBusiness / FAQPage / Article) stack on top. */}
-            <JsonLd data={[buildOrganizationLd(locale as 'zh' | 'en')]} />
+            <JsonLd data={[buildOrganizationLd(locale as 'zh' | 'en', orgBranches)]} />
             <VisitTracker />
             <Header />
             <SettlementDebtNotice />

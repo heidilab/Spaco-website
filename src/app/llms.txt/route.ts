@@ -2,23 +2,32 @@
 // canonical, distilled summary of a site without having to scrape every page.
 // Spec: https://llmstxt.org/
 
-import { BRANCH_INFO } from '@/lib/branchInfo';
-import { venues } from '@/lib/venues';
+import { venues as staticVenues } from '@/lib/venues';
+import { groupBranches } from '@/lib/branchGrouping';
+import { orderRooms } from '@/lib/roomOrder';
 
 const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://spacohk.com';
 const PHONE = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER
   ? `+${process.env.NEXT_PUBLIC_WHATSAPP_NUMBER}`
   : '+852 9123 4567';
 
-export const dynamic = 'force-static';
-export const revalidate = 3600; // 1h
+// Read per request so a branch added in 分店管理 appears without a rebuild.
+export const dynamic = 'force-dynamic';
 
 export async function GET() {
   const lines: string[] = [];
 
+  // Branches from 分店管理 (built-in list if the registry cannot be read).
+  let branches = groupBranches(staticVenues.map((v) => ({ ...v, active: true })));
+  try {
+    const { loadActiveVenuesServer } = await import('@/lib/venueRegistryServer');
+    const live = groupBranches(await loadActiveVenuesServer());
+    if (live.length) branches = live;
+  } catch { /* fallback above */ }
+
   lines.push('# SPACO');
   lines.push('');
-  lines.push('> SPACO is a Hong Kong premium self-service multifunctional event space with four branches across Causeway Bay, Wan Chai, Sheung Wan, and Tsim Sha Tsui. We host family parties, corporate events, casual gatherings, and poker nights with full BBQ, hotpot, pool, mahjong, and shisha facilities.');
+  lines.push(`> SPACO is a Hong Kong premium self-service multifunctional event space with ${branches.length} branches across Causeway Bay, Wan Chai, Sheung Wan, and Tsim Sha Tsui. We host family parties, corporate events, casual gatherings, and poker nights with full BBQ, hotpot, pool, mahjong, and shisha facilities.`);
   lines.push('');
 
   lines.push('## Brand');
@@ -30,17 +39,13 @@ export async function GET() {
   lines.push('');
 
   lines.push('## Branches');
-  for (const b of BRANCH_INFO) {
-    lines.push(`### ${b.name.en} / ${b.name.zh}`);
-    lines.push(`- Address: ${b.streetAddress.en} (${b.streetAddress.zh})`);
+  for (const b of branches) {
+    const first = b.rooms[0];
+    lines.push(`### ${b.name.en || b.name.zh} / ${b.name.zh}`);
+    lines.push(`- Address: ${first.address?.en || first.address?.zh || ''} (${first.address?.zh || ''})`);
     lines.push(`- Hours: 24/7`);
     lines.push(`- Page: ${SITE_URL}/en/branches/${b.slug}`);
-    const inBranch = venues.filter((v) => {
-      if (b.id === 'sw') return ['sw-a', 'sw-b', 'sw-ab'].includes(v.id);
-      if (b.id === 'wanchai') return v.id === 'wanchai';
-      return v.id === b.id;
-    });
-    for (const v of inBranch) {
+    for (const v of orderRooms(b.rooms)) {
       lines.push(
         `  - ${v.name.en}: ${v.size}, capacity ${v.capacity.min}–${v.capacity.max}, HK$${v.pricing.weekday.perHead}/head weekday · HK$${v.pricing.weekend.perHead}/head weekend`,
       );

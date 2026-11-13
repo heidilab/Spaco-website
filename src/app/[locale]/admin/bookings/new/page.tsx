@@ -16,7 +16,7 @@ import {
   calculateSecurityDeposit,
   SHISHA_MAX_PIPES,
   getShishaFlavorLabel,
-  freeDrinksVenues,
+  venueDrinksIncluded,
   calcShishaPrice, stampAddOnPrices, shishaPrices, shishaFlavors,
 } from '@/lib/pricing';
 import { useAddOnConfig } from '@/lib/addOnConfigClient';
@@ -511,7 +511,7 @@ export default function AdminNewBookingPage() {
       // venues that already bundle drinks (TST) — no add-on to add.
       if (data.freeDrinks
         && !drinksInCart
-        && !freeDrinksVenues.includes(venueId)
+        && !venueDrinksIncluded(venue, venueId)
       ) {
         setAddOnQty((prev) => ({ ...prev, drinks: 1 }));
       }

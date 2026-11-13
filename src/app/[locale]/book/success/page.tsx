@@ -6,7 +6,7 @@ import { Link } from '@/i18n/routing';
 import { useRouter } from '@/i18n/routing';
 import { useSearchParams } from 'next/navigation';
 import { getBooking } from '@/lib/firestore';
-import { venues } from '@/lib/venues';
+import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import { BookingRecord } from '@/types';
 import { generateWhatsAppLink } from '@/lib/email';
 import { Check, CalendarDays, MessageCircle, ArrowRight, Clock, XCircle, RefreshCcw } from 'lucide-react';
@@ -14,6 +14,8 @@ import { motion } from 'framer-motion';
 
 export default function BookingSuccessPage() {
   const locale = useLocale() as 'zh' | 'en';
+  // 分店管理 venues (registry-first; the built-in list is the fallback).
+  useVenueRegistryReady();
   const router = useRouter();
   const searchParams = useSearchParams();
   const bookingId = searchParams.get('booking_id');
@@ -48,7 +50,7 @@ export default function BookingSuccessPage() {
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, [bookingId, pollCount]);
 
-  const venue = booking ? venues.find((v) => v.id === booking.venueId) : null;
+  const venue = booking ? (findVenueNow(booking.venueId) ?? null) : null;
   const whatsappNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || '85292823060';
   const whatsappMsg = booking
     ? locale === 'zh'

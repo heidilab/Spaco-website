@@ -15,7 +15,7 @@ import { normalizeGcalCalendarId } from '@/lib/gcalCalendarId';
 import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp, deleteField } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '@/lib/firebase';
 import { Venue } from '@/types';
@@ -154,6 +154,9 @@ export default function AdminVenuesPage() {
     if (!shared) return 'no branch';
     const key = shared.key.trim();
     if (!/^[a-z0-9-]{2,24}$/.test(key)) return locale === 'zh' ? '分店代號只可用小寫英文/數字/連字號（2-24 字）' : 'Branch key: lowercase/digits/dashes';
+    // Finance / bonus keys of the original branches: a new branch named
+    // 'sw' would be merged into Sheung Wan's books.
+    if (isNewBranch && ['sw', 'cwb', 'wanchai', 'tst', 'sheung-wan'].includes(key)) return locale === 'zh' ? '呢個代號留俾原有分店，請用另一個' : 'This key is reserved';
     if (!shared.branchName.zh) return locale === 'zh' ? '請填分店中文名' : 'Branch Chinese name required';
     if (isNewBranch && venues.some((v) => (v.branchKey || v.id) === key)) return locale === 'zh' ? '呢個分店代號已存在' : 'Branch key exists';
     for (const [i, r] of Array.from(rooms.entries())) {
@@ -199,6 +202,11 @@ export default function AdminVenuesPage() {
         };
         if (docData.gcalCalendarId === null) delete docData.gcalCalendarId;
         if (docData.spaceGroup === null) delete docData.spaceGroup;
+        // An emptied lock field must clear the stored value — with
+        // merge:true a missing key keeps the old id (site review, lock #7).
+        for (const f of ['ttlockLockId', 'lockGuideUrl', 'lockConfirmKey'] as const) {
+          if (docData[f] === '' || docData[f] === undefined) docData[f] = deleteField();
+        }
         const isNewRoom = !venues.some((v) => v.id === id);
         if (isNewRoom) docData.createdAt = serverTimestamp();
         await setDoc(doc(db, 'venues', id), docData, { merge: true });
@@ -478,7 +486,20 @@ export default function AdminVenuesPage() {
                       </div>
                       <div>
                         <label className={labelCls}>TTLock {locale === 'zh' ? '門鎖 ID（呢個場地嘅門）' : 'lock ID'}</label>
-                        <input value={r.ttlockLockId || ''} onChange={(e) => setRoom(i, { ttlockLockId: e.target.value.trim() || undefined })} placeholder="1234567" className={`${inputCls} font-mono`} />
+                        {/* '' (not undefined) so clearing the field really removes the id on save. */}
+                        <input value={r.ttlockLockId || ''} onChange={(e) => setRoom(i, { ttlockLockId: e.target.value.trim() })} placeholder="1234567" className={`${inputCls} font-mono`} />
+                      </div>
+                      <div>
+                        <label className={labelCls}>{locale === 'zh' ? '門鎖鍵盤確認鍵' : 'Keypad confirm key'}</label>
+                        <select value={r.lockConfirmKey || ''} onChange={(e) => setRoom(i, { lockConfirmKey: e.target.value })} className={inputCls}>
+                          <option value="">{locale === 'zh' ? '預設（# ，灣仔 🔔）' : 'Default (#, Wan Chai 🔔)'}</option>
+                          <option value="#">#</option>
+                          <option value="🔔">🔔</option>
+                        </select>
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className={labelCls}>{locale === 'zh' ? '門鎖指引圖網址（密碼電郵會附上）' : 'Door-guide image URL (in the passcode email)'}</label>
+                        <input value={r.lockGuideUrl || ''} onChange={(e) => setRoom(i, { lockGuideUrl: e.target.value.trim() })} placeholder="https://…" className={`${inputCls} font-mono text-xs`} />
                       </div>
                       <label className="flex items-center gap-2 text-sm mt-5">
                         <input type="checkbox" checked={r.active !== false} onChange={(e) => setRoom(i, { active: e.target.checked })} className="accent-accent" />

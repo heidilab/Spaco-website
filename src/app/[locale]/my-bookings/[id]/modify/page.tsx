@@ -22,11 +22,12 @@ import { getBooking, getBlockedSlots } from '@/lib/firestore';
 import { getPeakDay } from '@/lib/peakDays';
 import { resolvePeakRule } from '@/lib/peakDayRules';
 import type { PeakDayConfig } from '@/types';
-import { getVenueById, venuesSharingSpace } from '@/lib/venues';
+import { venuesSharingSpace } from '@/lib/venues';
+import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import { loadAllVenues, conflictIdsFor } from '@/lib/venueRegistry';
 import {
   addOns as addOnCatalog, calculatePricing,
-  earlySetupPriceByVenue, calcCateringTotal,
+  earlySetupPricePerHour, calcCateringTotal,
   fixedRentOf, addOnAvailableAt,
 } from '@/lib/pricing';
 import { useAddOnConfig } from '@/lib/addOnConfigClient';
@@ -119,7 +120,9 @@ export default function ModifyBookingPage() {
       .finally(() => setLoading(false));
   }, [bookingId, user, authLoading, router, locale]);
 
-  const venue = booking ? getVenueById(booking.venueId) : null;
+  // 分店管理 venues too — a customer at HART could not modify at all.
+  useVenueRegistryReady();
+  const venue = booking ? (findVenueNow(booking.venueId) ?? null) : null;
 
   const startMs = booking ? new Date(`${booking.date}T${booking.startTime}:00+08:00`).getTime() : 0;
   const hoursUntilStart = booking ? (startMs - Date.now()) / 3600000 : Infinity;
@@ -225,7 +228,7 @@ export default function ModifyBookingPage() {
   // price (#m4Dg9Gb0 clobber incident).
   const pkgSetupQty = cart.find((c) => c.id === 'early-setup')?.quantity || 0;
   const pkgSetupDiff = isPackage && venue
-    ? Math.max(0, (pkgSetupQty - (floor['early-setup'] || 0)) * (earlySetupPriceByVenue[venue.id] || 500))
+    ? Math.max(0, (pkgSetupQty - (floor['early-setup'] || 0)) * earlySetupPricePerHour(venue))
     : 0;
   // Catering diff (package flow) — new total vs what's already booked.
   const pkgCateringDiff = isPackage
@@ -672,7 +675,7 @@ export default function ModifyBookingPage() {
                         {a.name[locale]}
                         {a.id === 'early-setup' && venue && (
                           <span className="text-pink font-bold ml-2">
-                            +HK${(earlySetupPriceByVenue[venue.id] || 500).toLocaleString()}/{locale === 'zh' ? '小時' : 'hr'}
+                            +HK${earlySetupPricePerHour(venue).toLocaleString()}/{locale === 'zh' ? '小時' : 'hr'}
                           </span>
                         )}
                       </p>

@@ -617,8 +617,26 @@ export const bbqPremiumMenu = {
 // Venues that do NOT offer BBQ
 export const noBBQVenues = ['wanchai'];
 
-// Venues that include free non-alcoholic drinks
+// Venues that include free non-alcoholic drinks — built-in fallback only;
+// 分店管理's `drinksIncluded` is the source (venueDrinksIncluded).
 export const freeDrinksVenues = ['tst'];
+
+/** Whether the venue bundles unlimited soft drinks: the 分店管理 setting
+ *  when the venue carries one, else the built-in list. Every consumer
+ *  (promo drinks cost, receipts, forms) must use this rather than the
+ *  list, so a branch set up in 分店管理 behaves as configured
+ *  (site review 2026-11-13, phase 2). */
+export function venueDrinksIncluded(venue: { id?: string; drinksIncluded?: boolean } | null | undefined, venueId?: string): boolean {
+  if (venue && typeof venue.drinksIncluded === 'boolean') return venue.drinksIncluded;
+  return freeDrinksVenues.includes(venue?.id ?? venueId ?? '');
+}
+
+/** 提早入場佈置 price per hour: the venue's own setting, else the built-in
+ *  map, else $500. */
+export function earlySetupPricePerHour(venue: { id?: string; earlySetupPricePerHour?: number } | null | undefined, venueId?: string): number {
+  if (venue && typeof venue.earlySetupPricePerHour === 'number' && venue.earlySetupPricePerHour >= 0) return venue.earlySetupPricePerHour;
+  return earlySetupPriceByVenue[venue?.id ?? venueId ?? ''] ?? 500;
+}
 
 // Hotpot packages can be ordered at EVERY venue (Heidi 2026-11-10 — the
 // old `hotpotVenues` list hid them everywhere except 銅鑼灣 / 上環 Room B /

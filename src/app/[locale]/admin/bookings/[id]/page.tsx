@@ -43,8 +43,8 @@ import {
   calculatePricing,
   calcShishaPrice,
   calcCateringTotal,
-  freeDrinksVenues,
-  earlySetupPriceByVenue,
+  venueDrinksIncluded,
+  earlySetupPricePerHour,
   PARTIAL_PAX_ADDON_IDS,
   addOnPartialPax,
   fixedRentOf,
@@ -84,10 +84,11 @@ function livePromoForBooking(opts: {
   if (!hasDrinks) return 0;
   const adults = Math.max(0, opts.liveGuestCount - opts.liveChildCount);
   const adultEquiv = adults + 0.5 * opts.liveChildCount;
-  return freeDrinksVenues.includes(opts.liveVenueId) ? 0 : Math.round(25 * adultEquiv);
+  return venueDrinksIncluded(findVenueNow(opts.liveVenueId), opts.liveVenueId) ? 0 : Math.round(25 * adultEquiv);
 }
 import PaymentHistory from '@/components/booking/PaymentHistory';
 import StaffRemarkEditor from '@/components/booking/StaffRemarkEditor';
+import { findVenueNow } from '@/lib/useRegistryVenue';
 import BookingSourceEditor from '@/components/admin/BookingSourceEditor';
 import { buildWhatsAppLink, formatHkPhone } from '@/lib/whatsapp';
 import {
@@ -3861,6 +3862,11 @@ function LockPasscodePanel({ booking, locale, onUpdated }: LockPasscodePanelProp
     let cancelled = false;
     (async () => {
       try {
+        // 分店管理 first (the engine's primary source), legacy 系統設定 next —
+        // a branch set up only in 分店管理 used to read as "manual" here.
+        const { loadAllVenues } = await import('@/lib/venueRegistry');
+        const fromRegistry = parseInt(String((await loadAllVenues()).find((v) => v.id === booking.venueId)?.ttlockLockId || '').trim(), 10);
+        if (Number.isFinite(fromRegistry) && fromRegistry > 0) { if (!cancelled) setHasTTLock(true); return; }
         const cms = await getSiteContent('settings');
         const raw = (cms?.[`ttlock_${booking.venueId}`]?.zh
                   || cms?.[`ttlock_${booking.venueId}`]?.en
@@ -4087,7 +4093,7 @@ function PackageAddOnsEditor({ booking, locale }: { booking: BookingRecord; loca
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  const setupPrice = earlySetupPriceByVenue[booking.venueId] || 500;
+  const setupPrice = earlySetupPricePerHour(findVenueNow(booking.venueId), booking.venueId);
   const setupDiff = setupPrice * (setupHours - storedSetup);
   const cateringDiff = (catering ? calcCateringTotal(catering) : 0)
     - (storedCatering ? calcCateringTotal(storedCatering) : 0);

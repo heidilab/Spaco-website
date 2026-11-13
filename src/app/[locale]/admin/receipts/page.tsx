@@ -10,12 +10,14 @@ import { db } from '@/lib/firebase';
 import { tryGenerateLockPasscode } from '@/lib/lockPasscodeClient';
 import { cancelBooking } from '@/lib/cancelBooking';
 import { BookingRecord } from '@/types';
-import { venues } from '@/lib/venues';
+import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import { Check, X, Eye, Clock, AlertCircle } from 'lucide-react';
 import { discountedSubtotal, computeGrandTotal, initialAmountDue } from '@/lib/bookingMoney';
 
 export default function AdminReceiptsPage() {
   const locale = useLocale() as 'zh' | 'en';
+  // 分店管理 venues (registry-first; the built-in list is the fallback).
+  useVenueRegistryReady();
   const { user, hasPermission } = useAuth();
   const [bookings, setBookings] = useState<BookingRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -287,7 +289,7 @@ export default function AdminReceiptsPage() {
       ) : (
         <div className="space-y-4">
           {bookings.map((booking) => {
-            const venue = venues.find((v) => v.id === booking.venueId);
+            const venue = findVenueNow(booking.venueId);
             const expired = isExpired(booking);
             const createdAt = booking.createdAt
               ? new Date((booking.createdAt as { seconds: number }).seconds * 1000)

@@ -29,6 +29,11 @@ describe('which branch a booking counts toward', () => {
     for (const id of ['hart-a', 'hart-b', 'hart-ab']) expect(salesBranchKey(id, registry)).toBe('tsthart');
   });
 
+  it('a room added to Sheung Wan in 分店管理 (branchKey sheung-wan) still books to sw', () => {
+    const withNewRoom = [...registry, { id: 'sw-c', name: { zh: 'Room C', en: 'Room C' }, active: true, sortOrder: 7, branchKey: 'sheung-wan' } as (typeof registry)[number]];
+    expect(salesBranchKey('sw-c', withNewRoom)).toBe('sw');
+  });
+
   it('falls back to the venue id when the registry does not know the venue', () => {
     expect(salesBranchKey('gone-venue', registry)).toBe('gone-venue');
     expect(salesBranchKey('hart-a', [])).toBe('hart-a');

@@ -7,7 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getUserProfile, getUserBookings, updateUserProfile } from '@/lib/firestore';
 import { isValidHkPhone, normalizeHkPhone } from '@/lib/whatsapp';
 import { UserProfile, BookingRecord } from '@/types';
-import { venues } from '@/lib/venues';
+import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import AuthModal from '@/components/auth/AuthModal';
 import { User, Sparkles, CalendarDays, Save, Clock, Users as UsersIcon } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -23,6 +23,8 @@ const statusLabels: Record<string, { zh: string; en: string }> = {
 
 export default function AccountPage() {
   const locale = useLocale() as 'zh' | 'en';
+  // 分店管理 venues (registry-first; the built-in list is the fallback).
+  useVenueRegistryReady();
   const { user, loading: authLoading } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [bookings, setBookings] = useState<BookingRecord[]>([]);
@@ -190,7 +192,7 @@ export default function AccountPage() {
               return (
                 <div className="space-y-2">
                   {visible.slice(0, 3).map((b) => {
-                    const venue = venues.find((v) => v.id === b.venueId);
+                    const venue = findVenueNow(b.venueId);
                     return (
                       <Link
                         key={b.id}

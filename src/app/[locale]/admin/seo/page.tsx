@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  saveSeoEntry, getSeoEntryClient, SEO_PAGES, type SeoPageDef,
+  saveSeoEntry, getSeoEntryClient, SEO_PAGES, branchSeoPages, type SeoPageDef,
 } from '@/lib/seo';
 import { uploadSiteImage } from '@/lib/content';
 import { translateZhToEn } from '@/lib/translate';
@@ -25,6 +25,10 @@ export default function AdminSeoPage() {
   const [globalConfig, setGlobalConfig] = useState<SeoDefaults>({});
   const [pageConfigs, setPageConfigs] = useState<Record<string, SeoEntry>>({});
   const [loading, setLoading] = useState(true);
+  // Fixed pages + one entry per branch in 分店管理 the fixed list does
+  // not know (HART), so every branch page's title / description can be
+  // edited here.
+  const [pages, setPages] = useState<SeoPageDef[]>(SEO_PAGES);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
   const [translating, setTranslating] = useState<string | null>(null);
@@ -32,13 +36,20 @@ export default function AdminSeoPage() {
   useEffect(() => {
     if (!hasPermission('seo')) return;
     (async () => {
+      let all: SeoPageDef[] = SEO_PAGES;
+      try {
+        const { loadActiveVenues } = await import('@/lib/venueRegistry');
+        const { groupBranches } = await import('@/lib/branchGrouping');
+        all = [...SEO_PAGES, ...branchSeoPages(groupBranches(await loadActiveVenues()))];
+      } catch { /* registry unreachable — fixed pages only */ }
+      setPages(all);
       const [def, ...entries] = await Promise.all([
         getSeoEntryClient(DEFAULT_PAGE_ID),
-        ...SEO_PAGES.map((p) => getSeoEntryClient(p.id)),
+        ...all.map((p) => getSeoEntryClient(p.id)),
       ]);
       setGlobalConfig((def as SeoDefaults) || {});
       const map: Record<string, SeoEntry> = {};
-      SEO_PAGES.forEach((p, i) => { map[p.id] = entries[i] || {}; });
+      all.forEach((p, i) => { map[p.id] = entries[i] || {}; });
       setPageConfigs(map);
       setLoading(false);
     })();
@@ -134,7 +145,7 @@ export default function AdminSeoPage() {
     }
   };
 
-  const currentPage = SEO_PAGES.find((p) => p.id === activePage);
+  const currentPage = pages.find((p) => p.id === activePage);
   const currentPageCfg = pageConfigs[activePage] || {};
 
   return (
@@ -189,7 +200,7 @@ export default function AdminSeoPage() {
               {locale === 'zh' ? '頁面' : 'Pages'}
             </p>
             <div className="space-y-0.5">
-              {SEO_PAGES.map((p) => {
+              {pages.map((p) => {
                 const isActive = activePage === p.id;
                 const has = !!pageConfigs[p.id]?.title?.zh;
                 return (

@@ -19,7 +19,7 @@ import { adminApiFetch } from './adminApiFetch';
 import { BookingRecord, BlockedSlot, BusinessDocument, DocumentType, DocumentRevision, CalendarEvent, AddOnOptions, PromoCode } from '@/types';
 import { venuesSharingSpace, getVenueById } from './venues';
 import { loadAllVenues, conflictIdsFor } from './venueRegistry';
-import { calculatePricing, calculateDeposit, fixedRentOf, freeDrinksVenues, stampAddOnPrices,
+import { calculatePricing, calculateDeposit, fixedRentOf, venueDrinksIncluded, stampAddOnPrices,
 } from './pricing';
 import { getPeakDay } from './peakDays';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
@@ -574,7 +574,7 @@ export async function updateBookingDateTime(
           if (pcSnap.exists()) {
             const promoAdults = Math.max(0, guests - children);
             const promoAdultEquiv = promoAdults + 0.5 * children;
-            const promoDrinksCost = hasDrinksAddOn && !freeDrinksVenues.includes(targetVenueId)
+            const promoDrinksCost = hasDrinksAddOn && !venueDrinksIncluded(venueForPricing, targetVenueId)
               ? Math.round(25 * promoAdultEquiv)
               : 0;
             // Bypass the eligibility gates (enabled / date window / venue
@@ -621,7 +621,7 @@ export async function updateBookingDateTime(
         // — back to the same convention-drift bug.
         const promoAdults = Math.max(0, guests - children);
         const adultEquiv = promoAdults + 0.5 * children;
-        const newDrinksCost = freeDrinksVenues.includes(targetVenueId)
+        const newDrinksCost = venueDrinksIncluded(venueForPricing, targetVenueId)
           ? 0
           : Math.round(25 * adultEquiv);
         promoDiscount = newDrinksCost;

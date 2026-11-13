@@ -5,7 +5,7 @@ import {
   sendStaffBookingNotification,
   sendStaffSupplierOrderNotification,
 } from '@/lib/emailAutomations';
-import { getVenueById } from '@/lib/venues';
+import { resolveVenueServer } from '@/lib/venueRegistryServer';
 import { processBookingForLockAccess } from '@/lib/lockPasscode';
 import { pushBookingToCalendar, updateBookingOnCalendar } from '@/lib/googleCalendar';
 import { formatAddOnsForStaff } from '@/lib/pricing';
@@ -161,7 +161,7 @@ export async function finalizeConfirmedBooking(
       const profile = userSnap.data() as UserProfile | undefined;
       const customerEmail = profile?.email;
       if (customerEmail) {
-        const venue = getVenueById(booking.venueId);
+        const venue = await resolveVenueServer(booking.venueId);
         const venueName = venue?.name.zh || booking.branchSlug;
         const whatsappNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || '85292823060';
         const whatsappLink = generateWhatsAppLink(
@@ -239,7 +239,7 @@ export async function finalizeConfirmedBooking(
   //    or the function is near its time budget, staff are still notified.
   try {
     if (bookingForNotify) {
-      const venue = getVenueById(bookingForNotify.venueId);
+      const venue = await resolveVenueServer(bookingForNotify.venueId);
       await sendStaffBookingNotification({
         bookingId: bookingForNotify.id,
         venueName: venue?.name.zh || bookingForNotify.branchSlug,

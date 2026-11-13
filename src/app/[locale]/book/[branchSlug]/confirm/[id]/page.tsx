@@ -17,7 +17,7 @@ import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import { getPeakDay } from '@/lib/peakDays';
 import { resolvePeakRule } from '@/lib/peakDayRules';
 import { hotpotSoupSummary, isHotpotPackage } from '@/lib/hotpot';
-import { addOns as addOnCatalog, getShishaFlavorLabel, calculatePricing, freeDrinksVenues, isWithin2Days, shishaPrices,
+import { addOns as addOnCatalog, getShishaFlavorLabel, calculatePricing, venueDrinksIncluded, isWithin2Days, shishaPrices,
 } from '@/lib/pricing';
 import { BookingRecord, RefundDetails } from '@/types';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
@@ -377,7 +377,7 @@ export default function ConfirmBookingPage() {
       const adults = Math.max(0, guestCount - childCount);
       const adultEquiv = adults + 0.5 * childCount;
       const venueIncludesDrinksFree = booking
-        ? freeDrinksVenues.includes(booking.venueId)
+        ? venueDrinksIncluded(findVenueNow(booking.venueId), booking.venueId)
         : false;
       const projectedDrinksCost = booking?.packageSlug || venueIncludesDrinksFree
         ? 0
@@ -437,7 +437,7 @@ export default function ConfirmBookingPage() {
         data.freeDrinks
         && booking
         && !booking.packageSlug
-        && !freeDrinksVenues.includes(booking.venueId)
+        && !venueDrinksIncluded(findVenueNow(booking.venueId), booking.venueId)
         && !booking.addOns?.some((a) => a.id === 'drinks')
       ) {
         const venue = findVenueNow(booking.venueId);

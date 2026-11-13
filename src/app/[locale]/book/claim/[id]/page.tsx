@@ -19,12 +19,13 @@ import { isValidHkPhone, normalizeHkPhone, formatHkPhone } from '@/lib/whatsapp'
 import { addOns as ALL_ADDONS, calculateSecurityDeposit } from '@/lib/pricing';
 import { hotpotSoupSummary, isHotpotPackage } from '@/lib/hotpot';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
-import { venues } from '@/lib/venues';
+import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import { BookingDraft } from '@/types';
 import AuthModal from '@/components/auth/AuthModal';
 
 export default function ClaimBookingPage() {
   const params = useParams();
+  const registryReady = useVenueRegistryReady();
   const locale = useLocale() as 'zh' | 'en';
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
@@ -79,8 +80,9 @@ export default function ClaimBookingPage() {
   }, [user, draft]);
 
   const venue = useMemo(
-    () => (draft ? venues.find((v) => v.id === draft.venueId) : null),
-    [draft],
+    () => (draft ? (findVenueNow(draft.venueId) ?? null) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [draft, registryReady],
   );
 
   const draftExpired = !!draft && isDraftExpired(draft);

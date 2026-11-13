@@ -3,7 +3,7 @@ import { adminDb } from '@/lib/firebaseAdmin';
 import { buildOfflinePaymentPendingEmail, generateWhatsAppLink } from '@/lib/email';
 import { sendAutomatedEmail } from '@/lib/emailAutomations';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
-import { getVenueById } from '@/lib/venues';
+import { resolveVenueServer } from '@/lib/venueRegistryServer';
 import { initialAmountDue } from '@/lib/bookingMoney';
 import { requireBookingAccess } from '@/lib/adminAuth';
 
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
     const user = userSnap.data() as { email?: string; displayName?: string };
     if (!user.email) return NextResponse.json({ ok: true, skipped: 'no email' });
 
-    const venue = getVenueById(booking.venueId);
+    const venue = await resolveVenueServer(booking.venueId);
     // Same amount as the FPS page and KPay: deposit − points (2026-10-18).
     const amountDue = initialAmountDue(booking as Parameters<typeof initialAmountDue>[0]);
     const whatsappLink = generateWhatsAppLink(

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { sendStaffReceiptPendingNotification } from '@/lib/emailAutomations';
-import { getVenueById } from '@/lib/venues';
+import { resolveVenueServer } from '@/lib/venueRegistryServer';
 import type { BookingRecord, UserProfile } from '@/types';
 import { requireBookingAccess } from '@/lib/adminAuth';
 
@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
       profile = userSnap.data() as UserProfile | undefined;
     }
 
-    const venue = getVenueById(booking.venueId);
+    const venue = await resolveVenueServer(booking.venueId);
     const origin = req.nextUrl.origin;
 
     await sendStaffReceiptPendingNotification({

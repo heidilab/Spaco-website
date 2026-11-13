@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
+import { useBranchDirectory } from '@/lib/branchDirectory';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -132,7 +133,6 @@ const PROMO_LINK_OPTIONS: { value: string; label: { zh: string; en: string } }[]
   { value: '/corporate',                  label: { zh: '商務活動',           en: 'Corporate Events' } },
   { value: '/book/package/birthday-cwb',  label: { zh: '生日包場（銅鑼灣）', en: 'Birthday Package (CWB)' } },
   { value: '/book/package/birthday-hart', label: { zh: '生日包場（尖沙咀 HART）', en: 'Birthday Package (TST HART)' } },
-  { value: '/branches/tsthart',           label: { zh: '尖沙咀 HART 分店',    en: 'TST HART Branch' } },
   { value: '/book/package/mahjong-wanchai', label: { zh: '麻雀包場（灣仔）',  en: 'Mahjong Package (Wan Chai)' } },
   { value: '/book/package/corporate-tst', label: { zh: '企業套餐（尖沙咀）',  en: 'Corporate Package Booking (TST)' } },
   { value: '/branches/causeway-bay',      label: { zh: '銅鑼灣分店',         en: 'Causeway Bay Branch' } },
@@ -1176,7 +1176,16 @@ interface PromoLinkEditorProps {
 
 function PromoLinkEditor({ img, locale, onChange }: PromoLinkEditorProps) {
   const current = img.linkUrl?.trim() || '';
-  const isPredefined = PROMO_LINK_OPTIONS.some((o) => o.value === current);
+  // Every branch page from 分店管理 (HART and any later branch) on top of
+  // the fixed destinations.
+  const { branches } = useBranchDirectory();
+  const options = [
+    ...PROMO_LINK_OPTIONS,
+    ...branches
+      .filter((b) => !PROMO_LINK_OPTIONS.some((o) => o.value === `/branches/${b.slug}`))
+      .map((b) => ({ value: `/branches/${b.slug}`, label: { zh: `${b.name.zh}分店`, en: `${b.name.en || b.name.zh} Branch` } })),
+  ];
+  const isPredefined = options.some((o) => o.value === current);
   // "custom" mode kicks in either when the saved URL is unrecognised, OR
   // when the admin explicitly picks the Custom option from the dropdown.
   const [mode, setMode] = useState<'predefined' | 'custom' | 'none'>(
@@ -1215,7 +1224,7 @@ function PromoLinkEditor({ img, locale, onChange }: PromoLinkEditorProps) {
         className="w-full px-2.5 py-2 rounded-lg border border-charcoal/15 text-xs bg-white focus:outline-none focus:border-pink"
       >
         <option value="">{locale === 'zh' ? '— 未設定 —' : '— Not set —'}</option>
-        {PROMO_LINK_OPTIONS.map((opt) => (
+        {options.map((opt) => (
           <option key={opt.value} value={opt.value}>
             {opt.label[locale]}
           </option>

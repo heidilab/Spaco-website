@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { sendStaffBookingNotification, sendStaffSupplierOrderNotification } from '@/lib/emailAutomations';
 import { bookingNeedsSupplierOrder } from '@/lib/email';
-import { getVenueById } from '@/lib/venues';
+import { resolveVenueServer } from '@/lib/venueRegistryServer';
 import { formatAddOnsForStaff } from '@/lib/pricing';
 import type { BookingRecord, UserProfile } from '@/types';
 import { requireAdmin } from '@/lib/adminAuth';
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
       profile = userSnap.data() as UserProfile | undefined;
     }
 
-    const venue = getVenueById(booking.venueId);
+    const venue = await resolveVenueServer(booking.venueId);
     const origin = req.nextUrl.origin;
 
     if (supplierOnly === true) {

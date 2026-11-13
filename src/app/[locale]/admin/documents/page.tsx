@@ -17,7 +17,7 @@ import {
   addOns as addOnConfig,
   calculateSecurityDeposit,
   bbqStandardPriceByVenue,
-  freeDrinksVenues,
+  venueDrinksIncluded,
   adultEquivalent,
   calcShishaPrice,
   SHISHA_MAX_PIPES,
@@ -26,7 +26,7 @@ import {
 } from '@/lib/pricing';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { HOTPOT_EXTRA_SOUP_PRICE, hotpotSoupSummary, isHotpotPackage } from '@/lib/hotpot';
-import { venues } from '@/lib/venues';
+import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import {
   BusinessDocument,
   DocumentType,
@@ -138,6 +138,8 @@ const BLANK_FORM: ReturnType<typeof emptyDoc> = {
 
 export default function AdminDocumentsPage() {
   const locale = useLocale() as 'zh' | 'en';
+  // 分店管理 venues (registry-first; the built-in list is the fallback).
+  useVenueRegistryReady();
   const { user, hasPermission } = useAuth();
   const canAccess = hasPermission('documents');
 
@@ -285,7 +287,7 @@ export default function AdminDocumentsPage() {
         (b.userId ? usersById[b.userId] : null) ||
         (b.customerName ? { displayName: b.customerName, email: b.customerEmail || '' } : {});
 
-      const venue = venues.find((v) => v.id === b.venueId);
+      const venue = findVenueNow(b.venueId);
       const venueName = venue?.name[locale] || b.venueId;
 
       // Item 1 — Venue rental, with bilingual placeholders filled in
@@ -374,7 +376,7 @@ export default function AdminDocumentsPage() {
           amount = unitPrice * quantity;
         } else if (addOn.id === 'drinks') {
           // Skip drinks for venues with unlimited drinks bundled (e.g. TST).
-          if (freeDrinksVenues.includes(b.venueId)) continue;
+          if (venueDrinksIncluded(findVenueNow(b.venueId), b.venueId)) continue;
           // Skip if customer redeemed a "free drinks" promo on this booking.
           if (b.promoFreeDrinksCost && b.promoFreeDrinksCost > 0) continue;
           unitPrice = 25;
@@ -1020,7 +1022,7 @@ export default function AdminDocumentsPage() {
                   {form.bookingId
                     ? (() => {
                         const linked = bookings.find((b) => b.id === form.bookingId);
-                        const v = linked && venues.find((vn) => vn.id === linked.venueId);
+                        const v = linked && findVenueNow(linked.venueId);
                         return (
                           <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl bg-pink/10 border border-pink/30">
                             <div className="text-sm text-ink min-w-0">
@@ -1442,7 +1444,7 @@ export default function AdminDocumentsPage() {
                         }
                         if (pickerSearch) {
                           const s = pickerSearch.toLowerCase();
-                          const v = venues.find((vn) => vn.id === b.venueId);
+                          const v = findVenueNow(b.venueId);
                           const u = usersById[b.userId];
                           const haystack = [
                             b.date,
@@ -1473,7 +1475,7 @@ export default function AdminDocumentsPage() {
                     return (
                       <div className="space-y-2 pb-2">
                         {filtered.map((b) => {
-                          const v = venues.find((vn) => vn.id === b.venueId);
+                          const v = findVenueNow(b.venueId);
                           const profile = usersById[b.userId];
                           const isLoading = pickerLoading === b.id;
                           const statusStyle =

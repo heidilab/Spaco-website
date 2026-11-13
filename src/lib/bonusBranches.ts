@@ -36,7 +36,10 @@ export function salesBranchKey(venueId: string, venues: readonly RegistryVenue[]
   // 上環 Room A / B / 全層 are one branch (same rule as finance.branchKey).
   if (venueId.startsWith('sw-')) return 'sw';
   if (LEGACY_KEYS.has(venueId)) return venueId;
-  return venues.find((v) => v.id === venueId)?.branchKey || venueId;
+  const key = venues.find((v) => v.id === venueId)?.branchKey || venueId;
+  // A room added to Sheung Wan in 分店管理 carries branchKey 'sheung-wan'
+  // (the public grouping key); its money belongs to the 'sw' books.
+  return key === 'sheung-wan' ? 'sw' : key;
 }
 
 /**

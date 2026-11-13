@@ -14,7 +14,7 @@ import { AlertTriangle } from 'lucide-react';
 import { Link } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
 import { getUserBookings } from '@/lib/firestore';
-import { getVenueById } from '@/lib/venues';
+import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import { outstandingDebts, type OutstandingDebt } from '@/lib/settlementDebt';
 
 const isBookingPath = (path: string) =>
@@ -22,6 +22,8 @@ const isBookingPath = (path: string) =>
 
 export default function SettlementDebtNotice() {
   const locale = useLocale() as 'zh' | 'en';
+  // 分店管理 venues (registry-first; the built-in list is the fallback).
+  useVenueRegistryReady();
   const zh = locale === 'zh';
   const pathname = usePathname() || '';
   const { user } = useAuth();
@@ -78,7 +80,7 @@ export default function SettlementDebtNotice() {
         </div>
         <ul className="space-y-3 mb-5">
           {debts.map((d) => {
-            const venue = d.venueId ? getVenueById(d.venueId) : undefined;
+            const venue = findVenueNow(d.venueId);
             return (
               <li key={d.bookingId} className="rounded-2xl border border-rose-200 bg-rose-50/70 p-4">
                 <div className="flex items-center justify-between gap-3">

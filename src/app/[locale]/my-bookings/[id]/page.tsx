@@ -10,7 +10,7 @@ import { resolvePeakRule } from '@/lib/peakDayRules';
 import type { PeakDayConfig } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { getBooking } from '@/lib/firestore';
-import { getVenueById } from '@/lib/venues';
+import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import {
   addOns as addOnCatalog, getShishaFlavorLabel,
   calculatePricing, shishaPrices,
@@ -46,6 +46,8 @@ const statusLabels: Record<string, { zh: string; en: string }> = {
 
 export default function MyBookingDetailPage() {
   const locale = useLocale() as 'zh' | 'en';
+  // 分店管理 venues (registry-first; the built-in list is the fallback).
+  useVenueRegistryReady();
   const params = useParams();
   const bookingId = params.id as string;
   const { user, loading: authLoading } = useAuth();
@@ -102,7 +104,7 @@ export default function MyBookingDetailPage() {
     );
   }
 
-  const venue = getVenueById(booking.venueId);
+  const venue = findVenueNow(booking.venueId);
   const venueName = venue?.name[locale] || booking.branchSlug;
   const securityDeposit = booking.pricing.securityDeposit ?? 0;
   // All money figures come from the shared bookingMoney module — see its

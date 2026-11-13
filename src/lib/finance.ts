@@ -3,7 +3,7 @@
 // functions: caller fetches the data, this file does the math.
 
 import type { BookingRecord, MarketingChannel, Venue } from '@/types';
-import { addOns as ADDON_CATALOG, addOnEntryTotal, addOnEntryUnitPrice, addOnPartialPax, earlySetupPriceByVenue } from './pricing';
+import { addOns as ADDON_CATALOG, addOnEntryTotal, addOnEntryUnitPrice, addOnPartialPax } from './pricing';
 
 import { venues } from './venues';
 import { salesBranchKey, salesBranches } from './bonusBranches';
@@ -155,7 +155,8 @@ export function addOnRevenueForBooking(
   // not move an old booking's money.
   if (addOnId === 'catering') return addOnEntryTotal(entry);
   if (addOnId === 'early-setup') {
-    const perHour = earlySetupPriceByVenue[booking.venueId] ?? 500;
+    // The per-hour price stamped when it was sold, else the built-in map.
+    const perHour = addOnEntryUnitPrice(entry, { id: booking.venueId });
     return perHour * (entry.quantity || 1);
   }
 

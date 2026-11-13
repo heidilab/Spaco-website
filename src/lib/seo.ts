@@ -207,8 +207,8 @@ export const SEO_PAGES: SeoPageDef[] = [
       en: 'SPACO — Multifunctional Space',
     },
     defaultDescription: {
-      zh: '香港高級全自助多功能活動空間，設有 BBQ、Shisha、桌球、打邊爐等設施。銅鑼灣、灣仔、上環、尖沙咀四間分店。',
-      en: 'Hong Kong premium self-service multifunctional event space — BBQ, Shisha, pool, hotpot. Four branches: Causeway Bay, Wan Chai, Sheung Wan, TST.',
+      zh: '香港高級全自助多功能活動空間，設有 BBQ、Shisha、桌球、打邊爐等設施。銅鑼灣、灣仔、上環、尖沙咀多間分店。',
+      en: 'Hong Kong premium self-service multifunctional event space — BBQ, Shisha, pool, hotpot. Branches in Causeway Bay, Wan Chai, Sheung Wan and TST.',
     },
   },
   {
@@ -288,6 +288,24 @@ export const SEO_PAGES: SeoPageDef[] = [
 
 export function pageDefById(id: string): SeoPageDef | undefined {
   return SEO_PAGES.find((p) => p.id === id);
+}
+
+/**
+ * SEO page definitions for the branches in 分店管理 that the fixed
+ * SEO_PAGES list does not know (e.g. 尖沙咀 HART). Same ids as
+ * `branchSeoIdFromSlug` gives the branch page, so SEO 管理 edits land
+ * where the page reads them. Pure: takes the grouped branches.
+ */
+export function branchSeoPages(branches: Array<{ slug: string; name: { zh: string; en: string } }>): SeoPageDef[] {
+  const known = new Set(SEO_PAGES.map((p) => p.path));
+  return branches
+    .filter((b) => !known.has(`/branches/${b.slug}`))
+    .map((b) => ({
+      id: branchSeoIdFromSlug(b.slug),
+      path: `/branches/${b.slug}`,
+      label: { zh: `${b.name.zh}分店`, en: `${b.name.en || b.name.zh} Branch` },
+      defaultTitle: { zh: `${b.name.zh} Party Room | SPACO`, en: `${b.name.en || b.name.zh} Party Room | SPACO` },
+    }));
 }
 
 /** Map a branch slug to the SEO page id used in Firestore. */

@@ -4,7 +4,7 @@ import { adminDb } from '@/lib/firebaseAdmin';
 import { requireCronSecret } from '@/lib/adminAuth';
 import { buildSettlementDebtReminderEmail, generateWhatsAppLink } from '@/lib/email';
 import { sendAutomatedEmail } from '@/lib/emailAutomations';
-import { getVenueById } from '@/lib/venues';
+import { resolveVenueServer } from '@/lib/venueRegistryServer';
 import { debtReminderStage, settlementDebt, type DebtBooking } from '@/lib/settlementDebt';
 
 export const runtime = 'nodejs';
@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
       results.push({ bookingId: doc.id, stage, sent: false, reason: 'no-email' });
       continue;
     }
-    const venue = b.venueId ? getVenueById(b.venueId) : undefined;
+    const venue = await resolveVenueServer(b.venueId);
     const tpl = buildSettlementDebtReminderEmail({
       customerName: name || email.split('@')[0],
       venueName: venue?.name.zh || b.branchSlug || '',

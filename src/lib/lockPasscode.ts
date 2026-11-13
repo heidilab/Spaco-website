@@ -20,7 +20,7 @@
 import { Timestamp, FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from './firebaseAdmin';
 import { addKeyboardPasscode, deleteKeyboardPasscode, isTTLockConfigured } from './ttlock';
-import { getVenueById } from './venues';
+import { resolveVenueServer, loadAllVenuesServer } from './venueRegistryServer';
 import { getSiteContent } from './content';
 import { buildLockPasscodeEmail, buildBalanceDueReminderEmail } from './email';
 import { lockConfirmKey } from './lockConfirmKey';
@@ -67,10 +67,10 @@ export async function getVenueLockMap(): Promise<Record<string, number>> {
       }
     }
   } catch { /* settings unreadable — venue docs still apply */ }
-  // …venue docs override.
+  // …venue docs override (server registry — the client SDK registry
+  // cannot read here).
   try {
-    const { loadAllVenues } = await import('./venueRegistry');
-    for (const v of await loadAllVenues()) {
+    for (const v of await loadAllVenuesServer()) {
       const parsed = parseInt(String(v.ttlockLockId || '').trim(), 10);
       if (Number.isFinite(parsed) && parsed > 0) map[v.id] = parsed;
     }
@@ -103,6 +103,12 @@ async function getLockGuideMap(): Promise<Record<string, string>> {
  *  booking) uses the Room B entrance, so it falls back to `lockguide_sw-b`
  *  when no `lockguide_sw-ab` is explicitly set. */
 export async function getLockGuideUrlForVenue(venueId: string): Promise<string | undefined> {
+  // 分店管理 first (any branch), then the legacy 系統設定 slots.
+  try {
+    const venue = await resolveVenueServer(venueId);
+    const own = (venue?.lockGuideUrl || '').trim();
+    if (own) return own;
+  } catch { /* registry unreachable — legacy slots below */ }
   const map = await getLockGuideMap();
   if (map[venueId]) return map[venueId];
   if (venueId === 'sw-ab' && map['sw-b']) return map['sw-b'];
@@ -208,7 +214,7 @@ export async function processBookingForLockAccess(bookingId: string): Promise<Pr
       if (!contact) {
         return { bookingId, action: 'error', reason: 'no-contact', error: 'user profile missing' };
       }
-      const venue = getVenueById(b.venueId);
+      const venue = await resolveVenueServer(b.venueId);
       const venueName = venue?.name.zh || b.branchSlug;
       const tpl = buildBalanceDueReminderEmail({
         customerName: contact.name,
@@ -267,7 +273,7 @@ export async function processBookingForLockAccess(bookingId: string): Promise<Pr
   const validTo   = endMs;
 
   try {
-    const venue = getVenueById(b.venueId);
+    const venue = await resolveVenueServer(b.venueId);
     const venueName = venue?.name.zh || b.branchSlug;
     const passcodeName = `SPACO-${b.date.replace(/-/g, '')}-${bookingId.slice(0, 6)}`;
 
@@ -303,7 +309,7 @@ export async function processBookingForLockAccess(bookingId: string): Promise<Pr
         endTime:      b.endTime,
         endDate:      b.endDate,
         passcode,
-        confirmKey:   lockConfirmKey(b.venueId),
+        confirmKey:   lockConfirmKey(b.venueId, venue),
         validFromMs:  validFrom,
         validToMs:    validTo,
         whatsappLink: 'https://wa.me/85292823060',
@@ -411,7 +417,7 @@ export async function setManualPasscode(
   const contact = await getCustomerContact(b.userId);
   if (!contact) return { ok: false, reason: 'no-contact' };
 
-  const venue = getVenueById(b.venueId);
+  const venue = await resolveVenueServer(b.venueId);
   const lockGuideImageUrl = await getLockGuideUrlForVenue(b.venueId);
   const tpl = buildLockPasscodeEmail({
     customerName: contact.name,
@@ -422,7 +428,7 @@ export async function setManualPasscode(
     endTime:      b.endTime,
     endDate:      b.endDate,
     passcode,
-    confirmKey:   lockConfirmKey(b.venueId),
+    confirmKey:   lockConfirmKey(b.venueId, venue),
     validFromMs:  validFrom,
     validToMs:    validTo,
     whatsappLink: 'https://wa.me/85292823060',

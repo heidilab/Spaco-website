@@ -10,7 +10,10 @@ import { KeyRound } from 'lucide-react';
 import { cancelBooking } from '@/lib/cancelBooking';
 import { BookingRecord, BookingDraft } from '@/types';
 import { channelDisplayLabel } from '@/lib/marketingChannels';
-import { venues } from '@/lib/venues';
+import { venues as staticVenues } from '@/lib/venues';
+import { loadAllVenues } from '@/lib/venueRegistry';
+import type { Venue } from '@/types';
+import { findVenueNow } from '@/lib/useRegistryVenue';
 import { formatAddOnsForStaff } from '@/lib/pricing';
 import { MARKETING_CHANNEL_LABELS, MarketingChannel } from '@/types';
 import {
@@ -67,6 +70,10 @@ const statusColors: Record<string, string> = {
 export default function AdminBookingsPage() {
   const locale = useLocale() as 'zh' | 'en';
   const { user } = useAuth();
+  // 分店管理 venues — the filter and every name used the built-in four,
+  // so a branch added there could not be filtered and read as its id.
+  const [venues, setVenues] = useState<Venue[]>(staticVenues);
+  useEffect(() => { loadAllVenues().then((list) => { if (list.length) setVenues(list); }).catch(() => {}); }, []);
   const [view, setView] = useState<View>('bookings');
   const [sweeping, setSweeping] = useState(false);
 
@@ -368,6 +375,7 @@ export default function AdminBookingsPage() {
            *    "0 selected = nothing shown"). */}
           <VenueFilterDropdown
             locale={locale}
+            venues={venues}
             open={venueFilterOpen}
             setOpen={setVenueFilterOpen}
             selectedVenues={selectedVenues}
@@ -751,7 +759,7 @@ function DraftsTable({ drafts, loading, locale, staffUid, onChange }: DraftsTabl
 
   const buildWaUrl = (draft: BookingDraft) => {
     const claimUrl = buildClaimUrl(draft.id, locale);
-    const v = venues.find((vn) => vn.id === draft.venueId);
+    const v = findVenueNow(draft.venueId);
     const customerLabel = draft.customerName || (locale === 'zh' ? '你' : 'you');
     const message =
       locale === 'zh'
@@ -810,7 +818,7 @@ function DraftsTable({ drafts, loading, locale, staffUid, onChange }: DraftsTabl
               </thead>
               <tbody>
                 {filtered.map((d) => {
-                  const v = venues.find((vn) => vn.id === d.venueId);
+                  const v = findVenueNow(d.venueId);
                   const expired = isDraftExpired(d);
                   const isPending = d.status === 'pending' && !expired;
                   const isClaimed = d.status === 'claimed';
@@ -948,10 +956,12 @@ interface VenueFilterDropdownProps {
    *  no filter applied). A Set explicitly lists which venue ids to show. */
   selectedVenues: Set<string> | null;
   setSelectedVenues: (next: Set<string> | null) => void;
+  /** Every venue (分店管理), live ones first. */
+  venues: Venue[];
 }
 
 function VenueFilterDropdown({
-  locale, open, setOpen, selectedVenues, setSelectedVenues,
+  locale, open, setOpen, selectedVenues, setSelectedVenues, venues,
 }: VenueFilterDropdownProps) {
   const ref = useRef<HTMLDivElement>(null);
   // Click-outside to close. Bound only while the dropdown is open so we

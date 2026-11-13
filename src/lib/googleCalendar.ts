@@ -14,7 +14,7 @@ import { normalizeGcalCalendarId } from './gcalCalendarId';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from './firebaseAdmin';
 import { BlockedSlot, BookingRecord } from '@/types';
-import { venues, venuesSharingSpace } from './venues';
+import { resolveVenueServer, venueStaffLabel } from './venueRegistryServer';
 import { formatAddOnsForStaff } from './pricing';
 
 // ──────────────────────────────────────────────────────────
@@ -469,17 +469,27 @@ function formatPhone(raw: string): string {
   return local;
 }
 
-/** Build the canonical event title used by direction A pushes. */
-function buildEventSummary(b: BookingRecord, customerName?: string): string {
-  const venue = venues.find((v) => v.id === b.venueId);
-  // For SW variants, prepend the room tag so staff scanning the SW calendar
-  // can tell which configuration was booked.
-  const swTag =
-    b.venueId === 'sw-a' ? '[Room A] '
-    : b.venueId === 'sw-b' ? '[Room B] '
-    : b.venueId === 'sw-ab' ? '[全層 A+B] '
+/** Legacy room tags for the built-in Sheung Wan rooms (registry venues
+ *  carry their own roomLabel). */
+function legacyRoomTag(venueId: string): string {
+  return venueId === 'sw-a' ? '[Room A] '
+    : venueId === 'sw-b' ? '[Room B] '
+    : venueId === 'sw-ab' ? '[全層 A+B] '
     : '';
-  const venueLabel = venue ? `${swTag}${venue.branch}` : b.venueId;
+}
+
+/** `[Room B] HART`-style label for an event title: the registry venue's
+ *  room label + branch tag; built-in rooms keep their old tags. */
+async function calendarVenueLabel(venueId: string): Promise<string> {
+  const venue = await resolveVenueServer(venueId);
+  if (!venue) return venueId;
+  if (venue.roomLabel?.en || venue.roomLabel?.zh) return venueStaffLabel(venue, venueId, 'en');
+  return `${legacyRoomTag(venueId)}${venue.branch || venue.name.en}`;
+}
+
+/** Build the canonical event title used by direction A pushes. */
+async function buildEventSummary(b: BookingRecord, customerName?: string): Promise<string> {
+  const venueLabel = await calendarVenueLabel(b.venueId);
   const phone = b.whatsappPhone ? ` ${formatPhone(b.whatsappPhone)}` : '';
   const name = customerName ? ` · ${customerName}${phone}` : phone ? ` ·${phone}` : '';
   // 商業租場 bookings may have no head count (0) — leave the suffix off.
@@ -573,7 +583,7 @@ export async function pushBookingToCalendar(
   const res = await cal.events.insert({
     calendarId,
     requestBody: {
-      summary: buildEventSummary(input.booking, input.customerName),
+      summary: await buildEventSummary(input.booking, input.customerName),
       description: buildEventDescription(input.booking, input.customerName, input.notes),
       start: { dateTime: startISO, timeZone: 'Asia/Hong_Kong' },
       end:   { dateTime: endISO,   timeZone: 'Asia/Hong_Kong' },
@@ -618,7 +628,7 @@ export async function updateBookingOnCalendar(
       calendarId,
       eventId: input.booking.googleEventId,
       requestBody: {
-        summary: buildEventSummary(input.booking, input.customerName),
+        summary: await buildEventSummary(input.booking, input.customerName),
         description: buildEventDescription(input.booking, input.customerName, input.notes),
         start: { dateTime: startISO, timeZone: 'Asia/Hong_Kong' },
         end:   { dateTime: endISO,   timeZone: 'Asia/Hong_Kong' },
@@ -699,13 +709,7 @@ export async function pushEventToCalendar(
   oauth2.setCredentials({ refresh_token: stored.refresh_token });
   const cal = google.calendar({ version: 'v3', auth: oauth2 });
 
-  const venue = venues.find((v) => v.id === input.venueId);
-  const swTag =
-    input.venueId === 'sw-a' ? '[Room A] '
-    : input.venueId === 'sw-b' ? '[Room B] '
-    : input.venueId === 'sw-ab' ? '[Full Floor] '
-    : '';
-  const venueLabel = venue ? `${swTag}${venue.branch}` : input.venueId;
+  const venueLabel = await calendarVenueLabel(input.venueId);
   const summary = `${input.label} · ${venueLabel}`;
 
   const startISO = `${input.date}T${input.startTime}:00+08:00`;
@@ -752,13 +756,7 @@ export async function updatePushedEvent(
   oauth2.setCredentials({ refresh_token: stored.refresh_token });
   const cal = google.calendar({ version: 'v3', auth: oauth2 });
 
-  const venue = venues.find((v) => v.id === args.venueId);
-  const swTag =
-    args.venueId === 'sw-a' ? '[Room A] '
-    : args.venueId === 'sw-b' ? '[Room B] '
-    : args.venueId === 'sw-ab' ? '[Full Floor] '
-    : '';
-  const venueLabel = venue ? `${swTag}${venue.branch}` : args.venueId;
+  const venueLabel = await calendarVenueLabel(args.venueId);
   const summary = `${args.label} · ${venueLabel}`;
 
   const startISO = `${args.date}T${args.startTime}:00+08:00`;

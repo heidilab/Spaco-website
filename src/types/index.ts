@@ -47,6 +47,13 @@ export interface Venue {
   gcalCalendarId?: string;
   /** TTLock lock id for automatic door passcodes (optional). */
   ttlockLockId?: string;
+  /** Door-guide image shown in the passcode email (optional). Replaces
+   *  the 系統設定 `lockguide_<id>` slots, which existed only for the
+   *  original branches (2026-11-13). */
+  lockGuideUrl?: string;
+  /** Key that confirms a passcode on this door's keypad: '#' (default) or
+   *  '🔔' (the Wan Chai keypad). */
+  lockConfirmKey?: string;
   /** Free-text facilities list shown on the branch page (one per line).
    *  Migrated from 內容管理/分店資料 2026-08. */
   amenitiesText?: { zh?: string; en?: string };

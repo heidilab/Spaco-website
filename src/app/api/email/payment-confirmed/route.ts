@@ -4,7 +4,7 @@ import { adminDb } from '@/lib/firebaseAdmin';
 import { buildBookingConfirmationEmail, generateWhatsAppLink } from '@/lib/email';
 import { sendAutomatedEmail } from '@/lib/emailAutomations';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
-import { getVenueById } from '@/lib/venues';
+import { resolveVenueServer } from '@/lib/venueRegistryServer';
 import { formatAddOnsForStaff } from '@/lib/pricing';
 import { consumeBookingRewards } from '@/lib/bookingRewards';
 import type { BookingRecord } from '@/types';
@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
     const user = userSnap.exists ? (userSnap.data() as { email?: string; displayName?: string }) : null;
     if (!user?.email) return NextResponse.json({ ok: true, skipped: 'no email' });
 
-    const venue = getVenueById(booking.venueId);
+    const venue = await resolveVenueServer(booking.venueId);
     const whatsappLink = generateWhatsAppLink(
       PAYMENT_DETAILS.fps.digitsOnly,
       `你好，預訂編號：${bookingId}`,

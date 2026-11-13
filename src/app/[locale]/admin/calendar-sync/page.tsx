@@ -38,6 +38,31 @@ export default function CalendarSyncPage() {
   const { hasPermission } = useAuth();
 
   const [status, setStatus] = useState<ConnectedStatus | null>(null);
+  // Branch calendars from 分店管理 (rooms sharing a calendar id are one row).
+  const [calendarRows, setCalendarRows] = useState<Array<{ key: string; name: string; rooms: string; calId: string }>>([]);
+  useEffect(() => {
+    if (!hasPermission('gcal')) return;
+    (async () => {
+      try {
+        const { loadAllVenues } = await import('@/lib/venueRegistry');
+        const { groupBranches } = await import('@/lib/branchGrouping');
+        const rows: Array<{ key: string; name: string; rooms: string; calId: string }> = [];
+        for (const b of groupBranches(await loadAllVenues())) {
+          const byCal = new Map<string, string[]>();
+          for (const r of b.rooms) {
+            const id = (r.gcalCalendarId || '').trim();
+            if (!id) continue;
+            byCal.set(id, [...(byCal.get(id) || []), r.roomLabel?.[locale] || r.roomLabel?.zh || r.name[locale]]);
+          }
+          for (const [calId, rooms] of Array.from(byCal.entries())) {
+            rows.push({ key: `${b.key}:${calId}`, name: b.name[locale] || b.name.zh, rooms: b.rooms.length > 1 ? `(${rooms.join(' / ')})` : '', calId });
+          }
+        }
+        setCalendarRows(rows);
+      } catch { /* registry unreachable */ }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locale]);
   const [syncMeta, setSyncMeta] = useState<SyncMeta | null>(null);
   const [busy, setBusy] = useState<'connect' | 'disconnect' | 'sync' | null>(null);
   const [flash, setFlash] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -254,29 +279,28 @@ export default function CalendarSyncPage() {
         </div>
       )}
 
-      {/* Calendar config */}
+      {/* Calendars actually synced: one per 分店管理 branch with a Google
+          Calendar ID (rooms of a branch share it). */}
       <div className="glass-card p-6 md:p-7">
         <h3 className="text-base font-bold text-ink mb-4">
-          {locale === 'zh' ? '4 條分店日曆' : '4 Branch Calendars'}
+          {locale === 'zh' ? `${calendarRows.length} 條分店日曆` : `${calendarRows.length} Branch Calendars`}
         </h3>
         <div className="space-y-2">
-          {([
-            { key: 'cwb', label: '銅鑼灣 / Causeway Bay' },
-            { key: 'wc',  label: '灣仔 / Wan Chai' },
-            { key: 'sw',  label: '上環 (sw-a / sw-b / sw-ab) / Sheung Wan' },
-            { key: 'tst', label: '尖沙咀 / Tsim Sha Tsui' },
-          ] as const).map((c) => (
+          {calendarRows.map((c) => (
             <div key={c.key} className="flex items-center gap-3 p-3 rounded-xl bg-white/40 border border-white/60 text-sm">
               <ChevronRight size={14} className="text-ink-soft" />
-              <span className="font-semibold text-ink flex-1">{c.label}</span>
-              <span className="text-xs text-ink-soft font-mono uppercase">{c.key}</span>
+              <span className="font-semibold text-ink flex-1">{c.name}<span className="ml-2 text-xs text-ink-soft font-normal">{c.rooms}</span></span>
+              <span className="text-xs text-ink-soft font-mono truncate max-w-[220px]" title={c.calId}>{c.calId}</span>
             </div>
           ))}
+          {calendarRows.length === 0 && (
+            <p className="text-sm text-ink-soft">{locale === 'zh' ? '未有分店設定 Google Calendar ID。' : 'No branch has a Google Calendar ID yet.'}</p>
+          )}
         </div>
         <p className="text-xs text-ink-soft mt-4">
           {locale === 'zh'
-            ? 'Calendar IDs 由環境變數 GCAL_CWB_ID / GCAL_WC_ID / GCAL_SW_ID / GCAL_TST_ID 提供。改動需要重啟 dev server。'
-            : 'Calendar IDs come from env vars GCAL_CWB_ID / GCAL_WC_ID / GCAL_SW_ID / GCAL_TST_ID. Restart dev server after edits.'}
+            ? 'Calendar ID 喺 分店管理 每間分店嘅「Google Calendar ID」設定；同步每 15 分鐘自動跑一次。'
+            : 'Calendar IDs are set per branch in 分店管理; the sync runs every 15 minutes.'}
         </p>
       </div>
     </div>

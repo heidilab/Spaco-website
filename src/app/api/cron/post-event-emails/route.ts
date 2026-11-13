@@ -4,7 +4,7 @@ import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { buildPostEventEmail } from '@/lib/email';
 import { sendAutomatedEmail } from '@/lib/emailAutomations';
-import { getVenueById } from '@/lib/venues';
+import { resolveVenueServer } from '@/lib/venueRegistryServer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -90,7 +90,7 @@ export async function GET(request: NextRequest) {
             - pointsDiscount,
         ),
       );
-      const venue = getVenueById(booking.venueId);
+      const venue = await resolveVenueServer(booking.venueId);
 
       const tpl = buildPostEventEmail({
         customerName: user.displayName || 'there',

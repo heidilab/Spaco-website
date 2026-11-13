@@ -7,8 +7,8 @@ import { adminVerifyIdToken } from '@/lib/adminAuth';
 import { getVenueById } from '@/lib/venues';
 import { getVenueByIdServer, venuesSharingSpaceServer } from '@/lib/venueRegistryServer';
 import {
-  calculatePricing, calculateDeposit, freeDrinksVenues, subtractHours,
-  earlySetupPriceByVenue, calcCateringTotal,
+  calculatePricing, calculateDeposit, venueDrinksIncluded, subtractHours,
+  earlySetupPricePerHour, calcCateringTotal,
   fixedRentOf, stampAddOnPrices,
 } from '@/lib/pricing';
 import { loadAddOnConfigServer } from '@/lib/addOnConfigServer';
@@ -273,7 +273,7 @@ export async function POST(
     // Additive pricing — flat package price untouched, setup + catering
     // diffs go straight onto addOnTotal / subtotal / balanceDue.
     // Customer pays the diff via the pay-balance page after saving.
-    const setupPrice = earlySetupPriceByVenue[booking.venueId] || 500;
+    const setupPrice = earlySetupPricePerHour(venue, booking.venueId);
     const addDiff = setupPrice * (newSetupHours - oldSetupHours) + cateringDiff;
     const pkgPatch: Record<string, unknown> = {
       addOns: reqAddOns,
@@ -370,7 +370,7 @@ export async function POST(
   const hasDrinks = reqAddOns.some((a) => a.id === 'drinks');
   const promoAdults = Math.max(0, newGuestCount - childCount);
   const promoAdultEquiv = promoAdults + 0.5 * childCount;
-  const promoDrinksCost = hasDrinks && !freeDrinksVenues.includes(booking.venueId)
+  const promoDrinksCost = hasDrinks && !venueDrinksIncluded(venue, booking.venueId)
     ? Math.round(25 * promoAdultEquiv)
     : 0;
   let promoRecomputed = false;

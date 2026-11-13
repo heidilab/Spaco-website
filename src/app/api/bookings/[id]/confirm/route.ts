@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { adminVerifyIdToken } from '@/lib/adminAuth';
-import { calculateDeposit, adultEquivalent, freeDrinksVenues } from '@/lib/pricing';
+import { calculateDeposit, adultEquivalent, venueDrinksIncluded } from '@/lib/pricing';
+import { resolveVenueServer } from '@/lib/venueRegistryServer';
 import { loadAddOnConfigServer } from '@/lib/addOnConfigServer';
 import { calcPromoDiscount } from '@/lib/promoCodes';
 import { BookingInputError, finiteNumber } from '@/lib/bookingSecurity';
@@ -41,7 +42,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       // CS quotes are immutable commercial terms. Customers may add points,
       // contact/refund details, but cannot remove or replace the agreed deal.
       if (!booking.draftId) {
-        const drinks = booking.packageSlug || freeDrinksVenues.includes(booking.venueId) ? 0
+        const venueForDrinks = await resolveVenueServer(booking.venueId);
+        const drinks = booking.packageSlug || venueDrinksIncluded(venueForDrinks, booking.venueId) ? 0
           : Math.round(25 * adultEquivalent(booking.guestCount - (booking.childCount || 0), booking.childCount || 0));
         const autoDrinks = !!(booking as BookingRecord & { promoAutoDrinks?: boolean }).promoAutoDrinks;
         if (autoDrinks) {

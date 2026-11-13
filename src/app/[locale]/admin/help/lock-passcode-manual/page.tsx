@@ -11,21 +11,18 @@ import { useLocale } from 'next-intl';
 import { Link } from '@/i18n/routing';
 import { useAuth } from '@/contexts/AuthContext';
 import { getSiteContent } from '@/lib/content';
+import { venues as staticVenues } from '@/lib/venues';
+import { loadActiveVenues } from '@/lib/venueRegistry';
 import {
   ArrowLeft, KeyRound, Smartphone, Type, Send, AlertTriangle,
   CheckCircle2, Clock, Building2, BookOpen,
 } from 'lucide-react';
 
-// The branches whose lock status this SOP reflects. Order + names only;
-// connected/manual status is read LIVE from the lock config below.
-const LOCK_VENUES: { id: string; name: { zh: string; en: string } }[] = [
-  { id: 'cwb',     name: { zh: '銅鑼灣 (CWB)', en: 'Causeway Bay' } },
-  { id: 'wanchai', name: { zh: '灣仔 (Wanchai)', en: 'Wan Chai' } },
-  { id: 'sw-a',    name: { zh: '上環 Room A (SW-A)', en: 'Sheung Wan A' } },
-  { id: 'sw-b',    name: { zh: '上環 Room B (SW-B)', en: 'Sheung Wan B' } },
-  { id: 'sw-ab',   name: { zh: '上環全層 (SW-AB)', en: 'Sheung Wan A+B' } },
-  { id: 'tst',     name: { zh: '尖沙咀 (TST)', en: 'Tsim Sha Tsui' } },
-];
+// The spaces whose lock status this SOP reflects: every live venue in
+// 分店管理 (built-in list until the registry loads). Connected / manual
+// is read LIVE: the venue's own TTLock id first, then the legacy
+// 系統設定 `ttlock_<id>` slot.
+const STATIC_LOCK_VENUES = staticVenues.map((v) => ({ id: v.id, name: v.name }));
 
 export default function ManualLockPasscodeSopPage() {
   const locale = useLocale() as 'zh' | 'en';
@@ -37,21 +34,32 @@ export default function ManualLockPasscodeSopPage() {
   // table below reflects reality — set a lockId in 內容管理 → 系統設定 and
   // this branch flips to "connected" with no code change.
   const [lockMap, setLockMap] = useState<Record<string, number>>({});
+  const [lockVenues, setLockVenues] = useState<{ id: string; name: { zh: string; en: string } }[]>(STATIC_LOCK_VENUES);
   const [loadingLocks, setLoadingLocks] = useState(true);
   useEffect(() => {
     if (!canAccess) return;
     (async () => {
       try {
-        const cms = await getSiteContent('settings');
         const map: Record<string, number> = {};
-        if (cms) {
-          for (const [k, v] of Object.entries(cms)) {
-            if (!k.startsWith('ttlock_')) continue;
-            const raw = ((v as { zh?: string; en?: string })?.zh || (v as { zh?: string; en?: string })?.en || '').trim();
-            const parsed = parseInt(raw, 10);
-            if (Number.isFinite(parsed) && parsed > 0) map[k.slice('ttlock_'.length)] = parsed;
+        try {
+          const cms = await getSiteContent('settings');
+          if (cms) {
+            for (const [k, v] of Object.entries(cms)) {
+              if (!k.startsWith('ttlock_')) continue;
+              const raw = ((v as { zh?: string; en?: string })?.zh || (v as { zh?: string; en?: string })?.en || '').trim();
+              const parsed = parseInt(raw, 10);
+              if (Number.isFinite(parsed) && parsed > 0) map[k.slice('ttlock_'.length)] = parsed;
+            }
           }
-        }
+        } catch { /* legacy slots unreadable */ }
+        try {
+          const live = await loadActiveVenues();
+          if (live.length) setLockVenues(live.map((v) => ({ id: v.id, name: v.name })));
+          for (const v of live) {
+            const parsed = parseInt(String(v.ttlockLockId || '').trim(), 10);
+            if (Number.isFinite(parsed) && parsed > 0) map[v.id] = parsed;
+          }
+        } catch { /* registry unreachable */ }
         setLockMap(map);
       } finally {
         setLoadingLocks(false);
@@ -106,7 +114,7 @@ export default function ManualLockPasscodeSopPage() {
               </tr>
             </thead>
             <tbody>
-              {LOCK_VENUES.map((v) => {
+              {lockVenues.map((v) => {
                 const lockId = lockMap[v.id];
                 const connected = !!lockId;
                 return (
@@ -132,8 +140,8 @@ export default function ManualLockPasscodeSopPage() {
         )}
         <p className="text-xs text-ink-soft">
           {locale === 'zh'
-            ? '📌 呢個表即時反映真實設定。喺 內容管理 → 文字內容 → 系統設定 填返該分店嘅 lockId，個分店就會即刻轉做「已連接 · 系統自動」，唔需要改 code。'
-            : '📌 This table is live. Set a branch\'s lockId in Content → Text → Settings and it flips to "Connected · Automatic" with no code change.'}
+            ? '📌 呢個表即時反映真實設定。喺 分店管理 填返該場地嘅「TTLock 門鎖 ID」，個場地就會即刻轉做「已連接 · 系統自動」，唔需要改 code。'
+            : '📌 This table is live. Set the space\'s TTLock lock ID in 分店管理 and it flips to "Connected · Automatic" with no code change.'}
         </p>
       </div>
 
