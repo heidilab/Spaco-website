@@ -24,7 +24,7 @@ npm run test:rules
 ## Release workflow
 
 1. Make changes on `kpay-integration`; run relevant checks and commit/push.
-2. Deploy a Vercel preview and record the exact URL/commit in the Notion changelog.
+2. Deploy a Vercel preview, point the fixed test address `spaco-test.vercel.app` at it (see `CLAUDE.md`) and share only that address; record the commit in the Notion changelog.
 3. Verify public pages and unauthorised endpoint responses. Do not create real test bookings, payments, messages or passcodes.
 4. Wait for Heidi's explicit production approval, then fast-forward/merge to `main`, push and deploy production with production environment variables.
 5. Verify the production alias and routes. Firebase rules are a separate deployment affecting the shared live database: back up remote rules first, deploy compatible app changes first, and verify rules read back correctly.
