@@ -17,7 +17,8 @@ import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import { getPeakDay } from '@/lib/peakDays';
 import { resolvePeakRule } from '@/lib/peakDayRules';
 import { hotpotSoupSummary, isHotpotPackage } from '@/lib/hotpot';
-import { addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE, calculatePricing, freeDrinksVenues, isWithin2Days } from '@/lib/pricing';
+import { addOns as addOnCatalog, getShishaFlavorLabel, calculatePricing, freeDrinksVenues, isWithin2Days, shishaPrices,
+} from '@/lib/pricing';
 import { BookingRecord, RefundDetails } from '@/types';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { getMarketingChannelOptions, DEFAULT_CHANNEL_OPTIONS, OTHER_OPTION, type MarketingChannelOption } from '@/lib/marketingChannels';
@@ -718,7 +719,7 @@ export default function ConfirmBookingPage() {
                       )}
                       {a.id === 'shisha' && a.options?.staffSetup && (
                         <p className="text-xs text-ink-soft pl-3">
-                          {locale === 'zh' ? `+ 員工協助 setup (HK$${SHISHA_STAFF_SETUP_FEE})` : `+ Staff setup help (HK$${SHISHA_STAFF_SETUP_FEE})`}
+                          {locale === 'zh' ? `+ 員工協助 setup (HK$${shishaPrices().staffSetup})` : `+ Staff setup help (HK$${shishaPrices().staffSetup})`}
                         </p>
                       )}
                     </div>

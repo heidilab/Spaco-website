@@ -9,6 +9,7 @@
 // `sendAutomatedEmail()` which checks the toggle first.
 
 import { adminDb } from './firebaseAdmin';
+import { loadAddOnConfigServer } from './addOnConfigServer';
 import { sendEmail, buildStaffBookingNotificationEmail, buildStaffReceiptPendingEmail, buildStaffSupplierOrderEmail, bookingNeedsSupplierOrder } from './email';
 import { sendStaffPush } from './webPushServer';
 import type { BookingRecord } from '@/types';
@@ -358,6 +359,8 @@ export async function sendStaffSupplierOrderNotification(params: {
   }
   const list = await getStaffNotificationRecipients();
   if (list.length === 0) return { sent: false, recipients: [], reason: 'no-recipients' };
+  // 附加服務管理 settings — dish / flavour names and prices staff set.
+  await loadAddOnConfigServer();
   const tpl = buildStaffSupplierOrderEmail(params);
   await Promise.all(list.map((to) =>
     sendEmail({ to, subject: tpl.subject, html: tpl.html })

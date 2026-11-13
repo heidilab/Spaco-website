@@ -790,7 +790,7 @@ export default function MonthClosePage() {
     <div className="p-4 md:p-8 space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-2xl font-bold flex items-center gap-2">
-          <CalendarCheck className="w-6 h-6 text-primary-600" />
+          <CalendarCheck className="w-6 h-6 text-pink" />
           {zh ? '月結' : 'Month Close'}
         </h1>
         <div className="flex items-center gap-2">
@@ -825,7 +825,7 @@ export default function MonthClosePage() {
         {branches.map(({ key: b }) => (
           <button
             key={b} onClick={() => setBranch(b)}
-            className={`px-4 py-1.5 rounded-full text-sm border ${branch === b ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+            className={`px-4 py-1.5 rounded-full text-sm border ${branch === b ? 'bg-pink text-white border-pink' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
           >
             {branchLabel(b)}
           </button>
@@ -918,7 +918,7 @@ export default function MonthClosePage() {
                 <div className="flex gap-2">
                   <button
                     onClick={() => persistSplits([...splits, { name: '', pct: 0 }])}
-                    className="text-sm text-primary-600 hover:underline flex items-center gap-1"
+                    className="text-sm text-pink hover:underline flex items-center gap-1"
                   >
                     <Plus className="w-4 h-4" />{zh ? '加一份' : 'Add party'}
                   </button>
@@ -1209,7 +1209,7 @@ export default function MonthClosePage() {
                 {fy.map(({ m, n }) => (
                   <tr
                     key={m}
-                    className={`border-b last:border-0 ${m === month ? 'bg-primary-50/50' : ''} ${n.count === 0 ? 'text-gray-300' : ''} cursor-pointer hover:bg-gray-50`}
+                    className={`border-b last:border-0 ${m === month ? 'bg-pink/5' : ''} ${n.count === 0 ? 'text-gray-300' : ''} cursor-pointer hover:bg-gray-50`}
                     onClick={() => setMonth(m)}
                   >
                     <td className="py-1.5">{monthLabel(m)}</td>

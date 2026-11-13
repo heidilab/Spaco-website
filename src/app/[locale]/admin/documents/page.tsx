@@ -22,7 +22,7 @@ import {
   calcShishaPrice,
   SHISHA_MAX_PIPES,
   addOnPartialPax,
-  addOnEntryUnitPrice,
+  addOnEntryUnitPrice, addOnEntryTotal,
 } from '@/lib/pricing';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { HOTPOT_EXTRA_SOUP_PRICE, hotpotSoupSummary, isHotpotPackage } from '@/lib/hotpot';
@@ -392,7 +392,7 @@ export default function AdminDocumentsPage() {
             Math.max(1, addOn.options?.pipes ?? Math.min(2, heads)),
           );
           const staffSetup = !!addOn.options?.staffSetup;
-          amount = calcShishaPrice(pipes, heads, staffSetup);
+          amount = addOnEntryTotal(addOn);
           // Render as "1 × $640" so the receipt math matches the line
           // total. Storing heads as quantity would print "2 × $390 =
           // $780" again on PDFs that re-derive amount.

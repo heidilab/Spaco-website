@@ -12,8 +12,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getBooking } from '@/lib/firestore';
 import { getVenueById } from '@/lib/venues';
 import {
-  addOns as addOnCatalog, getShishaFlavorLabel, SHISHA_STAFF_SETUP_FEE,
-  calculatePricing,
+  addOns as addOnCatalog, getShishaFlavorLabel,
+  calculatePricing, shishaPrices,
 } from '@/lib/pricing';
 import { displayBillTotal, paidGateway, surchargePaid, adminDiscountAmount } from '@/lib/bookingMoney';
 import { generateWhatsAppLink } from '@/lib/email';
@@ -235,7 +235,7 @@ export default function MyBookingDetailPage() {
                           )}
                           {a.id === 'shisha' && a.options?.staffSetup && (
                             <span className="block text-xs text-ink-soft pl-3">
-                              + {locale === 'zh' ? `員工協助 setup (HK$${SHISHA_STAFF_SETUP_FEE})` : `Staff setup (HK$${SHISHA_STAFF_SETUP_FEE})`}
+                              + {locale === 'zh' ? `員工協助 setup (HK$${shishaPrices().staffSetup})` : `Staff setup (HK$${shishaPrices().staffSetup})`}
                             </span>
                           )}
                         </li>

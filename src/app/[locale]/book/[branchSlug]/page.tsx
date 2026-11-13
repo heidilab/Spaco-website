@@ -5,7 +5,8 @@ import { Link } from '@/i18n/routing';
 import { useParams } from 'next/navigation';
 import { useState, useMemo, useEffect } from 'react';
 import { getVenueBySlug } from '@/lib/venues';
-import { addOns, calculatePricing, noBBQVenues, freeDrinksVenues, addOnUnitPrice, addOnAvailableAt, addOnMenu, calcShishaPrice, SHISHA_STAFF_SETUP_FEE, SHISHA_MAX_PIPES, subtractHours } from '@/lib/pricing';
+import { addOns, calculatePricing, noBBQVenues, freeDrinksVenues, addOnUnitPrice, addOnAvailableAt, addOnMenu, calcShishaPrice, SHISHA_MAX_PIPES, subtractHours, shishaPrices, shishaFlavors as shishaFlavorOptions, shishaDescription,
+} from '@/lib/pricing';
 import { useAddOnConfig } from '@/lib/addOnConfigClient';
 import {
   HOTPOT_EXTRA_SOUP_ID, HOTPOT_MIN_ADVANCE_DAYS, HOTPOT_TWO_SOUP_MIN_EQUIV,
@@ -1333,7 +1334,7 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                   <div className={`p-5 rounded-2xl border ${shishaHeads > 0 ? 'border-accent bg-accent/5' : 'border-charcoal/5'}`}>
                     <div className="mb-4">
                       <p className="font-semibold">{shishaCatalogEntry.name[locale]}</p>
-                      <p className="text-sm text-muted mt-1">{shishaCatalogEntry.description?.[locale]}</p>
+                      <p className="text-sm text-muted mt-1">{shishaDescription(locale)}</p>
                       <p className="text-xs text-ink-soft mt-2">
                         {locale === 'zh'
                           ? '* 由外部供應商提供。需活動 2 日前預訂。'
@@ -1427,7 +1428,7 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                                 onChange={(e) => setShishaFlavor(i, e.target.value)}
                                 className="flex-1 px-2 py-1.5 rounded-lg border border-charcoal/15 bg-white text-sm focus:outline-none focus:border-accent"
                               >
-                                {shishaCatalogEntry.variants?.map((v) => (
+                                {shishaFlavorOptions().map((v) => (
                                   <option key={v.id} value={v.id}>{v.name[locale]}</option>
                                 ))}
                               </select>
@@ -1445,8 +1446,8 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                           />
                           <span className="text-sm">
                             {locale === 'zh'
-                              ? `需要員工協助 setup（+HK$${SHISHA_STAFF_SETUP_FEE}）`
-                              : `Staff setup help (+HK$${SHISHA_STAFF_SETUP_FEE})`}
+                              ? `需要員工協助 setup（+HK$${shishaPrices().staffSetup}）`
+                              : `Staff setup help (+HK$${shishaPrices().staffSetup})`}
                           </span>
                         </label>
 

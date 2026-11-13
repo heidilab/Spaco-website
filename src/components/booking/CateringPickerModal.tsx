@@ -15,17 +15,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X as XIcon, Plus, Minus, Sparkles, Leaf, Flame, Baby } from 'lucide-react';
 import {
   CATERING_CATEGORIES,
-  CATERING_ITEMS,
-  CATERING_TIERS,
   CATERING_DELIVERY_ZONES,
-  CATERING_EXTRA_DISH_FEE,
-  CATERING_DOORSTEP_DELIVERY_FEE,
   CATERING_NO_CUTLERY_DISCOUNT,
   CATERING_EXTRA_CUTLERY_SET_FEE,
   CATERING_EXTRA_FOOD_TONG_FEE,
   CATERING_MIN_LEAD_DAYS,
   type CateringTag,
 } from '@/lib/cateringMenu';
+// Dish list, tier prices and fees as set in 附加服務管理.
+import { cateringItemsAll, cateringTiers, findCateringItem, cateringExtraDishFee, cateringDoorstepFee } from '@/lib/cateringCatalog';
 import { calcCateringTotal } from '@/lib/pricing';
 
 export interface CateringSelection {
@@ -69,7 +67,7 @@ export default function CateringPickerModal({
   open, initial, locale, bookingDate, bookingStartTime, bookingEndTime,
   onClose, onSave, onRemove,
 }: Props) {
-  const [tierId, setTierId] = useState(initial?.tierId || CATERING_TIERS[0].id);
+  const [tierId, setTierId] = useState(initial?.tierId || cateringTiers()[0].id);
   const [dishCodes, setDishCodes] = useState<string[]>(initial?.dishCodes || []);
   const [deliveryZoneId, setDeliveryZoneId] = useState(initial?.deliveryZoneId || CATERING_DELIVERY_ZONES[0].id);
   const [doorstepDelivery, setDoorstepDelivery] = useState(!!initial?.doorstepDelivery);
@@ -83,7 +81,7 @@ export default function CateringPickerModal({
   // Re-hydrate when the modal reopens with a different initial set.
   useEffect(() => {
     if (open) {
-      setTierId(initial?.tierId || CATERING_TIERS[0].id);
+      setTierId(initial?.tierId || cateringTiers()[0].id);
       setDishCodes(initial?.dishCodes || []);
       setDeliveryZoneId(initial?.deliveryZoneId || CATERING_DELIVERY_ZONES[0].id);
       setDoorstepDelivery(!!initial?.doorstepDelivery);
@@ -95,13 +93,13 @@ export default function CateringPickerModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const tier = CATERING_TIERS.find((t) => t.id === tierId)!;
+  const tier = cateringTiers().find((t) => t.id === tierId)!;
   // dishCodes carries one entry PER PORTION (盤) — the same code may
   // repeat (e.g. 20× '102'). Counts below are per-entry so pricing and
   // the tier progress reflect portions, not distinct dishes.
   const qtyOf = (code: string) => dishCodes.filter((c) => c === code).length;
   const nonAddonSelectedCount = dishCodes
-    .filter((c) => CATERING_ITEMS.find((d) => d.code === c)?.category !== 'addon').length;
+    .filter((c) => findCateringItem(c)?.category !== 'addon').length;
   const overTierCount = Math.max(0, nonAddonSelectedCount - tier.pickCount);
 
   const total = useMemo(() => calcCateringTotal({
@@ -115,7 +113,10 @@ export default function CateringPickerModal({
     return bookingMs >= Date.now() + CATERING_MIN_LEAD_DAYS * 24 * 60 * 60 * 1000;
   })();
 
-  const visibleItems = CATERING_ITEMS
+  // Dishes on offer, plus any already on this order (a dish staff have
+  // since paused can still be seen and removed).
+  const visibleItems = cateringItemsAll()
+    .filter((d) => !d.hidden || dishCodes.includes(d.code))
     .filter((d) => d.category === activeCategory)
     .filter((d) => !activeTagFilter || (d.tags || []).includes(activeTagFilter));
 
@@ -208,7 +209,7 @@ export default function CateringPickerModal({
                 {locale === 'zh' ? '人數套餐' : 'Group-size tier'}
               </h3>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                {CATERING_TIERS.map((t) => {
+                {cateringTiers().map((t) => {
                   const active = tierId === t.id;
                   return (
                     <button
@@ -234,7 +235,7 @@ export default function CateringPickerModal({
                 <div className="flex gap-1.5 overflow-x-auto pb-1 flex-1 min-w-0">
                   {CATERING_CATEGORIES.map((c) => {
                     const active = activeCategory === c.id;
-                    const cnt = dishCodes.filter((code) => CATERING_ITEMS.find((d) => d.code === code)?.category === c.id).length;
+                    const cnt = dishCodes.filter((code) => findCateringItem(code)?.category === c.id).length;
                     return (
                       <button
                         key={c.id}
@@ -353,7 +354,7 @@ export default function CateringPickerModal({
                 </select>
                 <label className="flex items-center gap-2 text-xs text-ink cursor-pointer mb-3">
                   <input type="checkbox" checked={doorstepDelivery} onChange={(e) => setDoorstepDelivery(e.target.checked)} className="w-4 h-4" />
-                  <span>{locale === 'zh' ? `上門交收 (+HK$${CATERING_DOORSTEP_DELIVERY_FEE})` : `Door-to-door (+HK$${CATERING_DOORSTEP_DELIVERY_FEE})`}</span>
+                  <span>{locale === 'zh' ? `上門交收 (+HK$${cateringDoorstepFee()})` : `Door-to-door (+HK$${cateringDoorstepFee()})`}</span>
                 </label>
 
                 {/* Delivery time — must be inside booking session so
@@ -410,7 +411,7 @@ export default function CateringPickerModal({
                 </span>
                 {overTierCount > 0 && (
                   <span className="ml-2 text-amber-700">
-                    {locale === 'zh' ? `(額外 ${overTierCount} × HK$${CATERING_EXTRA_DISH_FEE})` : `(+${overTierCount} × HK$${CATERING_EXTRA_DISH_FEE})`}
+                    {locale === 'zh' ? `(額外 ${overTierCount} × HK$${cateringExtraDishFee()})` : `(+${overTierCount} × HK$${cateringExtraDishFee()})`}
                   </span>
                 )}
               </div>

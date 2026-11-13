@@ -25,7 +25,7 @@ import { db } from '@/lib/firebase';
 import { BookingRecord, UserProfile, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
 import { venues as staticVenues } from '@/lib/venues';
 import { loadAllVenues, venuesSnapshot } from '@/lib/venueRegistry';
-import type { Venue } from '@/types';
+import type { AddOnOptions, Venue } from '@/types';
 import { getHoliday } from '@/lib/hkHolidays';
 import { getPackageBySlug } from '@/lib/packages';
 import { getDecorationById } from '@/lib/decorations';
@@ -47,7 +47,7 @@ import {
   PARTIAL_PAX_ADDON_IDS,
   addOnPartialPax,
   fixedRentOf,
-  addOnUnitPrice,
+  addOnUnitPrice, shishaFlavors, keepSoldTotals,
 } from '@/lib/pricing';
 import { useAddOnConfig } from '@/lib/addOnConfigClient';
 import { depositSettlementAmounts, amountOwed, paidBase, isSettlementOverflow, computeGrandTotal, netConsumption, discountedSubtotal, computeBalanceDue, adminDiscountAmount } from '@/lib/bookingMoney';
@@ -182,6 +182,11 @@ export default function AdminBookingDetailPage() {
     const n = Number(addOnPax[id]);
     return (PARTIAL_PAX_ADDON_IDS as readonly string[]).includes(id) && Number.isFinite(n) && n > 0 ? n : 0;
   };
+  /** A 到會 / 水煙 entry rebuilt from the form: keeps the total it was sold
+   *  at while the selection is unchanged, drops it once staff change it
+   *  (then it is priced at today's prices). */
+  const soldEntry = <T extends { id: string; quantity: number; options?: AddOnOptions }>(entry: T): T =>
+    keepSoldTotals([entry], booking?.addOns)[0];
   /** A plain add-on entry, with its partial head count when one is set
    *  and the unit price it was sold at (so the preview shows what the
    *  save will keep; a venue change re-prices). */
@@ -445,10 +450,10 @@ export default function AdminBookingDetailPage() {
         .filter(([, q]) => q > 0)
         .map(([id, quantity]) => {
           if (id === 'shisha') {
-            return { id, quantity, options: shishaAddOnOptions(shishaOptions) };
+            return soldEntry({ id, quantity, options: shishaAddOnOptions(shishaOptions) });
           }
           if (id === 'catering' && cateringSelection) {
-            return { id, quantity: 1, options: cateringSelection };
+            return soldEntry({ id, quantity: 1, options: cateringSelection });
           }
           return paxEntry(id, quantity);
         }),
@@ -709,10 +714,10 @@ export default function AdminBookingDetailPage() {
                 if (id === 'shisha') {
                   // Shared builder — keeps the customer's staff-setup
                   // TIME, which this save path used to drop.
-                  return { id, quantity, options: shishaAddOnOptions(shishaOptions) };
+                  return soldEntry({ id, quantity, options: shishaAddOnOptions(shishaOptions) });
                 }
                 if (id === 'catering' && cateringSelection) {
-                  return { id, quantity: 1, options: cateringSelection };
+                  return soldEntry({ id, quantity: 1, options: cateringSelection });
                 }
                 return paxEntry(id, quantity);
               }),
@@ -2092,7 +2097,7 @@ export default function AdminBookingDetailPage() {
                                 <option value="">
                                   {locale === 'zh' ? '— 未揀 —' : '— Not picked —'}
                                 </option>
-                                {shishaCfg.variants!.map((v) => (
+                                {shishaFlavors(shishaOptions.flavors).map((v) => (
                                   <option key={v.id} value={v.id}>
                                     {v.name[locale]}
                                   </option>
@@ -2183,10 +2188,10 @@ export default function AdminBookingDetailPage() {
                       .filter(([, q]) => q > 0)
                       .map(([id, quantity]) => {
                         if (id === 'shisha') {
-                          return { id, quantity, options: shishaAddOnOptions(shishaOptions) };
+                          return soldEntry({ id, quantity, options: shishaAddOnOptions(shishaOptions) });
                         }
                         if (id === 'catering' && cateringSelection) {
-                          return { id, quantity: 1, options: cateringSelection };
+                          return soldEntry({ id, quantity: 1, options: cateringSelection });
                         }
                         return paxEntry(id, quantity);
                       }),

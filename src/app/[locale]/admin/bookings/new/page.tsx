@@ -15,10 +15,9 @@ import {
   calculateDeposit,
   calculateSecurityDeposit,
   SHISHA_MAX_PIPES,
-  SHISHA_STAFF_SETUP_FEE,
   getShishaFlavorLabel,
   freeDrinksVenues,
-  calcShishaPrice, stampAddOnPrices,
+  calcShishaPrice, stampAddOnPrices, shishaPrices, shishaFlavors,
 } from '@/lib/pricing';
 import { useAddOnConfig } from '@/lib/addOnConfigClient';
 import { ALL_PACKAGES, getPackageBySlug, CATEGORY_LABEL } from '@/lib/packages';
@@ -1386,7 +1385,7 @@ export default function AdminNewBookingPage() {
                                   <option value="">
                                     {locale === 'zh' ? '— 未揀（之後補）—' : '— Not picked —'}
                                   </option>
-                                  {a.variants!.map((v) => (
+                                  {shishaFlavors().map((v) => (
                                     <option key={v.id} value={v.id}>
                                       {v.name[locale]}
                                     </option>
@@ -1413,8 +1412,8 @@ export default function AdminNewBookingPage() {
                           />
                           <span className="text-ink-soft">
                             {locale === 'zh'
-                              ? `人手 setup +HK$${SHISHA_STAFF_SETUP_FEE}`
-                              : `Staff setup +HK$${SHISHA_STAFF_SETUP_FEE}`}
+                              ? `人手 setup +HK$${shishaPrices().staffSetup}`
+                              : `Staff setup +HK$${shishaPrices().staffSetup}`}
                           </span>
                         </label>
                         {shishaOptions.staffSetup && (

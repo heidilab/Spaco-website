@@ -2,12 +2,11 @@
 
 import type { BookingRecord, AddOnOptions } from '@/types';
 import { discountedSubtotal } from './bookingMoney';
-import { addOnEntryUnitPrice, addOnPartialPax, calcShishaPrice } from './pricing';
+import { addOnEntryTotal, addOnEntryUnitPrice, addOnPartialPax, getShishaFlavorLabel, shishaPrices } from './pricing';
+import { cateringTiers, findCateringItem, cateringExtraDishFee, cateringDoorstepFee } from './cateringCatalog';
 import { HOTPOT_EXTRA_SOUP_PRICE, hotpotSoupBases, hotpotSoupSlots, hotpotSoupSummary } from './hotpot';
 import { getDecorationById } from './decorations';
 import {
-  CATERING_ITEMS,
-  CATERING_TIERS,
   CATERING_DELIVERY_ZONES,
 } from './cateringMenu';
 
@@ -830,15 +829,15 @@ export function buildStaffSupplierOrderEmail(params: {
     const heads = shisha.quantity;
     const pipes = Math.min(2, Math.max(1, opts.pipes ?? Math.min(2, heads)));
     const staffSetup = !!opts.staffSetup;
-    const cost = calcShishaPrice(pipes, heads, staffSetup);
+    const cost = addOnEntryTotal(shisha);
     const flavorList = (opts.flavors || []).filter((f) => !!f);
     const flavorLines = flavorList.length > 0
-      ? flavorList.map((f, i) => `  • Head ${i + 1}: ${SHISHA_FLAVOR_NAMES[f] || f}`).join('<br>')
+      ? flavorList.map((f, i) => `  • Head ${i + 1}: ${getShishaFlavorLabel(f, 'zh')}`).join('<br>')
       : '<i style="color:#991B1B;">⚠️ 客人未揀煙頭口味,須跟進</i>';
     const staffSetupLine = staffSetup
       ? (opts.staffSetupTime
-          ? `是 (+$180) · <strong style="color:#B45309;">⏰ Setup 時間：${opts.staffSetupTime}</strong>（客人會喺場地內接收,請供應商當日聯絡客人 ${booking.whatsappPhone || ''}）`
-          : `是 (+$180) · <strong style="color:#991B1B;">⚠️ 客人未揀 setup 時間,須跟進</strong>`)
+          ? `是 (+$${shishaPrices().staffSetup}) · <strong style="color:#B45309;">⏰ Setup 時間：${opts.staffSetupTime}</strong>（客人會喺場地內接收,請供應商當日聯絡客人 ${booking.whatsappPhone || ''}）`
+          : `是 (+$${shishaPrices().staffSetup}) · <strong style="color:#991B1B;">⚠️ 客人未揀 setup 時間,須跟進</strong>`)
       : '否';
     const lines = [
       `• ${pipes} 支水煙 × ${heads} 個煙頭（HK$${cost.toLocaleString()}）`,
@@ -874,7 +873,7 @@ export function buildStaffSupplierOrderEmail(params: {
   const catering = booking.addOns?.find((a) => a.id === 'catering');
   if (catering) {
     const opts = (catering.options || {}) as AddOnOptions;
-    const tier = CATERING_TIERS.find((t) => t.id === opts.tierId);
+    const tier = cateringTiers().find((t) => t.id === opts.tierId);
     const zone = CATERING_DELIVERY_ZONES.find((z) => z.id === opts.deliveryZoneId);
     // dishCodes carries one entry PER PORTION — the same code repeats when
     // the customer orders multiple 盤 of a dish. GROUP with ×N for the
@@ -884,8 +883,8 @@ export function buildStaffSupplierOrderEmail(params: {
     const qtyByCode = new Map<string, number>();
     for (const c of codes) qtyByCode.set(c, (qtyByCode.get(c) || 0) + 1);
     const grouped = Array.from(qtyByCode.entries())
-      .map(([c, qty]) => ({ item: CATERING_ITEMS.find((d) => d.code === c), qty }))
-      .filter((g): g is { item: (typeof CATERING_ITEMS)[number]; qty: number } => !!g.item);
+      .map(([c, qty]) => ({ item: findCateringItem(c), qty }))
+      .filter((g): g is { item: NonNullable<ReturnType<typeof findCateringItem>>; qty: number } => !!g.item);
     const nonAddon = grouped.filter((g) => g.item.category !== 'addon');
     const addonDishes = grouped.filter((g) => g.item.category === 'addon');
     const nonAddonPortions = nonAddon.reduce((s, g) => s + g.qty, 0);
@@ -900,9 +899,9 @@ export function buildStaffSupplierOrderEmail(params: {
       : '<strong style="color:#991B1B;">⚠️ 客人未揀送貨時間,須跟進</strong>';
     const lines = [
       `• 套餐：${tier?.paxRange.min}-${tier?.paxRange.max} 人 / 任選 ${tier?.pickCount} 盤 / HK$${tier?.price.toLocaleString()}`,
-      `• 已揀 ${nonAddonPortions} 盤主菜${nonAddonPortions > (tier?.pickCount ?? 0) ? `（額外 ${nonAddonPortions - (tier?.pickCount ?? 0)} 盤 × HK$155）` : ''}：${dishLinesByCategory}`,
+      `• 已揀 ${nonAddonPortions} 盤主菜${nonAddonPortions > (tier?.pickCount ?? 0) ? `（額外 ${nonAddonPortions - (tier?.pickCount ?? 0)} 盤 × HK$${cateringExtraDishFee()}）` : ''}：${dishLinesByCategory}`,
       addonDishes.length > 0 ? `• 追加款式：${addonLines}` : '',
-      `• 送貨區：${zone?.label.zh || '—'}${zone?.fee ? ` (+HK$${zone.fee})` : ''}${opts.doorstepDelivery ? ' / 上門交收 (+$150)' : ' / 樓下交收'}`,
+      `• 送貨區：${zone?.label.zh || '—'}${zone?.fee ? ` (+HK$${zone.fee})` : ''}${opts.doorstepDelivery ? ` / 上門交收 (+$${cateringDoorstepFee()})` : ' / 樓下交收'}`,
       `• ${deliveryTimeLine}`,
       `• 餐具：${opts.noCutlery ? '走餐具 (−$10)' : '包餐具 + 1 食物夾'}${(opts.extraCutlerySets ?? 0) > 0 ? ` / 額外 ${opts.extraCutlerySets} set` : ''}${(opts.extraFoodTongs ?? 0) > 0 ? ` / 額外 ${opts.extraFoodTongs} 食物夾` : ''}`,
     ].filter(Boolean);
@@ -963,16 +962,6 @@ function supplierSection(emoji: string, title: string, hint: string, lines: stri
 /** Map of shisha flavor variant ids → human-readable Chinese names.
  *  Mirrors the variants array in lib/pricing.ts (the shisha entry).
  *  Updated 2026-06-22 — keep in sync if new flavors get added. */
-const SHISHA_FLAVOR_NAMES: Record<string, string> = {
-  A: 'A · 芒果菠蘿檸檬綠茶',
-  B: 'B · 蜜桃伯爵茶',
-  C: 'C · 提子茉莉青瓜',
-  D: 'D · 士多啤梨窩夫',
-  E: 'E · 蜜瓜牛奶',
-  F: 'F · 茉莉雞蛋花青檸',
-  G: 'G · 檀香伯爵蜜桃針葉',
-  H: 'H · 檀香綠茶蘋果',
-};
 
 // ─────────────────────────────────────────────────────────────
 // Booking cancelled — sent when admin cancels a booking.

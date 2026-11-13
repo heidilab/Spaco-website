@@ -290,7 +290,7 @@ export default function PeakDaysPage() {
     <div className="p-4 md:p-8 space-y-6">
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Sparkles className="w-6 h-6 text-primary-600" />
+          <Sparkles className="w-6 h-6 text-pink" />
           {zh ? '特別日子設定' : 'Peak Days'}
         </h1>
         <p className="text-sm text-gray-500 mt-1">
@@ -326,7 +326,7 @@ export default function PeakDaysPage() {
                   key={cell.date}
                   onClick={() => pickDate(cell.date)}
                   className={`relative rounded-lg py-2 text-sm border transition
-                    ${selected === cell.date ? 'border-primary-600 ring-2 ring-primary-200' : 'border-transparent hover:border-gray-200'}
+                    ${selected === cell.date ? 'border-pink ring-2 ring-pink-light' : 'border-transparent hover:border-gray-200'}
                     ${days[cell.date] ? 'bg-rose-50 text-rose-700 font-semibold' : 'bg-gray-50/60'}
                     ${cell.date === todayStr ? 'underline underline-offset-2' : ''}`}
                 >

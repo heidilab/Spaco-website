@@ -3,7 +3,7 @@
 // functions: caller fetches the data, this file does the math.
 
 import type { BookingRecord, MarketingChannel, Venue } from '@/types';
-import { addOns as ADDON_CATALOG, addOnEntryUnitPrice, addOnPartialPax, calcShishaPrice, calcCateringTotal, earlySetupPriceByVenue } from './pricing';
+import { addOns as ADDON_CATALOG, addOnEntryTotal, addOnEntryUnitPrice, addOnPartialPax, earlySetupPriceByVenue } from './pricing';
 
 import { venues } from './venues';
 import { salesBranchKey, salesBranches } from './bonusBranches';
@@ -150,17 +150,10 @@ export function addOnRevenueForBooking(
   }
   // Catering: derived from tier + dishes + delivery + cutlery, same calc
   // as checkout. Was falling through to the default 0.
-  if (addOnId === 'catering') {
-    return calcCateringTotal({
-      tierId: entry.options?.tierId,
-      dishCodes: entry.options?.dishCodes,
-      deliveryZoneId: entry.options?.deliveryZoneId,
-      doorstepDelivery: entry.options?.doorstepDelivery,
-      noCutlery: entry.options?.noCutlery,
-      extraCutlerySets: entry.options?.extraCutlerySets,
-      extraFoodTongs: entry.options?.extraFoodTongs,
-    });
-  }
+  // 到會 / 水煙: the total the selection was sold at, else today's prices
+  // (pricing.addOnEntryTotal) — a later price change in 附加服務管理 must
+  // not move an old booking's money.
+  if (addOnId === 'catering') return addOnEntryTotal(entry);
   if (addOnId === 'early-setup') {
     const perHour = earlySetupPriceByVenue[booking.venueId] ?? 500;
     return perHour * (entry.quantity || 1);
@@ -183,12 +176,8 @@ export function addOnRevenueForBooking(
     }
     case 'hotpot-extra-soup':
       return addOnEntryUnitPrice(entry, { id: booking.venueId }) * entry.quantity;
-    case 'shisha': {
-      const heads = entry.quantity;
-      const pipes = entry.options?.pipes ?? Math.min(2, heads);
-      const setup = !!entry.options?.staffSetup;
-      return calcShishaPrice(pipes, heads, setup);
-    }
+    case 'shisha':
+      return addOnEntryTotal(entry);
     default:
       return 0;
   }

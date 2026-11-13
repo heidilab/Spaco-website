@@ -7,7 +7,8 @@
 // (public read, like the rest of site_content) and are loaded by
 // addOnConfigClient (browser) / addOnConfigServer (API routes), which
 // call setAddOnConfig(). Everything that prices or lists add-ons then
-// reads the active settings through lib/pricing's accessors.
+// reads the active settings through lib/pricing's and lib/cateringCatalog's
+// accessors.
 //
 // Empty settings = the catalog exactly as coded, so a missing or
 // unreadable doc can never change a price.
@@ -17,6 +18,41 @@ export interface AddOnMenu {
   en: string[];
   notesZh: string[];
   notesEn: string[];
+}
+
+/** One dish of the 美食到會 menu as staff edit it. */
+export interface CateringDishSetting {
+  /** Code printed on the menu (101, A1 …) — what a booking stores. */
+  code: string;
+  /** Category id (lib/cateringMenu CATERING_CATEGORIES). */
+  category: string;
+  zh: string;
+  en: string;
+  /** Own price — 追加款式 dishes only. */
+  price?: number;
+  /** true = not offered right now; kept so old bookings still name it. */
+  hidden?: boolean;
+  tags?: string[];
+}
+
+/** One shisha flavour as staff edit it. */
+export interface ShishaFlavorSetting {
+  /** Letter / short id a booking stores (A, B …). */
+  id: string;
+  zh: string;
+  en: string;
+  hidden?: boolean;
+}
+
+export interface ShishaPriceSetting {
+  /** 1 pipe + 1 head. */
+  onePipe?: number;
+  /** 2 pipes + 2 heads. */
+  twoPipes?: number;
+  /** Each head beyond the pipes. */
+  extraHead?: number;
+  /** Staff set-up, flat. */
+  staffSetup?: number;
 }
 
 export interface AddOnSetting {
@@ -29,14 +65,30 @@ export interface AddOnSetting {
   price?: number | null;
   /** Unit price at a particular venue — wins over `price`. */
   venuePrices?: Record<string, number>;
-  /** Menu shown to customers (BBQ / hotpot packages). */
+  /** Menu shown to customers (BBQ / hotpot packages). `zh` and `en`
+   *  (and the two notes lists) are index-aligned. */
   menu?: AddOnMenu | null;
+
+  // ── 美食到會 (`catering`) ──
+  /** The whole dish list, replacing the built-in one. */
+  dishes?: CateringDishSetting[];
+  /** Tier price by tier id (tier-10 …). */
+  tierPrices?: Record<string, number>;
+  /** Fee per dish beyond the tier's included count. */
+  extraDishFee?: number;
+  /** Door-to-door delivery fee. */
+  doorstepFee?: number;
+
+  // ── Shisha (`shisha`) ──
+  /** The whole flavour list, replacing the built-in one. */
+  flavors?: ShishaFlavorSetting[];
+  shishaPrices?: ShishaPriceSetting;
 }
 
 export type AddOnConfig = Record<string, AddOnSetting>;
 
 /** Add-ons whose unit price staff can set. Shisha (tiered by pipes) and
- *  catering (priced from its own menu) are toggle / branch only. */
+ *  catering (tiers + dishes) have their own price fields above. */
 export const PRICE_EDITABLE_ADDON_IDS = [
   'bbq-standard', 'bbq-premium', 'bbq-grill', 'bbq-helper',
   'hotpot-standard', 'hotpot-seafood', 'hotpot-extra-soup',
@@ -49,20 +101,43 @@ export const MENU_EDITABLE_ADDON_IDS = ['bbq-standard', 'bbq-premium', 'hotpot-s
 const MAX_PRICE = 100000;
 const MAX_LINES = 80;
 const MAX_LINE_LEN = 200;
+const MAX_DISHES = 300;
+const MAX_FLAVORS = 40;
 
 function cleanPrice(v: unknown): number | null {
   const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
   return Number.isFinite(n) && n >= 0 && n <= MAX_PRICE ? Math.round(n * 100) / 100 : null;
 }
 
-function cleanLines(v: unknown): string[] {
-  if (!Array.isArray(v)) return [];
-  return v
-    .filter((x): x is string => typeof x === 'string')
-    .map((x) => x.trim().slice(0, MAX_LINE_LEN))
-    .filter(Boolean)
-    .slice(0, MAX_LINES);
+const cleanText = (v: unknown): string => (typeof v === 'string' ? v.trim().slice(0, MAX_LINE_LEN) : '');
+
+/** Index-aligned pair of lists: a row survives when its Chinese text
+ *  does; a blank English cell falls back to the Chinese. */
+function cleanPairs(zhRaw: unknown, enRaw: unknown): { zh: string[]; en: string[] } {
+  const zhList = Array.isArray(zhRaw) ? zhRaw : [];
+  const enList = Array.isArray(enRaw) ? enRaw : [];
+  const zh: string[] = [];
+  const en: string[] = [];
+  for (let i = 0; i < zhList.length && zh.length < MAX_LINES; i++) {
+    const z = cleanText(zhList[i]);
+    if (!z) continue;
+    zh.push(z);
+    en.push(cleanText(enList[i]) || z);
+  }
+  return { zh, en };
 }
+
+function cleanPriceMap(v: unknown, keyPattern: RegExp): Record<string, number> | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const out: Record<string, number> = {};
+  for (const [key, p] of Object.entries(v as Record<string, unknown>)) {
+    const cp = cleanPrice(p);
+    if (cp !== null && keyPattern.test(key)) out[key] = cp;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+const ID = /^[a-z0-9-]{1,40}$/;
 
 /** Keep only well-formed settings — applied to whatever comes out of
  *  Firestore or in from the admin form, so a bad value can never reach a
@@ -71,32 +146,81 @@ export function sanitizeAddOnConfig(raw: unknown): AddOnConfig {
   const out: AddOnConfig = {};
   if (!raw || typeof raw !== 'object') return out;
   for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (!/^[a-z0-9-]{1,40}$/.test(id) || !value || typeof value !== 'object') continue;
+    if (!ID.test(id) || !value || typeof value !== 'object') continue;
     const v = value as Record<string, unknown>;
     const setting: AddOnSetting = {};
     if (v.enabled === false) setting.enabled = false;
     if (Array.isArray(v.venueIds)) {
-      setting.venueIds = v.venueIds.filter((x): x is string => typeof x === 'string' && /^[a-z0-9-]{1,40}$/.test(x)).slice(0, 50);
+      setting.venueIds = v.venueIds.filter((x): x is string => typeof x === 'string' && ID.test(x)).slice(0, 50);
     }
     const price = cleanPrice(v.price);
     if (price !== null) setting.price = price;
-    if (v.venuePrices && typeof v.venuePrices === 'object') {
-      const vp: Record<string, number> = {};
-      for (const [venueId, p] of Object.entries(v.venuePrices as Record<string, unknown>)) {
-        const cp = cleanPrice(p);
-        if (cp !== null && /^[a-z0-9-]{1,40}$/.test(venueId)) vp[venueId] = cp;
-      }
-      if (Object.keys(vp).length > 0) setting.venuePrices = vp;
-    }
+    const venuePrices = cleanPriceMap(v.venuePrices, ID);
+    if (venuePrices) setting.venuePrices = venuePrices;
     if (v.menu && typeof v.menu === 'object') {
       const m = v.menu as Record<string, unknown>;
-      const menu: AddOnMenu = {
-        zh: cleanLines(m.zh), en: cleanLines(m.en),
-        notesZh: cleanLines(m.notesZh), notesEn: cleanLines(m.notesEn),
-      };
-      // A menu needs at least its Chinese items to replace the built-in one.
-      if (menu.zh.length > 0) setting.menu = menu;
+      const items = cleanPairs(m.zh, m.en);
+      const notes = cleanPairs(m.notesZh, m.notesEn);
+      // A menu needs at least one item to replace the built-in one.
+      if (items.zh.length > 0) setting.menu = { zh: items.zh, en: items.en, notesZh: notes.zh, notesEn: notes.en };
     }
+
+    if (id === 'catering') {
+      if (Array.isArray(v.dishes)) {
+        const seen = new Set<string>();
+        const dishes: CateringDishSetting[] = [];
+        for (const d of v.dishes as Array<Record<string, unknown>>) {
+          if (!d || typeof d !== 'object' || dishes.length >= MAX_DISHES) continue;
+          const code = cleanText(d.code);
+          const zh = cleanText(d.zh);
+          const category = cleanText(d.category);
+          if (!/^[A-Za-z0-9-]{1,10}$/.test(code) || seen.has(code) || !zh || !ID.test(category)) continue;
+          seen.add(code);
+          const dish: CateringDishSetting = { code, category, zh, en: cleanText(d.en) || zh };
+          const p = cleanPrice(d.price);
+          if (p !== null && p > 0) dish.price = p;
+          if (d.hidden === true) dish.hidden = true;
+          if (Array.isArray(d.tags)) {
+            const tags = d.tags.filter((t): t is string => typeof t === 'string' && ID.test(t)).slice(0, 6);
+            if (tags.length > 0) dish.tags = tags;
+          }
+          dishes.push(dish);
+        }
+        if (dishes.length > 0) setting.dishes = dishes;
+      }
+      const tierPrices = cleanPriceMap(v.tierPrices, ID);
+      if (tierPrices) setting.tierPrices = tierPrices;
+      const extra = cleanPrice(v.extraDishFee);
+      if (extra !== null) setting.extraDishFee = extra;
+      const doorstep = cleanPrice(v.doorstepFee);
+      if (doorstep !== null) setting.doorstepFee = doorstep;
+    }
+
+    if (id === 'shisha') {
+      if (Array.isArray(v.flavors)) {
+        const seen = new Set<string>();
+        const flavors: ShishaFlavorSetting[] = [];
+        for (const f of v.flavors as Array<Record<string, unknown>>) {
+          if (!f || typeof f !== 'object' || flavors.length >= MAX_FLAVORS) continue;
+          const fid = cleanText(f.id);
+          const zh = cleanText(f.zh);
+          if (!/^[A-Za-z0-9-]{1,10}$/.test(fid) || seen.has(fid) || !zh) continue;
+          seen.add(fid);
+          flavors.push({ id: fid, zh, en: cleanText(f.en) || zh, ...(f.hidden === true ? { hidden: true } : {}) });
+        }
+        if (flavors.length > 0) setting.flavors = flavors;
+      }
+      if (v.shishaPrices && typeof v.shishaPrices === 'object') {
+        const sp = v.shishaPrices as Record<string, unknown>;
+        const prices: ShishaPriceSetting = {};
+        for (const key of ['onePipe', 'twoPipes', 'extraHead', 'staffSetup'] as const) {
+          const p = cleanPrice(sp[key]);
+          if (p !== null) prices[key] = p;
+        }
+        if (Object.keys(prices).length > 0) setting.shishaPrices = prices;
+      }
+    }
+
     if (Object.keys(setting).length > 0) out[id] = setting;
   }
   return out;

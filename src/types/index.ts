@@ -108,6 +108,12 @@ export interface AddOnOptions {
    *  was made at, and month close keeps putting it in the right column.
    *  Never accepted from a customer request. */
   unitPrice?: number;
+  /** 美食到會 / Shisha: the TOTAL this entry was sold at, for the exact
+   *  selection stored beside it (pricing.stampAddOnPrices). Kept while
+   *  the selection is unchanged, so a later change to tier / dish /
+   *  shisha prices does not re-price the booking; dropped and recomputed
+   *  when staff change the selection. Never accepted from a customer. */
+  soldTotal?: number;
   /** How many shisha pipes (1 or 2). Constrained by venue (max 2). */
   pipes?: number;
   /** Flavor variant ids picked, one per head (so length === quantity). */

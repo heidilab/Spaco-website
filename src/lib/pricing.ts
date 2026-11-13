@@ -1,15 +1,12 @@
 import { Venue, AddOn, AddOnOptions } from '@/types';
 import { PRICE_EDITABLE_ADDON_IDS, configuredAddOnPrice, getAddOnConfig, type AddOnConfig } from './addOnConfig';
 import {
-  CATERING_ITEMS,
-  CATERING_TIERS,
   CATERING_DELIVERY_ZONES,
-  CATERING_EXTRA_DISH_FEE,
-  CATERING_DOORSTEP_DELIVERY_FEE,
   CATERING_NO_CUTLERY_DISCOUNT,
   CATERING_EXTRA_CUTLERY_SET_FEE,
   CATERING_EXTRA_FOOD_TONG_FEE,
 } from './cateringMenu';
+import { cateringTiers, findCateringItem, cateringExtraDishFee, cateringDoorstepFee } from './cateringCatalog';
 import {
   HOTPOT_EXTRA_SOUP_PRICE,
   HOTPOT_TWO_SOUP_MIN_EQUIV,
@@ -30,8 +27,9 @@ export function calcCateringTotal(opts: {
   noCutlery?: boolean;
   extraCutlerySets?: number;
   extraFoodTongs?: number;
-}): number {
-  const tier = CATERING_TIERS.find((t) => t.id === opts.tierId);
+}, config: AddOnConfig = getAddOnConfig()): number {
+  // Tier prices, the dish list and the two fees follow 附加服務管理.
+  const tier = cateringTiers(config).find((t) => t.id === opts.tierId);
   if (!tier) return 0;
   // `dishCodes` may contain REPEATED codes — one entry per 盤 (portion),
   // so 20 portions of dish 102 = twenty '102' entries. Every entry counts
@@ -39,16 +37,16 @@ export function calcCateringTotal(opts: {
   // add-on dishes). Legacy bookings with unique codes behave identically.
   const codes = opts.dishCodes || [];
   const entries = codes
-    .map((c) => CATERING_ITEMS.find((d) => d.code === c))
-    .filter((d): d is (typeof CATERING_ITEMS)[number] => !!d);
+    .map((c) => findCateringItem(c, config))
+    .filter((d): d is NonNullable<ReturnType<typeof findCateringItem>> => !!d);
   const nonAddonCount = entries.filter((d) => d.category !== 'addon').length;
   const extras = Math.max(0, nonAddonCount - tier.pickCount);
-  const extrasFee = extras * CATERING_EXTRA_DISH_FEE;
+  const extrasFee = extras * cateringExtraDishFee(config);
   const addonDishesFee = entries
     .filter((d) => d.category === 'addon')
     .reduce((s, d) => s + (d.price || 0), 0);
   const zone = CATERING_DELIVERY_ZONES.find((z) => z.id === opts.deliveryZoneId);
-  const deliveryFee = (zone?.fee || 0) + (opts.doorstepDelivery ? CATERING_DOORSTEP_DELIVERY_FEE : 0);
+  const deliveryFee = (zone?.fee || 0) + (opts.doorstepDelivery ? cateringDoorstepFee(config) : 0);
   const cutleryFee = (opts.noCutlery ? -CATERING_NO_CUTLERY_DISCOUNT : 0)
     + (opts.extraCutlerySets || 0) * CATERING_EXTRA_CUTLERY_SET_FEE
     + (opts.extraFoodTongs || 0) * CATERING_EXTRA_FOOD_TONG_FEE;
@@ -215,13 +213,53 @@ export function calcShishaPrice(
   pipes: number,
   heads: number,
   staffSetup = false,
+  config: AddOnConfig = getAddOnConfig(),
 ): number {
   if (pipes <= 0 || heads <= 0) return 0;
+  const price = shishaPrices(config);
   const validPipes = Math.min(2, Math.max(1, Math.floor(pipes)));
   const validHeads = Math.max(validPipes, Math.floor(heads));
-  const base = validPipes === 1 ? 390 : 750;
-  const extra = (validHeads - validPipes) * 250;
-  return base + extra + (staffSetup ? 180 : 0);
+  const base = validPipes === 1 ? price.onePipe : price.twoPipes;
+  const extra = (validHeads - validPipes) * price.extraHead;
+  return base + extra + (staffSetup ? price.staffSetup : 0);
+}
+
+/** Shisha prices in force: staff settings over the built-in ones. */
+export function shishaPrices(config: AddOnConfig = getAddOnConfig()): {
+  onePipe: number; twoPipes: number; extraHead: number; staffSetup: number;
+} {
+  const s = config.shisha?.shishaPrices;
+  return {
+    onePipe: s?.onePipe ?? 390,
+    twoPipes: s?.twoPipes ?? 750,
+    extraHead: s?.extraHead ?? 250,
+    staffSetup: s?.staffSetup ?? SHISHA_STAFF_SETUP_FEE,
+  };
+}
+
+/** The shisha line under its name on the booking form, with today's prices. */
+export function shishaDescription(locale: 'zh' | 'en'): string {
+  const p = shishaPrices();
+  return locale === 'zh'
+    ? `1 支水煙 + 1 個煙頭 $${p.onePipe} / 2 支 + 2 頭 $${p.twoPipes} / 額外每個煙頭 +$${p.extraHead}；自助形式（食完一個頭可以換新嘅）；最多 2 支水煙；需活動 2 日前預訂`
+    : `1 pipe + 1 head $${p.onePipe} / 2 pipes + 2 heads $${p.twoPipes} / +$${p.extraHead} each extra head (DIY swap); max 2 pipes per venue; order ≥ 2 days ahead`;
+}
+
+type ShishaFlavor = { id: string; name: { zh: string; en: string }; hidden?: boolean };
+
+/** Every shisha flavour staff keep, hidden ones included. */
+function shishaFlavorsAll(config: AddOnConfig = getAddOnConfig()): ShishaFlavor[] {
+  const custom = config.shisha?.flavors;
+  if (custom && custom.length > 0) {
+    return custom.map((f) => ({ id: f.id, name: { zh: f.zh, en: f.en }, ...(f.hidden ? { hidden: true } : {}) }));
+  }
+  return (addOns.find((a) => a.id === 'shisha')?.variants || []).map((v) => ({ id: v.id, name: v.name }));
+}
+
+/** Flavours offered now, plus any in `keep` (what a booking already
+ *  holds) so an old pick stays selectable while editing that booking. */
+export function shishaFlavors(keep: readonly string[] = [], config: AddOnConfig = getAddOnConfig()): ShishaFlavor[] {
+  return shishaFlavorsAll(config).filter((f) => !f.hidden || keep.includes(f.id));
 }
 
 /** Max simultaneous pipes per venue. Currently uniform across venues. */
@@ -250,8 +288,10 @@ export function getAddOnLabel(id: string, locale: 'zh' | 'en' = 'en'): string {
 
 /** Resolve a Shisha flavor variant id → its display label. */
 export function getShishaFlavorLabel(variantId: string, locale: 'zh' | 'en' = 'en'): string {
-  const shisha = addOns.find((a) => a.id === 'shisha');
-  const v = shisha?.variants?.find((x) => x.id === variantId);
+  // Staff list first (hidden flavours included), then the built-in one —
+  // a flavour removed later still reads properly on an old booking.
+  const v = shishaFlavorsAll().find((x) => x.id === variantId)
+    ?? addOns.find((a) => a.id === 'shisha')?.variants?.find((x) => x.id === variantId);
   return v?.name[locale] || variantId;
 }
 
@@ -296,14 +336,73 @@ export function addOnEntryUnitPrice(
 export function stampAddOnPrices<T extends { id: string; quantity: number; options?: AddOnOptions }>(
   entries: readonly T[],
   venue: PriceVenue | null | undefined,
-  keepFrom?: readonly { id: string; options?: AddOnOptions }[] | null,
+  keepFrom?: readonly { id: string; quantity?: number; options?: AddOnOptions }[] | null,
 ): T[] {
-  return entries.map((entry) => {
+  return keepSoldTotals(entries, keepFrom).map((entry) => {
+    // 到會 / 水煙: sold as a total for the selection (see keepSoldTotals).
+    if (entry.id === 'catering' || entry.id === 'shisha') {
+      if (typeof entry.options?.soldTotal === 'number') return entry;
+      return { ...entry, options: { ...(entry.options || {}), soldTotal: addOnSelectionTotal(entry) } };
+    }
     if (!(PRICE_EDITABLE_ADDON_IDS as readonly string[]).includes(entry.id)) return entry;
     if (typeof entry.options?.unitPrice === 'number') return entry;
     const kept = keepFrom?.find((a) => a.id === entry.id)?.options?.unitPrice;
     const unitPrice = typeof kept === 'number' ? kept : addOnUnitPrice(entry.id, venue);
     return { ...entry, options: { ...(entry.options || {}), unitPrice } };
+  });
+}
+
+/** What identifies a 到會 / 水煙 selection for pricing — two entries with
+ *  the same key cost the same. */
+function addOnSelectionKey(entry: { id: string; quantity?: number; options?: AddOnOptions }): string {
+  const o = entry.options || {};
+  if (entry.id === 'catering') {
+    return JSON.stringify([
+      o.tierId || '', [...(o.dishCodes || [])].sort(), o.deliveryZoneId || '', !!o.doorstepDelivery,
+      !!o.noCutlery, o.extraCutlerySets || 0, o.extraFoodTongs || 0,
+    ]);
+  }
+  return JSON.stringify([entry.quantity || 0, o.pipes ?? null, !!o.staffSetup]);
+}
+
+/** Today's total for a 到會 / 水煙 entry's selection. */
+export function addOnSelectionTotal(
+  entry: { id: string; quantity: number; options?: AddOnOptions },
+  config: AddOnConfig = getAddOnConfig(),
+): number {
+  if (entry.id === 'catering') return calcCateringTotal(entry.options || {}, config);
+  const heads = entry.quantity;
+  const pipes = Math.min(SHISHA_MAX_PIPES, Math.max(1, entry.options?.pipes ?? Math.min(2, heads)));
+  return calcShishaPrice(pipes, heads, !!entry.options?.staffSetup, config);
+}
+
+/** What a 到會 / 水煙 entry costs: the total it was sold at, else today's. */
+export function addOnEntryTotal(entry: { id: string; quantity: number; options?: AddOnOptions }): number {
+  const sold = entry.options?.soldTotal;
+  return typeof sold === 'number' && Number.isFinite(sold) && sold >= 0 ? sold : addOnSelectionTotal(entry);
+}
+
+/**
+ * Carry `soldTotal` (AddOnOptions) across an edit: a 到會 / 水煙 entry
+ * keeps the total stored on the booking only while its selection is the
+ * same; a changed selection loses it and is priced at today's prices.
+ * Whatever soldTotal the incoming entry carries is never trusted.
+ */
+export function keepSoldTotals<T extends { id: string; quantity: number; options?: AddOnOptions }>(
+  entries: readonly T[],
+  keepFrom?: readonly { id: string; quantity?: number; options?: AddOnOptions }[] | null,
+): T[] {
+  return entries.map((entry) => {
+    if (entry.id !== 'catering' && entry.id !== 'shisha') return entry;
+    const stored = keepFrom?.find((a) => a.id === entry.id);
+    const kept = stored && typeof stored.options?.soldTotal === 'number'
+      && addOnSelectionKey(stored) === addOnSelectionKey(entry)
+      ? stored.options.soldTotal
+      : undefined;
+    if (kept === entry.options?.soldTotal) return entry;
+    const options = { ...(entry.options || {}) };
+    if (typeof kept === 'number') options.soldTotal = kept; else delete options.soldTotal;
+    return { ...entry, options };
   });
 }
 
@@ -758,7 +857,8 @@ export function calculatePricing(
         extraCutlerySets?: number;
         extraFoodTongs?: number;
       } | undefined;
-      const cost = calcCateringTotal(opts || {});
+      // The total this selection was sold at, else today's prices.
+      const cost = addOnEntryTotal(selected);
       if (cost > 0) {
         addOnTotal += cost;
         const tierLbl = opts?.tierId ? ` (${opts.tierId})` : '';
@@ -896,7 +996,8 @@ export function calculatePricing(
       // so old test data keeps producing a sensible total.
       const pipes = Math.min(SHISHA_MAX_PIPES, Math.max(1, selected.options?.pipes ?? Math.min(2, heads)));
       const staffSetup = !!selected.options?.staffSetup;
-      const cost = calcShishaPrice(pipes, heads, staffSetup);
+      // The total this selection was sold at, else today's prices.
+      const cost = addOnEntryTotal(selected);
       addOnTotal += cost;
       breakdown.push({
         label: {

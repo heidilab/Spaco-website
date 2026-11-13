@@ -157,6 +157,7 @@ export async function POST(
         const clientOptions = { ...(a.options || {}) } as NonNullable<CartEntry['options']>;
         delete clientOptions.pax;
         delete clientOptions.unitPrice; // re-stamped below from the stored booking / today's price
+        delete clientOptions.soldTotal;
         const pax = storedPax.get(id);
         const options = { ...clientOptions, ...(typeof pax === 'number' && pax > 0 ? { pax } : {}) };
         return {

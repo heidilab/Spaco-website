@@ -46,9 +46,36 @@ package menus.
   (`pricing.stampAddOnPrices`); `calculatePricing` and month close use it.
   Saving a changed price first stamps the OLD price on every existing
   booking that has that add-on unstamped (`lockedBookings` in the response).
-- Not editable here: shisha prices (tiered), catering prices and dishes
-  (`lib/cateringMenu.ts`), add-on names / descriptions, soup bases. Staff
-  can still add a switched-off add-on to a booking by hand.
+- 美食到會 (second round, same day): the dish list (code, names, own price
+  for 追加款式, offered / paused, add / remove per category), the five tier
+  prices, the extra-dish fee and the door-to-door fee. 水煙: the flavour
+  list and the four prices (1 pipe, 2 pipes, extra head, staff set-up).
+  Read through `lib/cateringCatalog` and `pricing.shishaPrices /
+  shishaFlavors` — the picker, the price, the supplier order email and the
+  customer copy all follow. A paused or removed dish / flavour is still
+  named on old bookings (falls back to the built-in name).
+- These two are sold as a TOTAL for a selection: `options.soldTotal`,
+  kept while the selection (tier + dishes + delivery / heads + pipes +
+  set-up) is unchanged and recomputed at today's prices when staff change
+  it (`pricing.keepSoldTotals`). Saving changed catering / shisha prices
+  stamps the old total on existing bookings first, like unit prices.
+- Every list is edited one row per item, Chinese and English side by side
+  with a number / code — the first version used two free-text boxes that
+  were hard to keep lined up. BBQ / hotpot menus and notes can be
+  re-ordered. Rendered in a jsdom harness and screenshotted (desktop and
+  phone width); not exercised against live data.
+- Not editable here: tier sizes (pax range, dishes included), delivery
+  zones and cutlery fees, dish tags, add-on names / descriptions, hotpot
+  soup bases, the maximum of 2 pipes. Staff can still add a switched-off
+  add-on to a booking by hand.
+- The undefined Tailwind colour `primary-*` (active tab rendered blank on
+  月結, 特別日子, 獎金 and here) is replaced with the theme's `pink`.
+
+## 3b. Supplier order email: BBQ 豪華套餐
+
+`bbq-premium` now triggers the supplier-order notification and has its own
+section (portions — the whole group or the package head count — unit price
+sold at, total, time slot). The standard BBQ package alone does not.
 - The per-branch prices in 分店管理 (BBQ standard, early set-up) still work;
   a price set in 附加服務管理 wins over them.
 

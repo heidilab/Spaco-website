@@ -20,6 +20,8 @@ export interface CateringItem {
   /** Optional explicit price — only for items in 追加款式 (A1-A10). */
   price?: number;
   tags?: CateringTag[];
+  /** Not offered right now (staff setting) — still named on old bookings. */
+  hidden?: boolean;
 }
 
 export interface CateringCategory {

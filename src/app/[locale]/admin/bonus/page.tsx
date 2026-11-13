@@ -146,7 +146,7 @@ export default function BonusPage() {
     <div className="p-4 md:p-8 space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Award className="w-6 h-6 text-primary-600" />
+          <Award className="w-6 h-6 text-pink" />
           {zh ? 'CS 獎金' : 'CS Bonus'}
         </h1>
         {isAdminRole && (
@@ -207,7 +207,7 @@ export default function BonusPage() {
                     ))}
                     <button
                       onClick={() => updateBranchTiers(bk, [...b.tiers, { target: 0, bonus: 0 }])}
-                      className="text-sm text-primary-600 hover:underline flex items-center gap-1"
+                      className="text-sm text-pink hover:underline flex items-center gap-1"
                     >
                       <Plus className="w-4 h-4" />{zh ? '加一層目標' : 'Add tier'}
                     </button>
@@ -251,7 +251,7 @@ export default function BonusPage() {
                     <>
                       <div className="relative bg-gray-100 rounded-full h-3 overflow-hidden">
                         <div
-                          className={`h-3 rounded-full ${ev.totalBonus > 0 ? 'bg-green-500' : 'bg-primary-500'}`}
+                          className={`h-3 rounded-full ${ev.totalBonus > 0 ? 'bg-green-500' : 'bg-pink'}`}
                           style={{ width: `${overallPct}%` }}
                         />
                         {tiers.slice(0, -1).map((t, i) => (
@@ -271,7 +271,7 @@ export default function BonusPage() {
                               <span>
                                 {hit ? '✅' : '⬜'} {zh ? `第 ${i + 1} 層` : `Tier ${i + 1}`} — ${fmt(t.target)}
                                 {isNext && ev.nextTierProgressPct !== null && (
-                                  <span className="ml-1 text-xs text-primary-600 font-medium">({ev.nextTierProgressPct.toFixed(0)}%)</span>
+                                  <span className="ml-1 text-xs text-pink font-medium">({ev.nextTierProgressPct.toFixed(0)}%)</span>
                                 )}
                               </span>
                               <span className={superseded ? 'line-through' : 'font-medium'}>
@@ -319,7 +319,7 @@ export default function BonusPage() {
                     return { bonus: ev.totalBonus, sales };
                   });
                   return (
-                    <tr key={m} className={`border-b last:border-0 ${m === month ? 'bg-primary-50/50' : ''}`}>
+                    <tr key={m} className={`border-b last:border-0 ${m === month ? 'bg-pink/5' : ''}`}>
                       <td className="py-1.5">{m}{m === month ? (zh ? '（本月）' : ' (now)') : ''}</td>
                       {cells.map((c, i) => (
                         <td key={i} className="text-right">
