@@ -9,7 +9,9 @@ import {
 import { addOnRevenueForBooking } from './finance';
 import { validateAddOns } from './bookingSecurity';
 import { venues } from './venues';
-import type { BookingRecord } from '@/types';
+import type { AddOnOptions, BookingRecord } from '@/types';
+
+type Entry = { id: string; quantity: number; options?: AddOnOptions };
 
 const cwb = venues.find((v) => v.id === 'cwb')!;
 const tst = venues.find((v) => v.id === 'tst')!;
@@ -54,7 +56,7 @@ describe('prices staff set', () => {
 
   it('a booking keeps the price it was sold at', () => {
     // Booked at $158, stamped; then staff raise the price to $168.
-    const sold = stampAddOnPrices([{ id: 'bbq-standard', quantity: 1 }], cwb);
+    const sold = stampAddOnPrices<Entry>([{ id: 'bbq-standard', quantity: 1 }], cwb);
     expect(sold[0].options?.unitPrice).toBe(158);
     setAddOnConfig(sanitizeAddOnConfig({ 'bbq-standard': { price: 168 } }));
     expect(addOnEntryUnitPrice(sold[0], cwb)).toBe(158);
@@ -68,13 +70,13 @@ describe('prices staff set', () => {
     const stored = [{ id: 'bbq-standard', quantity: 1, options: { unitPrice: 158 } }];
     setAddOnConfig(sanitizeAddOnConfig({ 'bbq-standard': { price: 168 }, drinks: { price: 30 } }));
     // The admin form rebuilds entries without their options.
-    const rebuilt = stampAddOnPrices([{ id: 'bbq-standard', quantity: 1 }, { id: 'drinks', quantity: 1 }], cwb, stored);
+    const rebuilt = stampAddOnPrices<Entry>([{ id: 'bbq-standard', quantity: 1 }, { id: 'drinks', quantity: 1 }], cwb, stored);
     expect(rebuilt[0].options?.unitPrice).toBe(158);
     expect(rebuilt[1].options?.unitPrice).toBe(30);
   });
 
   it('does not stamp add-ons whose price is not a unit price', () => {
-    const out = stampAddOnPrices([{ id: 'shisha', quantity: 2 }, { id: 'catering', quantity: 1 }], cwb);
+    const out = stampAddOnPrices<Entry>([{ id: 'shisha', quantity: 2 }, { id: 'catering', quantity: 1 }], cwb);
     expect(out.every((a) => a.options?.unitPrice === undefined)).toBe(true);
   });
 
