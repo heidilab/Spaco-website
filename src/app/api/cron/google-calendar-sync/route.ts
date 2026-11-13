@@ -3,6 +3,9 @@ import { syncCalendars } from '@/lib/googleCalendar';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+// Six months of events across every branch calendar — do not let the
+// default limit cut the run off before stale slots are removed.
+export const maxDuration = 60;
 
 /**
  * Pulls events from the 4 branch Google Calendars into `blocked_slots`

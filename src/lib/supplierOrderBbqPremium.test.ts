@@ -26,7 +26,7 @@ describe('supplier order — BBQ 豪華套餐', () => {
 
   it('lists the package with the number of portions and the amount', () => {
     const out = html(booking([{ id: 'bbq-premium', quantity: 1 }]));
-    expect(out).toContain('BBQ 豪華套餐');
+    expect(out).toContain('BBQ 豪華海鮮套餐');
     expect(out).toContain('每位 $328');
     expect(out).toContain('6,560'); // 20 × 328
   });

@@ -253,6 +253,8 @@ export async function syncCalendars(redirectUri: string): Promise<SyncResult> {
     errors: [], syncedAt: now.toISOString(),
   };
   const seenKeys = new Set<string>();
+  /** Venues whose calendar failed to load this run (see the catch below). */
+  const unreadVenueIds = new Set<string>();
 
   // Fetch each calendar (venue-doc groups + legacy env fallback)
   for (const { key: calKey, calId, venueIds: groupVenueIds } of calendarGroups) {
@@ -275,6 +277,9 @@ export async function syncCalendars(redirectUri: string): Promise<SyncResult> {
       } while (pageToken);
     } catch (err) {
       result.errors.push(`${calKey}: ${err instanceof Error ? err.message : String(err)}`);
+      // This calendar could not be read: its mirrored slots are unknown,
+      // not gone — keep them rather than unblock real events.
+      for (const vid of groupVenueIds) unreadVenueIds.add(vid);
       continue;
     }
 
@@ -360,13 +365,18 @@ export async function syncCalendars(redirectUri: string): Promise<SyncResult> {
   // Use writeBatch for efficiency.
   const toRemove: string[] = [];
   existingByEventVenue.forEach((slot, key) => {
-    if (!seenKeys.has(key)) toRemove.push(slot.id);
+    if (!seenKeys.has(key) && !unreadVenueIds.has(slot.venueId)) toRemove.push(slot.id);
   });
-  if (toRemove.length > 0) {
+  // Firestore batches take at most 500 writes. One oversized batch threw
+  // here, which aborted the run before anything was removed — and the
+  // same backlog then failed every later run, so a deleted Google event
+  // kept blocking its slot indefinitely (Heidi 2026-11-13: still
+  // "conflicting" two hours after the event was deleted).
+  for (let i = 0; i < toRemove.length; i += 400) {
     const batch = adminDb.batch();
-    for (const id of toRemove) batch.delete(adminDb.collection('blocked_slots').doc(id));
+    for (const id of toRemove.slice(i, i + 400)) batch.delete(adminDb.collection('blocked_slots').doc(id));
     await batch.commit();
-    result.removed = toRemove.length;
+    result.removed += Math.min(400, toRemove.length - i);
   }
 
   // Persist sync metadata

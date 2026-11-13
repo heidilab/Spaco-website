@@ -5,6 +5,7 @@ import { requireAdmin } from '@/lib/adminAuth';
 import { computeGrandTotal, computeBalanceDue, paidBase } from '@/lib/bookingMoney';
 import { BookingInputError, sanitizeAdminDiscount } from '@/lib/bookingSecurity';
 import { overlappingBookings, type OverlapBooking, type OverlapWindow } from '@/lib/bookingOverlap';
+import { slotClashes, clashesNeedingConfirmation, type ClashSlot, type DirectBookingClash } from '@/lib/directBookingClashes';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest) {
   const {
     venueId, branchSlug, date, startTime, endTime, endDate,
     hours, guestCount, adultCount, childCount, isWeekend,
-    addOns, hasBYOFood, pricing, peakSurchargeOverride, isAirbnb, isCommercial, packageSlug,
+    addOns, hasBYOFood, pricing, peakSurchargeOverride, isAirbnb, isCommercial, packageSlug, allowOverlap,
     customerName, whatsappPhone, customerEmail, notes,
     marketingChannel, marketingChannelLabel,
     payments, adminDiscount: rawAdminDiscount,
@@ -118,6 +119,7 @@ export async function POST(req: NextRequest) {
   const balanceDue = computeBalanceDue(moneyShape);
   const paid = paidBase(moneyShape);
 
+  let clashes: DirectBookingClash[] = [];
   try {
     let bookingId!: string;
     await adminDb.runTransaction(async (t) => {
@@ -136,17 +138,16 @@ export async function POST(req: NextRequest) {
           blockedDocs.push(...snap.docs);
         }
       }
-      for (const w of checkWindows) {
-        for (const docSnap of blockedDocs) {
-          const bd = docSnap.data() as { date: string; startTime: string; endTime: string; isTest?: boolean };
-          // Test bookings never occupy real timeslots on production.
-          if (bd.isTest && process.env.VERCEL_ENV === 'production') continue;
-          if (bd.date !== w.date) continue;
-          if (w.start < toMin(bd.endTime) && toMin(bd.startTime) < w.end) {
-            throw new Error('SLOT_CONFLICT');
-          }
-        }
-      }
+      // What the order overlaps (lib/directBookingClashes). A Google
+      // Calendar entry never refuses an offline order — it is usually the
+      // same booking, marked there first by a part-timer. Another
+      // booking / its buffers / a site block refuses it once; staff may
+      // then add it anyway (`allowOverlap`).
+      clashes = slotClashes(
+        checkWindows,
+        blockedDocs.map((d) => d.data() as ClashSlot),
+        { production: process.env.VERCEL_ENV === 'production' },
+      );
       // Bookings themselves are the final authority when blocked_slots are
       // missing or hidden (CWB 2026-10-31 double booking).
       const candidateDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
@@ -162,12 +163,19 @@ export async function POST(req: NextRequest) {
         ? [{ date: date as string, startTime, endTime: '23:59' }, { date: resolvedEndDate, startTime: '00:00', endTime }]
         : [{ date: date as string, startTime, endTime }];
       const seen = new Set<string>();
-      const clashes = overlappingBookings(requestedWindows,
+      const bookingClashes = overlappingBookings(requestedWindows,
         candidateDocs.filter((d) => !seen.has(d.id) && seen.add(d.id)).map((d) => ({ id: d.id, ...(d.data() as Omit<OverlapBooking, 'id'>) })),
         { production: process.env.VERCEL_ENV === 'production' });
-      if (clashes.length) {
-        console.warn('[booking-direct] booking overlap without blocked_slots', { venueId, date, clashes: clashes.map((c) => c.id) });
+      for (const b of bookingClashes) {
+        // Already listed through its blocked slot?
+        if (clashes.some((c) => c.kind === 'booking' && c.bookingId === b.id && c.label === '預訂')) continue;
+        clashes.push({ kind: 'booking', date: b.date, startTime: b.startTime, endTime: b.endTime, label: '預訂', bookingId: b.id });
+      }
+      if (clashesNeedingConfirmation(clashes).length > 0 && allowOverlap !== true) {
         throw new Error('SLOT_CONFLICT');
+      }
+      if (clashes.length > 0) {
+        console.warn('[booking-direct] offline order recorded over existing entries', { venueId, date, allowOverlap: allowOverlap === true, clashes });
       }
 
       const bookingRef = adminDb.collection('bookings').doc();
@@ -250,11 +258,15 @@ export async function POST(req: NextRequest) {
       console.warn('[booking-direct] gcal push failed (non-fatal):', err);
     }
 
-    return NextResponse.json({ bookingId, grandTotal, paid, balanceDue });
+    // `overlaps`: what the order sits on top of (e.g. the Google Calendar
+    // entry a part-timer made for it) so staff can tidy up.
+    return NextResponse.json({ bookingId, grandTotal, paid, balanceDue, overlaps: clashes });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg === 'SLOT_CONFLICT') {
-      return NextResponse.json({ error: 'SLOT_CONFLICT' }, { status: 409 });
+      // `conflicts` lets the form say what is in the way and offer
+      // 「照樣加入」 (resubmit with allowOverlap: true).
+      return NextResponse.json({ error: 'SLOT_CONFLICT', conflicts: clashesNeedingConfirmation(clashes), overlaps: clashes }, { status: 409 });
     }
     console.error('[/api/admin/booking-direct]', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

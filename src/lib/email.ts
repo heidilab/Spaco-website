@@ -816,8 +816,8 @@ export function buildStaffSupplierOrderEmail(params: {
     const pax = addOnPartialPax(bbqPremium);
     const heads = pax ?? adultEquiv;
     const unit = addOnEntryUnitPrice(bbqPremium, { id: booking.venueId });
-    sections.push(supplierSection('🍖', 'BBQ 豪華套餐', '須最少 2 日前向供應商落單', [
-      `• BBQ 豪華套餐 × ${pax ? `${pax}位` : guestLabel}（每位 $${unit}，總計 HK$${Math.round(unit * heads).toLocaleString()}）`,
+    sections.push(supplierSection('🍖', 'BBQ 豪華海鮮套餐', '須最少 2 日前向供應商落單', [
+      `• BBQ 豪華海鮮套餐 × ${pax ? `${pax}位` : guestLabel}（每位 $${unit}，總計 HK$${Math.round(unit * heads).toLocaleString()}）`,
       `• 時段：${booking.startTime} – ${booking.endTime}（${booking.hours} 小時）`,
     ]));
   }

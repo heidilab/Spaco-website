@@ -273,7 +273,9 @@ export const SHISHA_STAFF_SETUP_FEE = 180;
 // can scan and order quickly. Falls back to the id if not mapped.
 const STAFF_ADDON_LABELS: Record<string, { zh: string; en: string }> = {
   'bbq-standard':     { zh: 'BBQ 標準套餐',   en: 'BBQ Standard Package' },
-  'bbq-premium':      { zh: 'BBQ 豪華套餐',   en: 'BBQ Premium Package' },
+  // "Premium" told the cleaner / helper nothing — say what has to be
+  // ordered and handled: seafood (Heidi 2026-11-13).
+  'bbq-premium':      { zh: 'BBQ 豪華海鮮套餐', en: 'BBQ Seafood Package' },
   'bbq-grill':        { zh: 'BBQ 爐租用',      en: 'BBQ Grill Rental' },
   'hotpot-standard':  { zh: '火鍋標準套餐',   en: 'Standard Hotpot Package' },
   'hotpot-seafood':   { zh: '海鮮火鍋套餐',   en: 'Seafood Hotpot Package' },

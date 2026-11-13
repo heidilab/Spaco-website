@@ -20,6 +20,7 @@ import {
   calcShishaPrice, stampAddOnPrices, shishaPrices, shishaFlavors,
 } from '@/lib/pricing';
 import { useAddOnConfig } from '@/lib/addOnConfigClient';
+import type { DirectBookingClash } from '@/lib/directBookingClashes';
 import { ALL_PACKAGES, getPackageBySlug, CATEGORY_LABEL } from '@/lib/packages';
 import { createBookingDraft, buildClaimUrl } from '@/lib/bookingDrafts';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
@@ -177,7 +178,14 @@ export default function AdminNewBookingPage() {
   const [directPayments, setDirectPayments] = useState<{ date: string; method: 'fps' | 'cash' | 'kpay' | 'other'; amount: string }[]>(
     [{ date: new Date().toISOString().slice(0, 10), method: 'fps', amount: '' }],
   );
-  const [directResult, setDirectResult] = useState<{ bookingId: string; balanceDue: number; paid: number } | null>(null);
+  const [directResult, setDirectResult] = useState<{ bookingId: string; balanceDue: number; paid: number; overlaps?: DirectBookingClash[] } | null>(null);
+  /** One clash in words, e.g. 「Google 日曆「行家 Amy」 2026-11-20 19:00–23:00」. */
+  const clashText = (c: DirectBookingClash): string => {
+    const when = `${c.date} ${c.startTime}–${c.endTime}`;
+    if (c.kind === 'calendar') return locale === 'zh' ? `Google 日曆「${c.label}」 ${when}` : `Google Calendar "${c.label}" ${when}`;
+    if (c.kind === 'block') return locale === 'zh' ? `人手封鎖 ${when}` : `Manual block ${when}`;
+    return `${c.label}${c.bookingId ? ` #${c.bookingId.slice(0, 8)}` : ''} ${when}`;
+  };
   useEffect(() => {
     // Broker presets first (Phase-2 commission rules key on these ids),
     // then whatever Heidi configured in 內容管理 → 系統設定.
@@ -518,7 +526,10 @@ export default function AdminNewBookingPage() {
    *  walk-in / WhatsApp FPS). Same pricing payload as the draft link,
    *  plus channel + received payments; server creates it as confirmed
    *  with the money already logged. */
-  const handleDirectSubmit = async () => {
+  const handleDirectSubmit = () => submitDirect(false);
+  /** `allowOverlap`: staff have seen what the order clashes with and
+   *  chose to add it anyway. */
+  const submitDirect = async (allowOverlap: boolean) => {
     if (!canSubmit || !user || !venue || !pricing) return;
     if (!customerName.trim()) {
       alert(locale === 'zh' ? '直接落單必須填客人姓名' : 'Customer name is required for direct bookings');
@@ -579,15 +590,25 @@ export default function AdminNewBookingPage() {
           marketingChannelLabel: isAirbnb ? 'Airbnb' : (isCustom ? directChannelCustom.trim() : (chosen?.zh || directChannel)),
           payments: cleanPays,
           ...(adminDiscount ? { adminDiscount } : {}),
+          ...(allowOverlap ? { allowOverlap: true } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 409) {
-        alert(locale === 'zh' ? '❌ 呢個時段已被其他預訂佔用，請改時間。' : 'Slot conflict — pick another time.');
+        // Another booking / a site block is on that time. A Google
+        // Calendar entry alone never gets here (see
+        // lib/directBookingClashes). Staff decide — an offline order is
+        // being RECORDED, it has already happened.
+        const conflicts = ((data as { conflicts?: DirectBookingClash[] }).conflicts || []);
+        const lines = conflicts.map((c) => `• ${clashText(c)}`).join('\n');
+        const go = window.confirm(locale === 'zh'
+          ? `呢個時段同以下項目撞咗：\n${lines || '（未能列出）'}\n\n仍然加入呢張線下訂單？（撳「確定」照樣加入，之後請自己處理撞期。）`
+          : `This time overlaps:\n${lines || '(could not be listed)'}\n\nAdd the offline order anyway?`);
+        if (go && !allowOverlap) { setSubmitting(false); await submitDirect(true); }
         return;
       }
       if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
-      setDirectResult(data as { bookingId: string; balanceDue: number; paid: number });
+      setDirectResult(data as { bookingId: string; balanceDue: number; paid: number; overlaps?: DirectBookingClash[] });
     } catch (err) {
       alert((locale === 'zh' ? '建立失敗：' : 'Create failed: ') + (err instanceof Error ? err.message : String(err)));
     } finally {
@@ -816,6 +837,23 @@ export default function AdminNewBookingPage() {
               ? '訂單已確認並鎖起時段，會計入財務報表。Google Calendar 已同步。'
               : 'Confirmed, slot locked, counted in finance. Google Calendar synced.'}
           </p>
+          {(directResult.overlaps?.length ?? 0) > 0 && (
+            <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              <p className="font-semibold mb-1">
+                {locale === 'zh' ? '呢張單同以下項目時間重疊（已照樣加入）：' : 'This order overlaps (added anyway):'}
+              </p>
+              <ul className="space-y-0.5">
+                {directResult.overlaps!.map((c, i) => <li key={i}>• {clashText(c)}</li>)}
+              </ul>
+              {directResult.overlaps!.some((c) => c.kind === 'calendar') && (
+                <p className="mt-2">
+                  {locale === 'zh'
+                    ? '如果 Google 日曆嗰個行程其實就係呢張單，請喺 Google 日曆刪返佢 — 系統已經為呢張單開咗一個新行程，唔刪就會見到兩個。'
+                    : 'If that Google Calendar entry is this same booking, delete it there — the system has created its own event for this order.'}
+                </p>
+              )}
+            </div>
+          )}
           <div className="flex gap-2 flex-wrap">
             <Link href={`/admin/bookings/${directResult.bookingId}`} className="btn-primary text-sm">
               {locale === 'zh' ? '打開訂單詳情' : 'Open booking'}
