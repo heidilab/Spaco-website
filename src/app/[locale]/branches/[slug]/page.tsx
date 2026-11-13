@@ -5,6 +5,7 @@ import { useTranslations, useLocale } from 'next-intl';
 import { Link, useRouter } from '@/i18n/routing';
 import { useParams } from 'next/navigation';
 import { getVenueBySlug } from '@/lib/venues';
+import { SW_REDIRECT } from '@/lib/branchSlug';
 import { venueAmenityItems } from '@/lib/venueAmenities';
 import { loadAllVenues } from '@/lib/venueRegistry';
 import MultiRoomBranch from '@/components/branch/MultiRoomBranch';
@@ -16,14 +17,6 @@ import { SiteImage } from '@/types';
 import { ArrowRight, ArrowLeft, Users, Maximize, Clock, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { notFound } from 'next/navigation';
-
-// Slugs that should redirect to the unified Sheung Wan branch page.
-// The combined page has anchors (#sw-a, #sw-b, #sw-ab) for deep links.
-const SW_REDIRECT: Record<string, string> = {
-  'sheung-wan-a':  '/branches/sheung-wan#sw-a',
-  'sheung-wan-b':  '/branches/sheung-wan#sw-b',
-  'sheung-wan-ab': '/branches/sheung-wan#sw-ab',
-};
 
 // Map venue slugs to image section prefixes
 

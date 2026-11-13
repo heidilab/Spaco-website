@@ -10,8 +10,16 @@ let cache: Venue[] | null = null;
 let cacheAt = 0;
 const TTL_MS = 60 * 1000;
 
-export async function loadAllVenuesServer(): Promise<Venue[]> {
-  if (cache && Date.now() - cacheAt < TTL_MS) return cache;
+/** Registry read that also says where the list came from. `fromFirestore`
+ *  is false when Firestore was unreachable or empty and the coded venue
+ *  list was returned instead — callers that must not act on a guess (a
+ *  server-side 404, say) check it. `maxAgeMs` tightens the 60s cache for
+ *  one call, e.g. to confirm a miss against a venue that was just 上架. */
+export async function loadVenueRegistryServer(
+  opts: { maxAgeMs?: number } = {},
+): Promise<{ venues: Venue[]; fromFirestore: boolean }> {
+  const maxAge = Math.min(opts.maxAgeMs ?? TTL_MS, TTL_MS);
+  if (cache && Date.now() - cacheAt < maxAge) return { venues: cache, fromFirestore: true };
   try {
     const snap = await adminDb.collection('venues').get();
     if (!snap.empty) {
@@ -19,12 +27,16 @@ export async function loadAllVenuesServer(): Promise<Venue[]> {
       list.sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999) || a.id.localeCompare(b.id));
       cache = list;
       cacheAt = Date.now();
-      return list;
+      return { venues: list, fromFirestore: true };
     }
   } catch (err) {
     console.warn('[venueRegistryServer] load failed, using static venues:', err);
   }
-  return staticVenues.map((v) => ({ ...v, active: true }));
+  return { venues: staticVenues.map((v) => ({ ...v, active: true })), fromFirestore: false };
+}
+
+export async function loadAllVenuesServer(): Promise<Venue[]> {
+  return (await loadVenueRegistryServer()).venues;
 }
 
 export async function loadActiveVenuesServer(): Promise<Venue[]> {

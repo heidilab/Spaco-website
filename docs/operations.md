@@ -53,6 +53,12 @@ Home title, description and social images can be managed in admin SEO. Titles al
 
 Venue-specific claims in articles must be checked against current venue settings and the business owner. The audit found an all-branches BBQ statement; do not silently rewrite live CMS articles as part of a code preview. Review that article with the current venue information before publishing a correction.
 
+## Not-found pages
+
+An address that matches no page shows the localized 找不到呢個頁面 / Page not found page with the site header and footer (`src/app/[locale]/not-found.tsx`; unknown paths reach it through the catch-all `src/app/[locale]/[...rest]/page.tsx`). Addresses outside `/zh` and `/en` get the plain fallback in `src/app/not-found.tsx`. Both answer HTTP 404 and are not in the sitemap. Before 2026-11-13 these addresses returned an empty 404 body, which looked like a broken site — most often seen when opening a new page's link on a deployment that does not contain it yet.
+
+`/branches/<slug>` answers a real 404 only when the venue registry was read from Firestore and has no live venue or branch for the slug. If the registry cannot be read, the page is served and the browser decides, as before. `/book/<slug>` is unchanged: an unknown venue there shows the not-found page from the browser with status 200, because its layout also serves the payment and confirmation pages of existing bookings.
+
 ## Preview authentication
 
 **Fixed test address: `spaco-test.vercel.app`** (created 2026-11-13). Every Vercel deployment gets a new random hostname, and every working branch a new branch alias, so sharing those meant a new Firebase authorized domain each time. Instead, point this one alias at the preview to be tested (`vercel alias set <deployment-url> spaco-test.vercel.app`, or the Vercel API/MCP `assign_alias`) and share `https://spaco-test.vercel.app/...`. It needs to be in the Firebase Auth authorized domains once, then never again. Re-point it after every new commit — it does not follow a branch by itself — and only one preview can sit on it at a time. Use the steps below only if a second address is really needed.
