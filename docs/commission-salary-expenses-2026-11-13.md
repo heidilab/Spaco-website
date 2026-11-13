@@ -20,8 +20,14 @@ one on 活動現金券.
 
 ## 2. Sales pay (底薪 + 獎金) on the month close
 
-- CS 獎金 → 目標設定: a 底薪 (monthly base pay) per branch, saved in
-  `system/bonus_config.branches[branch].baseSalary`.
+- CS 獎金 → 目標設定: 底薪 per branch **by period** — rows of 「由 YYYY-MM 起
+  $X」 in `system/bonus_config.branches[branch].baseSalaryHistory`; a month
+  takes the latest row that had started by then, an undated row ('') is the
+  floor. One CS is paid $6,000 split across the branches: $1,500 each with
+  four branches, $1,200 each once the fifth opened — a single figure (the
+  first version, same day) would have rewritten July–October, which is why
+  it is dated. The legacy `baseSalary` is read only when the history is
+  empty.
 - 月結: `salary = baseSalary + bonus of the tier reached` (lib/salesSalary,
   same sales basis as the CS 獎金 page — Σ `pricing.subtotal` of the month's
   countsForFinance bookings of that branch). Counted in 總支出 and in the

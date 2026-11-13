@@ -341,7 +341,7 @@ export default function MonthClosePage() {
     // Sales pay: 底薪 + the bonus tier reached on the same sales basis as
     // the CS 獎金 page (Σ pricing.subtotal of the month's bookings).
     const bonusSales = rows.reduce((s, b) => s + (b.pricing.subtotal || 0), 0);
-    const salary = salesSalaryForMonth(bonusSales, bonusCfg.branches[branch]);
+    const salary = salesSalaryForMonth(bonusSales, bonusCfg.branches[branch], m);
     const expenses = stored + salary.total + commissions + kpayFee + discounts;
     return {
       sales, stored, salary, commissions, commissionByChannel, discounts, kpayFee,

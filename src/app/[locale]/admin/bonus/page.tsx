@@ -19,7 +19,8 @@ import { loadAllVenues } from '@/lib/venueRegistry';
 import { salesBranchKey, salesBranches, type SalesBranch } from '@/lib/bonusBranches';
 import { getBonusConfig, saveBonusConfig } from '@/lib/bonus';
 import { evaluateBonus, sortedTiers } from '@/lib/bonusMath';
-import type { BookingRecord, BonusConfig, BonusTier, Venue } from '@/types';
+import type { BaseSalaryPeriod, BookingRecord, BonusConfig, BonusTier, Venue } from '@/types';
+import { baseSalaryForMonth, sortedSalaryPeriods } from '@/lib/salesSalary';
 import { Award, Loader2, Plus, Trash2, Check, Settings2 } from 'lucide-react';
 
 // Branches come from the venue registry (lib/bonusBranches) so one added in
@@ -104,7 +105,7 @@ export default function BonusPage() {
    *  that already has saved targets). */
   const branches = useMemo<SalesBranch[]>(() => {
     const configured = Object.entries(cfg?.branches || {})
-      .filter(([, b]) => (b.tiers || []).length > 0 || (b.baseSalary || 0) > 0)
+      .filter(([, b]) => (b.tiers || []).length > 0 || (b.baseSalary || 0) > 0 || (b.baseSalaryHistory || []).length > 0)
       .map(([key]) => key);
     return salesBranches(venues, configured);
   }, [venues, cfg]);
@@ -115,9 +116,17 @@ export default function BonusPage() {
     if (!cfg) return;
     setCfg({ ...cfg, branches: { ...cfg.branches, [bk]: { ...(cfg.branches[bk] || {}), tiers } } });
   }
-  function updateBaseSalary(bk: string, baseSalary: number) {
+  /** The 底薪 periods as edited: the saved history, or the legacy single
+   *  figure shown as one undated row (「由最初起」). */
+  function salaryPeriodsOf(bk: string): BaseSalaryPeriod[] {
+    const b = cfg?.branches[bk];
+    if (!b) return [];
+    if (b.baseSalaryHistory?.length) return b.baseSalaryHistory;
+    return b.baseSalary ? [{ fromMonth: '', amount: b.baseSalary }] : [];
+  }
+  function updateSalaryPeriods(bk: string, baseSalaryHistory: BaseSalaryPeriod[]) {
     if (!cfg) return;
-    setCfg({ ...cfg, branches: { ...cfg.branches, [bk]: { tiers: cfg.branches[bk]?.tiers || [], baseSalary } } });
+    setCfg({ ...cfg, branches: { ...cfg.branches, [bk]: { tiers: cfg.branches[bk]?.tiers || [], baseSalaryHistory } } });
   }
   async function handleSave() {
     if (!cfg) return;
@@ -127,7 +136,10 @@ export default function BonusPage() {
       const cleaned: BonusConfig = {
         branches: Object.fromEntries(Object.entries(cfg.branches).map(([bk, b]) => [bk, {
           tiers: sortedTiers((b.tiers || []).filter((t) => t.target > 0 && t.bonus > 0)),
-          baseSalary: Math.max(0, Number(b.baseSalary) || 0),
+          // Dated 底薪 replaces the single figure (kept only as a fallback
+          // for configs saved before the history existed).
+          baseSalaryHistory: sortedSalaryPeriods((b.baseSalaryHistory?.length ? b.baseSalaryHistory : (b.baseSalary ? [{ fromMonth: '', amount: b.baseSalary }] : []))
+            .map((p) => ({ fromMonth: p.fromMonth || '', amount: Math.max(0, Number(p.amount) || 0) }))),
         }])),
       };
       await saveBonusConfig(cleaned);
@@ -190,19 +202,47 @@ export default function BonusPage() {
                 return (
                   <div key={bk} className="border rounded-lg p-4 space-y-3">
                     <div className="font-medium">{labelOf(branch)}</div>
-                    {/* 底薪: month close books base + the month's bonus as the
-                        branch's Sales Salary expense (Heidi 2026-11-13). */}
-                    <div className="flex items-center gap-2 text-sm flex-wrap">
-                      <span className="text-gray-500 w-14">{zh ? '底薪' : 'Base pay'}</span>
-                      <span className="text-gray-400">{zh ? '每月' : 'Monthly'} $</span>
-                      <input
-                        type="number" min={0} value={b.baseSalary || ''}
-                        onChange={(e) => updateBaseSalary(bk, Number(e.target.value))}
-                        className="border rounded px-2 py-1 w-28 text-right"
-                      />
-                      <span className="text-xs text-gray-400">
-                        {zh ? '月結會將「底薪 + 當月獎金」當成呢間分店嘅 Sales Salary 支出' : 'Month close books base + this month\'s bonus as the branch\'s Sales Salary expense'}
-                      </span>
+                    {/* 底薪 by period: a new branch changes every branch's
+                        share from that month on, past months keep theirs
+                        (Heidi 2026-11-13). Month close books base + the
+                        month's bonus as the branch's Sales Salary expense. */}
+                    <div className="rounded-lg bg-gray-50 p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="text-sm font-medium">{zh ? '底薪（按月份生效）' : 'Base pay (by period)'}</span>
+                        <span className="text-xs text-gray-500">
+                          {zh ? `本月 ${month}：$${fmt(baseSalaryForMonth(cfg.branches[bk], month))}` : `This month ${month}: $${fmt(baseSalaryForMonth(cfg.branches[bk], month))}`}
+                        </span>
+                      </div>
+                      {salaryPeriodsOf(bk).map((p, i) => (
+                        <div key={i} className="flex items-center gap-2 text-sm flex-wrap">
+                          <span className="text-gray-400">{zh ? '由' : 'From'}</span>
+                          <input
+                            type="month" value={p.fromMonth}
+                            onChange={(e) => updateSalaryPeriods(bk, salaryPeriodsOf(bk).map((x, j) => j === i ? { ...x, fromMonth: e.target.value } : x))}
+                            className="border rounded px-2 py-1"
+                          />
+                          <span className="text-gray-400">{zh ? (p.fromMonth ? '起，每月 $' : '（最初）起，每月 $') : (p.fromMonth ? 'monthly $' : '(the start) monthly $')}</span>
+                          <input
+                            type="number" min={0} value={p.amount || ''}
+                            onChange={(e) => updateSalaryPeriods(bk, salaryPeriodsOf(bk).map((x, j) => j === i ? { ...x, amount: Number(e.target.value) } : x))}
+                            className="border rounded px-2 py-1 w-28 text-right"
+                          />
+                          <button onClick={() => updateSalaryPeriods(bk, salaryPeriodsOf(bk).filter((_, j) => j !== i))} className="text-gray-300 hover:text-red-500">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        onClick={() => updateSalaryPeriods(bk, [...salaryPeriodsOf(bk), { fromMonth: month, amount: 0 }])}
+                        className="text-sm text-pink hover:underline flex items-center gap-1"
+                      >
+                        <Plus className="w-4 h-4" />{zh ? '加一段底薪（由某月起）' : 'Add a period'}
+                      </button>
+                      <p className="text-xs text-gray-400">
+                        {zh
+                          ? '例：「由 2025-07 起 $1,500」「由 2026-11 起 $1,200」— 10 月之前嘅月結照用 $1,500，11 月起用 $1,200。月結會將「底薪 + 當月獎金」當成呢間分店嘅 Sales Salary 支出。'
+                          : 'e.g. "from 2025-07 $1,500", "from 2026-11 $1,200" — months before November keep $1,500. Month close books base + the month\'s bonus as the branch\'s Sales Salary expense.'}
+                      </p>
                     </div>
                     {(b.tiers.length ? b.tiers : []).map((t, i) => (
                       <div key={i} className="flex items-center gap-2 text-sm flex-wrap">

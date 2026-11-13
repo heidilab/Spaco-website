@@ -992,10 +992,22 @@ export interface BonusTier {
  *  roster (Heidi 2026-09-07). */
 export interface BranchBonusConfig {
   tiers: BonusTier[];
-  /** 底薪 — the sales staff's fixed monthly pay for this branch (HK$).
-   *  Month close books base + the month's bonus as one expense line
-   *  (lib/salesSalary; Heidi 2026-11-13). */
+  /** @deprecated 2026-11-13, same day: a single figure changed every
+   *  past month too. Read as the floor when `baseSalaryHistory` is empty. */
   baseSalary?: number;
+  /** 底薪 by period — the sales staff's fixed monthly pay booked to this
+   *  branch (HK$), each entry in force from `fromMonth` (YYYY-MM) until the
+   *  next entry. One CS is paid $6,000 split across the branches, so a new
+   *  branch changes every branch's share from that month on while past
+   *  months keep theirs (Heidi 2026-11-13). Month close books the month's
+   *  base + bonus as one expense line (lib/salesSalary). */
+  baseSalaryHistory?: BaseSalaryPeriod[];
+}
+
+export interface BaseSalaryPeriod {
+  /** First month (YYYY-MM) this amount applies to; '' = from the start. */
+  fromMonth: string;
+  amount: number;
 }
 
 /** system/bonus_config — admin-write, staff-read (Firestore rules). */
