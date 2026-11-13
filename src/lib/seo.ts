@@ -272,6 +272,18 @@ export const SEO_PAGES: SeoPageDef[] = [
     label: { zh: '尖沙咀分店', en: 'TST Branch' },
     defaultTitle: { zh: '尖沙咀店 — SPACO', en: 'TST — SPACO' },
   },
+  {
+    // Ad landing page listing the 尖沙咀 branches (lib/districtLanding).
+    // Not in the site menu.
+    id: 'landing-tst',
+    path: '/tsim-sha-tsui-party-room',
+    label: { zh: '尖沙咀廣告頁', en: 'TST landing page' },
+    defaultTitle: { zh: '尖沙咀 Party Room — SPACO', en: 'Tsim Sha Tsui Party Room — SPACO' },
+    defaultDescription: {
+      zh: 'SPACO 尖沙咀 Party Room：兩間全自助派對場地，睇晒每間嘅場地相、尺寸同容納人數，再入去睇詳細介紹同價錢。',
+      en: 'SPACO party rooms in Tsim Sha Tsui: two self-service venues — compare photos, size and capacity, then open each for full details and prices.',
+    },
+  },
 ];
 
 export function pageDefById(id: string): SeoPageDef | undefined {
