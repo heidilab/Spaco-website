@@ -511,7 +511,8 @@ export default function FinanceOverviewPage() {
     if (m === 'kpay') return 'KPay';
     if (m === 'stripe') return 'Stripe';
     if (m === 'fps') return 'FPS';
-    if (m === 'bank') return 'Bank';
+    // Old records only — bank transfers are FPS for the books.
+    if (m === 'bank') return 'FPS';
     if (m === 'cash') return 'Cash';
     if (m === 'other') return 'Other';
     return m;

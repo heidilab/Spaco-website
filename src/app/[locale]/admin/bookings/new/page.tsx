@@ -160,7 +160,7 @@ export default function AdminNewBookingPage() {
   const [channelOptions, setChannelOptions] = useState<MarketingChannelOption[]>([]);
   const [directChannel, setDirectChannel] = useState('agent');
   const [directChannelCustom, setDirectChannelCustom] = useState('');
-  const [directPayments, setDirectPayments] = useState<{ date: string; method: 'fps' | 'bank' | 'cash' | 'kpay' | 'other'; amount: string }[]>(
+  const [directPayments, setDirectPayments] = useState<{ date: string; method: 'fps' | 'cash' | 'kpay' | 'other'; amount: string }[]>(
     [{ date: new Date().toISOString().slice(0, 10), method: 'fps', amount: '' }],
   );
   const [directResult, setDirectResult] = useState<{ bookingId: string; balanceDue: number; paid: number } | null>(null);
@@ -1728,7 +1728,7 @@ export default function AdminNewBookingPage() {
                         onChange={(e) => setDirectPayments((prev) => prev.map((x, idx) => idx === i ? { ...x, method: e.target.value as typeof r.method } : x))}
                         className="px-2.5 py-2 rounded-xl border-2 border-charcoal/15 text-xs bg-white/85">
                         <option value="fps">FPS</option>
-                        <option value="bank">{locale === 'zh' ? '銀行' : 'Bank'}</option>
+                        
                         <option value="cash">{locale === 'zh' ? '現金' : 'Cash'}</option>
                         <option value="kpay">KPay</option>
                         <option value="other">{locale === 'zh' ? '其他' : 'Other'}</option>

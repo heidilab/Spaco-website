@@ -84,7 +84,9 @@ export async function POST(req: NextRequest) {
     .filter((p) => p && Number(p.amount) > 0 && p.date)
     .map((p) => ({
       amount: Math.round(Number(p.amount) * 100) / 100,
-      method: (['fps', 'bank', 'cash', 'kpay', 'other'] as const).includes(p.method) ? p.method : 'other',
+      // A bank transfer is recorded as FPS — one method for money into
+      // the bank account (Heidi 2026-11-13).
+      method: p.method === 'bank' ? 'fps' : (['fps', 'cash', 'kpay', 'other'] as const).includes(p.method) ? p.method : 'other',
       kind: 'initial' as const,
       note: '線下直接落單',
       recordedBy: gate.uid,

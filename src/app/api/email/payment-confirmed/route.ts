@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
       balanceDue: booking.balanceDue,
       balanceDueDate: booking.balanceDueDate,
       addOnsLine: formatAddOnsForStaff(booking.addOns, 'zh'),
-      paymentMethod: booking.paymentMethod === 'fps' ? 'FPS / 銀行轉帳' : (booking.paymentMethod || 'Online'),
+      paymentMethod: booking.paymentMethod === 'fps' || booking.paymentMethod === 'bank' ? 'FPS / 銀行轉帳' : (booking.paymentMethod || 'Online'),
       whatsappLink,
     });
     await sendAutomatedEmail({

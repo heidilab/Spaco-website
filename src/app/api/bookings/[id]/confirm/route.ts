@@ -83,8 +83,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         promoFreeDrinksCost: freeDrinksCost, pointsUsed: pointsDiscount * 100, pointsDiscount,
         balanceDue: Math.max(0, grand - pricing.deposit), updatedAt: FieldValue.serverTimestamp(),
       };
-      for (const field of ['marketingChannel', 'marketingChannelLabel', 'marketingChannelOther']) {
-        if (typeof body[field] === 'string' && body[field].length <= 300) patch[field] = body[field];
+      // Staff corrected the source on the admin booking page — the
+      // customer's own "how did you hear about us" must not undo it.
+      if (!booking.marketingChannelSetByStaff) {
+        for (const field of ['marketingChannel', 'marketingChannelLabel', 'marketingChannelOther']) {
+          if (typeof body[field] === 'string' && body[field].length <= 300) patch[field] = body[field];
+        }
       }
       tx.update(ref, patch);
     });

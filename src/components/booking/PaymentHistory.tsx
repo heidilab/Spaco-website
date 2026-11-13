@@ -17,7 +17,8 @@ const METHOD_LABELS: Record<string, { zh: string; en: string }> = {
   kpay:   { zh: 'KPay', en: 'KPay' },
   stripe: { zh: 'Stripe', en: 'Stripe' },
   fps:    { zh: 'FPS 轉數快', en: 'FPS' },
-  bank:   { zh: '銀行轉帳', en: 'Bank' },
+  // Old records only: staff now record every bank-account transfer as FPS.
+  bank:   { zh: 'FPS（銀行轉帳）', en: 'FPS (bank transfer)' },
   cash:   { zh: '現金', en: 'Cash' },
   other:  { zh: '其他', en: 'Other' },
 };

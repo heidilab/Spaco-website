@@ -85,7 +85,7 @@ function fmt(n: number): string {
 function masterMethodLabel(m: string): string {
   const refund = /^退款\((.+)\)$/.exec(m);
   if (refund) return `退款(${masterMethodLabel(refund[1])})`;
-  const labels: Record<string, string> = { kpay: 'Kpay', fps: 'FPS', bank: 'Bank', cash: 'Cash', stripe: 'Stripe', other: 'Other' };
+  const labels: Record<string, string> = { kpay: 'Kpay', fps: 'FPS', bank: 'FPS', cash: 'Cash', stripe: 'Stripe', other: 'Other' };
   return labels[m] || m;
 }
 

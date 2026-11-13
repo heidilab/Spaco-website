@@ -96,7 +96,18 @@ async function upsertUserProfile(user: User) {
       }).catch((err) => console.warn('[welcome email] non-blocking failure:', err));
     }
   } else {
-    await setDoc(userRef, { lastLogin: serverTimestamp() }, { merge: true });
+    // The name used to be written only when the doc was first created, so
+    // a doc created before the name was known (sign-up interrupted, or
+    // email registration racing its own updateProfile) stayed nameless —
+    // staff saw those members as 「訪客」 (Heidi 2026-11-13). Fill a MISSING
+    // name / photo from the sign-in account on every sign-in; never
+    // overwrite one the member already has (they can edit it themselves).
+    const stored = snap.data() as { displayName?: string; photoURL?: string };
+    const patch: Record<string, unknown> = { lastLogin: serverTimestamp() };
+    const accountName = (user.displayName || '').trim().slice(0, 200);
+    if (!(stored.displayName || '').trim() && accountName) patch.displayName = accountName;
+    if (!stored.photoURL && user.photoURL) patch.photoURL = user.photoURL;
+    await setDoc(userRef, patch, { merge: true });
   }
 }
 

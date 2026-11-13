@@ -51,6 +51,27 @@ export default function AdminMembersPage() {
   const canAccess = hasPermission('members');
 
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Fill members with no name from their sign-in (Google) account.
+  const [fillingNames, setFillingNames] = useState(false);
+  const [fillNamesMsg, setFillNamesMsg] = useState<string | null>(null);
+  const namelessCount = members.filter((m) => !(m.displayName || '').trim()).length;
+  async function fillMissingNames() {
+    setFillingNames(true); setFillNamesMsg(null);
+    try {
+      const res = await adminApiFetch('/api/admin/backfill-member-names', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error || 'failed');
+      setFillNamesMsg(locale === 'zh'
+        ? `已補回 ${data.filled} 個會員嘅姓名${data.stillEmpty > 0 ? `；仲有 ${data.stillEmpty} 個嘅登入帳戶本身冇姓名（用電郵註冊），要人手填` : ''}。`
+        : `Filled ${data.filled} names${data.stillEmpty > 0 ? `; ${data.stillEmpty} accounts carry no name (email sign-up)` : ''}.`);
+      const fresh = await getAllUsers();
+      setMembers(fresh as MemberData[]);
+    } catch {
+      setFillNamesMsg(locale === 'zh' ? '補回姓名失敗，請再試。' : 'Could not fill names — try again.');
+    } finally {
+      setFillingNames(false);
+    }
+  }
 
   useEffect(() => {
     if (!canAccess) return;
@@ -580,6 +601,28 @@ export default function AdminMembersPage() {
        *  Export uses the FILTERED list so admin can search-then-export.
        *  The pink "X 個會員" chip beside the title is glanceable at a
        *  distance — main metric for member-management at-a-glance. */}
+      {(namelessCount > 0 || fillNamesMsg) && (
+        <div className="mb-4 rounded-2xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-900 flex flex-wrap items-center gap-3">
+          {namelessCount > 0 && (
+            <>
+              <span>
+                {locale === 'zh'
+                  ? `有 ${namelessCount} 個會員冇姓名（訂單會顯示「訪客」或者電郵）。`
+                  : `${namelessCount} members have no name (bookings show them as Guest / their email).`}
+              </span>
+              <button
+                type="button" onClick={fillMissingNames} disabled={fillingNames}
+                className="rounded-full bg-amber-600 text-white text-xs font-semibold px-4 py-1.5 disabled:opacity-50"
+              >
+                {fillingNames
+                  ? (locale === 'zh' ? '處理中…' : 'Working…')
+                  : (locale === 'zh' ? '由 Google 帳戶補回姓名' : 'Fill names from sign-in accounts')}
+              </button>
+            </>
+          )}
+          {fillNamesMsg && <span className="text-emerald-800">{fillNamesMsg}</span>}
+        </div>
+      )}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
         <div className="flex items-center gap-3">
           <h1 className="text-heading">{locale === 'zh' ? '會員管理' : 'Member Management'}</h1>

@@ -461,6 +461,11 @@ export async function POST(req: NextRequest) {
         pendingExpiresAt,
         depositRefund: null,
         whatsappPhone: rest.whatsappPhone ?? null,
+        // The name CS typed on the booking link (from the staff-issued
+        // draft, never the client) — otherwise it was lost on claim and
+        // staff saw 「訪客」 for a member whose profile has no name.
+        ...(draftId && typeof rest.customerName === 'string' && rest.customerName.trim()
+          ? { customerName: rest.customerName.trim().slice(0, 200) } : {}),
         ...(promoCode ? { promoCode } : {}),
         ...(promoCodeId ? { promoCodeId } : {}),
         ...(promoDiscount > 0 ? { promoDiscount } : {}),

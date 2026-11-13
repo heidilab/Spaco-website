@@ -358,6 +358,11 @@ export interface BookingRecord {
   marketingChannelLabel?: string;
   /** Free-text detail when marketingChannel === 'other'. */
   marketingChannelOther?: string;
+  /** True once staff set the source on the admin booking page
+   *  (BookingSourceEditor) — the customer's confirm step then leaves the
+   *  three marketingChannel* fields alone. */
+  marketingChannelSetByStaff?: boolean;
+  marketingChannelSetBy?: string | null;
   /** Promo code applied at checkout (entered by customer on the
    *  confirm page). Optional. The discount applies to the subtotal
    *  before any loyalty redemption — see Ship C in repo docs. */

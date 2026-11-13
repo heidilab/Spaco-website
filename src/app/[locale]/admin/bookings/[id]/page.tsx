@@ -23,7 +23,6 @@ import {
 import { doc, updateDoc, serverTimestamp, getDocs, query, collection, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { BookingRecord, UserProfile, MarketingChannel, MARKETING_CHANNEL_LABELS } from '@/types';
-import { channelDisplayLabel } from '@/lib/marketingChannels';
 import { venues as staticVenues } from '@/lib/venues';
 import { loadAllVenues, venuesSnapshot } from '@/lib/venueRegistry';
 import type { Venue } from '@/types';
@@ -82,6 +81,8 @@ function livePromoForBooking(opts: {
   return freeDrinksVenues.includes(opts.liveVenueId) ? 0 : Math.round(25 * adultEquiv);
 }
 import PaymentHistory from '@/components/booking/PaymentHistory';
+import StaffRemarkEditor from '@/components/booking/StaffRemarkEditor';
+import BookingSourceEditor from '@/components/admin/BookingSourceEditor';
 import { buildWhatsAppLink, formatHkPhone } from '@/lib/whatsapp';
 import {
   ArrowLeft, CalendarDays, Clock, Users, Save, MessageCircle,
@@ -236,7 +237,9 @@ export default function AdminBookingDetailPage() {
   // "stripe必須透過連結付款而系統亦必然會自動Detect"). Manually typing
   // a Stripe payment created phantom entries on bookings like
   // #WIiQYL2I that never actually charged.
-  const [payMethod, setPayMethod] = useState<'fps' | 'bank' | 'cash' | 'other'>('fps');
+  // FPS covers every transfer into the bank account — a separate 「銀行」
+  // choice was the same thing for the books (Heidi 2026-11-13).
+  const [payMethod, setPayMethod] = useState<'fps' | 'cash' | 'other'>('fps');
   const [payNote, setPayNote] = useState<string>('');
   // 付款日期 — defaults to today; admin back-dates when the customer
   // actually paid earlier (finance exports use this date).
@@ -1325,7 +1328,12 @@ export default function AdminBookingDetailPage() {
   const memberPhone = profile?.phone || memberWa;
   // Offline/broker bookings have no user account — the name lives on the
   // booking itself (createdVia 'admin-direct').
-  const memberName = profile?.displayName || booking.customerName || (locale === 'zh' ? '訪客' : 'Guest');
+  // Same order as the bookings list and the calendar: profile name, the
+  // name on the booking, then the email prefix — 「訪客」 only when there is
+  // truly nothing to show.
+  const memberName = (profile?.displayName || '').trim() || booking.customerName
+    || (profile?.email || booking.customerEmail || '').split('@')[0]
+    || (locale === 'zh' ? '訪客' : 'Guest');
   const memberEmail = profile?.email;
 
   return (
@@ -1351,6 +1359,17 @@ export default function AdminBookingDetailPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* LEFT — booking info + edit */}
         <div className="lg:col-span-2 space-y-6">
+          {/* 內部備註 — for colleagues and the cleaner; also on Google Calendar. */}
+          <div className="mb-4">
+            <StaffRemarkEditor
+              bookingId={booking.id}
+              remark={booking.staffRemark}
+              locale={locale}
+              canEdit
+              onSaved={(remark) => setBooking((prev) => (prev ? { ...prev, staffRemark: remark || undefined } : prev))}
+            />
+          </div>
+
           {/* Status */}
           <div className="glass-card p-6">
             <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
@@ -2648,16 +2667,16 @@ export default function AdminBookingDetailPage() {
                 </>
               );
             })()}
-            {booking.marketingChannel && (
-              <Row
-                label={locale === 'zh' ? '推廣渠道' : 'Channel'}
-                value={
-                  booking.marketingChannel === 'loyalty_member'
-                    ? (locale === 'zh' ? '🌟 老會員' : '🌟 Loyalty Member')
-                    : `📣 ${channelDisplayLabel(booking, locale)}${booking.marketingChannelOther ? `: ${booking.marketingChannelOther}` : ''}`
-                }
-              />
-            )}
+            {/* Source — always shown, staff can correct it (it drives the
+             *  month-close Source column and the commission). */}
+            <BookingSourceEditor
+              booking={booking}
+              locale={locale}
+              onSaved={async () => {
+                const fresh = await getBooking(booking.id);
+                if (fresh) setBooking(fresh);
+              }}
+            />
             <Row label={locale === 'zh' ? '付款方式' : 'Payment method'} value={booking.paymentMethod || '—'} />
             {/* Cancellation audit — only renders for cancelled bookings.
              *  Shows who hit the X (staff name + email) and when, so
@@ -2934,7 +2953,7 @@ export default function AdminBookingDetailPage() {
                   {locale === 'zh' ? '付款方式' : 'Method'}
                 </label>
                 <div className="grid grid-cols-2 gap-2">
-                  {(['fps', 'bank', 'cash', 'other'] as const).map((m) => (
+                  {(['fps', 'cash', 'other'] as const).map((m) => (
                     <button
                       key={m}
                       onClick={() => setPayMethod(m)}
@@ -2944,7 +2963,7 @@ export default function AdminBookingDetailPage() {
                           : 'bg-white/60 border-charcoal/15 text-ink-soft hover:bg-white'
                       }`}
                     >
-                      {m === 'fps' ? 'FPS' : m === 'bank' ? (locale === 'zh' ? '銀行' : 'Bank') : m === 'cash' ? (locale === 'zh' ? '現金' : 'Cash') : (locale === 'zh' ? '其他' : 'Other')}
+                      {m === 'fps' ? 'FPS' : m === 'cash' ? (locale === 'zh' ? '現金' : 'Cash') : (locale === 'zh' ? '其他' : 'Other')}
                     </button>
                   ))}
                 </div>
@@ -3243,7 +3262,7 @@ function OutstandingBalanceSection({
           <p className="text-sm text-amber-800">
             {paidTotal <= 0
               ? (locale === 'zh'
-                  ? '此預訂仲未有任何付款記錄。如客人已用 FPS／銀行／現金付款，請用下面「已於線下付款」記錄；或發送線上付款連結。'
+                  ? '此預訂仲未有任何付款記錄。如客人已用 FPS／現金付款，請用下面「已於線下付款」記錄；或發送線上付款連結。'
                   : 'No payment recorded yet. If the customer paid by FPS / bank / cash, log it with "Record offline payment" below, or send the online pay link.')
               : isSettlementOverflow(booking)
                 ? (locale === 'zh'
