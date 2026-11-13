@@ -42,7 +42,11 @@ own page (`/branches/tsim-sha-tsui`, `/branches/tsthart`).
 
 - Content comes from 分店管理 (`lib/districtLanding.ts`, pure, tested):
   - which branches: name or address contains 尖沙咀 / Tsim Sha Tsui / TST;
-  - main photo: the venue's first photo (multi-room: first room that has one);
+  - main photo: the venue's first photo. Multi-room: of the BIGGEST space
+    that has photos — HART's A+B has none, so Room B's first photo is used
+    (Heidi asked for exactly that one, not Room A's);
+  - address: street number only, no building / floor / unit
+    (「尖沙咀寶勒巷22-24號」) — her request; `streetOnly()`;
   - size: as typed in 分店管理 (multi-room: the whole-floor option);
   - capacity: smallest minimum – largest maximum of the branch's spaces;
   - intro: the venue's 簡介. HART has none filled in (2026-11-13), so the page

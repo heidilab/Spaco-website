@@ -3,7 +3,7 @@
 // linking to the branch's own page.
 
 import { describe, it, expect } from 'vitest';
-import { districtBranchCards, DISTRICTS } from './districtLanding';
+import { districtBranchCards, DISTRICTS, streetOnly } from './districtLanding';
 import { venues as staticVenues } from './venues';
 import type { Venue } from '@/types';
 
@@ -28,7 +28,7 @@ const registry: Venue[] = [
     id: 'tst', slug: 'tsim-sha-tsui', branchKey: 'tst', sortOrder: 3, name: { zh: '尖沙咀店', en: 'Tsim Sha Tsui' },
     branchName: { zh: '尖沙咀店', en: 'Tsim Sha Tsui' },
     description: { zh: '尖沙咀獨特複式單位連露台，送無酒精飲品任飲。', en: 'Duplex with terrace.' },
-    address: { zh: '尖沙咀寶勒巷22-24號雲龍商業大廈17樓A1室', en: 'Prat Avenue, Tsim Sha Tsui' },
+    address: { zh: '尖沙咀寶勒巷22-24號雲龍商業大廈17樓A1室', en: 'Unit A1, 17/F, Wan Loong Commercial Building, 22-24 Prat Avenue, Tsim Sha Tsui' },
     size: '900呎（室內）＋400呎（天台）', capacity: { min: 8, max: 70 },
     images: ['https://img.test/tst-main.jpg', 'https://img.test/tst-2.jpg'],
   }),
@@ -55,17 +55,32 @@ describe('尖沙咀 landing page', () => {
     expect(tst.rooms).toEqual([]);
   });
 
-  it('multi-room branch: whole-floor size, smallest-to-largest capacity, first room photo', () => {
+  it('multi-room branch: whole-floor size, smallest-to-largest capacity, photo of the biggest room that has one', () => {
     const h = cards[1];
     expect(h.name.zh).toBe('尖沙咀 HART');
     expect(h.size).toBe('2000 sq ft Indoor +600 sq ft Terrace');
     expect(h.capacity).toEqual({ min: 6, max: 90 });
-    // Room A+B has no photos of its own — Room A's first photo stands in.
-    expect(h.image).toBe('https://img.test/hart-a.jpg');
+    // Room A+B has no photos of its own — Room B's first photo stands for
+    // the branch (Heidi: 「Room B 嘅第一張主圖片」), not the smaller Room A's.
+    expect(h.image).toBe('https://img.test/hart-b.jpg');
     expect(h.rooms.map((r) => [r.label.zh, r.combined])).toEqual([
       ['Hart Room A', false], ['Hart Room B', false], ['Hart Room A+B（全場）', true],
     ]);
     expect(h.address.zh).toBe('尖沙咀赫德道 12 - 15 號');
+  });
+
+  it('the address stops at the street number — no building, floor or unit', () => {
+    expect(cards[0].address).toEqual({ zh: '尖沙咀寶勒巷22-24號', en: '22-24 Prat Avenue, Tsim Sha Tsui' });
+    expect(cards[1].address).toEqual({ zh: '尖沙咀赫德道 12 - 15 號', en: '12-15 Hart Avenue, Tsim Sha Tsui' });
+  });
+
+  it('street-only works on the other branches\' addresses too, and leaves odd ones as typed', () => {
+    expect(streetOnly('銅鑼灣禮頓道26號凱基商業大廈5樓全層', 'zh')).toBe('銅鑼灣禮頓道26號');
+    expect(streetOnly('5/F (Whole Floor), KGI Commercial Building, 26 Leighton Road, Causeway Bay', 'en')).toBe('26 Leighton Road, Causeway Bay');
+    expect(streetOnly('Shop B2, G/F, 1 Kat On Street, Wan Chai', 'en')).toBe('1 Kat On Street, Wan Chai');
+    expect(streetOnly('灣仔吉安街一號B2地鋪', 'zh')).toBe('灣仔吉安街一號');
+    expect(streetOnly('尖沙咀某大廈', 'zh')).toBe('尖沙咀某大廈');
+    expect(streetOnly('', 'zh')).toBe('');
   });
 
   it('no intro filled in → empty (the page then describes the room options)', () => {
