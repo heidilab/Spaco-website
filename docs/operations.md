@@ -55,6 +55,8 @@ Venue-specific claims in articles must be checked against current venue settings
 
 ## Preview authentication
 
+**Fixed test address: `spaco-test.vercel.app`** (created 2026-11-13). Every Vercel deployment gets a new random hostname, and every working branch a new branch alias, so sharing those meant a new Firebase authorized domain each time. Instead, point this one alias at the preview to be tested (`vercel alias set <deployment-url> spaco-test.vercel.app`, or the Vercel API/MCP `assign_alias`) and share `https://spaco-test.vercel.app/...`. It needs to be in the Firebase Auth authorized domains once, then never again. Re-point it after every new commit — it does not follow a branch by itself — and only one preview can sit on it at a time. Use the steps below only if a second address is really needed.
+
 Before sharing a new Vercel preview URL, verify its exact hostname is present in Firebase Authentication authorized domains. A new random deployment hostname is not automatically authorized. Preserve all existing domains and add only the verified SPACO hostname (no scheme, path, port or wildcard). Read the config back after updating. Preview still shares live Firebase; do not create test bookings or payments to verify login.
 
 2026-10-10: added `spaco-website-73kkj89n6-heidilabs-projects.vercel.app` to the live Firebase Auth allowlist after the reported `auth/unauthorized-domain` error. Readback confirmed the hostname and preservation of all six previous domains. No app deployment, provider change, user account change or end-to-end user sign-in was performed.
