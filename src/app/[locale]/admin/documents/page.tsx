@@ -22,6 +22,7 @@ import {
   calcShishaPrice,
   SHISHA_MAX_PIPES,
   addOnPartialPax,
+  addOnEntryUnitPrice,
 } from '@/lib/pricing';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { HOTPOT_EXTRA_SOUP_PRICE, hotpotSoupSummary, isHotpotPackage } from '@/lib/hotpot';
@@ -346,29 +347,29 @@ export default function AdminDocumentsPage() {
         const heads = addOnPartialPax(addOn) ?? equiv;
         if (addOn.id === 'bbq-standard') {
           // Per-head, venue-specific. SW: $158, TST: $138, CWB: $158.
-          unitPrice = bbqStandardPriceByVenue[b.venueId] || cfg.pricePerUnit;
+          unitPrice = addOnEntryUnitPrice(addOn, { id: b.venueId });
           quantity = heads;
           amount = Math.round(unitPrice * heads);
         } else if (addOn.id === 'bbq-premium') {
-          unitPrice = 328;
+          unitPrice = addOnEntryUnitPrice(addOn, { id: b.venueId });
           quantity = heads;
           amount = Math.round(unitPrice * heads);
         } else if (addOn.id === 'bbq-grill') {
           // Grill rental is bundled when a BBQ package is also selected.
           if (hasBBQPackage) continue;
-          unitPrice = 500;
+          unitPrice = addOnEntryUnitPrice(addOn, { id: b.venueId });
           quantity = addOn.quantity;
           amount = unitPrice * quantity;
         } else if (addOn.id === 'hotpot-standard') {
-          unitPrice = 168;
+          unitPrice = addOnEntryUnitPrice(addOn, { id: b.venueId });
           quantity = heads;
           amount = Math.round(unitPrice * heads);
         } else if (addOn.id === 'hotpot-seafood') {
-          unitPrice = 348;
+          unitPrice = addOnEntryUnitPrice(addOn, { id: b.venueId });
           quantity = heads;
           amount = Math.round(unitPrice * heads);
         } else if (addOn.id === 'hotpot-extra-soup') {
-          unitPrice = HOTPOT_EXTRA_SOUP_PRICE;
+          unitPrice = addOnEntryUnitPrice(addOn, { id: b.venueId });
           quantity = addOn.quantity;
           amount = unitPrice * quantity;
         } else if (addOn.id === 'drinks') {

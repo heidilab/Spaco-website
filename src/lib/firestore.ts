@@ -19,7 +19,8 @@ import { adminApiFetch } from './adminApiFetch';
 import { BookingRecord, BlockedSlot, BusinessDocument, DocumentType, DocumentRevision, CalendarEvent, AddOnOptions, PromoCode } from '@/types';
 import { venuesSharingSpace, getVenueById } from './venues';
 import { loadAllVenues, conflictIdsFor } from './venueRegistry';
-import { calculatePricing, calculateDeposit, fixedRentOf, freeDrinksVenues } from './pricing';
+import { calculatePricing, calculateDeposit, fixedRentOf, freeDrinksVenues, stampAddOnPrices,
+} from './pricing';
 import { getPeakDay } from './peakDays';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { resolvePeakRule } from './peakDayRules';
@@ -496,7 +497,23 @@ export async function updateBookingDateTime(
       const children = typeof next.childCount === 'number'
         ? next.childCount
         : (booking.childCount ?? 0);
-      const addOns = next.addOns ?? booking.addOns ?? [];
+      // Add-ons keep the unit price they were sold at; anything new gets
+      // today's (AddOnOptions.unitPrice). A move to another venue re-prices
+      // at that venue.
+      const incomingAddOns = next.addOns ?? booking.addOns ?? [];
+      const addOns = stampAddOnPrices(
+        venueChanged
+          ? incomingAddOns.map((a) => {
+              if (typeof a.options?.unitPrice !== 'number') return a;
+              const options = { ...a.options };
+              delete options.unitPrice;
+              return { ...a, options };
+            })
+          : incomingAddOns,
+        venueForPricing,
+        venueChanged ? null : booking.addOns,
+      );
+      if (next.addOns) patch.addOns = addOns;
       const peakRule = resolvePeakRule(await getPeakDay(next.date), targetVenueId);
       if (peakRule?.forceWeekendRate && !isWeekend) {
         isWeekend = true;

@@ -18,8 +18,9 @@ import {
   SHISHA_STAFF_SETUP_FEE,
   getShishaFlavorLabel,
   freeDrinksVenues,
-  calcShishaPrice,
+  calcShishaPrice, stampAddOnPrices,
 } from '@/lib/pricing';
+import { useAddOnConfig } from '@/lib/addOnConfigClient';
 import { ALL_PACKAGES, getPackageBySlug, CATEGORY_LABEL } from '@/lib/packages';
 import { createBookingDraft, buildClaimUrl } from '@/lib/bookingDrafts';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
@@ -136,6 +137,9 @@ export default function AdminNewBookingPage() {
   // `isCommercial` so later edits keep the typed rent instead of
   // re-deriving it from the per-head formula.
   const [isCommercial, setIsCommercial] = useState(false);
+  // 附加服務管理 settings — activates staff-set add-on prices; the
+  // component re-renders once they are loaded.
+  useAddOnConfig();
   const [commercialRent, setCommercialRent] = useState('');
   const [commercialDeposit, setCommercialDeposit] = useState('');
   const commercialRentNum = Math.max(0, parseFloat(commercialRent) || 0);
@@ -547,7 +551,7 @@ export default function AdminNewBookingPage() {
           adultCount,
           childCount,
           isWeekend,
-          addOns: isAirbnb ? [] : selectedAddOnList,
+          addOns: isAirbnb ? [] : (packageSlug ? selectedAddOnList : stampAddOnPrices(selectedAddOnList, venue)),
           hasBYOFood,
           ...(peakOverride !== null && !isAirbnb ? { peakSurchargeOverride: peakOverride } : {}),
           pricing: isAirbnb
@@ -609,7 +613,8 @@ export default function AdminNewBookingPage() {
         adultCount,
         childCount,
         isWeekend,
-        addOns: selectedAddOnList,
+        // Sold at today's prices — kept if prices change before the claim.
+        addOns: packageSlug ? selectedAddOnList : stampAddOnPrices(selectedAddOnList, venue),
         hasBYOFood,
         ...(peakOverride !== null ? { peakSurchargeOverride: peakOverride } : {}),
         pricing: {

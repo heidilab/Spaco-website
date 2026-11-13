@@ -102,6 +102,12 @@ export interface AddOnOptions {
    *  Set by staff only; customer requests have it stripped
    *  (bookingSecurity.validateAddOns, the modify route). */
   pax?: number;
+  /** Unit price this add-on was SOLD at (per person / item / hour),
+   *  stamped when the booking is priced (pricing.stampAddOnPrices). Staff
+   *  can change add-on prices in 附加服務管理; a booking keeps the price it
+   *  was made at, and month close keeps putting it in the right column.
+   *  Never accepted from a customer request. */
+  unitPrice?: number;
   /** How many shisha pipes (1 or 2). Constrained by venue (max 2). */
   pipes?: number;
   /** Flavor variant ids picked, one per head (so length === quantity). */

@@ -3,8 +3,8 @@
 // functions: caller fetches the data, this file does the math.
 
 import type { BookingRecord, MarketingChannel, Venue } from '@/types';
-import { addOns as ADDON_CATALOG, addOnPartialPax, bbqStandardPriceByVenue, calcShishaPrice, calcCateringTotal, earlySetupPriceByVenue } from './pricing';
-import { HOTPOT_EXTRA_SOUP_PRICE } from './hotpot';
+import { addOns as ADDON_CATALOG, addOnEntryUnitPrice, addOnPartialPax, calcShishaPrice, calcCateringTotal, earlySetupPriceByVenue } from './pricing';
+
 import { venues } from './venues';
 import { salesBranchKey, salesBranches } from './bonusBranches';
 
@@ -167,25 +167,22 @@ export function addOnRevenueForBooking(
   }
 
   switch (addOnId) {
-    case 'bbq-standard': {
-      const price = bbqStandardPriceByVenue[booking.venueId] || 158;
-      return Math.round(price * equiv);
-    }
+    // Unit prices: the one stamped on the entry when it was sold, else
+    // today's (pricing.addOnEntryUnitPrice) — a later price change in
+    // 附加服務管理 must not move an old booking between columns.
+    case 'bbq-standard':
     case 'bbq-premium':
-      return Math.round(328 * equiv);
+    case 'hotpot-standard':
+    case 'hotpot-seafood':
+    case 'drinks':
+      return Math.round(addOnEntryUnitPrice(entry, { id: booking.venueId }) * equiv);
     case 'bbq-grill': {
       // Grill is waived if a BBQ package is also booked.
       const hasPkg = booking.addOns?.some((a) => a.id === 'bbq-standard' || a.id === 'bbq-premium');
-      return hasPkg ? 0 : 500 * entry.quantity;
+      return hasPkg ? 0 : addOnEntryUnitPrice(entry, { id: booking.venueId }) * entry.quantity;
     }
-    case 'hotpot-standard':
-      return Math.round(168 * equiv);
-    case 'hotpot-seafood':
-      return Math.round(348 * equiv);
     case 'hotpot-extra-soup':
-      return HOTPOT_EXTRA_SOUP_PRICE * entry.quantity;
-    case 'drinks':
-      return Math.round(25 * equiv);
+      return addOnEntryUnitPrice(entry, { id: booking.venueId }) * entry.quantity;
     case 'shisha': {
       const heads = entry.quantity;
       const pipes = entry.options?.pipes ?? Math.min(2, heads);

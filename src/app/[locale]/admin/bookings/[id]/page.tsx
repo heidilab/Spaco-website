@@ -47,7 +47,9 @@ import {
   PARTIAL_PAX_ADDON_IDS,
   addOnPartialPax,
   fixedRentOf,
+  addOnUnitPrice,
 } from '@/lib/pricing';
+import { useAddOnConfig } from '@/lib/addOnConfigClient';
 import { depositSettlementAmounts, amountOwed, paidBase, isSettlementOverflow, computeGrandTotal, netConsumption, discountedSubtotal, computeBalanceDue, adminDiscountAmount } from '@/lib/bookingMoney';
 
 /**
@@ -167,6 +169,9 @@ export default function AdminBookingDetailPage() {
   // recompute in lib/firestore.ts so the booking's subtotal /
   // securityDeposit / balanceDue all reflect the change.
   const [addOnQty, setAddOnQty] = useState<Record<string, number>>({});
+  // 附加服務管理 settings — activates staff-set add-on prices; the
+  // component re-renders once they are loaded.
+  useAddOnConfig();
   // Per-person food packages (BBQ / hotpot) can be charged for only part
   // of the group: the head count typed per add-on id, '' = everyone.
   // Stored as `options.pax` on the add-on entry (Heidi 2026-11-13 — staff
@@ -177,10 +182,19 @@ export default function AdminBookingDetailPage() {
     const n = Number(addOnPax[id]);
     return (PARTIAL_PAX_ADDON_IDS as readonly string[]).includes(id) && Number.isFinite(n) && n > 0 ? n : 0;
   };
-  /** A plain add-on entry, with its partial head count when one is set. */
+  /** A plain add-on entry, with its partial head count when one is set
+   *  and the unit price it was sold at (so the preview shows what the
+   *  save will keep; a venue change re-prices). */
   const paxEntry = (id: string, quantity: number) => {
     const pax = partialPaxOf(id);
-    return pax > 0 ? { id, quantity, options: { pax } } : { id, quantity };
+    const stored = booking && venueId === booking.venueId
+      ? booking.addOns?.find((a) => a.id === id)?.options?.unitPrice
+      : undefined;
+    const options = {
+      ...(pax > 0 ? { pax } : {}),
+      ...(typeof stored === 'number' ? { unitPrice: stored } : {}),
+    };
+    return Object.keys(options).length > 0 ? { id, quantity, options } : { id, quantity };
   };
   // Admin-defined custom add-ons (name + price). Each entry has a
   // unique `id` of the form `custom-<timestamp>` so the booking can
@@ -1793,8 +1807,8 @@ export default function AdminBookingDetailPage() {
                               {cfg.id === 'shisha' && enabled
                                 ? `$${calcShishaPrice(shishaOptions.pipes, qty, shishaOptions.staffSetup).toLocaleString()}`
                                 : cfg.id === 'early-setup'
-                                  ? `$${(earlySetupPriceByVenue[venueId] || 500).toLocaleString()}/小時`
-                                  : `$${cfg.pricePerUnit}${isPerHead ? '/位' : ''}`}
+                                  ? `$${addOnUnitPrice('early-setup', venue).toLocaleString()}/小時`
+                                  : `$${addOnUnitPrice(cfg.id, venue)}${isPerHead ? '/位' : ''}`}
                             </span>
                           </div>
                           {enabled && isPerHead && !(PARTIAL_PAX_ADDON_IDS as readonly string[]).includes(cfg.id) && (

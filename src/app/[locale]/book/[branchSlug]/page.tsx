@@ -5,9 +5,10 @@ import { Link } from '@/i18n/routing';
 import { useParams } from 'next/navigation';
 import { useState, useMemo, useEffect } from 'react';
 import { getVenueBySlug } from '@/lib/venues';
-import { addOns, calculatePricing, noBBQVenues, freeDrinksVenues, bbqStandardPriceByVenue, bbqStandardMenu, bbqPremiumMenu, hotpotStandardMenu, hotpotSeafoodMenu, calcShishaPrice, SHISHA_STAFF_SETUP_FEE, SHISHA_MAX_PIPES, earlySetupPriceByVenue, subtractHours } from '@/lib/pricing';
+import { addOns, calculatePricing, noBBQVenues, freeDrinksVenues, addOnUnitPrice, addOnAvailableAt, addOnMenu, calcShishaPrice, SHISHA_STAFF_SETUP_FEE, SHISHA_MAX_PIPES, subtractHours } from '@/lib/pricing';
+import { useAddOnConfig } from '@/lib/addOnConfigClient';
 import {
-  HOTPOT_EXTRA_SOUP_ID, HOTPOT_EXTRA_SOUP_PRICE, HOTPOT_MIN_ADVANCE_DAYS, HOTPOT_TWO_SOUP_MIN_EQUIV,
+  HOTPOT_EXTRA_SOUP_ID, HOTPOT_MIN_ADVANCE_DAYS, HOTPOT_TWO_SOUP_MIN_EQUIV,
   hotpotPackageEntry, hotpotSelectionError, hotpotSoupSlots, isHotpotAddOn, isHotpotPackage,
   normalizeHotpotAddOns, withHotpotSoups,
 } from '@/lib/hotpot';
@@ -38,8 +39,8 @@ import { useRouter } from '@/i18n/routing';
 
 /** The two hotpot packages — one card each on the booking form. */
 const HOTPOT_PACKAGE_CARDS = [
-  { id: 'hotpot-standard', title: { zh: '火鍋標準套餐', en: 'Hotpot Standard' }, price: 168, menu: hotpotStandardMenu },
-  { id: 'hotpot-seafood',  title: { zh: '海鮮火鍋套餐', en: 'Seafood Hotpot' },  price: 348, menu: hotpotSeafoodMenu },
+  { id: 'hotpot-standard', title: { zh: '火鍋標準套餐', en: 'Hotpot Standard' } },
+  { id: 'hotpot-seafood',  title: { zh: '海鮮火鍋套餐', en: 'Seafood Hotpot' } },
 ];
 
 /** Venue-resolution wrapper — resolves the venue (static instantly,
@@ -75,6 +76,9 @@ export default function BookingPage() {
 function BookingPageInner({ venue }: { venue: Venue }) {
   const params = useParams();
   const locale = useLocale() as 'zh' | 'en';
+  // 附加服務管理 settings: which add-ons are offered here, at what price,
+  // with which menu. Re-renders once loaded.
+  const addOnCfgVersion = useAddOnConfig();
   const t = useTranslations('booking');
   const { user } = useAuth();
   const router = useRouter();
@@ -290,7 +294,8 @@ function BookingPageInner({ venue }: { venue: Venue }) {
   // Pricing calculation
   const pricing = useMemo(() => {
     return calculatePricing(venue, isWeekend, Math.max(hours, minHours), guestCount, selectedAddOns, childCount, peakRule?.surchargePerHead || 0);
-  }, [venue, isWeekend, hours, minHours, guestCount, childCount, selectedAddOns, peakRule]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [venue, isWeekend, hours, minHours, guestCount, childCount, selectedAddOns, peakRule, addOnCfgVersion]);
 
   // Add-on toggle
   const toggleAddOn = (id: string) => {
@@ -582,10 +587,9 @@ function BookingPageInner({ venue }: { venue: Venue }) {
     if (a.id === 'catering') return false;
     // Hide BBQ packages for venues without BBQ (incl. the new BBQ
     // helper chef — chef is only useful where BBQ is allowed).
-    if ((a.id === 'bbq-standard' || a.id === 'bbq-premium' || a.id === 'bbq-grill' || a.id === 'bbq-helper') && (venue.bbqAvailable === false || (venue.bbqAvailable === undefined && noBBQVenues.includes(venue.id)))) return false;
-    // Hide drinks for venues with free drinks
-    if (a.id === 'drinks' && (venue.drinksIncluded ?? freeDrinksVenues.includes(venue.id))) return false;
-    return true;
+    // (addOnAvailableAt: staff settings from 附加服務管理 — switched off or
+    // limited to other branches — then the built-in venue rules.)
+    return addOnAvailableAt(a.id, venue);
   });
 
   // ── 美食到會 state ──
@@ -902,7 +906,7 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                 {visibleAddOns.some((a) => a.id === 'bbq-standard') && (() => {
                   const isSelected = selectedAddOns.some((a) => a.id === 'bbq-standard');
                   const isExpanded = expandedMenu === 'bbq-standard';
-                  const price = bbqStandardPriceByVenue[venue.id] || 158;
+                  const price = addOnUnitPrice('bbq-standard', venue);
                   return (
                     <div className={`rounded-2xl border transition-all ${isSelected ? 'border-accent bg-accent/5' : 'border-charcoal/5'}`}>
                       <div className="flex items-center justify-between p-5">
@@ -922,12 +926,12 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                       {isExpanded && (
                         <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="px-5 pb-5 border-t border-charcoal/5">
                           <div className="pt-4 grid grid-cols-2 gap-x-4 gap-y-1">
-                            {bbqStandardMenu[locale].map((item, i) => (
+                            {addOnMenu('bbq-standard')![locale].map((item, i) => (
                               <p key={i} className="text-sm text-charcoal/70">• {item}</p>
                             ))}
                           </div>
                           <div className="mt-4 space-y-1">
-                            {bbqStandardMenu.notes[locale].map((note, i) => (
+                            {addOnMenu('bbq-standard')!.notes[locale].map((note, i) => (
                               <p key={i} className="text-[11px] text-muted">《{note}》</p>
                             ))}
                           </div>
@@ -946,7 +950,7 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                       <div className="flex items-center justify-between p-5">
                         <div className="flex-1" onClick={() => toggleAddOn('bbq-premium')} role="button">
                           <p className="font-semibold">{locale === 'zh' ? 'BBQ 豪華套餐（海鮮、肉類、丸及蔬菜）' : 'BBQ Premium (Seafood, Meat & Veggies)'}</p>
-                          <p className="text-sm text-muted mt-1">{locale === 'zh' ? '統一每位 +$328' : '$328/pax'}</p>
+                          <p className="text-sm text-muted mt-1">{locale === 'zh' ? `統一每位 +$${addOnUnitPrice('bbq-premium', venue)}` : `$${addOnUnitPrice('bbq-premium', venue)}/pax`}</p>
                         </div>
                         <div className="flex items-center gap-3">
                           <button onClick={() => setExpandedMenu(isExpanded ? null : 'bbq-premium')} className="text-xs text-accent hover:underline">
@@ -960,12 +964,12 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                       {isExpanded && (
                         <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="px-5 pb-5 border-t border-charcoal/5">
                           <div className="pt-4 grid grid-cols-2 gap-x-4 gap-y-1">
-                            {bbqPremiumMenu[locale].map((item, i) => (
+                            {addOnMenu('bbq-premium')![locale].map((item, i) => (
                               <p key={i} className="text-sm text-charcoal/70">• {item}</p>
                             ))}
                           </div>
                           <div className="mt-4 space-y-1">
-                            {bbqPremiumMenu.notes[locale].map((note, i) => (
+                            {addOnMenu('bbq-premium')!.notes[locale].map((note, i) => (
                               <p key={i} className="text-[11px] text-muted">《{note}》</p>
                             ))}
                           </div>
@@ -981,7 +985,9 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                  *  ½) = one of the three soups, +$108 for an extra one; 15 or
                  *  more = two included, and the two may be the same soup.
                  *  Needs 3 days' notice — a closer date locks the cards. */}
-                {HOTPOT_PACKAGE_CARDS.map((card) => {
+                {HOTPOT_PACKAGE_CARDS.filter((c) => addOnAvailableAt(c.id, venue)).map((c) => {
+                  // Price and menu as set in 附加服務管理 (else the built-in ones).
+                  const card = { ...c, price: addOnUnitPrice(c.id, venue), menu: addOnMenu(c.id)! };
                   const isSelected = selectedAddOns.some((a) => a.id === card.id);
                   const isExpanded = expandedMenu === card.id;
                   const hotpotLocked = tooSoonForHotpot && !!selectedDate;
@@ -1039,8 +1045,8 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                                   ? '已加購額外湯底：請揀兩個湯底（可以揀兩個一樣）'
                                   : 'Extra soup base added: pick two soup bases (they can be the same)')
                                 : (locale === 'zh'
-                                  ? `計價人數 ${HOTPOT_TWO_SOUP_MIN_EQUIV} 位以下（小童計 ½，你而家係 ${adultEquiv} 位）：湯底三選一。想要多一個湯底可以加購，每個 +$${HOTPOT_EXTRA_SOUP_PRICE}`
-                                  : `Under ${HOTPOT_TWO_SOUP_MIN_EQUIV} charged guests (kids count ½ — you have ${adultEquiv}): choose one of three. An extra soup base is +$${HOTPOT_EXTRA_SOUP_PRICE} each`)}
+                                  ? `計價人數 ${HOTPOT_TWO_SOUP_MIN_EQUIV} 位以下（小童計 ½，你而家係 ${adultEquiv} 位）：湯底三選一。想要多一個湯底可以加購，每個 +$${addOnUnitPrice(HOTPOT_EXTRA_SOUP_ID, venue)}`
+                                  : `Under ${HOTPOT_TWO_SOUP_MIN_EQUIV} charged guests (kids count ½ — you have ${adultEquiv}): choose one of three. An extra soup base is +$${addOnUnitPrice(HOTPOT_EXTRA_SOUP_ID, venue)} each`)}
                           </p>
                           <HotpotSoupPicker
                             slots={hotpotSlots}
@@ -1058,8 +1064,8 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                               />
                               <span className="text-sm">
                                 {locale === 'zh'
-                                  ? `加購額外湯底 (+$${HOTPOT_EXTRA_SOUP_PRICE})`
-                                  : `Add extra soup base (+$${HOTPOT_EXTRA_SOUP_PRICE})`}
+                                  ? `加購額外湯底 (+$${addOnUnitPrice(HOTPOT_EXTRA_SOUP_ID, venue)})`
+                                  : `Add extra soup base (+$${addOnUnitPrice(HOTPOT_EXTRA_SOUP_ID, venue)})`}
                               </span>
                             </label>
                           )}
@@ -1136,7 +1142,7 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                  *  hours. Hidden at noBBQ venues (灣仔). Quantity 0-6.
                  *  Min 5hr + ≥ 7 days advance enforced; violations show
                  *  a red hint that blocks Proceed via canProceed. */}
-                {!(venue.bbqAvailable === false || (venue.bbqAvailable === undefined && noBBQVenues.includes(venue.id))) && (
+                {addOnAvailableAt('bbq-helper', venue) && (
                   <div className={`p-5 rounded-2xl border transition-all ${
                     bbqHelperQty > 0 ? 'border-pink bg-pink/5' : 'border-charcoal/5'
                   }`}>
@@ -1145,8 +1151,8 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                         <p className="font-semibold">{locale === 'zh' ? '代燒員' : 'BBQ Helper Chef'}</p>
                         <p className="text-sm text-muted mt-1">
                           {locale === 'zh'
-                            ? '每位 $300/小時 × 訂場時數；最少訂 5 小時、需提前最少 7 日'
-                            : '$300/hr per chef × booked hours; min 5-hr booking, ≥ 7 days advance'}
+                            ? `每位 $${addOnUnitPrice('bbq-helper', venue)}/小時 × 訂場時數；最少訂 5 小時、需提前最少 7 日`
+                            : `$${addOnUnitPrice('bbq-helper', venue)}/hr per chef × booked hours; min 5-hr booking, ≥ 7 days advance`}
                         </p>
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
@@ -1214,7 +1220,7 @@ function BookingPageInner({ venue }: { venue: Venue }) {
 
                 {/* 美食到會 — opens CateringPickerModal. Available at
                  *  every venue. Shows summary when selection exists. */}
-                <div className={`p-5 rounded-2xl border transition-all ${
+                <div className={`${addOnAvailableAt('catering', venue) ? '' : 'hidden '}p-5 rounded-2xl border transition-all ${
                   cateringAddOn ? 'border-pink bg-pink/5' : 'border-charcoal/5'
                 }`}>
                   <div className="flex items-start justify-between gap-3">
@@ -1267,7 +1273,7 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                           <p className="text-sm text-muted mt-1">{addOn.description?.[locale]}</p>
                         </div>
                         <div className="flex items-center gap-3">
-                          <span className="font-bold">+HK${addOn.pricePerUnit}/{locale === 'zh' ? '位' : 'pax'}</span>
+                          <span className="font-bold">+HK${addOnUnitPrice(addOn.id, venue)}/{locale === 'zh' ? '位' : 'pax'}</span>
                           <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${
                             isSelected ? 'border-accent bg-accent' : 'border-charcoal/20'
                           }`}>
@@ -1289,14 +1295,14 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                 )}
 
                 {/* Early setup access (提早入場佈置) — hours stepper */}
-                <div className={`p-5 rounded-2xl border ${earlySetupQty > 0 ? 'border-accent bg-accent/5' : 'border-charcoal/5'}`}>
+                <div className={`${addOnAvailableAt('early-setup', venue) ? '' : 'hidden '}p-5 rounded-2xl border ${earlySetupQty > 0 ? 'border-accent bg-accent/5' : 'border-charcoal/5'}`}>
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="font-semibold">{locale === 'zh' ? '提早入場佈置' : 'Early Setup Access'}</p>
                       <p className="text-sm text-muted mt-1">
                         {locale === 'zh'
-                          ? `提早開場俾你佈置場地，每小時 +HK$${venue.earlySetupPricePerHour ?? earlySetupPriceByVenue[venue.id] ?? 500}，最多 3 小時。佈置時段會鎖埋喺你嘅預訂入面。`
-                          : `Get in early to decorate — +HK$${venue.earlySetupPricePerHour ?? earlySetupPriceByVenue[venue.id] ?? 500}/hr, max 3 hrs. The setup window is reserved with your booking.`}
+                          ? `提早開場俾你佈置場地，每小時 +HK$${addOnUnitPrice('early-setup', venue)}，最多 3 小時。佈置時段會鎖埋喺你嘅預訂入面。`
+                          : `Get in early to decorate — +HK$${addOnUnitPrice('early-setup', venue)}/hr, max 3 hrs. The setup window is reserved with your booking.`}
                       </p>
                       {earlySetupQty > 0 && (
                         <p className="text-xs text-amber-700 mt-2">
@@ -1323,7 +1329,7 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                 </div>
 
                 {/* Shisha Package — pipes + heads + per-head flavor selection */}
-                {shishaCatalogEntry && (
+                {shishaCatalogEntry && addOnAvailableAt('shisha', venue) && (
                   <div className={`p-5 rounded-2xl border ${shishaHeads > 0 ? 'border-accent bg-accent/5' : 'border-charcoal/5'}`}>
                     <div className="mb-4">
                       <p className="font-semibold">{shishaCatalogEntry.name[locale]}</p>

@@ -48,7 +48,7 @@ export function validateAddOns(value: unknown, packageSlug?: string): BookingRec
     // a staff concession. A customer who could send it would pay for 1
     // guest's BBQ instead of everyone's — drop it from customer requests.
     const options = a.options && typeof a.options === 'object' ? { ...(a.options as AddOnOptions) } : undefined;
-    if (options) delete options.pax;
+    if (options) { delete options.pax; delete options.unitPrice; }
     return { id: a.id, quantity, ...(options ? { options } : {}) };
   });
 }

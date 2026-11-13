@@ -9,8 +9,9 @@ import { getVenueByIdServer, venuesSharingSpaceServer } from '@/lib/venueRegistr
 import {
   calculatePricing, calculateDeposit, freeDrinksVenues, subtractHours,
   earlySetupPriceByVenue, calcCateringTotal,
-  fixedRentOf,
+  fixedRentOf, stampAddOnPrices,
 } from '@/lib/pricing';
+import { loadAddOnConfigServer } from '@/lib/addOnConfigServer';
 import { calcPromoDiscount } from '@/lib/promoCodes';
 import { computeGrandTotal, computeBalanceDue, paidBase } from '@/lib/bookingMoney';
 import {
@@ -89,6 +90,7 @@ export async function POST(
   }
 
   const body = await req.json().catch(() => ({}));
+  await loadAddOnConfigServer(); // 附加服務管理 prices
 
   const bookingRef = adminDb.collection('bookings').doc(id);
   const snap = await bookingRef.get();
@@ -154,6 +156,7 @@ export async function POST(
         const id = String(a.id);
         const clientOptions = { ...(a.options || {}) } as NonNullable<CartEntry['options']>;
         delete clientOptions.pax;
+        delete clientOptions.unitPrice; // re-stamped below from the stored booking / today's price
         const pax = storedPax.get(id);
         const options = { ...clientOptions, ...(typeof pax === 'number' && pax > 0 ? { pax } : {}) };
         return {
@@ -181,9 +184,15 @@ export async function POST(
   // Only real soup ids are stored, never more than the pots allowed.
   const soupSlots = hotpotSoupSlots(newAdultEquiv, offsetAddOns);
   const soupPicks = hotpotSoupBases(offsetAddOns);
-  const reqAddOns: CartEntry[] = soupPicks.length > soupSlots
+  const soupedAddOns: CartEntry[] = soupPicks.length > soupSlots
     ? withHotpotSoups(offsetAddOns, soupPicks.slice(0, soupSlots))
     : offsetAddOns;
+  // What is already booked keeps its price; anything added now is sold at
+  // today's (AddOnOptions.unitPrice). Package add-ons are priced by the
+  // package, not the catalog.
+  const reqAddOns: CartEntry[] = booking.packageSlug
+    ? soupedAddOns
+    : stampAddOnPrices(soupedAddOns, venue, booking.addOns);
   // Newly ADDING a hotpot package (or an extra soup base) must come with
   // a complete soup choice; a package booked earlier without one is left
   // for CS to follow up rather than blocking an unrelated change.

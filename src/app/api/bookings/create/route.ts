@@ -7,7 +7,10 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { adminVerifyIdToken } from '@/lib/adminAuth';
 import { getVenueById } from '@/lib/venues';
 import { getVenueByIdServer, venuesSharingSpaceServer } from '@/lib/venueRegistryServer';
-import { calculatePricing, calculateDeposit, adultEquivalent, freeDrinksVenues, subtractHours } from '@/lib/pricing';
+import { calculatePricing, calculateDeposit, adultEquivalent, freeDrinksVenues, subtractHours, stampAddOnPrices,
+} from '@/lib/pricing';
+import { loadAddOnConfigServer } from '@/lib/addOnConfigServer';
+import { addOnBlockedBySettings } from '@/lib/addOnConfig';
 import { calcPromoDiscount } from '@/lib/promoCodes';
 import { getHoliday } from '@/lib/hkHolidays';
 import { BookingInputError, bookingInterval, finiteNumber, pricePackage, validateAddOns, sanitizeAdminDiscount } from '@/lib/bookingSecurity';
@@ -74,6 +77,8 @@ const toMin = (t: string) => {
 export async function POST(req: NextRequest) {
   try {
   const submitted = await req.json();
+  // 附加服務管理 settings — same prices and availability the customer saw.
+  await loadAddOnConfigServer();
   const authHeader = req.headers.get('authorization') || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
   if (!token) return NextResponse.json({ error: 'missing-token' }, { status: 401 });
@@ -135,9 +140,20 @@ export async function POST(req: NextRequest) {
   // days' notice. CS links (drafts) are exempt — staff may issue one
   // before the customer has decided, or closer to the date by arrangement.
   const hotpotEquiv = adultEquivalent(adultCount, childCount);
-  const addOns = draftId
+  const requestedAddOns = draftId
     ? (rest.addOns || [])
     : normalizeHotpotAddOns(finalizeHotpotAddOns(validateAddOns(rest.addOns || [], rest.packageSlug)), hotpotEquiv);
+  // Each add-on keeps the unit price it is sold at (AddOnOptions.unitPrice)
+  // so a later price change in 附加服務管理 does not re-price this booking.
+  // Package add-ons are priced by the package, not the catalog.
+  // Customer self-bookings cannot include an add-on staff have switched
+  // off or limited to other branches (the form hides it; this stops a
+  // hand-built request). CS links are staff decisions and are exempt.
+  if (!draftId && !rest.packageSlug) {
+    const blocked = requestedAddOns.find((a: { id: string }) => addOnBlockedBySettings(a.id, venue.id));
+    if (blocked) return NextResponse.json({ error: 'ADDON_UNAVAILABLE', addOnId: blocked.id }, { status: 400 });
+  }
+  const addOns = rest.packageSlug ? requestedAddOns : stampAddOnPrices(requestedAddOns, venue);
   if (!draftId && !rest.packageSlug) {
     const hotpotError = hotpotSelectionError(addOns, hotpotEquiv);
     if (hotpotError) throw new BookingInputError(hotpotError);

@@ -1,4 +1,5 @@
 import { Venue, AddOn, AddOnOptions } from '@/types';
+import { PRICE_EDITABLE_ADDON_IDS, configuredAddOnPrice, getAddOnConfig, type AddOnConfig } from './addOnConfig';
 import {
   CATERING_ITEMS,
   CATERING_TIERS,
@@ -258,6 +259,92 @@ export function getShishaFlavorLabel(variantId: string, locale: 'zh' | 'en' = 'e
  *  e.g. "BBQ Standard Package ×4, Drinks Package ×4". For Shisha, also
  *  surface pipe count + flavor breakdown + setup option:
  *  "Shisha 水煙 (2支/3頭: A·芒果菠蘿×2, C·提子×1, +人手setup)". */
+// ── 附加服務管理: prices, availability and menus staff can change ──
+// (settings in lib/addOnConfig; empty settings = the catalog as coded)
+
+type PriceVenue = Pick<Venue, 'id'> & Partial<Pick<Venue, 'bbqStandardPrice' | 'earlySetupPricePerHour' | 'bbqAvailable' | 'drinksIncluded'>>;
+
+/** The unit price coded for an add-on, before any staff setting. */
+export function builtInAddOnPrice(id: string, venue?: PriceVenue | null): number {
+  if (id === 'bbq-standard') return venue?.bbqStandardPrice ?? bbqStandardPriceByVenue[venue?.id || ''] ?? 158;
+  if (id === 'early-setup') return venue?.earlySetupPricePerHour ?? earlySetupPriceByVenue[venue?.id || ''] ?? 500;
+  if (id === 'hotpot-extra-soup') return HOTPOT_EXTRA_SOUP_PRICE;
+  return addOns.find((a) => a.id === id)?.pricePerUnit ?? 0;
+}
+
+/** Today's unit price of an add-on at a venue (per person / item / hour):
+ *  the staff setting when there is one, else the built-in price. */
+export function addOnUnitPrice(id: string, venue?: PriceVenue | null, config: AddOnConfig = getAddOnConfig()): number {
+  return configuredAddOnPrice(id, venue?.id, config) ?? builtInAddOnPrice(id, venue);
+}
+
+/** The unit price to charge for an add-on ENTRY: the price stamped on it
+ *  when it was sold, else today's. A booking made at $158 stays at $158
+ *  after staff raise the price. */
+export function addOnEntryUnitPrice(
+  entry: { id: string; options?: AddOnOptions } | undefined,
+  venue?: PriceVenue | null,
+): number {
+  const stamped = entry?.options?.unitPrice;
+  if (typeof stamped === 'number' && Number.isFinite(stamped) && stamped >= 0) return stamped;
+  return addOnUnitPrice(entry?.id || '', venue);
+}
+
+/** Stamp today's unit price on entries that carry none (see
+ *  AddOnOptions.unitPrice). `keepFrom` is the booking's stored add-ons:
+ *  an entry rebuilt by a form keeps the price it already had. */
+export function stampAddOnPrices<T extends { id: string; quantity: number; options?: AddOnOptions }>(
+  entries: readonly T[],
+  venue: PriceVenue | null | undefined,
+  keepFrom?: readonly { id: string; options?: AddOnOptions }[] | null,
+): T[] {
+  return entries.map((entry) => {
+    if (!(PRICE_EDITABLE_ADDON_IDS as readonly string[]).includes(entry.id)) return entry;
+    if (typeof entry.options?.unitPrice === 'number') return entry;
+    const kept = keepFrom?.find((a) => a.id === entry.id)?.options?.unitPrice;
+    const unitPrice = typeof kept === 'number' ? kept : addOnUnitPrice(entry.id, venue);
+    return { ...entry, options: { ...(entry.options || {}), unitPrice } };
+  });
+}
+
+/** Can a CUSTOMER pick this add-on at this venue? Staff settings first
+ *  (switched off / limited to listed venues), then the built-in rules:
+ *  no BBQ where there is no BBQ area, no paid drinks where drinks are
+ *  included. A venue list set by staff replaces the built-in rule. */
+export function addOnAvailableAt(id: string, venue: PriceVenue): boolean {
+  const setting = getAddOnConfig()[id];
+  if (setting?.enabled === false) return false;
+  if (Array.isArray(setting?.venueIds)) return setting.venueIds.includes(venue.id);
+  if (id.startsWith('bbq-')) return venue.bbqAvailable ?? !noBBQVenues.includes(venue.id);
+  if (id === 'drinks') return !(venue.drinksIncluded ?? freeDrinksVenues.includes(venue.id));
+  return true;
+}
+
+/** The menu customers see for a package: staff-edited when set, else the
+ *  built-in one. Null for add-ons without a menu. */
+export function addOnMenu(id: string): { zh: string[]; en: string[]; notes: { zh: string[]; en: string[] } } | null {
+  const custom = getAddOnConfig()[id]?.menu;
+  if (custom && custom.zh.length > 0) {
+    return {
+      zh: custom.zh,
+      en: custom.en.length > 0 ? custom.en : custom.zh,
+      notes: { zh: custom.notesZh, en: custom.notesEn.length > 0 ? custom.notesEn : custom.notesZh },
+    };
+  }
+  return builtInAddOnMenu(id);
+}
+
+/** The menu coded for a package, before any staff edit. */
+export function builtInAddOnMenu(id: string): { zh: string[]; en: string[]; notes: { zh: string[]; en: string[] } } | null {
+  const builtIn: Record<string, { zh: string[]; en: string[]; notes: { zh: string[]; en: string[] } }> = {
+    'bbq-standard': bbqStandardMenu,
+    'bbq-premium': bbqPremiumMenu,
+    'hotpot-standard': hotpotStandardMenu,
+    'hotpot-seafood': hotpotSeafoodMenu,
+  };
+  return builtIn[id] || null;
+}
+
 /** Per-person food packages staff can charge for only part of the group
  *  (Heidi 2026-11-13). Drinks stay whole-group: free-drinks promos and
  *  included-drinks venues are computed off the full head count. */
@@ -614,8 +701,8 @@ export function calculatePricing(
     const headsZh = partPax ? `${partPax}位` : guestLabel;
     const headsEn = partPax ? `${partPax} pax` : guestLabelEn;
     if (selected.id === 'bbq-standard') {
-      // Use venue-specific BBQ standard price.
-      const price = venue.bbqStandardPrice ?? bbqStandardPriceByVenue[venue.id] ?? 158;
+      // Venue-specific price (staff setting, else the venue's own).
+      const price = addOnEntryUnitPrice(selected, venue);
       const cost = Math.round(price * heads);
       addOnTotal += cost;
       breakdown.push({
@@ -629,12 +716,13 @@ export function calculatePricing(
     }
 
     if (selected.id === 'bbq-premium') {
-      const cost = Math.round(328 * heads);
+      const price = addOnEntryUnitPrice(selected, venue);
+      const cost = Math.round(price * heads);
       addOnTotal += cost;
       breakdown.push({
         label: {
-          zh: `BBQ 豪華套餐 (${headsZh} x $328)`,
-          en: `BBQ Premium (${headsEn} x $328)`,
+          zh: `BBQ 豪華套餐 (${headsZh} x $${price})`,
+          en: `BBQ Premium (${headsEn} x $${price})`,
         },
         amount: cost,
       });
@@ -644,12 +732,13 @@ export function calculatePricing(
     if (selected.id === 'bbq-grill') {
       // Skip BBQ grill fee if a BBQ package is selected
       if (hasBBQPackage) continue;
-      const cost = 500 * selected.quantity;
+      const price = addOnEntryUnitPrice(selected, venue);
+      const cost = price * selected.quantity;
       addOnTotal += cost;
       breakdown.push({
         label: {
-          zh: `BBQ 爐租用 (${selected.quantity}個 x $500)`,
-          en: `BBQ Grill Rental (${selected.quantity} x $500)`,
+          zh: `BBQ 爐租用 (${selected.quantity}個 x $${price})`,
+          en: `BBQ Grill Rental (${selected.quantity} x $${price})`,
         },
         amount: cost,
       });
@@ -691,12 +780,13 @@ export function calculatePricing(
       // just multiplies what came in, so an admin-issued booking
       // with shorter hours still prices correctly.
       const numChefs = selected.quantity;
-      const cost = 300 * numChefs * hours;
+      const price = addOnEntryUnitPrice(selected, venue);
+      const cost = price * numChefs * hours;
       addOnTotal += cost;
       breakdown.push({
         label: {
-          zh: `代燒員 (${numChefs} 位 × ${hours} 小時 × $300)`,
-          en: `BBQ Helper Chef (${numChefs} × ${hours} hr × $300)`,
+          zh: `代燒員 (${numChefs} 位 × ${hours} 小時 × $${price})`,
+          en: `BBQ Helper Chef (${numChefs} × ${hours} hr × $${price})`,
         },
         amount: cost,
       });
@@ -704,12 +794,13 @@ export function calculatePricing(
     }
 
     if (selected.id === 'hotpot-standard') {
-      const cost = Math.round(168 * heads);
+      const price = addOnEntryUnitPrice(selected, venue);
+      const cost = Math.round(price * heads);
       addOnTotal += cost;
       breakdown.push({
         label: {
-          zh: `火鍋標準套餐 (${headsZh} x $168)${soupSuffix(selected, 'zh')}`,
-          en: `Hotpot Standard (${headsEn} x $168)${soupSuffix(selected, 'en')}`,
+          zh: `火鍋標準套餐 (${headsZh} x $${price})${soupSuffix(selected, 'zh')}`,
+          en: `Hotpot Standard (${headsEn} x $${price})${soupSuffix(selected, 'en')}`,
         },
         amount: cost,
       });
@@ -717,12 +808,13 @@ export function calculatePricing(
     }
 
     if (selected.id === 'hotpot-seafood') {
-      const cost = Math.round(348 * heads);
+      const price = addOnEntryUnitPrice(selected, venue);
+      const cost = Math.round(price * heads);
       addOnTotal += cost;
       breakdown.push({
         label: {
-          zh: `海鮮火鍋套餐 (${headsZh} x $348)${soupSuffix(selected, 'zh')}`,
-          en: `Seafood Hotpot (${headsEn} x $348)${soupSuffix(selected, 'en')}`,
+          zh: `海鮮火鍋套餐 (${headsZh} x $${price})${soupSuffix(selected, 'zh')}`,
+          en: `Seafood Hotpot (${headsEn} x $${price})${soupSuffix(selected, 'en')}`,
         },
         amount: cost,
       });
@@ -730,12 +822,13 @@ export function calculatePricing(
     }
 
     if (selected.id === 'hotpot-extra-soup') {
-      const cost = HOTPOT_EXTRA_SOUP_PRICE * selected.quantity;
+      const price = addOnEntryUnitPrice(selected, venue);
+      const cost = price * selected.quantity;
       addOnTotal += cost;
       breakdown.push({
         label: {
-          zh: `加購額外湯底 (${selected.quantity}個 x $${HOTPOT_EXTRA_SOUP_PRICE})`,
-          en: `Extra Soup Base (${selected.quantity} x $${HOTPOT_EXTRA_SOUP_PRICE})`,
+          zh: `加購額外湯底 (${selected.quantity}個 x $${price})`,
+          en: `Extra Soup Base (${selected.quantity} x $${price})`,
         },
         amount: cost,
       });
@@ -744,7 +837,7 @@ export function calculatePricing(
 
     if (selected.id === 'early-setup') {
       // Per-hour venue-specific price; quantity = hours of early access.
-      const price = venue.earlySetupPricePerHour ?? earlySetupPriceByVenue[venue.id] ?? 500;
+      const price = addOnEntryUnitPrice(selected, venue);
       const cost = price * selected.quantity;
       addOnTotal += cost;
       breakdown.push({
@@ -760,12 +853,13 @@ export function calculatePricing(
     if (selected.id === 'drinks') {
       // Skip if venue includes free drinks (TST)
       if (venue.drinksIncluded ?? freeDrinksVenues.includes(venue.id)) continue;
-      const cost = Math.round(25 * equiv);
+      const price = addOnEntryUnitPrice(selected, venue);
+      const cost = Math.round(price * equiv);
       addOnTotal += cost;
       breakdown.push({
         label: {
-          zh: `無酒精飲品任飲 (${guestLabel} x $25)`,
-          en: `Unlimited Drinks (${guestLabelEn} x $25)`,
+          zh: `無酒精飲品任飲 (${guestLabel} x $${price})`,
+          en: `Unlimited Drinks (${guestLabelEn} x $${price})`,
         },
         amount: cost,
       });

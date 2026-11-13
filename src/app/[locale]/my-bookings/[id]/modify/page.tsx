@@ -25,10 +25,11 @@ import type { PeakDayConfig } from '@/types';
 import { getVenueById, venuesSharingSpace } from '@/lib/venues';
 import { loadAllVenues, conflictIdsFor } from '@/lib/venueRegistry';
 import {
-  addOns as addOnCatalog, calculatePricing, noBBQVenues, freeDrinksVenues,
+  addOns as addOnCatalog, calculatePricing,
   earlySetupPriceByVenue, calcCateringTotal,
-  fixedRentOf,
+  fixedRentOf, addOnAvailableAt,
 } from '@/lib/pricing';
+import { useAddOnConfig } from '@/lib/addOnConfigClient';
 import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
 import HotpotSoupPicker from '@/components/booking/HotpotSoupPicker';
 import {
@@ -52,6 +53,7 @@ interface CartEntry { id: string; quantity: number; options?: AddOnOptions }
 
 export default function ModifyBookingPage() {
   const locale = useLocale() as 'zh' | 'en';
+  const addOnCfgVersion = useAddOnConfig(); // 附加服務管理 settings
   const params = useParams();
   const router = useRouter();
   const bookingId = params.id as string;
@@ -136,11 +138,13 @@ export default function ModifyBookingPage() {
     return addOnCatalog.filter((a) => {
       if (isPackage) return a.id === 'early-setup' || a.id === 'catering';
       if (a.id === 'shisha') return false; // D2 skip
-      if ((a.id === 'bbq-standard' || a.id === 'bbq-premium' || a.id === 'bbq-grill') && noBBQVenues.includes(venue.id)) return false;
-      if (a.id === 'drinks' && freeDrinksVenues.includes(venue.id)) return false;
-      return true;
+      // Staff settings (switched off / other branches only), then the
+      // built-in venue rules. Something already on the booking stays
+      // listed so it can still be seen and kept.
+      return addOnAvailableAt(a.id, venue) || !!booking?.addOns?.some((x) => x.id === a.id);
     });
-  }, [venue, isPackage]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [venue, isPackage, booking, addOnCfgVersion]);
 
   // Catering picker (package flow) — options-driven, needs the modal.
   const [cateringModalOpen, setCateringModalOpen] = useState(false);
@@ -213,7 +217,8 @@ export default function ModifyBookingPage() {
       booking.peakSurchargeOverride,
       fixedRentOf(booking),
     );
-  }, [venue, booking, cart, newGuestCount, childCount, newHours, peakCfg]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [venue, booking, cart, newGuestCount, childCount, newHours, peakCfg, addOnCfgVersion]);
 
   // Package bookings: diff is ADDITIVE (setup hrs × venue rate) — the
   // per-head calculatePricing result must never touch a flat package

@@ -3,6 +3,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { adminVerifyIdToken } from '@/lib/adminAuth';
 import { calculateDeposit, adultEquivalent, freeDrinksVenues } from '@/lib/pricing';
+import { loadAddOnConfigServer } from '@/lib/addOnConfigServer';
 import { calcPromoDiscount } from '@/lib/promoCodes';
 import { BookingInputError, finiteNumber } from '@/lib/bookingSecurity';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
@@ -18,6 +19,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   try {
     await assertNoSettlementDebt(uid);
     const body = await req.json();
+    await loadAddOnConfigServer(); // 附加服務管理 prices
     const ref = adminDb.collection('bookings').doc(params.id);
     await adminDb.runTransaction(async tx => {
       const snap = await tx.get(ref);
