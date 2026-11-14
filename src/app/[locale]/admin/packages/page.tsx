@@ -81,7 +81,7 @@ function packageOf(d: Draft, sortOrder: number): unknown {
   };
 }
 
-function problemsOf(d: Draft, zh: boolean, venues: Venue[]): string[] {
+function problemsOf(d: Draft, zh: boolean): string[] {
   const out: string[] = [];
   const name = d.nameZh.trim() || d.slug;
   if (!d.nameZh.trim()) out.push(zh ? `${d.slug || '新套餐'}：未填中文名稱` : `${d.slug || 'new'}: Chinese name missing`);
@@ -170,7 +170,7 @@ export default function PackagesAdminPage() {
     if (openSlug === d.slug) setOpenSlug(null);
   }
 
-  const problems = useMemo(() => drafts.flatMap((d) => problemsOf(d, zh, venues)), [drafts, zh, venues]);
+  const problems = useMemo(() => drafts.flatMap((d) => problemsOf(d, zh)), [drafts, zh]);
 
   async function save() {
     if (problems.length > 0) { setMessage({ ok: false, text: problems.join('；') }); return; }
