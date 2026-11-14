@@ -8,7 +8,7 @@ import { signInWithGoogle } from '@/lib/auth';
 import {
   LayoutDashboard, CalendarDays, ListOrdered,
   ChevronLeft, ChevronDown, ChevronUp, Shield, Image, Users, UserCog, Receipt, FileText, HelpCircle, Search, CalendarClock, Mail, Tag, BarChart3,
-  BookOpen, LogIn, Menu, X, Newspaper, Store, Package, KeyRound, Gift,
+  BookOpen, LogIn, Menu, X, Newspaper, Store, Package, KeyRound, Gift, Scale,
 } from 'lucide-react';
 import AdminPushSetup from '@/components/admin/AdminPushSetup';
 import { Wallet, CalendarCheck, Award, Sparkles } from 'lucide-react';
@@ -30,6 +30,7 @@ const allSidebarLinks: NavItem[] = [
   { href: '/admin/venues', icon: Store, label: { zh: '分店管理', en: 'Venues' }, permission: 'staff' },
   { href: '/admin/addons', icon: Package, label: { zh: '附加服務管理', en: 'Add-ons' }, permission: 'staff' },
   { href: '/admin/packages', icon: Gift, label: { zh: '套餐管理', en: 'Packages' }, permission: 'staff' },
+  { href: '/admin/rules', icon: Scale, label: { zh: '預訂規則', en: 'Booking rules' }, permission: 'staff' },
   { href: '/admin/peak-days', icon: Sparkles, label: { zh: '特別日子', en: 'Peak Days' }, permission: 'peakdays' },
   {
     href: '/admin/finance', icon: BarChart3, label: { zh: '財務總覽', en: 'Finance' }, permission: 'documents',

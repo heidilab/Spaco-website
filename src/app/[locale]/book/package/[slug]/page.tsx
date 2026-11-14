@@ -1,4 +1,5 @@
 'use client';
+import { useBookingRules } from '@/lib/bookingRulesClient';
 
 import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
@@ -64,6 +65,7 @@ export default function PackageBookingPage() {
   // 套餐管理: the saved packages. A slug unknown to the coded list may
   // still be a saved one, so wait for the registry before 404-ing.
   const { version: pkgVersion, loaded: pkgLoaded } = usePackages();
+  useBookingRules(); // 預訂規則: deposit tiers, instalment
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const pkg = useMemo(() => getPackageBySlug(slug), [slug, pkgVersion]);
   if (!pkg || pkg.active === false) {

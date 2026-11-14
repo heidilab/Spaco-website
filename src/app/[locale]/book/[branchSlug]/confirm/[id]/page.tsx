@@ -1,4 +1,5 @@
 'use client';
+import { useBookingRules } from '@/lib/bookingRulesClient';
 import { useAddOnConfig } from '@/lib/addOnConfigClient';
 
 import { adminApiFetch } from '@/lib/adminApiFetch';
@@ -79,6 +80,7 @@ function draftToBooking(
 export default function ConfirmBookingPage() {
   const locale = useLocale() as 'zh' | 'en';
   useAddOnConfig(); // 附加服務管理 (custom add-on names)
+  useBookingRules(); // 預訂規則: deposit tiers, instalment
   const params = useParams();
   const router = useRouter();
   // Registry venues (HART) are not in the static list — load once so the

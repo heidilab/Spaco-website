@@ -1,4 +1,5 @@
 'use client';
+import { useBookingRules } from '@/lib/bookingRulesClient';
 import { useAddOnConfig } from '@/lib/addOnConfigClient';
 
 import { useEffect, useMemo, useState } from 'react';
@@ -29,6 +30,7 @@ export default function ClaimBookingPage() {
   const registryReady = useVenueRegistryReady();
   const locale = useLocale() as 'zh' | 'en';
   useAddOnConfig(); // 附加服務管理 (custom add-on names)
+  useBookingRules(); // 預訂規則: deposit tiers, instalment
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   const draftId = params.id as string;

@@ -5,6 +5,7 @@ import { adminVerifyIdToken } from '@/lib/adminAuth';
 import { calculateDeposit, adultEquivalent, venueDrinksIncluded } from '@/lib/pricing';
 import { resolveVenueServer } from '@/lib/venueRegistryServer';
 import { loadAddOnConfigServer } from '@/lib/addOnConfigServer';
+import { loadBookingRulesServer } from '@/lib/bookingRulesServer';
 import { calcPromoDiscount } from '@/lib/promoCodes';
 import { BookingInputError, finiteNumber } from '@/lib/bookingSecurity';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
@@ -21,6 +22,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     await assertNoSettlementDebt(uid);
     const body = await req.json();
     await loadAddOnConfigServer(); // 附加服務管理 prices
+    await loadBookingRulesServer(); // 預訂規則: deposit tiers, instalment
     const ref = adminDb.collection('bookings').doc(params.id);
     await adminDb.runTransaction(async tx => {
       const snap = await tx.get(ref);

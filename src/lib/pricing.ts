@@ -10,6 +10,7 @@ import {
   CATERING_EXTRA_FOOD_TONG_FEE,
 } from './cateringMenu';
 import { cateringTiers, findCateringItem, cateringExtraDishFee, cateringDoorstepFee } from './cateringCatalog';
+import { getBookingRules, securityDepositFor } from './bookingRules';
 import {
   HOTPOT_EXTRA_SOUP_PRICE,
   HOTPOT_TWO_SOUP_MIN_EQUIV,
@@ -1175,7 +1176,7 @@ export function calculatePricing(
     securityDeposit,
     grandTotal,
     deposit,
-    canInstallment: grandTotal > 10000,
+    canInstallment: getBookingRules().installmentThreshold > 0 && getBookingRules().installmentPct < 100 && grandTotal > getBookingRules().installmentThreshold,
     breakdown,
   };
 }
@@ -1189,9 +1190,9 @@ export function calculatePricing(
  *   >  HK$10,000 → HK$4,000
  */
 export function calculateSecurityDeposit(rentalSubtotal: number): number {
-  if (rentalSubtotal > 10000) return 4000;
-  if (rentalSubtotal > 4000) return 2000;
-  return 1000;
+  // Tiers from 預訂規則 (lib/bookingRules); the coded default is the
+  // 1,000 / 2,000 / 4,000 ladder above.
+  return securityDepositFor(rentalSubtotal);
 }
 
 /**
@@ -1203,16 +1204,18 @@ export function calculateSecurityDeposit(rentalSubtotal: number): number {
  *     (balance due date has already passed, so installment is not offered).
  */
 export function calculateDeposit(grandTotal: number, bookingDateStr?: string): number {
-  if (grandTotal <= 10000) return grandTotal;
+  // Threshold, share and window from 預訂規則 (lib/bookingRules).
+  const rules = getBookingRules();
+  if (!(rules.installmentThreshold > 0) || rules.installmentPct >= 100 || grandTotal <= rules.installmentThreshold) return grandTotal;
   if (bookingDateStr) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const eventDate = new Date(bookingDateStr);
     eventDate.setHours(0, 0, 0, 0);
     const daysUntil = Math.round((eventDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-    if (daysUntil <= 2) return grandTotal;
+    if (daysUntil <= rules.balanceDueDaysBefore) return grandTotal;
   }
-  return Math.round(grandTotal * 0.5);
+  return Math.round(grandTotal * (rules.installmentPct / 100));
 }
 
 /** Returns true when a booking date is within 2 calendar days of today,

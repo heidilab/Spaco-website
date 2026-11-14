@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { motion } from 'framer-motion';
 import { getSiteContent } from '@/lib/content';
+import { useBookingRules } from '@/lib/bookingRulesClient';
+import { fillRuleTokens } from '@/lib/bookingRules';
 import { SiteContentSection } from '@/types';
 import {
   ClipboardList, CreditCard, ShieldCheck, CalendarX,
@@ -24,8 +26,8 @@ const sections: GuidelineSection[] = [
     titleKey: 'booking_flow',
     defaultTitle: { zh: '預約流程', en: 'Booking Process' },
     defaultContent: {
-      zh: `1. 於網站選擇想預約的日期、時段、人數及場地\n2. 系統會自動計算訂單總額及所需按金\n3. 完成付款後，我們會發送預約確認信息\n4. 活動前 1-2 天會提供場地一次性密碼\n\n本公司為全自助式場地，沒有職員駐場。場地已備有所有設施的使用指南。\n\n按金計算：\n• 基本按金：HK$1,000\n• 訂單總額 >$4,000：按金 HK$2,000\n• 訂單總額 >$10,000：按金 HK$4,000\n• 訂單總額 >$20,000：按金 HK$8,000\n\n訂單金額超過 $10,000 可選擇先付 50% 確認預訂，餘額於活動前 2 天付清。\n\n重要提示：預約付款確認後，所有查詢或更改只會與付款人溝通，恕不接受其他人士代為查詢。`,
-      en: `1. Select your preferred date, time, guest count and venue on our website\n2. The system will automatically calculate the total and required deposit\n3. Upon payment completion, we will send a booking confirmation\n4. A one-time venue access code will be provided 1-2 days before the event\n\nSPACO is a fully self-service venue with no on-site staff. Usage guides for all facilities are provided on-site.\n\nDeposit calculation:\n• Base deposit: HK$1,000\n• Orders >$4,000: HK$2,000 deposit\n• Orders >$10,000: HK$4,000 deposit\n• Orders >$20,000: HK$8,000 deposit\n\nOrders exceeding $10,000 may opt to pay 50% upfront, with the balance due 2 days before the event.\n\nImportant: After booking confirmation, all enquiries and changes will only be handled with the person who made the payment.`,
+      zh: `1. 於網站選擇想預約的日期、時段、人數及場地\n2. 系統會自動計算訂單總額及所需按金\n3. 完成付款後，我們會發送預約確認信息\n4. 活動前 1-2 天會提供場地一次性密碼\n\n本公司為全自助式場地，沒有職員駐場。場地已備有所有設施的使用指南。\n\n按金計算（按場地消費：場租＋附加服務）：\n{{DEPOSIT_TIERS}}\n\n{{INSTALLMENT}}\n\n重要提示：預約付款確認後，所有查詢或更改只會與付款人溝通，恕不接受其他人士代為查詢。`,
+      en: `1. Select your preferred date, time, guest count and venue on our website\n2. The system will automatically calculate the total and required deposit\n3. Upon payment completion, we will send a booking confirmation\n4. A one-time venue access code will be provided 1-2 days before the event\n\nSPACO is a fully self-service venue with no on-site staff. Usage guides for all facilities are provided on-site.\n\nDeposit (by the bill: rent plus add-ons):\n{{DEPOSIT_TIERS}}\n\n{{INSTALLMENT}}\n\nImportant: After booking confirmation, all enquiries and changes will only be handled with the person who made the payment.`,
     },
   },
   {
@@ -42,8 +44,8 @@ const sections: GuidelineSection[] = [
     titleKey: 'deposit',
     defaultTitle: { zh: '按金安排', en: 'Deposit Arrangement' },
     defaultContent: {
-      zh: `• 按金不計算於場地租用收費內\n• 按金用以確保使用者愛惜場地物品及保持清潔\n• 所有垃圾請放進垃圾桶\n• 歡迎自攜飲品及食物\n• 如有使用場地餐具或爐具，請於完場前清洗乾淨\n\n按金扣除標準：\n• 沒有關閉焗爐：-$2,000\n• 沒有關閉冷氣：-$800\n• 沒有關閉電燈或其他電器：-$500\n• 沒有清洗已使用的餐具/爐具：-$500\n• 場地髒亂清潔費 / 嘔吐物：-$800\n• 於波波池飲食或嘔吐：-$1,500\n• 其他損毀按物品價值賠償\n\n如無以上情況，按金將於退場後 24 小時內以轉帳/FPS 全數退還。`,
-      en: `• The deposit is separate from the venue rental fee\n• The deposit ensures guests take care of facilities and maintain cleanliness\n• Please dispose of all rubbish in the bins provided\n• You are welcome to bring your own food and drinks\n• Please wash all cookware and utensils before leaving\n\nDeposit deduction schedule:\n• Oven not turned off: -$2,000\n• AC not turned off: -$800\n• Lights or appliances not turned off: -$500\n• Cookware/utensils not cleaned: -$500\n• Venue mess / vomit cleanup: -$800\n• Food or vomit in ball pit: -$1,500\n• Other damage: charged at item value\n\nIf none of the above applies, the full deposit will be refunded within 24 hours via bank transfer/FPS.`,
+      zh: `• 按金不計算於場地租用收費內\n• 按金用以確保使用者愛惜場地物品及保持清潔\n• 所有垃圾請放進垃圾桶\n• 歡迎自攜飲品及食物\n• 如有使用場地餐具或爐具，請於完場前清洗乾淨\n\n按金扣除標準：\n{{DEDUCTIONS}}\n• 其他損毀按物品價值賠償\n\n如無以上情況，按金將於退場後 24 小時內以轉帳/FPS 全數退還。`,
+      en: `• The deposit is separate from the venue rental fee\n• The deposit ensures guests take care of facilities and maintain cleanliness\n• Please dispose of all rubbish in the bins provided\n• You are welcome to bring your own food and drinks\n• Please wash all cookware and utensils before leaving\n\nDeposit deduction schedule:\n{{DEDUCTIONS}}\n• Other damage: charged at item value\n\nIf none of the above applies, the full deposit will be refunded within 24 hours via bank transfer/FPS.`,
     },
   },
   {
@@ -183,11 +185,15 @@ export default function GuidelinesPage() {
     });
   }, []);
 
+  // 預訂規則: {{DEPOSIT_TIERS}} / {{DEDUCTIONS}} / {{INSTALLMENT}} / {{POINTS}}
+  // in the default text — or in text staff wrote in 內容管理 — become the
+  // current rules (lib/bookingRules), the same ones pricing applies.
+  useBookingRules();
   const getContent = (section: GuidelineSection, field: 'title' | 'content') => {
-    if (cmsContent && cmsContent[`${section.titleKey}_${field}`]) {
-      return cmsContent[`${section.titleKey}_${field}`][locale];
-    }
-    return field === 'title' ? section.defaultTitle[locale] : section.defaultContent[locale];
+    const raw = cmsContent && cmsContent[`${section.titleKey}_${field}`]
+      ? cmsContent[`${section.titleKey}_${field}`][locale]
+      : field === 'title' ? section.defaultTitle[locale] : section.defaultContent[locale];
+    return field === 'content' ? fillRuleTokens(raw || '', locale) : raw;
   };
 
   return (

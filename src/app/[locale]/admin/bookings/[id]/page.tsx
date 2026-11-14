@@ -30,6 +30,8 @@ import type { AddOnOptions, Venue } from '@/types';
 import { getHoliday } from '@/lib/hkHolidays';
 import { getPackageBySlug } from '@/lib/packages';
 import { usePackages } from '@/lib/packageRegistryClient';
+import { useBookingRules } from '@/lib/bookingRulesClient';
+import { getBookingRules, pointsEarnedFor } from '@/lib/bookingRules';
 import { getDecorationById } from '@/lib/decorations';
 import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
 import HotpotSoupPicker from '@/components/booking/HotpotSoupPicker';
@@ -101,16 +103,9 @@ import { getSiteContent } from '@/lib/content';
 import { resendLockPasscode, setManualLockPasscode, tryGenerateLockPasscode } from '@/lib/lockPasscodeClient';
 import { cancelBooking } from '@/lib/cancelBooking';
 
-// Standard fixed deductions — same set as /admin/deposit so the
-// inline form stays in lockstep with the dedicated page.
-const FIXED_DEDUCTIONS = [
-  { id: 'oven', label: { zh: '沒有關閉焗爐', en: 'Oven not turned off' }, amount: 2000 },
-  { id: 'ac', label: { zh: '沒有關閉冷氣', en: 'AC not turned off' }, amount: 800 },
-  { id: 'lights', label: { zh: '沒有關閉電燈', en: 'Lights not turned off' }, amount: 500 },
-  { id: 'cookware', label: { zh: '沒有清洗爐具', en: 'Cookware not cleaned' }, amount: 500 },
-  { id: 'mess', label: { zh: '嘔吐物/場地髒亂', en: 'Vomit/venue mess' }, amount: 800 },
-  { id: 'ballpit', label: { zh: '波波池飲食違規', en: 'Ball pit food violation' }, amount: 1500 },
-];
+// Standard fixed deductions — from 預訂規則 (lib/bookingRules), the same
+// list the guidelines and terms print.
+const fixedDeductions = () => getBookingRules().deductionItems.map((d) => ({ id: d.id, label: { zh: d.zh, en: d.en }, amount: d.amount }));
 
 const statusLabels: Record<string, { zh: string; en: string }> = {
   pending: { zh: '待處理', en: 'Pending' },
@@ -176,6 +171,8 @@ export default function AdminBookingDetailPage() {
   // component re-renders once they are loaded.
   useAddOnConfig();
   usePackages(); // 套餐管理
+  useBookingRules(); // 預訂規則: deductions, points rate
+  const FIXED_DEDUCTIONS = fixedDeductions();
   // Per-person food packages (BBQ / hotpot) can be charged for only part
   // of the group: the head count typed per add-on id, '' = everyone.
   // Stored as `options.pax` on the add-on entry (Heidi 2026-11-13 — staff
@@ -932,7 +929,7 @@ export default function AdminBookingDetailPage() {
       // customer pays out of pocket. Diff against what was credited.
       let pointsMsg = '';
       if (booking.userId && booking.pointsCreditedAt) {
-        const expected = netConsumption(booking) + total;
+        const expected = pointsEarnedFor(netConsumption(booking) + total);
         const oldCredited = booking.pointsActuallyCredited || 0;
         const diff = expected - oldCredited;
         if (diff > 0) {
@@ -1039,7 +1036,7 @@ export default function AdminBookingDetailPage() {
         // PRE- or POST-promo (convention drift between admin/bookings/new
         // and updateBookingPricing).
         const effectiveSpend = netConsumption(booking);
-        const points = effectiveSpend + consumedDeposit + overflowPaid;
+        const points = pointsEarnedFor(effectiveSpend + consumedDeposit + overflowPaid);
         creditedPoints = await creditLoyaltyPoints(booking.userId, points);
         if (creditedPoints > 0) {
           await updateDoc(doc(db, 'bookings', booking.id), {
@@ -1098,7 +1095,7 @@ export default function AdminBookingDetailPage() {
       const consumedDeposit = Math.min(settledDeductions, securityDepositAtSettle);
       const overflowPaid = Math.max(0, settledDeductions - securityDepositAtSettle);
       const effectiveSpend = netConsumption(booking);
-      const points = effectiveSpend + consumedDeposit + overflowPaid;
+      const points = pointsEarnedFor(effectiveSpend + consumedDeposit + overflowPaid);
       const credited = await creditLoyaltyPoints(booking.userId, points);
       if (credited > 0) {
         await updateDoc(doc(db, 'bookings', booking.id), {
@@ -3534,7 +3531,7 @@ function DepositSettlement(props: DepositSettlementProps) {
     // the gross subtotal without subtracting promo/points, so the preview
     // overstated the points the button would actually credit.
     const effectiveSpend = netConsumption(booking);
-    return effectiveSpend + settledDeductions;
+    return pointsEarnedFor(effectiveSpend + settledDeductions);
   })();
 
   // Past-event check: settlement should only be done after the event.
@@ -3720,7 +3717,7 @@ function DepositSettlement(props: DepositSettlementProps) {
               {locale === 'zh' ? '固定扣費' : 'Fixed deductions'}
             </p>
             <div className="space-y-1.5">
-              {FIXED_DEDUCTIONS.map((item) => (
+              {fixedDeductions().map((item) => (
                 <label
                   key={item.id}
                   className={`flex items-center justify-between p-2.5 rounded-lg border cursor-pointer text-sm transition-colors ${

@@ -1,6 +1,8 @@
 'use client';
 
 import { useLocale } from 'next-intl';
+import { useBookingRules } from '@/lib/bookingRulesClient';
+import { depositTierSentence, deductionLines, type BookingRules, getBookingRules } from '@/lib/bookingRules';
 import { Link } from '@/i18n/routing';
 import { ArrowLeft, FileText } from 'lucide-react';
 
@@ -88,18 +90,18 @@ const SECTIONS: Section[] = [
     title: { zh: '按金', en: 'Security Deposit' },
     body: {
       zh: [
-        '所有預訂均收取可退還按金。金額根據場地租金總額分級：HK$4,000 以下 HK$1,000、HK$10,000 以下 HK$2,000、HK$10,000 以上 HK$4,000。',
+        '{{DEPOSIT_TIERS_SENTENCE}}',
         '按金於活動結束後 24 小時內，以客人預訂時提供之退款方式（FPS／銀行轉帳）退還。',
         '如場地檢查發現有以下情況，將於按金中扣減相應金額：',
-        '• 沒有關閉焗爐：HK$2,000\n• 沒有關閉冷氣：HK$800\n• 沒有關閉電燈：HK$500\n• 沒有清洗爐具：HK$500\n• 嘔吐物／場地髒亂：HK$800\n• 波波池飲食違規：HK$1,500',
+        '{{DEDUCTIONS}}',
         '其他自訂扣費（如損壞家具、丟失物品等）按實際維修或重置成本計算。',
         '若損壞金額超過按金，客人須額外賠償差額。',
       ],
       en: [
-        'A refundable security deposit is charged on every booking. Tiered: under HK$4,000 → HK$1,000; under HK$10,000 → HK$2,000; HK$10,000+ → HK$4,000.',
+        '{{DEPOSIT_TIERS_SENTENCE}}',
         'The deposit is refunded within 24 hours after the event via the refund method (FPS / bank) provided at booking time.',
         'The deposit may be reduced for the following infractions:',
-        '• Oven left on: HK$2,000\n• AC left on: HK$800\n• Lights left on: HK$500\n• Cookware not cleaned: HK$500\n• Vomit / mess: HK$800\n• Food in ball-pit area: HK$1,500',
+        '{{DEDUCTIONS}}',
         'Custom deductions (furniture damage, lost items, etc.) charged at actual repair / replacement cost.',
         'If damages exceed the deposit, the customer is liable for the shortfall.',
       ],
@@ -209,8 +211,23 @@ const SECTIONS: Section[] = [
   },
 ];
 
+/** Section 5's rule texts come from 預訂規則; the tokens mark where. */
+function withRules(list: Section[], rules: BookingRules): Section[] {
+  const fill = (text: string, locale: 'zh' | 'en') => text
+    .replace('{{DEPOSIT_TIERS_SENTENCE}}', depositTierSentence(locale, rules))
+    .replace('{{DEDUCTIONS}}', deductionLines(locale, rules).map((l) => `• ${l}`).join('\n'));
+  return list.map((s) => ({
+    ...s,
+    body: { zh: s.body.zh.map((t) => fill(t, 'zh')), en: s.body.en.map((t) => fill(t, 'en')) },
+  }));
+}
+
 export default function TermsPage() {
   const locale = useLocale() as 'zh' | 'en';
+  // 預訂規則: the deposit tiers and fixed deductions are inserted from the
+  // same settings pricing and settlement use (lib/bookingRules).
+  useBookingRules();
+  const sections = withRules(SECTIONS, getBookingRules());
   return (
     <div className="pt-28 pb-20 relative overflow-hidden">
       <div className="orb orb-pink animate-float-slow" style={{ width: 280, height: 280, top: '-60px', right: '-60px', opacity: 0.3 }} />
@@ -236,7 +253,7 @@ export default function TermsPage() {
           </div>
 
           <div className="space-y-6">
-            {SECTIONS.map((s) => (
+            {sections.map((s) => (
               <section key={s.number} className="glass-card p-7">
                 <h2 className="font-bold font-display text-lg text-ink mb-3 flex items-center gap-2">
                   <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-gradient-pink text-white text-xs font-bold shrink-0">

@@ -1,4 +1,5 @@
 'use client';
+import { useBookingRules } from '@/lib/bookingRulesClient';
 
 import { useTranslations, useLocale } from 'next-intl';
 import { Link } from '@/i18n/routing';
@@ -81,6 +82,7 @@ function BookingPageInner({ venue }: { venue: Venue }) {
   // 附加服務管理 settings: which add-ons are offered here, at what price,
   // with which menu. Re-renders once loaded.
   const addOnCfgVersion = useAddOnConfig();
+  useBookingRules(); // 預訂規則: deposit tiers, instalment
   const t = useTranslations('booking');
   const { user } = useAuth();
   const router = useRouter();

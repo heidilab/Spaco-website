@@ -1,4 +1,5 @@
 'use client';
+import { useBookingRules } from '@/lib/bookingRulesClient';
 
 import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
@@ -142,6 +143,7 @@ export default function AdminNewBookingPage() {
   // component re-renders once they are loaded.
   useAddOnConfig();
   const { version: pkgVersion } = usePackages(); // 套餐管理
+  useBookingRules(); // 預訂規則: deposit tiers, instalment
   const [commercialRent, setCommercialRent] = useState('');
   const [commercialDeposit, setCommercialDeposit] = useState('');
   const commercialRentNum = Math.max(0, parseFloat(commercialRent) || 0);

@@ -28,7 +28,10 @@
  *      Import from here instead.
  */
 
-/** 100 loyalty points = HK$1. */
+import { getBookingRules } from './bookingRules';
+
+/** 100 loyalty points = HK$1 — the coded default; the live rate is
+ *  預訂規則's pointsPerHkd (lib/bookingRules), read by the two helpers. */
 export const POINTS_PER_HKD = 100;
 
 /**
@@ -39,12 +42,12 @@ export const POINTS_PER_HKD = 100;
  * more than they hold.
  */
 export function pointsToHkd(points: number): number {
-  return Math.floor((points || 0) / POINTS_PER_HKD);
+  return Math.floor((points || 0) / getBookingRules().pointsPerHkd);
 }
 
 /** Convert HK$ to the number of points required. */
 export function hkdToPoints(hkd: number): number {
-  return Math.max(0, Math.floor(hkd || 0) * POINTS_PER_HKD);
+  return Math.max(0, Math.floor(hkd || 0) * getBookingRules().pointsPerHkd);
 }
 
 // ── Shapes ─────────────────────────────────────────────────────────────

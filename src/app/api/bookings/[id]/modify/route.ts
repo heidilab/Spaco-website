@@ -13,6 +13,7 @@ import {
   fixedRentOf, stampAddOnPrices,
 } from '@/lib/pricing';
 import { loadAddOnConfigServer } from '@/lib/addOnConfigServer';
+import { loadBookingRulesServer } from '@/lib/bookingRulesServer';
 import { calcPromoDiscount } from '@/lib/promoCodes';
 import { computeGrandTotal, computeBalanceDue, paidBase } from '@/lib/bookingMoney';
 import {
@@ -92,6 +93,7 @@ export async function POST(
 
   const body = await req.json().catch(() => ({}));
   await loadAddOnConfigServer(); // 附加服務管理 prices
+  await loadBookingRulesServer(); // 預訂規則: deposit tiers, instalment
 
   const bookingRef = adminDb.collection('bookings').doc(id);
   const snap = await bookingRef.get();

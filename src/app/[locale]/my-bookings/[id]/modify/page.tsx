@@ -1,4 +1,5 @@
 'use client';
+import { useBookingRules } from '@/lib/bookingRulesClient';
 
 // Customer-facing booking modification — D2 (add add-ons).
 //
@@ -55,6 +56,7 @@ interface CartEntry { id: string; quantity: number; options?: AddOnOptions }
 export default function ModifyBookingPage() {
   const locale = useLocale() as 'zh' | 'en';
   const addOnCfgVersion = useAddOnConfig(); // 附加服務管理 settings
+  useBookingRules(); // 預訂規則: deposit tiers, instalment
   const params = useParams();
   const router = useRouter();
   const bookingId = params.id as string;

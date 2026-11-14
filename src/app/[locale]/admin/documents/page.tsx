@@ -1,4 +1,5 @@
 'use client';
+import { useBookingRules } from '@/lib/bookingRulesClient';
 import { useAddOnConfig } from '@/lib/addOnConfigClient';
 
 import { useEffect, useMemo, useState } from 'react';
@@ -141,6 +142,7 @@ const BLANK_FORM: ReturnType<typeof emptyDoc> = {
 export default function AdminDocumentsPage() {
   const locale = useLocale() as 'zh' | 'en';
   useAddOnConfig(); // 附加服務管理 (custom add-on names)
+  useBookingRules(); // 預訂規則: deposit tiers, instalment
   // 分店管理 venues (registry-first; the built-in list is the fallback).
   useVenueRegistryReady();
   const { user, hasPermission } = useAuth();

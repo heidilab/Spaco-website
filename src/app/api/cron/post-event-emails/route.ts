@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { pointsEarnedFor } from '@/lib/bookingRules';
+import { loadBookingRulesServer } from '@/lib/bookingRulesServer';
 import { requireCronSecret } from '@/lib/adminAuth';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -22,6 +24,7 @@ export const dynamic = 'force-dynamic';
  * Suggested cron schedule: once per day (e.g. 0 3 * * *).
  */
 export async function GET(request: NextRequest) {
+  await loadBookingRulesServer(); // 預訂規則: points rate
   const denied = requireCronSecret(request);
   if (denied) return denied;
 
@@ -81,14 +84,11 @@ export async function GET(request: NextRequest) {
       // next check.
       const promoDiscount = (booking as { promoDiscount?: number }).promoDiscount || 0;
       const pointsDiscount = (booking as { pointsDiscount?: number }).pointsDiscount || 0;
-      const pointsEarned = Math.max(
-        0,
-        Math.floor(
-          (booking.pricing.baseCharge || 0)
-            + (booking.pricing.addOnTotal || 0)
-            - promoDiscount
-            - pointsDiscount,
-        ),
+      const pointsEarned = pointsEarnedFor(
+        (booking.pricing.baseCharge || 0)
+          + (booking.pricing.addOnTotal || 0)
+          - promoDiscount
+          - pointsDiscount,
       );
       const venue = await resolveVenueServer(booking.venueId);
 
