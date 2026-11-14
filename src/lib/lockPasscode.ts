@@ -97,7 +97,7 @@ export async function getLockIdForVenue(venueId: string): Promise<number | null>
 }
 
 /** Read the venueId → lock-guide image URL map from Firestore. Admins set
- *  `lockguide_<venueId>` to a Cloudinary URL in Admin → 內容管理 → 系統設定. */
+ *  `lockguide_<venueId>` (legacy slots; 門鎖設定 now writes the venue doc). */
 async function getLockGuideMap(): Promise<Record<string, string>> {
   const cms = await getSiteContent('settings');
   const map: Record<string, string> = {};

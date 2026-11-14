@@ -12,14 +12,13 @@ import {
 import { translateZhToEn } from '@/lib/translate';
 import { CONTENT_DEFAULTS } from '@/lib/contentDefaults';
 import { SiteImage, SiteContentSection } from '@/types';
-import MarketingChannelEditor from '@/components/admin/MarketingChannelEditor';
 import {
   Upload, Trash2, Save, Image, FileText, Check, Languages, Loader2, GripVertical, Star, Link2,
 } from 'lucide-react';
 
 type Tab = 'images' | 'text';
 type ImageSubTab = 'homepage' | 'branches' | 'guidelines';
-type TextSubTab = 'homepage' | 'corporate' | 'family' | 'guidelines' | 'branches' | 'settings';
+type TextSubTab = 'homepage' | 'corporate' | 'family' | 'guidelines' | 'branches';
 
 // ===== IMAGE SECTIONS =====
 // `recommendedSize` shows guidance to admins. All sizes in pixels.
@@ -258,29 +257,6 @@ const textPages: { id: TextSubTab; label: { zh: string; en: string }; fields: { 
       { key: 'swab_amenities', label: { zh: '上環全層 — 設施列表', en: 'SW-AB — Amenities' }, multiline: true },
       { key: 'swab_switch_games', label: { zh: '上環全層 — Switch 遊戲（每行一個）', en: 'SW-AB — Switch Games (one per line)' }, multiline: true },
       { key: 'swab_board_games', label: { zh: '上環全層 — 桌遊（每行一個）', en: 'SW-AB — Board Games (one per line)' }, multiline: true },
-    ],
-  },
-  {
-    id: 'settings',
-    label: { zh: '系統設定', en: 'Settings' },
-    fields: [
-      // TTLock smart-lock IDs per venue. Read by lockPasscode.ts → getVenueLockMap().
-      // Keys MUST be `ttlock_<venueId>`; the value can be entered into either zh/en.
-      // Find each lockId by opening the TTLock admin app or calling listLocks().
-      { key: 'ttlock_cwb',      label: { zh: 'TTLock — 銅鑼灣 (lockId)',       en: 'TTLock — Causeway Bay (lockId)' } },
-      { key: 'ttlock_wanchai',  label: { zh: 'TTLock — 灣仔 (lockId)',         en: 'TTLock — Wan Chai (lockId)' } },
-      { key: 'ttlock_sw-a',     label: { zh: 'TTLock — 上環 Room A (lockId)',  en: 'TTLock — Sheung Wan A (lockId)' } },
-      { key: 'ttlock_sw-b',     label: { zh: 'TTLock — 上環 Room B (lockId)',  en: 'TTLock — Sheung Wan B (lockId)' } },
-      { key: 'ttlock_sw-ab',    label: { zh: 'TTLock — 上環全層 (lockId)',     en: 'TTLock — Sheung Wan A+B (lockId)' } },
-      { key: 'ttlock_tst',      label: { zh: 'TTLock — 尖沙咀 (lockId)',       en: 'TTLock — TST (lockId)' } },
-      // Per-branch door usage guide images (Cloudinary URL). Embedded in
-      // the lock-passcode email. `sw-ab` automatically falls back to
-      // `sw-b` when unset (whole-floor bookings enter via Room B).
-      { key: 'lockguide_cwb',     label: { zh: '門鎖指南圖 — 銅鑼灣 (URL)',        en: 'Lock guide image — Causeway Bay (URL)' } },
-      { key: 'lockguide_wanchai', label: { zh: '門鎖指南圖 — 灣仔 (URL)',          en: 'Lock guide image — Wan Chai (URL)' } },
-      { key: 'lockguide_sw-a',    label: { zh: '門鎖指南圖 — 上環 Room A (URL)',   en: 'Lock guide image — Sheung Wan A (URL)' } },
-      { key: 'lockguide_sw-b',    label: { zh: '門鎖指南圖 — 上環 Room B / 全層 (URL)', en: 'Lock guide image — SW Room B / A+B (URL)' } },
-      { key: 'lockguide_tst',     label: { zh: '門鎖指南圖 — 尖沙咀 (URL)',        en: 'Lock guide image — TST (URL)' } },
     ],
   },
 ];
@@ -621,14 +597,6 @@ export default function AdminContentPage() {
                   </button>
                 </div>
               </div>
-
-              {/* 來源渠道選項 — structured row editor (shows the options
-                * currently in effect, add/edit/remove per item). Replaces
-                * the raw `id | zh | en` textarea, which Heidi found
-                * unusable. Writes the same settings key underneath. */}
-              {currentTextPage.id === 'settings' && (
-                <MarketingChannelEditor locale={locale} />
-              )}
 
               <div className="space-y-6">
                 {currentTextPage.fields.map((field) => (

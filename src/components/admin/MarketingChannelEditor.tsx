@@ -1,6 +1,7 @@
 'use client';
 
-// 來源渠道 — the ONE channel list (site review 2026-11-13, phase 4b).
+// 來源渠道／佣金 (財務 → /admin/channels) — the ONE channel list (site
+// review 2026-11-13, phase 4b; moved from 內容管理 2026-11-14).
 //
 // Every channel a booking can carry is a row here: its labels, whether
 // customers see it at 確認預訂「喺邊度得知我哋」, whether it is a broker /

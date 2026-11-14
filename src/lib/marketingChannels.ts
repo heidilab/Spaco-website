@@ -13,7 +13,7 @@
 //             overview (her Financial Master's first table)
 //
 // Commission rules stay in system/finance_config (keyed by channel id);
-// 內容管理 → 系統設定 → 來源渠道 edits both together.
+// 財務 → 來源渠道／佣金 (/admin/channels) edits both together.
 //
 // Storage: `site_content/channels` { items: ChannelDef[] } (public read,
 // admin write). Before that doc exists the registry is DERIVED from the

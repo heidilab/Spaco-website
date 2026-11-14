@@ -115,7 +115,7 @@ export default function ConfirmBookingPage() {
   const [isFirstTime, setIsFirstTime] = useState<boolean>(false);
   const [marketingChannel, setMarketingChannel] = useState<string>('');
   const [marketingOther, setMarketingOther] = useState<string>('');
-  // Channel options — admin-configurable (內容管理 → 系統設定 → 來源渠道選項).
+  // Channel options — admin-configurable (財務 → 來源渠道／佣金).
   const [channelOptions, setChannelOptions] = useState<MarketingChannelOption[]>(
     [...DEFAULT_CHANNEL_OPTIONS, OTHER_OPTION],
   );

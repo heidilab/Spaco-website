@@ -66,7 +66,7 @@ accessor each, with the coded lists kept only as seed / fallback.
 | # | What | Where staff edit it | Stored |
 |---|---|---|---|
 | 4a | Custom add-ons (name, per person / item / flat, price per branch, month-close column, supplier order) | 附加服務管理 → 新增附加服務 | `site_content/addons` (ids `x-…`, `AddOnSetting.custom`) |
-| 4b | Channels: labels, offered to customers, broker / platform, own Excel column, commission | 內容管理 → 系統設定 → 來源渠道 | `site_content/channels` (derived from the legacy text until first save) |
+| 4b | Channels: labels, offered to customers, broker / platform, own Excel column, commission | 財務 → 來源渠道／佣金 (`/admin/channels`; 內容管理 → 系統設定 removed 2026-11-14) | `site_content/channels` (derived from the legacy text until first save) |
 | 4c | Packages: branch / room, price, deposit, hours, days, times, notice, inclusions, per-head add-ons, 停售, duplicate to another branch | 套餐管理 (`/admin/packages`) | `site_content/packages` |
 | 4d | Deposit tiers, fixed deposit deductions, points rates, instalment rule | 預訂規則 (`/admin/rules`) | `site_content/booking_rules` |
 | 4e | Home filters on each venue's capacity / vibes / amenities; 全場優先 for any branch whose rooms combine (room relationships from 分店管理) | 分店管理 / 特別日子 | — |

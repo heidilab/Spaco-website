@@ -31,8 +31,8 @@ export default function ManualLockPasscodeSopPage() {
 
   // Live lockId map (venueId → lockId), read from the same Firestore
   // settings the passcode engine uses. Mirrors getVenueLockMap() so the
-  // table below reflects reality — set a lockId in 內容管理 → 系統設定 and
-  // this branch flips to "connected" with no code change.
+  // table below reflects reality — set a lockId in 門鎖設定 (venue doc; the
+  // legacy settings slots still count) and this branch flips to "connected".
   const [lockMap, setLockMap] = useState<Record<string, number>>({});
   const [lockVenues, setLockVenues] = useState<{ id: string; name: { zh: string; en: string } }[]>(STATIC_LOCK_VENUES);
   const [loadingLocks, setLoadingLocks] = useState(true);

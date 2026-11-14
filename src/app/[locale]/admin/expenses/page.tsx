@@ -453,7 +453,7 @@ export default function ExpensesPage() {
                       {rule
                         ? `${rule.pct}% × ${rule.base === 'rent' ? (locale === 'zh' ? '場租' : 'rent') : (locale === 'zh' ? '全單' : 'total')} $${commissionBase(b, rule.base).toLocaleString()}${extras > 0 ? (locale === 'zh' ? `（含加時/罰款 $${extras.toLocaleString()}）` : ` (incl. extras $${extras.toLocaleString()})`) : ''} = $${auto.toLocaleString()}`
                         : noRule && !manual
-                          ? <span className="text-amber-700 font-semibold" title={locale === 'zh' ? '去 內容管理 → 系統設定 → 來源渠道選項，喺呢個渠道剔「佣金」並儲存' : 'Tick 佣金 for this channel under 系統設定 → 來源渠道選項 and save'}>
+                          ? <span className="text-amber-700 font-semibold" title={locale === 'zh' ? '去 財務 → 來源渠道／佣金，喺呢個渠道剔「佣金」並儲存' : 'Tick 佣金 for this channel under 財務 → 來源渠道／佣金 and save'}>
                               {locale === 'zh' ? `⚠ 「${channelDisplayLabel(b, locale)}」未設佣金規則` : `⚠ no commission rule for "${channelDisplayLabel(b, locale)}"`}
                             </span>
                           : (locale === 'zh' ? '手動' : 'manual')}
@@ -521,8 +521,8 @@ export default function ExpensesPage() {
               <h2 className="font-bold mb-3 flex items-center gap-2"><Settings2 size={15} /> {locale === 'zh' ? '規則設定（只限 Admin）' : 'Rules (admin only)'}</h2>
               <p className="text-xs text-ink-soft mb-3">
                 {locale === 'zh'
-                  ? '呢度同「內容管理 → 系統設定 → 來源渠道」係同一份佣金數據 — 邊度改都會同步。新增渠道（包括行家／平台）同佣金請去「來源渠道」。'
-                  : 'Same data as 內容管理 → 系統設定 → channels — edit in either place. Add channels (brokers / platforms too) and their rules there.'}
+                  ? '呢度同「財務 → 來源渠道／佣金」係同一份佣金數據 — 邊度改都會同步。新增渠道（包括行家／平台）同佣金請去嗰度。'
+                  : 'Same data as 財務 → 來源渠道／佣金 — edit in either place. Add channels (brokers / platforms too) and their rules there.'}
               </p>
               <div className="space-y-2 text-sm mb-3">
                 {Object.entries(config.commissionRules).map(([id, rule]) => {

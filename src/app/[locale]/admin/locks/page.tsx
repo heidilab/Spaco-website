@@ -256,7 +256,7 @@ export default function LocksPage() {
               {legacyCount > 0 && (
                 <button onClick={migrateLegacy} disabled={busy === 'migrate'} className="text-xs flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 disabled:opacity-50">
                   {busy === 'migrate' ? <Loader2 size={12} className="animate-spin" /> : <AlertTriangle size={12} />}
-                  {zh ? `仲有 ${legacyCount} 個舊設定喺 內容管理 → 系統設定 — 搬入分店管理` : `${legacyCount} legacy setting(s) in 系統設定 — copy into 分店管理`}
+                  {zh ? `仲有 ${legacyCount} 個舊門鎖設定（以前喺內容管理）— 搬入分店管理` : `${legacyCount} legacy lock setting(s) — copy into 分店管理`}
                 </button>
               )}
             </div>
@@ -282,7 +282,7 @@ export default function LocksPage() {
                         : <span className="chip text-[10px] bg-amber-50 text-amber-700 border-amber-200">{zh ? '手動密碼' : 'Manual'}</span>}
                       {typeof v.battery === 'number' && <span className={`chip text-[10px] ${v.battery < 20 ? 'bg-rose-50 text-rose-700 border-rose-200' : ''}`}>🔋 {v.battery}%</span>}
                       {v.hasGateway === false && <span className="chip text-[10px] bg-rose-50 text-rose-700 border-rose-200">{zh ? '冇 gateway' : 'No gateway'}</span>}
-                      {legacy && (legacy.lockId || legacy.guideUrl) && <span className="chip text-[10px] bg-amber-50 text-amber-700 border-amber-200" title={`ttlock_${v.id}: ${legacy.lockId ?? '—'}`}>{zh ? '系統設定有舊值' : 'Legacy slot'}</span>}
+                      {legacy && (legacy.lockId || legacy.guideUrl) && <span className="chip text-[10px] bg-amber-50 text-amber-700 border-amber-200" title={`ttlock_${v.id}: ${legacy.lockId ?? '—'}`}>{zh ? '有舊設定值' : 'Legacy slot'}</span>}
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end">
                       <label className="block md:col-span-4">

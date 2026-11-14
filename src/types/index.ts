@@ -389,7 +389,7 @@ export interface BookingRecord {
   } | null;
   /** Channel id — a built-in MarketingChannel, 'loyalty_member' (auto
    *  repeat-customer tag), or an admin-configured custom id from
-   *  內容管理 → 系統設定 → 來源渠道選項. */
+   *  財務 → 來源渠道／佣金. */
   marketingChannel?: MarketingChannel | 'loyalty_member' | (string & {});
   /** Display label snapshotted at checkout for custom channel ids, so
    *  reports stay readable even after the admin edits the option list. */
