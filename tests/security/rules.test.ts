@@ -43,8 +43,25 @@ describe('Customer authority boundaries', () => {
     const booking = doc(db('alice'), 'bookings', 'one');
     await assertSucceeds(updateDoc(booking, { refundDetails: { method:'fps', accountNumber:'test' } }));
     await assertSucceeds(updateDoc(booking, { paymentMethod:'fps', status:'awaiting_payment' }));
-    await assertSucceeds(updateDoc(booking, { receiptUrl:'https://example.test/receipt', status:'awaiting_review' }));
+    const ownReceipt = 'https://firebasestorage.googleapis.com/v0/b/spaco-website.firebasestorage.app/o/receipts%2Fone%2F1700000000-r.jpg?alt=media&token=abc';
+    // Only a receipt uploaded for THIS booking moves it to 待審核.
+    await assertFails(updateDoc(booking, { receiptUrl:'https://example.test/receipt', status:'awaiting_review' }));
+    await assertFails(updateDoc(booking, { receiptUrl: ownReceipt.replace('%2Fone%2F', '%2Ftwo%2F'), status:'awaiting_review' }));
+    await assertSucceeds(updateDoc(booking, { receiptUrl: ownReceipt, status:'awaiting_review' }));
     await assertFails(updateDoc(doc(db('bob'), 'bookings', 'one'), {receiptUrl:'x'}));
+  });
+  it('a confirmed booking never leaves confirmed by the customer\'s hand (site review 2026-11-13 #10)', async () => {
+    await env.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'bookings', 'paid'), { userId: 'alice', status: 'confirmed',
+        pricing: { baseCharge: 5000, addOnTotal: 0, subtotal: 5000, deposit: 6000, securityDeposit: 1000 },
+        balanceDue: 1000, payments: [{ amount: 3000 }], receiptUrl: null, paymentMethod: 'fps' });
+    });
+    const paid = doc(db('alice'), 'bookings', 'paid');
+    const ownReceipt = 'https://firebasestorage.googleapis.com/v0/b/spaco-website.firebasestorage.app/o/receipts%2Fpaid%2F1700000000-r.jpg?alt=media';
+    await assertFails(updateDoc(paid, { receiptUrl: ownReceipt, status: 'awaiting_review' }));
+    await assertFails(updateDoc(paid, { receiptUrl: 'x', status: 'awaiting_review' }));
+    // Attaching a receipt for a balance payment without touching the status is still fine.
+    await assertSucceeds(updateDoc(paid, { receiptUrl: ownReceipt }));
   });
   it('freezes points for customers and client-side staff; permits profile changes', async () => {
     await assertSucceeds(updateDoc(doc(db('alice'), 'users', 'alice'), {phone:'+85200000000'}));

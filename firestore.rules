@@ -26,6 +26,12 @@ service cloud.firestore {
         && request.resource.data.get('whatsappPhone', '') is string
         && request.resource.data.get('whatsappPhone', '').size() <= 40;
     }
+    // A Firebase Storage download URL of a file under receipts/<bookingId>/
+    // (the only place the storage rules let a customer upload to).
+    function ownReceiptUrl(bookingId, url) {
+      return url is string && url.size() <= 3000
+        && url.matches('https://firebasestorage[.]googleapis[.]com/v0/b/[^/]+/o/receipts%2F' + bookingId + '%2F.+');
+    }
     match /users/{uid} {
       allow read: if owner(uid) || bookings();
       allow create: if owner(uid) && validProfile()
@@ -48,15 +54,21 @@ service cloud.firestore {
           'refundDetails', 'paymentMethod', 'receiptUrl', 'paymentReceiptUploadedAt', 'status', 'updatedAt'
         ])
         && resource.data.status in ['awaiting_payment', 'awaiting_review', 'confirmed']
+        // A customer may only move an UNPAID booking to 「待審核」, and only
+        // with a receipt they uploaded for THIS booking. A confirmed
+        // booking stays confirmed: before 2026-11-14 any non-empty string
+        // took it to awaiting_review, which lifted the settlement-debt
+        // block and the expiry sweep (site review #10).
         && (request.resource.data.status == resource.data.status
           || (resource.data.status in ['awaiting_payment', 'awaiting_review']
             && request.resource.data.status == 'awaiting_payment')
-          || (request.resource.data.status == 'awaiting_review'
-            && request.resource.data.get('receiptUrl', '') is string
-            && request.resource.data.get('receiptUrl', '').size() > 0))
+          || (resource.data.status in ['awaiting_payment', 'awaiting_review']
+            && request.resource.data.status == 'awaiting_review'
+            && ownReceiptUrl(id, request.resource.data.get('receiptUrl', null))))
         && request.resource.data.get('paymentMethod', null) in [null, 'fps', 'bank', 'kpay']
         && (request.resource.data.get('receiptUrl', null) == null
-          || (request.resource.data.receiptUrl is string && request.resource.data.receiptUrl.size() <= 3000)));
+          || request.resource.data.receiptUrl == resource.data.get('receiptUrl', null)
+          || ownReceiptUrl(id, request.resource.data.receiptUrl)));
     }
     match /booking_drafts/{id} {
       // Public link preview uses a redacted server response. No customer enumeration or writes.
