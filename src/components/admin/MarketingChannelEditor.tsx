@@ -37,7 +37,7 @@ function makeId(label: string, taken: Set<string>): string {
 }
 
 const CELL = 'px-3 py-2 rounded-xl border-2 border-charcoal/15 bg-white text-sm';
-const GRID = 'grid grid-cols-[1fr,1fr,64px,52px,52px,52px,minmax(170px,auto),32px] gap-2 items-center';
+const GRID = 'grid grid-cols-[1fr,1fr,64px,52px,52px,52px,minmax(170px,auto),84px] gap-2 items-center';
 
 export default function MarketingChannelEditor({ locale }: { locale: 'zh' | 'en' }) {
   const zh = locale === 'zh';

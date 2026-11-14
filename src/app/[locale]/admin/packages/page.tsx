@@ -86,7 +86,7 @@ function problemsOf(d: Draft, zh: boolean, venues: Venue[]): string[] {
   const name = d.nameZh.trim() || d.slug;
   if (!d.nameZh.trim()) out.push(zh ? `${d.slug || '新套餐'}：未填中文名稱` : `${d.slug || 'new'}: Chinese name missing`);
   if (!/^[a-z0-9][a-z0-9-]{1,39}$/.test(d.slug.trim().toLowerCase())) out.push(zh ? `${name}：網址代號只可以用小寫英文、數字同「-」（2–40 個字）` : `${name}: slug must be 2–40 lower-case letters, digits or '-'`);
-  if (!venues.some((v) => v.id === d.venueId)) out.push(zh ? `${name}：請揀分店／房間` : `${name}: pick a venue`);
+  if (!d.venueId.trim()) out.push(zh ? `${name}：請揀分店／房間` : `${name}: pick a venue`);
   if (!(Number(d.price) >= 0) || d.price.trim() === '') out.push(zh ? `${name}：未填價錢` : `${name}: price missing`);
   if (!(Number(d.deposit) >= 0) || d.deposit.trim() === '') out.push(zh ? `${name}：未填按金` : `${name}: deposit missing`);
   const h = Number(d.durationHours);
