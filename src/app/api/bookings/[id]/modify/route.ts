@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { refreshPasscodeAfterTimeChange } from '@/lib/lockPasscode';
+import { overlappingBookings, type OverlapBooking, type OverlapWindow } from '@/lib/bookingOverlap';
 import { updateBookingOnCalendar } from '@/lib/googleCalendar';
 import { getPublicOrigin } from '@/lib/kpay';
 import { getPeakDayAdmin } from '@/lib/peakDaysAdmin';
@@ -132,6 +133,11 @@ export async function POST(
   // Time — extend-only. Start ≤ booked start, end ≥ booked end.
   const startTime = typeof body.startTime === 'string' ? body.startTime : booking.startTime;
   const endTime = typeof body.endTime === 'string' ? body.endTime : booking.endTime;
+  // Malformed times made hours and prices NaN (site review #16).
+  const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+  if (!HHMM.test(startTime) || !HHMM.test(endTime)) {
+    return NextResponse.json({ error: 'invalid-time' }, { status: 400 });
+  }
   if (toMin(startTime) > toMin(booking.startTime)) {
     return NextResponse.json({ error: 'start-only-earlier' }, { status: 400 });
   }
@@ -498,6 +504,13 @@ export async function POST(
   if (setupStart) {
     checkWindows.push({ date: booking.date, start: toMin(setupStart), end: toMin(startTime) });
   }
+  // The booking's own cleaning buffer after the new end (site review #15).
+  checkWindows.push({ date: endDate, start: toMin(endTime), end: toMin(bufferEnd) });
+  const requestedWindows: OverlapWindow[] = checkWindows.map((w) => ({
+    date: w.date, startTime: `${String(Math.floor(w.start / 60)).padStart(2, '0')}:${String(w.start % 60).padStart(2, '0')}`,
+    endTime: w.end >= 24 * 60 ? '23:59' : `${String(Math.floor(w.end / 60)).padStart(2, '0')}:${String(w.end % 60).padStart(2, '0')}`,
+  }));
+  const production = process.env.VERCEL_ENV === 'production';
 
   try {
     await adminDb.runTransaction(async (t) => {
@@ -521,17 +534,35 @@ export async function POST(
         }
       }
 
-      // Conflict check — ignore this booking's own slots.
+      // The bookings themselves are the final authority when blocked_slots
+      // are missing or hidden (site review #16).
+      const candidateDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+      for (const vid of sharedVenues) {
+        for (const d of dates) {
+          for (const field of ['date', 'endDate'] as const) {
+            candidateDocs.push(...(await t.get(adminDb.collection('bookings').where('venueId', '==', vid).where(field, '==', d))).docs);
+          }
+        }
+      }
+
+      // Conflict check — ignore this booking's own slots (and, on
+      // production, test slots).
       for (const w of checkWindows) {
         for (const docSnap of allSlots) {
-          const b = docSnap.data() as { date: string; startTime: string; endTime: string; bookingId?: string };
+          const b = docSnap.data() as { date: string; startTime: string; endTime: string; bookingId?: string; isTest?: boolean };
           if (b.bookingId === id) continue;
+          if (b.isTest && production) continue;
           if (b.date !== w.date) continue;
           if (w.start < toMin(b.endTime) && toMin(b.startTime) < w.end) {
             throw new Error('SLOT_CONFLICT');
           }
         }
       }
+      const seenIds = new Set<string>();
+      const clashes = overlappingBookings(requestedWindows,
+        candidateDocs.filter((d) => !seenIds.has(d.id) && seenIds.add(d.id)).map((d) => ({ id: d.id, ...(d.data() as Omit<OverlapBooking, 'id'>) })),
+        { production, excludeId: id });
+      if (clashes.length) throw new Error('SLOT_CONFLICT');
 
       // Delete this booking's old slots, write the new ones.
       for (const docSnap of allSlots) {

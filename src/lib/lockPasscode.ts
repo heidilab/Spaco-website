@@ -425,6 +425,25 @@ export async function sweepUpcomingBookings(): Promise<{
   } catch (err) {
     console.warn('[lockPasscode] status write failed', err);
   }
+  // Failures reach a person (site review, lock #4): one email per sweep
+  // listing the bookings whose passcode could not be issued.
+  const failed = results.filter((r) => r.action === 'error');
+  if (failed.length > 0) {
+    try {
+      const { getStaffNotificationRecipients } = await import('./emailAutomations');
+      const { sendEmail } = await import('./email');
+      const to = await getStaffNotificationRecipients();
+      const base = process.env.NEXT_PUBLIC_APP_URL || 'https://spacohk.com';
+      const lines = failed.map((r) => `• <a href="${base}/zh/admin/bookings/${r.bookingId}">#${r.bookingId.slice(0, 8)}</a>：${r.reason || ''} ${(r.error || '').slice(0, 160)}`).join('<br>');
+      await Promise.all(to.map((addr) => sendEmail({
+        to: addr,
+        subject: `⚠️ 門鎖密碼未能發出（${failed.length} 張單）`,
+        html: `<p>今日 09:00 嘅門鎖密碼掃描有 ${failed.length} 張單未能發出密碼：</p><p>${lines}</p><p>請去 後台 → 門鎖設定 查看並重試，或者手動設定密碼。</p>`,
+      })));
+    } catch (err) {
+      console.warn('[lockPasscode] failure alert failed', err);
+    }
+  }
   return { scanned: ids.length, results };
 }
 

@@ -1,20 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { consumeBookingRewards } from '@/lib/bookingRewards';
-import { refreshPasscodeAfterTimeChange } from '@/lib/lockPasscode';
-import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
-import {
-  buildBookingConfirmationEmail, generateWhatsAppLink,
-} from '@/lib/email';
-import { sendAutomatedEmail } from '@/lib/emailAutomations';
-import {
-  updateBookingOnCalendar, pushBookingToCalendar,
-} from '@/lib/googleCalendar';
-import { venues as staticVenues } from '@/lib/venues';
-import { loadAllVenuesServer } from '@/lib/venueRegistryServer';
-import { formatAddOnsForStaff } from '@/lib/pricing';
-import type { BookingRecord, UserProfile } from '@/types';
+import { followUpAfterEdit } from '@/lib/bookingEditServer';
+import { getPublicOrigin } from '@/lib/kpay';
+import type { BookingRecord } from '@/types';
 import { requireAdmin } from '@/lib/adminAuth';
 
 export const runtime = 'nodejs';
@@ -194,146 +184,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 2. Re-send confirmation email so customer sees the new schedule.
-    //    Firestore .data() drops the doc id, so re-attach it on every
-    //    BookingRecord we hand off — gcal description + email body
-    //    both surface Booking ID and we don't want "undefined".
-    const freshData = (await bookingRef.get()).data() as BookingRecord;
-    const fresh: BookingRecord = { ...freshData, id: bookingId };
+    // 2–3. Passcode re-issued, customer update email, Calendar event —
+    //      the shared follow-up (lib/bookingEditServer), also used by the
+    //      staff edit route.
+    const follow = await followUpAfterEdit(bookingId, getPublicOrigin(req.nextUrl.origin), {
+      previousSnapshot: body.previousSnapshot as never,
+      email: !syncOnly || !!body.resendEmail,
+      resend: !!body.resendEmail,
+      updatedBalance,
+    });
 
-    // A TTLock passcode issued for the old times is re-issued for the new
-    // ones (no-op when nothing changed).
-    try { await refreshPasscodeAfterTimeChange(bookingId); } catch (err) { console.error('[booking-edit-followup] passcode refresh failed', err); }
-
-    // Admin-direct (線下) bookings carry userId: null — .doc(null)
-    // THROWS, which killed this whole route before the gcal sync ever
-    // ran (#s2VteSf7: edits synced for normal bookings but never for
-    // offline ones). Guard it and fall back to the booking's own
-    // customerEmail so offline customers still get the update email.
-    const userSnap = fresh.userId
-      ? await adminDb.collection('users').doc(fresh.userId).get()
-      : null;
-    const profile = userSnap?.exists ? (userSnap.data() as UserProfile) : null;
-    const customerEmail = profile?.email || fresh.customerEmail || undefined;
-    // Registry first — HART rooms only exist in 分店管理, so the static
-    // lookup alone named them by slug in the customer's update email.
-    const registryVenues = await loadAllVenuesServer();
-    const findVenue = (id: string) => registryVenues.find((v) => v.id === id) ?? staticVenues.find((v) => v.id === id);
-    const venue = findVenue(fresh.venueId);
-    const venueName = venue?.name.zh || fresh.branchSlug;
-
-    // Build the human-readable diff list when caller supplied a snapshot
-    // of pre-edit values. Each entry is shown as a bullet in the email's
-    // "🔄 你嘅預訂已更新" banner so customer sees exactly what moved.
-    const changes: string[] = [];
-    const prev = body.previousSnapshot;
-    if (prev) {
-      const venueLabel = (id?: string) => {
-        if (!id) return '';
-        return findVenue(id)?.name.zh || id;
-      };
-      if (prev.date && prev.date !== fresh.date) {
-        changes.push(`日期: ${prev.date} → ${fresh.date}`);
-      }
-      const newRange = `${fresh.startTime}-${fresh.endTime}`;
-      const oldRange = `${prev.startTime || ''}-${prev.endTime || ''}`;
-      if ((prev.startTime || prev.endTime) && newRange !== oldRange) {
-        changes.push(`時段: ${oldRange} → ${newRange}`);
-      }
-      if (prev.venueId && prev.venueId !== fresh.venueId) {
-        changes.push(`場地: ${venueLabel(prev.venueId)} → ${venueLabel(fresh.venueId)}`);
-      }
-      if (typeof prev.guestCount === 'number' && prev.guestCount !== fresh.guestCount) {
-        changes.push(`人數: ${prev.guestCount} 人 → ${fresh.guestCount} 人`);
-      }
-      const newAddOnsLine = formatAddOnsForStaff(fresh.addOns, 'zh');
-      if (prev.addOnsLine !== undefined && prev.addOnsLine !== newAddOnsLine) {
-        changes.push(`附加服務: ${prev.addOnsLine || '(無)'} → ${newAddOnsLine || '(無)'}`);
-      }
-    }
-
-    // Email triggers:
-    //   - syncOnly=false (default for admin edits + "重新發送")  → email
-    //   - syncOnly=true                                          → skip
-    //   - resendEmail=true forces email regardless of syncOnly
-    const shouldEmail = (!syncOnly || body.resendEmail) && !!customerEmail;
-    if (shouldEmail) {
-      const whatsappNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || '85292823060';
-      const whatsappLink = generateWhatsAppLink(
-        whatsappNumber,
-        `你好，我嘅預訂編號：${bookingId}\n場地：${venueName}\n日期：${fresh.date}`,
-      );
-      const tpl = buildBookingConfirmationEmail({
-        customerName: profile?.displayName || fresh.customerName || (customerEmail ? customerEmail.split('@')[0] : '客人'),
-        venueId: booking.venueId,
-        venueName,
-        venueAddress: venue?.address.zh,
-        date: fresh.date,
-        startTime: fresh.startTime,
-        endTime: fresh.endTime,
-        endDate: fresh.endDate,
-        guestCount: fresh.guestCount,
-        adultCount: fresh.adultCount,
-        childCount: fresh.childCount,
-        subtotal: fresh.pricing.subtotal,
-        deposit: fresh.pricing.deposit,
-        securityDeposit: fresh.pricing.securityDeposit,
-        promoCode: fresh.promoCode,
-        promoDiscount: fresh.promoDiscount,
-        adminDiscount: adminDiscountAmount(booking as never),
-        pointsUsed: fresh.pointsUsed,
-        pointsDiscount: fresh.pointsDiscount,
-        balanceDue: updatedBalance ?? fresh.balanceDue,
-        balanceDueDate: fresh.balanceDueDate,
-        addOnsLine: formatAddOnsForStaff(fresh.addOns, 'zh'),
-        paymentMethod: fresh.paymentMethod || 'Online',
-        whatsappLink,
-        // Show the diff banner only when admin's edit actually changed
-        // something. Resends with no snapshot use the default subject.
-        changes: changes.length > 0 ? changes : undefined,
-      });
-      await sendAutomatedEmail({
-        automationKey: 'booking_confirmation',
-        to: customerEmail,
-        subject: tpl.subject,
-        html: tpl.html,
-      });
-    }
-
-    // 3. Update / re-create the matching Google Calendar event.
-    //    When admin changes the booking's venue, lib/firestore.ts clears
-    //    `googleEventId` (the old event lives on a different calendar).
-    //    In that case updateBookingOnCalendar would no-op, so we push a
-    //    fresh event on the new venue's calendar instead. The old
-    //    orphaned event on the previous venue's calendar needs manual
-    //    cleanup — admin is told in the success message.
-    try {
-      const origin = req.nextUrl.origin;
-      const redirectUri = `${origin}/api/google/callback`;
-      if (fresh.googleEventId) {
-        await updateBookingOnCalendar(redirectUri, {
-          booking: fresh,
-          customerName: profile?.displayName,
-        });
-      } else {
-        const newEventId = await pushBookingToCalendar(redirectUri, {
-          booking: fresh,
-          customerName: profile?.displayName,
-        });
-        if (newEventId) {
-          // Persist so subsequent edits / cancellations can find the event.
-          await bookingRef.update({
-            googleEventId: newEventId,
-            updatedAt: FieldValue.serverTimestamp(),
-          });
-        }
-      }
-    } catch (err) {
-      console.warn('[booking-edit-followup] gcal update failed:', err);
-      // Non-fatal — booking is already updated; admin can resync.
-    }
-
-    return NextResponse.json({ ok: true, newBalance: updatedBalance });
+    return NextResponse.json({ ok: true, newBalance: updatedBalance, effects: follow.effects, errors: follow.errors });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Edit followup failed' },

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { pointsEarnedFor } from '@/lib/bookingRules';
 import { loadBookingRulesServer } from '@/lib/bookingRulesServer';
 import { requireCronSecret } from '@/lib/adminAuth';
+import { hkTodayYmd, shiftYmd } from '@/lib/hkTime';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { buildPostEventEmail } from '@/lib/email';
@@ -28,16 +29,17 @@ export async function GET(request: NextRequest) {
   const denied = requireCronSecret(request);
   if (denied) return denied;
 
-  // Compute "3 days ago" in HKT (UTC+8) → YYYY-MM-DD
-  const now = new Date();
-  const threeDaysAgoMs = now.getTime() - 3 * 24 * 60 * 60 * 1000;
-  const hkt = new Date(threeDaysAgoMs + 8 * 60 * 60 * 1000);
-  const targetDate = `${hkt.getUTCFullYear()}-${String(hkt.getUTCMonth() + 1).padStart(2, '0')}-${String(hkt.getUTCDate()).padStart(2, '0')}`;
+  // Bookings whose event ended 3 to 10 days ago (HKT) and have not had the
+  // email yet — a missed run no longer skips a day for good (review #25).
+  const today = hkTodayYmd();
+  const targetDate = shiftYmd(today, -3);
+  const earliest = shiftYmd(today, -10);
+  const production = process.env.VERCEL_ENV === 'production';
 
   const snap = await adminDb
     .collection('bookings')
-    .where('date', '==', targetDate)
-    .where('status', 'in', ['confirmed', 'completed'])
+    .where('date', '>=', earliest)
+    .where('date', '<=', targetDate)
     .get();
 
   const sent: string[] = [];
@@ -50,9 +52,16 @@ export async function GET(request: NextRequest) {
       date: string;
       pricing: { subtotal: number; deposit: number; baseCharge?: number; addOnTotal?: number };
       postEventEmailSentAt?: unknown;
+      status?: string;
+      isTest?: boolean;
     };
 
-    if (booking.postEventEmailSentAt) {
+    if (booking.postEventEmailSentAt || !['confirmed', 'completed'].includes(String(booking.status))) {
+      skipped.push(docSnap.id);
+      continue;
+    }
+    // Test bookings get no customer email on production.
+    if (booking.isTest && production) {
       skipped.push(docSnap.id);
       continue;
     }
@@ -99,12 +108,15 @@ export async function GET(request: NextRequest) {
         pointsEarned,
         pointsBalance: user.loyaltyPoints || 0,
       });
-      await sendAutomatedEmail({
+      const r = await sendAutomatedEmail({
         automationKey: 'post_event',
         to: user.email,
         subject: tpl.subject,
         html: tpl.html,
       });
+      // The automation is switched off: nothing went out, so no mark —
+      // the email is sent once it is switched back on.
+      if (!r.sent) { skipped.push(docSnap.id); continue; }
 
       await docSnap.ref.update({
         postEventEmailSentAt: FieldValue.serverTimestamp(),

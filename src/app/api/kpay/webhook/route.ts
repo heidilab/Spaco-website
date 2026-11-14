@@ -1,3 +1,4 @@
+import { recordKpayRefundEntry } from '@/lib/kpayRefundEntry';
 import { NextRequest, NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { adminDb } from '@/lib/firebaseAdmin';
@@ -254,5 +255,11 @@ async function handleRefundNotify(payload: KPayNotifyPayload) {
     });
   });
 
+  // A successful refund is money out — one payments[] entry (review #26).
+  if (payload.transactionState === 2) {
+    try {
+      await recordKpayRefundEntry(ref.id, { amount: payload.payAmount, kpayOrderNo: null, refundOutTradeNo: tradeNo, kpayRefundOrderNo: payload.orderNo, recordedBy: 'kpay' });
+    } catch (err) { console.error('[kpay/webhook] refund entry failed:', err); }
+  }
   return NextResponse.json({ ok: true, bookingId: ref.id, refund: true });
 }

@@ -183,8 +183,8 @@ export const EMAIL_AUTOMATIONS: EmailAutomationDef[] = [
       en: 'For high-value bookings paying 50% upfront. T-2d reminder if balance unpaid.',
     },
     trigger: {
-      zh: 'Cron — 每日 03:00 HKT',
-      en: 'Cron — daily at 03:00 HKT',
+      zh: 'Cron — 每日 09:00 HKT（門鎖密碼掃描一併處理）',
+      en: 'Cron — daily at 09:00 HKT (with the passcode sweep)',
     },
     audience: 'customer',
   },
@@ -209,8 +209,8 @@ export const EMAIL_AUTOMATIONS: EmailAutomationDef[] = [
       en: 'T-1/2 days before event when balance is fully paid. Sends door access passcode.',
     },
     trigger: {
-      zh: 'Cron — 每日 01:00 HKT',
-      en: 'Cron — daily at 01:00 HKT',
+      zh: 'Cron — 每日 09:00 HKT',
+      en: 'Cron — daily at 09:00 HKT',
     },
     audience: 'customer',
   },
@@ -222,8 +222,8 @@ export const EMAIL_AUTOMATIONS: EmailAutomationDef[] = [
       en: 'Sent ~3 days after event. Loyalty points earned + Instagram nudge.',
     },
     trigger: {
-      zh: 'Cron — 每日 03:00 HKT',
-      en: 'Cron — daily at 03:00 HKT',
+      zh: 'Cron — 每日 11:00 HKT',
+      en: 'Cron — daily at 11:00 HKT',
     },
     audience: 'customer',
   },

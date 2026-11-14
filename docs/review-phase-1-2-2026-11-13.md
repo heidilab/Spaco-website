@@ -115,3 +115,24 @@ amenity ids) stays in the i18n files; FAQ text is edited in 常見問題管理.
   `booking-edit-followup`) — it already conflict-checks and migrates
   slots, but a closed tab between the two calls leaves the Calendar /
   email behind; next candidate for the same treatment.
+
+## Remaining items (2026-11-14, after phase 5)
+
+| # | Done |
+|---|---|
+| 15 | create / direct-order / modify / staff-edit windows include the booking's own 60-minute cleaning buffer (blocked_slots and booking-level checks). |
+| 16 | Customer modify validates HH:mm, ignores test slots on production, and checks the bookings themselves (`overlappingBookings`). |
+| 17 | `lib/gcalSegments`: a Google event crossing midnight blocks both days; an all-day event every day (one row per day, keyed by `googleEventPart`). |
+| 18 | `pushBookingToCalendar` never pushes a cancelled / dead / test booking; the staff edit keeps no slots for a dead booking. |
+| 22 | Promo windows use Hong Kong dates (`lib/hkTime`). |
+| 23 | 財務總覽 revenue nets the staff discount; the 行家 rent base nets a rent-scoped staff discount. |
+| 24 | Done in phase 1 (`requireCronSecret`; lock route behind `requireAdmin`). |
+| 25 | Post-event sweep covers 3–10 days back, skips test bookings on production, leaves no mark when the automation is off; CS bonus sales = net bill. |
+| 26 | KPay refund capped at what is left of the payment; a successful refund is a `payments[]` refund entry (route + webhook, idempotent). |
+| 27 | 11 secret-gated diagnostic routes deleted; the four repair routes the admin UI uses stay behind `requireAdmin`. |
+| lock 4 | The 09:00 sweep emails staff when a passcode could not be issued. |
+| lock 9 | Automation schedule texts say 09:00 / 11:00 HKT (the crons are UTC). |
+| 404 | `[locale]/not-found.tsx` + `[locale]/[...rest]` + root `not-found.tsx`: a wrong address shows a page, not a blank. |
+| staff edit | `lib/bookingEditServer.updateBookingServer` + `/api/admin/booking-update`: the staff edit (save and recalc) runs in one server transaction — conflict check, slots, repricing, promo rescale, sticky deposit, balance, settled-booking points — then `followUpAfterEdit` (passcode, update email with diff, Calendar), shared with `booking-edit-followup`. `lib/firestore.updateBookingDateTime` is no longer called by the admin. |
+
+See `docs/change-process.md` for how changes are made and deployed from here on.

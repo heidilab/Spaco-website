@@ -676,6 +676,9 @@ export interface BlockedSlot {
   googleEventTitle?: string;
   /** Event description — same as googleEventTitle. */
   googleEventDescription?: string;
+  /** For an event that covers several days: this row's date (the first
+   *  day's row has none). Lets the sync keep one row per day. */
+  googleEventPart?: string;
 }
 
 // Informational events that admin/CS schedule (e.g. site visits, deliveries)

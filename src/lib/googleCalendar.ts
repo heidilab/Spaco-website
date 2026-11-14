@@ -9,6 +9,7 @@
 //
 // Auth: OAuth 2.0 (refresh token stored in Firestore at `secrets/google_oauth`).
 
+import { timedEventSegments, allDayEventSegments } from './gcalSegments';
 import { google, calendar_v3 } from 'googleapis';
 import { normalizeGcalCalendarId } from './gcalCalendarId';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -190,25 +191,6 @@ export async function disconnectGoogle(): Promise<void> {
  *  Critical: cron runs on Vercel (UTC), so getHours() would return
  *  UTC hours and store 19:00 HKT bookings as 11:00. Use Intl with
  *  explicit timeZone to format in Hong Kong time regardless of host. */
-function hhmm(d: Date): string {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Hong_Kong',
-    hour: '2-digit', minute: '2-digit', hour12: false,
-  }).formatToParts(d);
-  const hour = parts.find((p) => p.type === 'hour')?.value || '00';
-  const minute = parts.find((p) => p.type === 'minute')?.value || '00';
-  return `${hour}:${minute}`;
-}
-function ymd(d: Date): string {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Hong_Kong',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-  }).formatToParts(d);
-  const y = parts.find((p) => p.type === 'year')?.value || '0000';
-  const m = parts.find((p) => p.type === 'month')?.value || '00';
-  const dd = parts.find((p) => p.type === 'day')?.value || '00';
-  return `${y}-${m}-${dd}`;
-}
 
 interface SyncResult {
   scanned: number;
@@ -244,7 +226,10 @@ export async function syncCalendars(redirectUri: string): Promise<SyncResult> {
   existingSnap.docs.forEach((d) => {
     const data = { id: d.id, ...d.data() } as BlockedSlot;
     if (data.googleEventId && data.venueId) {
-      existingByEventVenue.set(`${data.googleEventId}::${data.venueId}`, data);
+      existingByEventVenue.set(
+        data.googleEventPart ? `${data.googleEventId}::${data.venueId}::${data.googleEventPart}` : `${data.googleEventId}::${data.venueId}`,
+        data,
+      );
     }
   });
 
@@ -297,35 +282,22 @@ export async function syncCalendars(redirectUri: string): Promise<SyncResult> {
       if (ev.extendedProperties?.private?.spaco_booking_id) continue;
       if (ev.extendedProperties?.private?.spaco_event_type) continue;
 
-      // Time-only slots from start.dateTime (skip all-day for now: dateTime
-      // would be undefined and only `date` set; treat all-day as full-day block)
-      let date: string;
-      let startTime: string;
-      let endTime: string;
-      if (ev.start.dateTime && ev.end.dateTime) {
-        const s = new Date(ev.start.dateTime);
-        const e = new Date(ev.end.dateTime);
-        date = ymd(s);
-        startTime = hhmm(s);
-        endTime = hhmm(e);
-        // If event spans midnight, clamp to the start day
-        if (ymd(e) !== date) endTime = '23:59';
-      } else if (ev.start.date && ev.end.date) {
-        // All-day event — block 00:00–23:59 of every day in range
-        date = ev.start.date;
-        startTime = '00:00';
-        endTime = '23:59';
-      } else {
-        continue;
-      }
+      // One slot per calendar day the event covers: an event crossing
+      // midnight blocks both days, an all-day event every day in its
+      // range (site review #17; before, only the first day was blocked).
+      const segments = ev.start.dateTime && ev.end.dateTime
+        ? timedEventSegments(ev.start.dateTime, ev.end.dateTime)
+        : ev.start.date && ev.end.date ? allDayEventSegments(ev.start.date, ev.end.date) : [];
+      if (segments.length === 0) continue;
 
       const venueIds = groupVenueIds;
-      // For SW: also expand via venuesSharingSpace defensive guard.
-      // Here venueIds is already the full set so just iterate.
       const eventTitle = ev.summary || '';
       const eventDescription = ev.description || '';
-      for (const venueId of venueIds) {
-        const seenKey = `${eventId}::${venueId}`;
+      for (const venueId of venueIds) for (let segIndex = 0; segIndex < segments.length; segIndex++) {
+        const { date, startTime, endTime } = segments[segIndex];
+        // The first day keeps the key rows have always had; later days are
+        // keyed by their date so they get their own rows.
+        const seenKey = segIndex === 0 ? `${eventId}::${venueId}` : `${eventId}::${venueId}::${date}`;
         seenKeys.add(seenKey);
         const existing = existingByEventVenue.get(seenKey);
 
@@ -347,6 +319,7 @@ export async function syncCalendars(redirectUri: string): Promise<SyncResult> {
           googleEventId: eventId,
           googleCalendarKey: calKey,
           googleEventDetailsHash: detailsHash,
+          ...(segIndex > 0 ? { googleEventPart: date } : {}),
         };
         const details = { venueId, date, googleEventId: eventId, title: eventTitle, description: eventDescription };
 
@@ -566,6 +539,9 @@ export async function pushBookingToCalendar(
     || b.status === 'completed'
     || !!b.paymentVerifiedAt;
   if (!isPaid) return null;
+  // A cancelled / dead booking that was once paid, and test bookings,
+  // never reach the real calendar (site review #18).
+  if (b.status === 'cancelled' || b.status === 'payment_not_completed' || b.isTest) return null;
 
   const stored = await getStoredToken();
   if (!stored) return null;

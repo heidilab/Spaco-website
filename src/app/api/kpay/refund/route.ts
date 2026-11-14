@@ -1,3 +1,4 @@
+import { recordKpayRefundEntry } from '@/lib/kpayRefundEntry';
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { refundOrder, isKpayConfigured } from '@/lib/kpay';
@@ -76,12 +77,29 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Never more than what is left of that payment (review #26): earlier
+    // refunds against the same KPay order come off first.
+    // Refund entries recorded by this route carry the ORIGINAL order no;
+    // ones the webhook recorded (kpayRefunds / entries without it) are
+    // counted too, so the cap errs on the safe side.
+    const refundEntries = (booking.payments || []).filter((p) => (p as { isRefund?: boolean }).isRefund);
+    const knownTradeNos = new Set(refundEntries.map((p) => (p as { refundOutTradeNo?: string }).refundOutTradeNo).filter(Boolean));
+    const alreadyRefunded = refundEntries
+      .filter((p) => { const o = (p as { kpayOrderNo?: string | null }).kpayOrderNo; return !o || o === target.kpayOrderNo; })
+      .reduce((s, p) => s + Math.abs(p.amount || 0), 0)
+      + (booking.kpayRefunds || [])
+        .filter((r) => r.state === 2 && !knownTradeNos.has(r.refundOutTradeNo))
+        .reduce((s, r) => s + (r.amount || 0), 0);
+    const refundable = Math.max(0, Math.round(((target.amount || 0) - alreadyRefunded) * 100) / 100);
     const refundAmount =
       typeof body.refundAmount === 'number' && body.refundAmount > 0
-        ? body.refundAmount
-        : target.amount;
+        ? Math.round(body.refundAmount * 100) / 100
+        : refundable;
     if (!refundAmount || refundAmount <= 0) {
       return NextResponse.json({ error: 'refundAmount must be > 0' }, { status: 400 });
+    }
+    if (refundAmount > refundable) {
+      return NextResponse.json({ error: `refundAmount exceeds what is left of this payment (HK$${refundable})`, refundable }, { status: 400 });
     }
 
     // Unique merchant trade number for this refund (≤32 chars):
@@ -96,6 +114,17 @@ export async function POST(req: NextRequest) {
       refundAmount,
       notifyUrl,
     });
+
+    // A refund that went through is money out: record it as a refund
+    // entry so finance sees it without a second manual step (review #26).
+    // balanceDue is untouched (review #7). The webhook records the same
+    // entry idempotently if it arrives first.
+    if (result.ok && result.result === 2) {
+      await recordKpayRefundEntry(bookingId, {
+        amount: refundAmount, kpayOrderNo: target.kpayOrderNo, refundOutTradeNo, kpayRefundOrderNo: result.orderNo || null,
+        recordedBy: body.recordedBy || 'admin',
+      });
+    }
 
     return NextResponse.json({
       ok: result.ok,

@@ -15,6 +15,7 @@ import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllBookings } from '@/lib/firestore';
 import { countsForFinance } from '@/lib/finance';
+import { netConsumption } from '@/lib/bookingMoney';
 import { loadAllVenues } from '@/lib/venueRegistry';
 import { salesBranchKey, salesBranches, type SalesBranch } from '@/lib/bonusBranches';
 import { getBonusConfig, saveBonusConfig } from '@/lib/bonus';
@@ -95,7 +96,8 @@ export default function BonusPage() {
       const v = allBookings
         .filter((b) => countsForFinance(b, { includeTest: isPreviewHost })
           && b.date.startsWith(month) && salesBranchKey(b.venueId, venues) === bk)
-        .reduce((s, b) => s + (b.pricing.subtotal || 0), 0);
+        // Net of promo / points / staff discount, as 月結 reports it.
+        .reduce((s, b) => s + netConsumption(b), 0);
       cache.set(key, v);
       return v;
     };

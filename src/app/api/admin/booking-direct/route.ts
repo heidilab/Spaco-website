@@ -124,6 +124,8 @@ export async function POST(req: NextRequest) {
         { date: resolvedEndDate, start: 0, end: toMin(endTime) },
       ]
     : [{ date: date as string, start: toMin(startTime), end: toMin(endTime) }];
+  // The order's own cleaning buffer (site review #15).
+  checkWindows.push({ date: resolvedEndDate, start: toMin(endTime), end: toMin(bufferEnd) });
 
   // Money derived through the shared module so balanceDue always agrees
   // with the rest of the system.
@@ -175,6 +177,7 @@ export async function POST(req: NextRequest) {
       const requestedWindows: OverlapWindow[] = overnight
         ? [{ date: date as string, startTime, endTime: '23:59' }, { date: resolvedEndDate, startTime: '00:00', endTime }]
         : [{ date: date as string, startTime, endTime }];
+      requestedWindows.push({ date: resolvedEndDate, startTime: endTime, endTime: bufferEnd });
       const seen = new Set<string>();
       const bookingClashes = overlappingBookings(requestedWindows,
         candidateDocs.filter((d) => !seen.has(d.id) && seen.add(d.id)).map((d) => ({ id: d.id, ...(d.data() as Omit<OverlapBooking, 'id'>) })),

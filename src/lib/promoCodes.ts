@@ -1,4 +1,5 @@
 import { promoEligibilityReason, promoRestrictionError, type PromoRestrictions, type PromoBookingContext } from './promoEligibility';
+import { hkTodayYmd } from './hkTime';
 // Promo code admin CRUD + checkout validation helpers.
 //
 // Codes live in Firestore at `promo_codes/{id}`. The admin UI uses
@@ -282,7 +283,7 @@ export function calcPromoDiscount(
 ): PromoDiscount | null {
   if (!code.enabled) return null;
   // Window check.
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = hkTodayYmd();
   if (code.startDate && todayStr < code.startDate) return null;
   if (code.endDate && todayStr > code.endDate) return null;
 

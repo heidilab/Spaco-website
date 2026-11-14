@@ -5,6 +5,7 @@
 import type { BookingRecord, MarketingChannel, Venue } from '@/types';
 import { findAddOn, addOnEntryTotal, addOnEntryUnitPrice, addOnPartialPax, customAddOnEntryCost, customAddOnSetting } from './pricing';
 import { isCustomAddOnId } from './addOnConfig';
+import { adminDiscountAmount } from './bookingMoney';
 
 import { venues } from './venues';
 import { salesBranchKey, salesBranches } from './bonusBranches';
@@ -387,7 +388,8 @@ export function aggregateBookings(
     // Promo / point discounts reduce what the customer actually paid.
     // For revenue accounting we use subtotal − discounts (= cash that
     // came in). That keeps free-drinks promos honest too.
-    const discount = (b.promoDiscount || 0) + (b.pointsDiscount || 0);
+    // 折扣優惠 (staff discount) comes off too — 月結 already did (review #23).
+    const discount = (b.promoDiscount || 0) + (b.pointsDiscount || 0) + adminDiscountAmount(b);
     const netRevenue = Math.max(0, subtotal - discount);
     const totalForBooking = netRevenue + dedTotal;
 

@@ -314,8 +314,10 @@ export function depositDeductionsKept(booking: MoneyBooking): number {
  */
 export function commissionBase(booking: MoneyBooking, base: 'rent' | 'total'): number {
   const extras = depositDeductionsKept(booking);
+  // A rent-scoped 折扣優惠 reduces the rent the broker is paid on (review #23).
+  const rentDiscount = booking.adminDiscount?.scope === 'rent' ? adminDiscountAmount(booking) : 0;
   const core = base === 'rent'
-    ? Math.max(0, (booking.pricing?.baseCharge || 0) - (booking.promoDiscount || 0) - (booking.pointsDiscount || 0))
+    ? Math.max(0, (booking.pricing?.baseCharge || 0) - (booking.promoDiscount || 0) - (booking.pointsDiscount || 0) - rentDiscount)
     : netConsumption(booking);
   return Math.round((core + extras) * 100) / 100;
 }

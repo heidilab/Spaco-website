@@ -1,3 +1,4 @@
+import { netConsumption } from '@/lib/bookingMoney';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireCronSecret } from '@/lib/adminAuth';
 import { adminDb } from '@/lib/firebaseAdmin';
@@ -52,7 +53,8 @@ export async function GET(request: NextRequest) {
     const b = { id: d.id, ...d.data() } as BookingRecord;
     if (!countsForFinance(b)) continue;   // prod basis: test bookings excluded
     const key = salesBranchKey(b.venueId, venues);
-    salesByBranch[key] = (salesByBranch[key] || 0) + (b.pricing?.subtotal || 0);
+    // Net of promo / points / staff discount — the figure 月結 reports (review #25).
+    salesByBranch[key] = (salesByBranch[key] || 0) + netConsumption(b);
   }
 
   const BRANCH_NAMES: Record<string, string> = Object.fromEntries(

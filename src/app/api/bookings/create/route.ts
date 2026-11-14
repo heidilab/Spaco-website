@@ -358,6 +358,10 @@ export async function POST(req: NextRequest) {
   if (setupStart) {
     checkWindows.push({ date: date as string, start: toMin(setupStart), end: toMin(startTime) });
   }
+  // The booking's own 60-minute cleaning buffer must be free as well — the
+  // next booking's start may not fall inside it (site review #15; only the
+  // browser checked this before).
+  checkWindows.push({ date: resolvedEndDate, start: toMin(endTime), end: toMin(bufferEnd) });
 
   // Dates that need the lock touched (covers overnight Day 2 as well).
   const lockDates = resolvedEndDate !== date
@@ -434,6 +438,7 @@ export async function POST(req: NextRequest) {
         ? [{ date: date as string, startTime, endTime: '23:59' }, { date: resolvedEndDate, startTime: '00:00', endTime }]
         : [{ date: date as string, startTime, endTime }];
       if (setupStart) requestedWindows.push({ date: date as string, startTime: setupStart, endTime: startTime });
+      requestedWindows.push({ date: resolvedEndDate, startTime: endTime, endTime: bufferEnd });
       const seen = new Set<string>();
       const clashes = overlappingBookings(requestedWindows,
         candidateDocs.filter((d) => !seen.has(d.id) && seen.add(d.id)).map((d) => ({ id: d.id, ...(d.data() as Omit<OverlapBooking, 'id'>) })),

@@ -1,3 +1,4 @@
+import { hkTodayYmd } from '@/lib/hkTime';
 import { promoEligibilityReason, type PromoBookingContext } from '@/lib/promoEligibility';
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDb } from '@/lib/firebaseAdmin';
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest) {
     const discount = calcPromoDiscount(code, { subtotal, baseCharge, adultEquiv, drinksCost, venueId: body.venueId, date: body.date, endDate: body.endDate, packageSlug: body.packageSlug });
     if (!discount) {
       // Determine specific reason for clearer UI message.
-      const todayStr = new Date().toISOString().slice(0, 10);
+      const todayStr = hkTodayYmd();
       if (code.startDate && todayStr < code.startDate) {
         return NextResponse.json({ valid: false, reason: 'not_started', startDate: code.startDate });
       }

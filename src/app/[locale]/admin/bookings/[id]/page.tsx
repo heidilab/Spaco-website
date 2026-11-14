@@ -14,9 +14,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   getBooking,
   getUserProfile,
-  updateBookingDateTime,
-  creditLoyaltyPoints,
-  redeemLoyaltyPoints,
 } from '@/lib/firestore';
 import { doc, updateDoc, serverTimestamp, getDocs, query, collection, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -38,7 +35,6 @@ import {
   applyHotpotSoups, cleanSoupBases, hotpotSoupBases, hotpotSoupSlots,
 } from '@/lib/hotpot';
 import {
-  formatAddOnsForStaff,
   allAddOns, findAddOn,
   calculatePricing,
   calcShishaPrice,
@@ -735,56 +731,33 @@ export default function AdminBookingDetailPage() {
               })),
           ], hotpotSoups, hotpotEquiv)
         : undefined;
-      // Snapshot pre-edit values so the followup endpoint can diff and
-      // include a "已更改項目" banner in the confirmation email.
-      // (Captured BEFORE updateBookingDateTime overwrites Firestore.)
-      const previousSnapshot = {
-        date: booking.date,
-        startTime: booking.startTime,
-        endTime: booking.endTime,
-        endDate: booking.endDate || null,
-        venueId: booking.venueId,
-        guestCount: booking.guestCount,
-        adultCount: booking.adultCount,
-        childCount: booking.childCount,
-        addOnsLine: formatAddOnsForStaff(booking.addOns, 'zh'),
-      };
-
-      await updateBookingDateTime(booking.id, {
-        date,
-        startTime,
-        endTime,
-        endDate,
-        guestCount,
-        adultCount,
-        childCount,
-        ...(venueChanged
-          ? { venueId, branchSlug: targetVenue?.slug || booking.branchSlug }
-          : {}),
-        ...(newAddOns ? { addOns: newAddOns } : {}),
-        ...(depositDirty ? { securityDepositOverride: depositOverrideNum } : {}),
-        ...(subtotalDirty ? { subtotalOverride: subtotalOverrideNum } : {}),
+      // One server call (lib/bookingEditServer): conflict check, slots,
+      // repricing and points in a transaction, then the passcode, the
+      // customer's 「預訂已更新」 email and the Calendar event.
+      const res = await adminApiFetch('/api/admin/booking-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookingId: booking.id,
+          date,
+          startTime,
+          endTime,
+          endDate,
+          guestCount,
+          adultCount,
+          childCount,
+          ...(venueChanged
+            ? { venueId, branchSlug: targetVenue?.slug || booking.branchSlug }
+            : {}),
+          ...(newAddOns ? { addOns: newAddOns } : {}),
+          ...(depositDirty ? { securityDepositOverride: depositOverrideNum } : {}),
+          ...(subtotalDirty ? { subtotalOverride: subtotalOverrideNum } : {}),
+        }),
       });
-
-      // Followup: send customer the "預訂已更新" email (with diff banner
-      // listing every changed field) + sync Google Calendar. Heidi 2026-06:
-      // previously this was syncOnly=true so customer NEVER got an email
-      // after admin edits — only the auto-cancellation noise from gcal
-      // attendee removal. Now we always email so the customer has a
-      // concrete record of the new schedule.
-      try {
-        const fu = await adminApiFetch('/api/admin/booking-edit-followup', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            bookingId: booking.id,
-            previousSnapshot,
-          }),
-        });
-        if (!fu.ok) throw new Error(`followup ${fu.status}`);
-      } catch (err) {
-        console.warn('[handleSave] followup (email + gcal) failed:', err);
-      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error || `save ${res.status}`);
+      const note = effectsSummary(data.effects || {}, data.errors || {}, locale === 'zh');
+      if (note) alert(note);
 
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
@@ -3042,73 +3015,32 @@ function OutstandingBalanceSection({
     setRecalcing(true);
     setSettleMsg(null);
     try {
-      await updateBookingDateTime(booking.id, {
-        date: booking.date,
-        startTime: booking.startTime,
-        endTime: booking.endTime,
-        ...(booking.endDate ? { endDate: booking.endDate } : {}),
-        guestCount: booking.guestCount,
-        ...(typeof booking.adultCount === 'number' ? { adultCount: booking.adultCount } : {}),
-        ...(typeof booking.childCount === 'number' ? { childCount: booking.childCount } : {}),
-        addOns: booking.addOns || [],
-        hasBYOFood: booking.hasBYOFood,
-      });
-
-      // Points reconciliation — runs only when the booking was already
-      // settled AND credited. Without this, repairing an over-credited
-      // booking (subtotal was inflated when the credit fired) leaves
-      // the user permanently overpaid in points.
-      let pointsMsg = '';
-      const fresh = await getBooking(booking.id);
-      if (fresh && fresh.pointsCreditedAt && fresh.userId) {
-        const settledDeductions =
-          (fresh.depositRefund as { deductions?: { amount: number }[] } | null)?.deductions
-            ?.reduce((s, d) => s + (d.amount || 0), 0) || 0;
-        // Match settle-deposit formula: exclude promo + points
-        // discounts from the points base.
-        const freshPromoDiscount = fresh.promoDiscount || 0;
-        const freshPointsDiscount = fresh.pointsDiscount || 0;
-        const expected = Math.max(0, (fresh.pricing.subtotal || 0) - freshPromoDiscount - freshPointsDiscount) + settledDeductions;
-        const oldCredited = fresh.pointsActuallyCredited || 0;
-        const diff = expected - oldCredited;
-        if (diff > 0) {
-          // Under-credited — top up by diff.
-          const added = await creditLoyaltyPoints(fresh.userId, diff);
-          await updateDoc(doc(db, 'bookings', fresh.id), {
-            pointsActuallyCredited: oldCredited + added,
-            updatedAt: serverTimestamp(),
-          });
-          pointsMsg = locale === 'zh'
-            ? `；積分補加 +${added.toLocaleString()}`
-            : `; +${added.toLocaleString()} pts credited`;
-        } else if (diff < 0) {
-          // Over-credited — deduct -diff. Falls back to whatever the
-          // user has left if their balance dropped below the amount.
-          const taken = await redeemLoyaltyPoints(fresh.userId, -diff);
-          if (taken) {
-            await updateDoc(doc(db, 'bookings', fresh.id), {
-              pointsActuallyCredited: expected,
-              updatedAt: serverTimestamp(),
-            });
-            pointsMsg = locale === 'zh'
-              ? `；積分扣返 −${(-diff).toLocaleString()}`
-              : `; −${(-diff).toLocaleString()} pts deducted`;
-          } else {
-            pointsMsg = locale === 'zh'
-              ? `；積分需減 ${(-diff).toLocaleString()} 但客戶餘額不足，請手動調整`
-              : `; need to deduct ${(-diff).toLocaleString()} pts but user balance too low, adjust manually`;
-          }
-        }
-      }
-
-      // Mirror handleSave's auto-gcal-sync so the event description
-      // reflects the refreshed totals.
-      adminApiFetch('/api/admin/booking-edit-followup', {
+      // Re-run pricing on the server with the booking's own values; a
+      // settled booking's points are reconciled in the same transaction.
+      const res = await adminApiFetch('/api/admin/booking-update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bookingId: booking.id, syncOnly: true }),
-      }).catch((err) => console.warn('[recalc gcal sync] failed:', err));
-      setSettleMsg((locale === 'zh' ? '✓ 已重新計算金額' : '✓ Pricing recomputed') + pointsMsg);
+        body: JSON.stringify({
+          bookingId: booking.id,
+          date: booking.date,
+          startTime: booking.startTime,
+          endTime: booking.endTime,
+          ...(booking.endDate ? { endDate: booking.endDate } : {}),
+          guestCount: booking.guestCount,
+          ...(typeof booking.adultCount === 'number' ? { adultCount: booking.adultCount } : {}),
+          ...(typeof booking.childCount === 'number' ? { childCount: booking.childCount } : {}),
+          addOns: booking.addOns || [],
+          hasBYOFood: booking.hasBYOFood,
+          email: false,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error || `recalc ${res.status}`);
+      let pointsMsg = '';
+      if (data.pointsApplied > 0) pointsMsg = locale === 'zh' ? `；積分補加 +${Number(data.pointsApplied).toLocaleString()}` : `; +${Number(data.pointsApplied).toLocaleString()} pts credited`;
+      else if (data.pointsApplied < 0) pointsMsg = locale === 'zh' ? `；積分扣返 −${Number(-data.pointsApplied).toLocaleString()}` : `; −${Number(-data.pointsApplied).toLocaleString()} pts deducted`;
+      if (data.pointsShortfall > 0) pointsMsg += locale === 'zh' ? `；尚有 ${Number(data.pointsShortfall).toLocaleString()} 分客戶餘額不足未能扣，請手動調整` : `; ${Number(data.pointsShortfall).toLocaleString()} pts could not be taken back — adjust manually`;
+      setSettleMsg((locale === 'zh' ? '✓ 已重新計價' : '✓ Repriced') + pointsMsg);
       onUpdated?.();
     } catch (err) {
       setSettleMsg(
