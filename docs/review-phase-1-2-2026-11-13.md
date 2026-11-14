@@ -20,7 +20,7 @@ Follow-up to `docs/site-review-2026-11-13.md`. Numbers refer to its §5.
 | 24 | All cron routes use `requireCronSecret` (no fail-open). |
 | lock #1 | A failed TTLock delete keeps `lockPasscode` on the booking with `revokeFailedAt` / `revokeError` and rethrows. |
 
-Not done (needs a Firestore rules deployment, which this session cannot do): #10 (customers setting `receiptUrl` to leave `confirmed`). Still open from the review: #8 (finalization retries), #12/#13 (cancel refunds rewards; server-side cancel), #15–18, #21–26.
+#10 (customers setting `receiptUrl` to leave `confirmed`): `firestore.rules` tightened (`ownReceiptUrl`, unpaid bookings only) and published by Heidi in the Firebase console on 2026-11-14 (rules deploy is separate from the app). Still open from the review: #8 (finalization retries), #12/#13 (cancel refunds rewards; server-side cancel), #15–18, #21–26.
 
 ## Phase 2 — one source for branches
 
