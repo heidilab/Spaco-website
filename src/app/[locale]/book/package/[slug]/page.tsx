@@ -13,7 +13,8 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { getUserProfile, updateUserWhatsapp } from '@/lib/firestore';
 import { useRegistryVenue } from '@/lib/useRegistryVenue';
-import { getPackageBySlug, getPackagesByCategory, CATEGORY_LABEL } from '@/lib/packages';
+import { getPackageBySlug, getPackagesByCategory, CATEGORY_LABEL, type EventPackage } from '@/lib/packages';
+import { usePackages } from '@/lib/packageRegistryClient';
 import { calculateDeposit } from '@/lib/pricing';
 import { saveBookingCheckoutDraft } from '@/lib/bookingCheckoutDraft';
 import HolidayDatePicker from '@/components/booking/HolidayDatePicker';
@@ -59,12 +60,26 @@ function addDays(yyyyMmDd: string, n: number): string {
 export default function PackageBookingPage() {
   const params = useParams();
   const locale = useLocale() as 'zh' | 'en';
+  const slug = params.slug as string;
+  // 套餐管理: the saved packages. A slug unknown to the coded list may
+  // still be a saved one, so wait for the registry before 404-ing.
+  const { version: pkgVersion, loaded: pkgLoaded } = usePackages();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const pkg = useMemo(() => getPackageBySlug(slug), [slug, pkgVersion]);
+  if (!pkg || pkg.active === false) {
+    if (pkgLoaded) notFound();
+    return (
+      <div className="pt-32 pb-24 flex justify-center">
+        <Loader2 size={28} className="animate-spin text-pink" />
+      </div>
+    );
+  }
+  return <PackageBookingPageInner key={pkg.slug} pkg={pkg} locale={locale} />;
+}
+
+function PackageBookingPageInner({ pkg, locale }: { pkg: EventPackage; locale: 'zh' | 'en' }) {
   const router = useRouter();
   const { user } = useAuth();
-  const slug = params.slug as string;
-  const pkg = getPackageBySlug(slug);
-
-  if (!pkg) notFound();
 
   // Registry first — HART rooms only exist in 分店管理, not src/lib/venues.ts.
   const venue = useRegistryVenue(pkg.venueId);

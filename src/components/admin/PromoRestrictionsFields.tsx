@@ -1,7 +1,8 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { loadAllVenues } from '@/lib/venueRegistry';
-import { ALL_PACKAGES } from '@/lib/packages';
+import { allPackages } from '@/lib/packages';
+import { usePackages } from '@/lib/packageRegistryClient';
 import type { Venue } from '@/types';
 import { type PromoRestrictions, promoRestrictionError } from '@/lib/promoEligibility';
 
@@ -16,6 +17,7 @@ export function restrictionErrorText(error: string, locale: 'zh' | 'en') {
 export default function PromoRestrictionsFields({ value, onChange, locale }: {
   value: PromoRestrictions; onChange: (patch: PromoRestrictions) => void; locale: 'zh' | 'en';
 }) {
+  usePackages(); // 套餐管理
   const [venues, setVenues] = useState<Venue[]>([]);
   const [selectedBranches, setSelectedBranches] = useState(!!value.venueIds?.length);
   useEffect(() => { let active = true; loadAllVenues().then(v => { if (active) setVenues(v); }); return () => { active = false; }; }, []);
@@ -37,7 +39,7 @@ export default function PromoRestrictionsFields({ value, onChange, locale }: {
       <select aria-label={zh ? '套餐適用方式' : 'Package eligibility'} className={input+' w-full'} value={scope} onChange={e => onChange({ packageScope: e.target.value as PromoRestrictions['packageScope'] })}>
         <option value="all">{zh ? '所有套餐適用' : 'All packages'}</option><option value="include">{zh ? '只適用於指定套餐' : 'Only selected packages'}</option><option value="exclude">{zh ? '排除指定套餐' : 'All except selected packages'}</option><option value="none">{zh ? '所有包場套餐不適用' : 'No packages'}</option>
       </select>
-      {(scope === 'include' || scope === 'exclude') && <div className="flex flex-wrap gap-3">{ALL_PACKAGES.map(p => <label key={p.slug} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={value.packageSlugs?.includes(p.slug) || false} onChange={e => onChange({ packageSlugs: e.target.checked ? [...(value.packageSlugs || []), p.slug] : (value.packageSlugs || []).filter(s => s !== p.slug) })} />{p.name[locale]}</label>)}</div>}
+      {(scope === 'include' || scope === 'exclude') && <div className="flex flex-wrap gap-3">{allPackages().map(p => <label key={p.slug} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={value.packageSlugs?.includes(p.slug) || false} onChange={e => onChange({ packageSlugs: e.target.checked ? [...(value.packageSlugs || []), p.slug] : (value.packageSlugs || []).filter(s => s !== p.slug) })} />{p.name[locale]}</label>)}</div>}
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={value.appliesToStandardBookings !== false} onChange={e => onChange({ appliesToStandardBookings: e.target.checked })} />{zh ? '一般時租訂場亦適用（非套餐）' : 'Also allow standard hourly bookings (not a package)'}</label>
     </fieldset>
     <fieldset className="space-y-2"><legend className="font-semibold text-sm">{zh ? '不適用活動日期' : 'Excluded event dates'}</legend>

@@ -10,6 +10,7 @@ import { getVenueByIdServer, venuesSharingSpaceServer } from '@/lib/venueRegistr
 import { calculatePricing, calculateDeposit, adultEquivalent, venueDrinksIncluded, subtractHours, stampAddOnPrices,
 } from '@/lib/pricing';
 import { loadAddOnConfigServer } from '@/lib/addOnConfigServer';
+import { loadPackagesServer } from '@/lib/packageRegistryServer';
 import { addOnBlockedBySettings } from '@/lib/addOnConfig';
 import { calcPromoDiscount } from '@/lib/promoCodes';
 import { getHoliday } from '@/lib/hkHolidays';
@@ -79,6 +80,7 @@ export async function POST(req: NextRequest) {
   const submitted = await req.json();
   // 附加服務管理 settings — same prices and availability the customer saw.
   await loadAddOnConfigServer();
+  await loadPackagesServer(); // 套餐管理
   const authHeader = req.headers.get('authorization') || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
   if (!token) return NextResponse.json({ error: 'missing-token' }, { status: 401 });

@@ -1,6 +1,15 @@
 /**
  * Pre-built event packages — fixed price, fixed scope, simplified booking.
  * Each package is bookable via /book/package/{slug}.
+ *
+ * Since the site review (2026-11-13, phase 4c) the packages are DATA:
+ * staff edit them in 套餐管理 (/admin/packages), stored in
+ * `site_content/packages` { items: EventPackage[] }. The coded list below
+ * is the seed and the fallback while nothing is saved. Everything reads
+ * through allPackages() / getPackageBySlug() / getPackagesByVenueId() /
+ * getPackagesByCategory(), which follow the saved list once a loader
+ * (lib/packageRegistryClient in the browser, lib/packageRegistryServer in
+ * API routes) has activated it with setPackageRegistry().
  */
 
 export type PackageCategory = 'birthday' | 'mahjong' | 'corporate';
@@ -56,7 +65,14 @@ export interface EventPackage {
   basePax?: number;
   /** HK$ surcharge per guest beyond `basePax`. Pairs with `basePax`. */
   extraPaxPrice?: number;
+  /** false = 停售: not offered to customers or in the staff form; a
+   *  booking that already carries the slug still resolves it. */
+  active?: boolean;
+  /** Display order in lists (lower first). */
+  sortOrder?: number;
 }
+
+export const PACKAGE_CATEGORIES: PackageCategory[] = ['birthday', 'mahjong', 'corporate'];
 
 /** Localized chip label for a package category. */
 export const CATEGORY_LABEL: Record<PackageCategory, { zh: string; en: string }> = {
@@ -260,17 +276,140 @@ export const ALL_PACKAGES: EventPackage[] = [
   CORPORATE_TST_PACKAGE,
 ];
 
+// ── the package registry (套餐管理) ──
+
+let active: EventPackage[] | null = null;
+let loaded = false;
+let version = 0;
+
+/** Activate the saved packages (null = nothing saved → the coded list). */
+export function setPackageRegistry(list: EventPackage[] | null): void {
+  active = list;
+  loaded = true;
+  version++;
+}
+export function packageRegistryVersion(): number { return version; }
+export function packageRegistryLoaded(): boolean { return loaded; }
+
+/** Every package, saved or coded, 停售 ones included, in display order. */
+export function allPackages(): EventPackage[] {
+  return [...(active ?? ALL_PACKAGES)].sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
+}
+
+/** Packages on sale. */
+export function activePackages(): EventPackage[] {
+  return allPackages().filter((p) => p.active !== false);
+}
+
+/** One package by slug — 停售 ones too, so old bookings still read. */
 export function getPackageBySlug(slug: string): EventPackage | undefined {
-  return ALL_PACKAGES.find((p) => p.slug === slug);
+  return allPackages().find((p) => p.slug === slug);
 }
 
-/** Packages bookable at a given venue (by venue.id). */
+/** Packages on sale at a given venue (by venue.id). */
 export function getPackagesByVenueId(venueId: string): EventPackage[] {
-  return ALL_PACKAGES.filter((p) => p.venueId === venueId);
+  return activePackages().filter((p) => p.venueId === venueId);
 }
 
-/** Sibling packages of one category (e.g. the birthday package at every
- *  branch that runs it) — drives the 揀分店 switcher on the package page. */
+/** Sibling packages of one category on sale (e.g. the birthday package at
+ *  every branch that runs it) — drives the 揀分店 switcher on the package page. */
 export function getPackagesByCategory(category: PackageCategory): EventPackage[] {
-  return ALL_PACKAGES.filter((p) => p.category === category);
+  return activePackages().filter((p) => p.category === category);
+}
+
+// ── sanitising what comes out of Firestore / the admin form ──
+
+const SLUG = /^[a-z0-9][a-z0-9-]{1,39}$/;
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const MAX_TEXT = 300;
+const MAX_LINES = 40;
+
+const text = (v: unknown, max = MAX_TEXT): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+const pair = (v: unknown): { zh: string; en: string } | null => {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>;
+  const zh = text(o.zh); const en = text(o.en);
+  if (!zh && !en) return null;
+  return { zh: zh || en, en: en || zh };
+};
+const lines = (v: unknown): string[] => (Array.isArray(v) ? v.map((x) => text(x)).filter(Boolean).slice(0, MAX_LINES) : []);
+const money = (v: unknown): number | null => {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
+  return Number.isFinite(n) && n >= 0 && n <= 1_000_000 ? Math.round(n * 100) / 100 : null;
+};
+const int = (v: unknown, min: number, max: number): number | null => {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
+  return Number.isInteger(n) && n >= min && n <= max ? n : null;
+};
+
+/** One well-formed package from raw data, or null. */
+export function sanitizePackage(raw: unknown): EventPackage | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const slug = text(r.slug, 40).toLowerCase();
+  const name = pair(r.name);
+  const venueId = text(r.venueId, 60);
+  const price = money(r.price);
+  const deposit = money(r.deposit);
+  const durationRaw = typeof r.durationHours === 'number' ? r.durationHours : Number(r.durationHours);
+  const durationHours = Number.isFinite(durationRaw) && durationRaw > 0 && durationRaw <= 24 && (durationRaw * 4) % 1 === 0 ? durationRaw : null;
+  const earliestStart = text(r.earliestStart, 5);
+  if (!SLUG.test(slug) || !name || !venueId || price === null || deposit === null || durationHours === null || !HHMM.test(earliestStart)) return null;
+  const category = PACKAGE_CATEGORIES.includes(r.category as PackageCategory) ? (r.category as PackageCategory) : 'birthday';
+  const includesRaw = r.includes && typeof r.includes === 'object' ? (r.includes as Record<string, unknown>) : {};
+  const zhLines = lines(includesRaw.zh);
+  const enLines = lines(includesRaw.en);
+  const pkg: EventPackage = {
+    slug, category, venueId, name,
+    shortDesc: pair(r.shortDesc) ?? { zh: '', en: '' },
+    includes: { zh: zhLines, en: enLines.length > 0 ? enLines : zhLines },
+    price, deposit, durationHours,
+    allowedDaysOfWeek: Array.isArray(r.allowedDaysOfWeek)
+      ? Array.from(new Set(r.allowedDaysOfWeek.map((d) => int(d, 0, 6)).filter((d): d is number => d !== null))).sort()
+      : [],
+    earliestStart,
+    pitch: pair(r.pitch) ?? { zh: '', en: '' },
+  };
+  const branchLabel = pair(r.branchLabel);
+  if (branchLabel) pkg.branchLabel = branchLabel;
+  const latestEnd = text(r.latestEnd, 5);
+  if (HHMM.test(latestEnd)) pkg.latestEnd = latestEnd;
+  const minAdvance = int(r.minAdvanceDays, 0, 365);
+  if (minAdvance !== null && minAdvance > 0) pkg.minAdvanceDays = minAdvance;
+  const basePax = int(r.basePax, 1, 500);
+  const extraPax = money(r.extraPaxPrice);
+  if (basePax !== null && extraPax !== null) { pkg.basePax = basePax; pkg.extraPaxPrice = extraPax; }
+  if (Array.isArray(r.addOns)) {
+    const seen = new Set<string>();
+    const addOns: PackageAddOn[] = [];
+    for (const a of r.addOns as Array<Record<string, unknown>>) {
+      if (!a || typeof a !== 'object' || addOns.length >= 20) continue;
+      const id = text(a.id, 40).toLowerCase();
+      const label = pair(a.label);
+      const pricePerPerson = money(a.pricePerPerson);
+      if (!SLUG.test(id) || seen.has(id) || !label || pricePerPerson === null) continue;
+      seen.add(id);
+      const description = pair(a.description);
+      addOns.push({ id, label, pricePerPerson, ...(description ? { description } : {}) });
+    }
+    if (addOns.length > 0) pkg.addOns = addOns;
+  }
+  if (r.active === false) pkg.active = false;
+  const sortOrder = int(r.sortOrder, 0, 999);
+  if (sortOrder !== null) pkg.sortOrder = sortOrder;
+  return pkg;
+}
+
+/** The saved list, well-formed rows only; null when there is none. */
+export function sanitizePackages(raw: unknown): EventPackage[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: EventPackage[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    const pkg = sanitizePackage(item);
+    if (!pkg || seen.has(pkg.slug) || out.length >= 100) continue;
+    seen.add(pkg.slug);
+    out.push(pkg);
+  }
+  return out.length > 0 ? out : null;
 }

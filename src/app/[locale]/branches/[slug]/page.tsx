@@ -11,6 +11,7 @@ import MultiRoomBranch from '@/components/branch/MultiRoomBranch';
 import type { Venue } from '@/types';
 import AmenityGrid from '@/components/branches/AmenityGrid';
 import { getPackagesByVenueId } from '@/lib/packages';
+import { usePackages } from '@/lib/packageRegistryClient';
 import BranchPackages from '@/components/branches/BranchPackages';
 import { SiteImage } from '@/types';
 import { ArrowRight, ArrowLeft, Users, Maximize, Clock, ChevronLeft, ChevronRight, X } from 'lucide-react';
@@ -28,6 +29,7 @@ const SW_REDIRECT: Record<string, string> = {
 // Map venue slugs to image section prefixes
 
 export default function BranchPage() {
+  usePackages(); // 套餐管理
   const params = useParams();
   const router = useRouter();
   const locale = useLocale() as 'zh' | 'en';

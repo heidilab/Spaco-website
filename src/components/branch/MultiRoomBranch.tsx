@@ -18,6 +18,7 @@ import { venueAmenityItems } from '@/lib/venueAmenities';
 import AmenityGrid from '@/components/branches/AmenityGrid';
 import { isCombinedRoom, optionLetter, orderRooms, roomLabel } from '@/lib/roomOrder';
 import { getPackagesByVenueId } from '@/lib/packages';
+import { usePackages } from '@/lib/packageRegistryClient';
 import BranchPackages from '@/components/branches/BranchPackages';
 
 const GRADIENTS = ['bg-gradient-cool', 'bg-gradient-pink', 'bg-gradient-sunset', 'bg-gradient-warm'];
@@ -32,7 +33,9 @@ export default function MultiRoomBranch({ rooms: input, locale }: { rooms: Venue
   const toList = (raw?: string) => (raw || '').split('\n').map((s) => s.trim()).filter(Boolean);
   const singlesCount = rooms.filter((r) => !isCombinedRoom(r)).length;
   // Packages sold on any of this branch's spaces (HART birthday package lives on Room A+B).
-  const packages = useMemo(() => rooms.flatMap((r) => getPackagesByVenueId(r.id)), [rooms]);
+  const { version: pkgVersion } = usePackages(); // 套餐管理
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const packages = useMemo(() => rooms.flatMap((r) => getPackagesByVenueId(r.id)), [rooms, pkgVersion]);
 
   return (
     <div className="pt-28 relative overflow-hidden">

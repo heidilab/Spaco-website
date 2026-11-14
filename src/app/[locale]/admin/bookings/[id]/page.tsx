@@ -29,6 +29,7 @@ import { loadAllVenues, venuesSnapshot } from '@/lib/venueRegistry';
 import type { AddOnOptions, Venue } from '@/types';
 import { getHoliday } from '@/lib/hkHolidays';
 import { getPackageBySlug } from '@/lib/packages';
+import { usePackages } from '@/lib/packageRegistryClient';
 import { getDecorationById } from '@/lib/decorations';
 import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
 import HotpotSoupPicker from '@/components/booking/HotpotSoupPicker';
@@ -174,6 +175,7 @@ export default function AdminBookingDetailPage() {
   // 附加服務管理 settings — activates staff-set add-on prices; the
   // component re-renders once they are loaded.
   useAddOnConfig();
+  usePackages(); // 套餐管理
   // Per-person food packages (BBQ / hotpot) can be charged for only part
   // of the group: the head count typed per add-on id, '' = everyone.
   // Stored as `options.pax` on the add-on entry (Heidi 2026-11-13 — staff

@@ -19,7 +19,8 @@ import {
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import Logo from '@/components/layout/Logo';
-import { BIRTHDAY_CWB_PACKAGE, getPackagesByCategory } from '@/lib/packages';
+import { BIRTHDAY_CWB_PACKAGE, getPackageBySlug, getPackagesByCategory } from '@/lib/packages';
+import { usePackages } from '@/lib/packageRegistryClient';
 import { DECORATION_STYLES } from '@/lib/decorations';
 import { getSiteImageByKey } from '@/lib/content';
 
@@ -40,6 +41,9 @@ const benefitGradients: Record<string, string> = {
 const benefitKeys = ['safe', 'games', 'space', 'food'] as const;
 
 export default function FamilyPage() {
+  // 套餐管理: the birthday package as saved (the CWB one, else the first).
+  usePackages();
+  const birthdayPkg = getPackageBySlug(BIRTHDAY_CWB_PACKAGE.slug) ?? getPackagesByCategory('birthday')[0] ?? BIRTHDAY_CWB_PACKAGE;
   const t = useTranslations('family');
   const locale = useLocale() as 'zh' | 'en';
 
@@ -114,7 +118,7 @@ export default function FamilyPage() {
                 </h1>
                 <p className="text-xl text-ink-soft mb-4">{t('subtitle')}</p>
                 <p className="text-ink-soft/80 leading-relaxed mb-8 max-w-lg">{t('hero')}</p>
-                <Link href={`/book/package/${BIRTHDAY_CWB_PACKAGE.slug}`} className="btn-primary">
+                <Link href={`/book/package/${birthdayPkg.slug}`} className="btn-primary">
                   {t('cta')}
                   <ArrowRight size={18} />
                 </Link>
@@ -147,19 +151,19 @@ export default function FamilyPage() {
                   <h2 className="text-3xl md:text-4xl font-bold font-display mb-3 leading-tight">
                     {locale === 'zh' ? '生日包場套餐' : 'Birthday Bash Package'}
                     <span className="block text-2xl md:text-3xl font-display font-normal mt-1 opacity-90">
-                      HK${BIRTHDAY_CWB_PACKAGE.price.toLocaleString()}
+                      HK${birthdayPkg.price.toLocaleString()}
                       <span className="text-base font-normal ml-2 opacity-75">
                         {locale === 'zh' ? '全包' : 'all-in'}
                       </span>
                     </span>
                   </h2>
                   <p className="text-white/85 text-base mb-5 leading-relaxed">
-                    {BIRTHDAY_CWB_PACKAGE.pitch[locale]}
+                    {birthdayPkg.pitch[locale]}
                   </p>
 
                   {/* Inclusions */}
                   <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 mb-6">
-                    {BIRTHDAY_CWB_PACKAGE.includes[locale].map((item) => (
+                    {birthdayPkg.includes[locale].map((item) => (
                       <li key={item} className="flex items-start gap-2 text-sm text-white/90">
                         <Check size={14} className="flex-shrink-0 mt-0.5" />
                         <span>{item}</span>
@@ -177,8 +181,8 @@ export default function FamilyPage() {
                     ))}
                     <span className="text-xs text-white/75 inline-flex items-center gap-1">
                       <Clock size={12} />
-                      {BIRTHDAY_CWB_PACKAGE.earliestStart}–{BIRTHDAY_CWB_PACKAGE.latestEnd} ·{' '}
-                      {BIRTHDAY_CWB_PACKAGE.durationHours}{locale === 'zh' ? '小時' : 'h'}
+                      {birthdayPkg.earliestStart}–{birthdayPkg.latestEnd} ·{' '}
+                      {birthdayPkg.durationHours}{locale === 'zh' ? '小時' : 'h'}
                     </span>
                   </div>
                 </div>
@@ -190,10 +194,10 @@ export default function FamilyPage() {
                       {locale === 'zh' ? '套餐費用' : 'Package Fee'}
                     </p>
                     <p className="text-5xl font-bold font-display text-gradient-pink leading-none my-3">
-                      ${BIRTHDAY_CWB_PACKAGE.price.toLocaleString()}
+                      ${birthdayPkg.price.toLocaleString()}
                     </p>
                     <p className="text-xs text-ink-soft mb-4">
-                      + HK${BIRTHDAY_CWB_PACKAGE.deposit.toLocaleString()}{' '}
+                      + HK${birthdayPkg.deposit.toLocaleString()}{' '}
                       {locale === 'zh' ? '可退按金' : 'refundable deposit'}
                     </p>
                     <div className="text-xs text-ink-soft space-y-1 border-t border-white/60 pt-3">

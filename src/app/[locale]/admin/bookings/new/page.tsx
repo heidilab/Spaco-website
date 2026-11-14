@@ -21,7 +21,8 @@ import {
 } from '@/lib/pricing';
 import { useAddOnConfig } from '@/lib/addOnConfigClient';
 import type { DirectBookingClash } from '@/lib/directBookingClashes';
-import { ALL_PACKAGES, getPackageBySlug, CATEGORY_LABEL } from '@/lib/packages';
+import { activePackages, getPackageBySlug, CATEGORY_LABEL } from '@/lib/packages';
+import { usePackages } from '@/lib/packageRegistryClient';
 import { createBookingDraft, buildClaimUrl } from '@/lib/bookingDrafts';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
 import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
@@ -140,6 +141,7 @@ export default function AdminNewBookingPage() {
   // 附加服務管理 settings — activates staff-set add-on prices; the
   // component re-renders once they are loaded.
   useAddOnConfig();
+  const { version: pkgVersion } = usePackages(); // 套餐管理
   const [commercialRent, setCommercialRent] = useState('');
   const [commercialDeposit, setCommercialDeposit] = useState('');
   const commercialRentNum = Math.max(0, parseFloat(commercialRent) || 0);
@@ -310,7 +312,8 @@ export default function AdminNewBookingPage() {
   // and the override pricing logic share a single source of truth.
   const selectedPackage = useMemo(
     () => (packageSlug ? getPackageBySlug(packageSlug) : null),
-    [packageSlug],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [packageSlug, pkgVersion],
   );
 
   // When a package is picked, force the booking to its locked venue + duration.
@@ -953,7 +956,7 @@ export default function AdminNewBookingPage() {
               >
                 🏢 {locale === 'zh' ? '商業租場使用' : 'Commercial hire'}
               </button>
-              {ALL_PACKAGES.map((p) => (
+              {activePackages().map((p) => (
                 <button
                   key={p.slug}
                   type="button"

@@ -9,12 +9,11 @@ import {
   Check, Flame, MessageCircle, FileText, Wallet, Gamepad2,
   ShieldCheck, Sparkles, X, ChevronLeft, ChevronRight,
 } from 'lucide-react';
-import { CORPORATE_TST_PACKAGE } from '@/lib/packages';
+import { CORPORATE_TST_PACKAGE, getPackageBySlug, getPackagesByCategory } from '@/lib/packages';
+import { usePackages } from '@/lib/packageRegistryClient';
 
 import { SiteImage } from '@/types';
 import { loadAllVenues } from '@/lib/venueRegistry';
-
-const pkg = CORPORATE_TST_PACKAGE;
 
 // Why-corporate-clients-pick-us bullet copy. Bilingual marketing block —
 // kept inline (rather than next-intl) since it's specific to this single
@@ -73,6 +72,9 @@ const IG_HANDLE       = '@spacohk';
 const IG_LINK         = 'https://www.instagram.com/spacohk';
 
 export default function CorporatePackagePage() {
+  // 套餐管理: the corporate package as saved (the TST one, else the first).
+  usePackages();
+  const pkg = getPackageBySlug(CORPORATE_TST_PACKAGE.slug) ?? getPackagesByCategory('corporate')[0] ?? CORPORATE_TST_PACKAGE;
   const locale = useLocale() as 'zh' | 'en';
 
   const bbq = pkg.addOns?.find((a) => a.id === 'bbq');
