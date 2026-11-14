@@ -1,4 +1,5 @@
 'use client';
+import { useAddOnConfig } from '@/lib/addOnConfigClient';
 
 import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
@@ -12,7 +13,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getBooking } from '@/lib/firestore';
 import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import {
-  addOns as addOnCatalog, getShishaFlavorLabel,
+  findAddOn, getShishaFlavorLabel,
   calculatePricing, shishaPrices,
 } from '@/lib/pricing';
 import { displayBillTotal, paidGateway, surchargePaid, adminDiscountAmount } from '@/lib/bookingMoney';
@@ -46,6 +47,7 @@ const statusLabels: Record<string, { zh: string; en: string }> = {
 
 export default function MyBookingDetailPage() {
   const locale = useLocale() as 'zh' | 'en';
+  useAddOnConfig(); // 附加服務管理 (custom add-on names)
   // 分店管理 venues (registry-first; the built-in list is the fallback).
   useVenueRegistryReady();
   const params = useParams();
@@ -211,13 +213,13 @@ export default function MyBookingDetailPage() {
                   </p>
                   <ul className="space-y-2 text-sm">
                     {booking.addOns.map((a, idx) => {
-                      const meta = addOnCatalog.find((c) => c.id === a.id);
+                      const meta = findAddOn(a.id);
                       const line = breakdown[idx];
                       return (
                         <li key={a.id}>
                           <div className="flex items-baseline justify-between gap-3">
                             <span className="text-ink">
-                              • {line?.label[locale] || meta?.name[locale] || a.id}
+                              • {line?.label[locale] || meta?.name[locale] || a.options?.customName || a.id}
                             </span>
                             {line && (
                               <span className="font-medium text-ink whitespace-nowrap">

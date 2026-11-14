@@ -1,5 +1,8 @@
 import { Venue, AddOn, AddOnOptions } from '@/types';
-import { PRICE_EDITABLE_ADDON_IDS, configuredAddOnPrice, getAddOnConfig, type AddOnConfig } from './addOnConfig';
+import {
+  PRICE_EDITABLE_ADDON_IDS, configuredAddOnPrice, getAddOnConfig, isCustomAddOnId, customAddOnSettings,
+  type AddOnConfig, type CustomAddOnSetting, type CustomAddOnUnit,
+} from './addOnConfig';
 import {
   CATERING_DELIVERY_ZONES,
   CATERING_NO_CUTLERY_DISCOUNT,
@@ -204,6 +207,60 @@ export const addOns: AddOn[] = [
   },
 ];
 
+// ── custom add-ons (附加服務管理 → 新增附加服務; lib/addOnConfig) ──
+// Staff-created add-ons have no entry above. They are sold per person,
+// per item or flat at the price set beside them, and carry a finance
+// column + supplier flag. Everything that lists add-ons uses allAddOns()
+// / findAddOn() so a new one appears in every form without a code change.
+
+/** The custom add-ons in the active settings, as catalog entries. */
+export function customAddOnDefinitions(config: AddOnConfig = getAddOnConfig()): AddOn[] {
+  return customAddOnSettings(config).map(({ id, setting, custom }) => ({
+    id,
+    name: custom.name,
+    description: custom.description,
+    pricePerUnit: typeof setting.price === 'number' ? setting.price : 0,
+    unit: custom.unit,
+    maxQuantity: custom.unit === 'item' ? (custom.maxQuantity ?? 20) : 1,
+  }));
+}
+
+/** Every add-on there is: the coded catalog plus the custom ones. */
+export function allAddOns(config: AddOnConfig = getAddOnConfig()): AddOn[] {
+  return [...addOns, ...customAddOnDefinitions(config)];
+}
+
+/** One add-on by id, coded or custom. */
+export function findAddOn(id: string, config: AddOnConfig = getAddOnConfig()): AddOn | undefined {
+  return addOns.find((a) => a.id === id)
+    ?? (isCustomAddOnId(id) ? customAddOnDefinitions(config).find((a) => a.id === id) : undefined);
+}
+
+/** A custom add-on's settings (unit, finance column, supplier flag). */
+export function customAddOnSetting(id: string, config: AddOnConfig = getAddOnConfig()): CustomAddOnSetting | undefined {
+  return isCustomAddOnId(id) ? config[id]?.custom : undefined;
+}
+
+/** How a custom add-on entry is sold: the current setting, else what was
+ *  stamped on the entry when it was priced (the add-on may be gone). */
+export function customAddOnUnit(entry: { id: string; options?: AddOnOptions }): CustomAddOnUnit {
+  return customAddOnSetting(entry.id)?.unit ?? entry.options?.customUnit ?? 'item';
+}
+
+/** What a custom add-on entry costs: its unit price (the one it was sold
+ *  at, else today's) × charged guests / quantity, or flat. */
+export function customAddOnEntryCost(
+  entry: { id: string; quantity: number; options?: AddOnOptions },
+  adultEquiv: number,
+  venue?: PriceVenue | null,
+): number {
+  const price = addOnEntryUnitPrice(entry, venue);
+  const unit = customAddOnUnit(entry);
+  if (unit === 'person') return Math.round(price * Math.max(0, adultEquiv));
+  if (unit === 'item') return price * Math.max(0, entry.quantity || 0);
+  return price;
+}
+
 /** Shisha pricing.
  *  - 1 pipe + 1 head = $390 (single base)
  *  - 2 pipes + 2 heads = $750 (double base)
@@ -285,7 +342,7 @@ const STAFF_ADDON_LABELS: Record<string, { zh: string; en: string }> = {
 };
 
 export function getAddOnLabel(id: string, locale: 'zh' | 'en' = 'en'): string {
-  return STAFF_ADDON_LABELS[id]?.[locale] || id;
+  return STAFF_ADDON_LABELS[id]?.[locale] || findAddOn(id)?.name[locale] || id;
 }
 
 /** Resolve a Shisha flavor variant id → its display label. */
@@ -345,6 +402,27 @@ export function stampAddOnPrices<T extends { id: string; quantity: number; optio
     if (entry.id === 'catering' || entry.id === 'shisha') {
       if (typeof entry.options?.soldTotal === 'number') return entry;
       return { ...entry, options: { ...(entry.options || {}), soldTotal: addOnSelectionTotal(entry) } };
+    }
+    if (isCustomAddOnId(entry.id)) {
+      // Custom add-on: the price as for a built-in one, plus the name /
+      // unit / finance column it is sold with — the add-on may later be
+      // renamed or deleted in 附加服務管理 and the booking must still read.
+      const def = customAddOnSetting(entry.id);
+      const kept = keepFrom?.find((a) => a.id === entry.id)?.options;
+      const options: AddOnOptions = { ...(entry.options || {}) };
+      if (typeof options.unitPrice !== 'number') {
+        options.unitPrice = typeof kept?.unitPrice === 'number' ? kept.unitPrice : addOnUnitPrice(entry.id, venue);
+      }
+      if (def) {
+        options.customName = def.name.zh;
+        options.customUnit = def.unit;
+        options.customCategory = def.category;
+      } else {
+        if (!options.customName && kept?.customName) options.customName = kept.customName;
+        if (!options.customUnit && kept?.customUnit) options.customUnit = kept.customUnit;
+        if (!options.customCategory && kept?.customCategory) options.customCategory = kept.customCategory;
+      }
+      return { ...entry, options };
     }
     if (!(PRICE_EDITABLE_ADDON_IDS as readonly string[]).includes(entry.id)) return entry;
     if (typeof entry.options?.unitPrice === 'number') return entry;
@@ -475,6 +553,12 @@ export function formatAddOnsForStaff(
       const price = a.options?.customPrice ?? 0;
       if (price > 0) return `${name} ($${price.toLocaleString()})`;
       return locale === 'zh' ? `${name}（免費）` : `${name} (FREE)`;
+    }
+    // 附加服務管理 custom add-on: current name, else the one stamped on it.
+    if (isCustomAddOnId(a.id)) {
+      const name = findAddOn(a.id)?.name[locale] || a.options?.customName || a.id;
+      const unit = customAddOnUnit(a);
+      return unit === 'item' ? `${name} ×${a.quantity}` : name;
     }
     if (a.id !== 'shisha') {
       // Per-head packages (BBQ / hotpot / drinks) charge against the
@@ -993,6 +1077,25 @@ export function calculatePricing(
     // `custom-…` entries), so this branch is exclusively driven by
     // admin's manual additions in the booking-link / booking-manage
     // flows.
+    // 附加服務管理 custom add-on (id `x-…`): per person, per item or flat,
+    // at the price it was sold at (else today's setting).
+    if (isCustomAddOnId(selected.id)) {
+      const def = findAddOn(selected.id);
+      const stamped = selected.options?.customName || selected.id;
+      const name = def?.name ?? { zh: stamped, en: stamped };
+      const unit = customAddOnUnit(selected);
+      const price = addOnEntryUnitPrice(selected, venue);
+      const cost = customAddOnEntryCost(selected, equiv, venue);
+      const detail = unit === 'person'
+        ? { zh: ` (${guestLabel} x $${price})`, en: ` (${guestLabelEn} x $${price})` }
+        : unit === 'item'
+          ? { zh: ` (${selected.quantity} x $${price})`, en: ` (${selected.quantity} x $${price})` }
+          : { zh: '', en: '' };
+      addOnTotal += cost;
+      breakdown.push({ label: { zh: `${name.zh}${detail.zh}`, en: `${name.en}${detail.en}` }, amount: cost });
+      continue;
+    }
+
     if (selected.id.startsWith('custom-')) {
       const customName = selected.options?.customName?.trim() || '自訂項目';
       const customPrice = Math.max(0, Math.floor(selected.options?.customPrice ?? 0));

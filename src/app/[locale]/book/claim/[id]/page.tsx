@@ -1,4 +1,5 @@
 'use client';
+import { useAddOnConfig } from '@/lib/addOnConfigClient';
 
 import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
@@ -16,7 +17,7 @@ import {
 import { getUserProfile, updateUserWhatsapp } from '@/lib/firestore';
 import { adminApiFetch } from '@/lib/adminApiFetch';
 import { isValidHkPhone, normalizeHkPhone, formatHkPhone } from '@/lib/whatsapp';
-import { addOns as ALL_ADDONS, calculateSecurityDeposit } from '@/lib/pricing';
+import { findAddOn, calculateSecurityDeposit } from '@/lib/pricing';
 import { hotpotSoupSummary, isHotpotPackage } from '@/lib/hotpot';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
@@ -27,6 +28,7 @@ export default function ClaimBookingPage() {
   const params = useParams();
   const registryReady = useVenueRegistryReady();
   const locale = useLocale() as 'zh' | 'en';
+  useAddOnConfig(); // 附加服務管理 (custom add-on names)
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   const draftId = params.id as string;
@@ -234,7 +236,7 @@ export default function ClaimBookingPage() {
   // full-payment case where pricing only drifted by a few dollars.
   const isHalfPayment = grandTotal > 10000;
   const selectedAddOns = draft.addOns
-    .map((a) => ALL_ADDONS.find((x) => x.id === a.id))
+    .map((a) => findAddOn(a.id))
     .filter(Boolean);
 
   return (

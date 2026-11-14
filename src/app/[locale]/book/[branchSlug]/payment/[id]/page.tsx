@@ -1,4 +1,5 @@
 'use client';
+import { useAddOnConfig } from '@/lib/addOnConfigClient';
 
 import { paymentErrorMessage, isKnownPaymentError } from '@/lib/paymentErrors';
 import { adminApiFetch } from '@/lib/adminApiFetch';
@@ -16,7 +17,7 @@ import { LogIn, CreditCard, Smartphone, Building2, MapPin, CalendarDays, Clock, 
 import { motion } from 'framer-motion';
 import AuthModal from '@/components/auth/AuthModal';
 import { PAYMENT_DETAILS } from '@/lib/paymentDetails';
-import { addOns as addOnCatalog } from '@/lib/pricing';
+import { findAddOn } from '@/lib/pricing';
 import { hotpotSoupSummary, isHotpotPackage } from '@/lib/hotpot';
 import { getVisitorId, getFirstTouchSource } from '@/lib/attribution';
 import {
@@ -85,6 +86,7 @@ function draftToBooking(
 
 export default function PaymentMethodPage() {
   const locale = useLocale() as 'zh' | 'en';
+  useAddOnConfig(); // 附加服務管理 (custom add-on names)
   const params = useParams();
   const router = useRouter();
   useVenueRegistryReady(); // registry venues (HART) are not in the static list
@@ -423,10 +425,10 @@ export default function PaymentMethodPage() {
               <div className="pt-2 border-t border-white/40 space-y-1">
                 <p className="text-xs text-ink-soft">{locale === 'zh' ? '附加服務' : 'Add-ons'}</p>
                 {booking.addOns.map((a) => {
-                  const meta = addOnCatalog.find((c) => c.id === a.id);
+                  const meta = findAddOn(a.id);
                   return (
                     <p key={a.id}>
-                      • {meta?.name[locale] || a.id}{a.quantity > 1 ? ` × ${a.quantity}` : ''}
+                      • {meta?.name[locale] || a.options?.customName || a.id}{a.quantity > 1 ? ` × ${a.quantity}` : ''}
                       {isHotpotPackage(a.id) && hotpotSoupSummary(a.options?.soupBases, locale)
                         ? `（${locale === 'zh' ? '湯底：' : 'Soup base: '}${hotpotSoupSummary(a.options?.soupBases, locale)}）`
                         : ''}

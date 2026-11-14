@@ -2,7 +2,7 @@
 
 import type { BookingRecord, AddOnOptions } from '@/types';
 import { discountedSubtotal } from './bookingMoney';
-import { addOnEntryTotal, addOnEntryUnitPrice, addOnPartialPax, getShishaFlavorLabel, shishaPrices } from './pricing';
+import { addOnEntryTotal, addOnEntryUnitPrice, addOnPartialPax, getShishaFlavorLabel, shishaPrices, customAddOnSetting, customAddOnEntryCost } from './pricing';
 import { cateringTiers, findCateringItem, cateringExtraDishFee, cateringDoorstepFee } from './cateringCatalog';
 import { HOTPOT_EXTRA_SOUP_PRICE, hotpotSoupBases, hotpotSoupSlots, hotpotSoupSummary } from './hotpot';
 import { getDecorationById } from './decorations';
@@ -749,6 +749,8 @@ export function bookingNeedsSupplierOrder(booking: BookingRecord): boolean {
   // booking (Heidi 2026-11-13) — the standard BBQ package is not.
   const SUPPLIER_IDS = new Set(['hotpot-standard', 'hotpot-seafood', 'hotpot-extra-soup', 'shisha', 'bbq-helper', 'bbq-premium', 'catering']);
   if ((booking.addOns || []).some((a) => SUPPLIER_IDS.has(a.id))) return true;
+  // 附加服務管理 custom add-ons staff flagged 「要向供應商落單」.
+  if ((booking.addOns || []).some((a) => customAddOnSetting(a.id)?.supplierOrder)) return true;
   if (booking.decorationStyle) return true;
   return false;
 }
@@ -845,6 +847,24 @@ export function buildStaffSupplierOrderEmail(params: {
       `• 口味：<br>${flavorLines}`,
     ];
     sections.push(supplierSection('💨', 'Shisha 水煙', '須最少 2 日前向供應商落單', lines));
+  }
+
+  // ── 附加服務管理 custom add-ons flagged 「要向供應商落單」 ──
+  for (const entry of booking.addOns || []) {
+    const def = customAddOnSetting(entry.id);
+    if (!def?.supplierOrder) continue;
+    const unit = addOnEntryUnitPrice(entry, { id: booking.venueId });
+    const cost = customAddOnEntryCost(entry, adultEquiv, { id: booking.venueId });
+    const qtyLine = def.unit === 'person'
+      ? `• ${def.name.zh} × ${guestLabel}（每位 $${unit}，總計 HK$${cost.toLocaleString()}）`
+      : def.unit === 'item'
+        ? `• ${def.name.zh} × ${entry.quantity}（每個 $${unit}，總計 HK$${cost.toLocaleString()}）`
+        : `• ${def.name.zh}（HK$${cost.toLocaleString()}）`;
+    sections.push(supplierSection('📦', def.name.zh, '須向供應商落單', [
+      qtyLine,
+      def.description?.zh ? `• ${def.description.zh}` : '',
+      `• 時段：${booking.startTime} – ${booking.endTime}（${booking.hours} 小時）`,
+    ].filter(Boolean)));
   }
 
   // ── 免費佈置 (package booking) ──

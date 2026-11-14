@@ -26,7 +26,7 @@ import { venuesSharingSpace } from '@/lib/venues';
 import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import { loadAllVenues, conflictIdsFor } from '@/lib/venueRegistry';
 import {
-  addOns as addOnCatalog, calculatePricing,
+  allAddOns, findAddOn, calculatePricing,
   earlySetupPricePerHour, calcCateringTotal,
   fixedRentOf, addOnAvailableAt,
 } from '@/lib/pricing';
@@ -138,7 +138,7 @@ export default function ModifyBookingPage() {
   // and venue-incompatible items). Package bookings only see early-setup.
   const visibleAddOns = useMemo(() => {
     if (!venue) return [];
-    return addOnCatalog.filter((a) => {
+    return allAddOns().filter((a) => {
       if (isPackage) return a.id === 'early-setup' || a.id === 'catering';
       if (a.id === 'shisha') return false; // D2 skip
       // Staff settings (switched off / other branches only), then the
@@ -331,7 +331,7 @@ export default function ModifyBookingPage() {
       // For modify, simplest: no mutex enforcement here — the customer
       // already chose at booking time. Just allow stacking.
       // Respect the catalog cap (e.g. one extra soup base, two grills).
-      const max = addOnCatalog.find((a) => a.id === id)?.maxQuantity;
+      const max = findAddOn(id)?.maxQuantity;
       if (existing) {
         if (max !== undefined && existing.quantity >= max) return prev;
         return prev.map((c) => c.id === id ? { ...c, quantity: c.quantity + 1 } : c);

@@ -3,7 +3,8 @@
 // functions: caller fetches the data, this file does the math.
 
 import type { BookingRecord, MarketingChannel, Venue } from '@/types';
-import { addOns as ADDON_CATALOG, addOnEntryTotal, addOnEntryUnitPrice, addOnPartialPax } from './pricing';
+import { findAddOn, addOnEntryTotal, addOnEntryUnitPrice, addOnPartialPax, customAddOnEntryCost, customAddOnSetting } from './pricing';
+import { isCustomAddOnId } from './addOnConfig';
 
 import { venues } from './venues';
 import { salesBranchKey, salesBranches } from './bonusBranches';
@@ -148,6 +149,9 @@ export function addOnRevenueForBooking(
   if (addOnId.startsWith('custom-')) {
     return Math.max(0, Math.floor(entry.options?.customPrice ?? 0));
   }
+  // 附加服務管理 custom add-ons: the unit price it was sold at × heads /
+  // quantity, or flat (pricing.customAddOnEntryCost).
+  if (isCustomAddOnId(addOnId)) return customAddOnEntryCost(entry, equiv, { id: booking.venueId });
   // Catering: derived from tier + dishes + delivery + cutlery, same calc
   // as checkout. Was falling through to the default 0.
   // 到會 / 水煙: the total the selection was sold at, else today's prices
@@ -223,15 +227,27 @@ function isFutureDate(dateStr: string): boolean {
  */
 export function salesCategoryBreakdown(b: BookingRecord) {
   const rent = b.pricing.baseCharge || 0;
-  const shisha = addOnRevenueForBooking(b, 'shisha');
-  const bbqHotpot = addOnRevenueForBooking(b, 'bbq-standard')
+  let shisha = addOnRevenueForBooking(b, 'shisha');
+  let bbqHotpot = addOnRevenueForBooking(b, 'bbq-standard')
     + addOnRevenueForBooking(b, 'bbq-premium')
     + addOnRevenueForBooking(b, 'bbq-grill')
     + addOnRevenueForBooking(b, 'hotpot-standard')
     + addOnRevenueForBooking(b, 'hotpot-seafood')
     + addOnRevenueForBooking(b, 'hotpot-extra-soup');
-  const cater = addOnRevenueForBooking(b, 'catering');
-  const drinks = addOnRevenueForBooking(b, 'drinks');
+  let cater = addOnRevenueForBooking(b, 'catering');
+  let drinks = addOnRevenueForBooking(b, 'drinks');
+  // 附加服務管理 custom add-ons land in the column staff chose for them
+  // (the current setting, else the one stamped when it was sold);
+  // `other` rides in 加時/罰款 with everything outside the five columns.
+  for (const a of b.addOns || []) {
+    if (!isCustomAddOnId(a.id)) continue;
+    const category = customAddOnSetting(a.id)?.category ?? a.options?.customCategory;
+    const cost = addOnRevenueForBooking(b, a.id);
+    if (category === 'bbqHotpot') bbqHotpot += cost;
+    else if (category === 'shisha') shisha += cost;
+    else if (category === 'cater') cater += cost;
+    else if (category === 'drinks') drinks += cost;
+  }
   // 加時/罰款 = admin-recorded rental top-ups (post-confirmation
   // extensions) + forfeited security deposit (penalties). New payment
   // entries split rentalAmount + addOnAmount; legacy entries lumped both
@@ -352,7 +368,7 @@ export function aggregateBookings(
 
   const monthlyMap = new Map<string, { revenue: number; bookings: number }>();
   const branchMap = new Map<string, { revenue: number; bookings: number }>();
-  const addOnMap = new Map<string, { bookings: number; revenue: number }>();
+  const addOnMap = new Map<string, { bookings: number; revenue: number; stampedName?: string }>();
   const channelMap = new Map<string, { bookings: number; revenue: number }>();
 
   let totalRevenue = 0;
@@ -409,6 +425,8 @@ export function aggregateBookings(
       const bucket = addOnMap.get(key) || { bookings: 0, revenue: 0 };
       bucket.bookings += 1;
       bucket.revenue += cost;
+      // A custom add-on deleted since is still named by what was stamped.
+      if (isCustomAddOnId(key) && !bucket.stampedName && a.options?.customName) bucket.stampedName = a.options.customName;
       addOnMap.set(key, bucket);
     }
 
@@ -433,11 +451,11 @@ export function aggregateBookings(
     .sort((a, b) => b.revenue - a.revenue);
 
   const byAddOn: AddOnRevenue[] = Array.from(addOnMap.entries())
-    .map(([id, v]) => {
-      const meta = ADDON_CATALOG.find((a) => a.id === id);
+    .map(([id, { stampedName, ...v }]) => {
+      const meta = findAddOn(id);
       const fallback = id === 'custom'
         ? { zh: '自訂項目', en: 'Custom items' }
-        : { zh: id, en: id };
+        : stampedName ? { zh: stampedName, en: stampedName } : { zh: id, en: id };
       return {
         id,
         name: meta?.name || fallback,

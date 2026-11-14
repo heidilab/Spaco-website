@@ -1,4 +1,5 @@
 'use client';
+import { useAddOnConfig } from '@/lib/addOnConfigClient';
 
 import { adminApiFetch } from '@/lib/adminApiFetch';
 import { paymentErrorMessage, isKnownPaymentError } from '@/lib/paymentErrors';
@@ -17,7 +18,7 @@ import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import { getPeakDay } from '@/lib/peakDays';
 import { resolvePeakRule } from '@/lib/peakDayRules';
 import { hotpotSoupSummary, isHotpotPackage } from '@/lib/hotpot';
-import { addOns as addOnCatalog, getShishaFlavorLabel, calculatePricing, venueDrinksIncluded, isWithin2Days, shishaPrices,
+import { findAddOn, getShishaFlavorLabel, calculatePricing, venueDrinksIncluded, isWithin2Days, shishaPrices,
 } from '@/lib/pricing';
 import { BookingRecord, RefundDetails } from '@/types';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
@@ -77,6 +78,7 @@ function draftToBooking(
 
 export default function ConfirmBookingPage() {
   const locale = useLocale() as 'zh' | 'en';
+  useAddOnConfig(); // 附加服務管理 (custom add-on names)
   const params = useParams();
   const router = useRouter();
   // Registry venues (HART) are not in the static list — load once so the
@@ -686,11 +688,11 @@ export default function ConfirmBookingPage() {
               <div className="pt-2 border-t border-white/40 space-y-1">
                 <p className="text-xs text-ink-soft">{locale === 'zh' ? '附加服務' : 'Add-ons'}</p>
                 {booking.addOns.map((a) => {
-                  const meta = addOnCatalog.find((c) => c.id === a.id);
+                  const meta = findAddOn(a.id);
                   return (
                     <div key={a.id} className="text-sm">
                       <p>
-                        • {meta?.name[locale] || a.id} {a.quantity > 1 ? `× ${a.quantity}` : ''}
+                        • {meta?.name[locale] || a.options?.customName || a.id} {a.quantity > 1 ? `× ${a.quantity}` : ''}
                       </p>
                       {isHotpotPackage(a.id) && hotpotSoupSummary(a.options?.soupBases, locale) && (
                         <p className="text-xs text-ink-soft pl-3 mt-0.5">

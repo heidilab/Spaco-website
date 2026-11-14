@@ -352,6 +352,9 @@ export async function sendStaffSupplierOrderNotification(params: {
    *  items, so there is never a blank order sheet. */
   force?: boolean;
 }): Promise<{ sent: boolean; recipients: string[]; reason?: 'no-supplier-items' | 'disabled' | 'no-recipients' }> {
+  // 附加服務管理 settings — dish / flavour names and prices staff set, and
+  // which custom add-ons need a supplier order.
+  await loadAddOnConfigServer();
   if (!bookingNeedsSupplierOrder(params.booking)) return { sent: false, recipients: [], reason: 'no-supplier-items' };
   if (!params.force && !(await isEmailAutomationEnabled('staff_supplier_order'))) {
     console.log('[staff-supplier] skipped (automation disabled)');
@@ -359,8 +362,6 @@ export async function sendStaffSupplierOrderNotification(params: {
   }
   const list = await getStaffNotificationRecipients();
   if (list.length === 0) return { sent: false, recipients: [], reason: 'no-recipients' };
-  // 附加服務管理 settings — dish / flavour names and prices staff set.
-  await loadAddOnConfigServer();
   const tpl = buildStaffSupplierOrderEmail(params);
   await Promise.all(list.map((to) =>
     sendEmail({ to, subject: tpl.subject, html: tpl.html })

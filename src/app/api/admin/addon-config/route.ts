@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { requireAdmin } from '@/lib/adminAuth';
-import { PRICE_EDITABLE_ADDON_IDS, sanitizeAddOnConfig, type AddOnConfig } from '@/lib/addOnConfig';
+import { PRICE_EDITABLE_ADDON_IDS, isCustomAddOnId, sanitizeAddOnConfig, type AddOnConfig } from '@/lib/addOnConfig';
 import { invalidateAddOnConfigCache } from '@/lib/addOnConfigServer';
 import { addOnSelectionTotal, addOnUnitPrice } from '@/lib/pricing';
 import { loadAllVenuesServer } from '@/lib/venueRegistryServer';
@@ -49,7 +49,13 @@ export async function POST(req: NextRequest) {
   const venues = await loadAllVenuesServer();
   const oldPrice = new Map<string, number>(); // `${addOnId}|${venueId}` → price before
   const changedIds = new Set<string>();
-  for (const id of PRICE_EDITABLE_ADDON_IDS) {
+  // Built-in unit-priced add-ons, plus every custom add-on before or after.
+  const pricedIds = new Set<string>([
+    ...PRICE_EDITABLE_ADDON_IDS,
+    ...Object.keys(before).filter(isCustomAddOnId),
+    ...Object.keys(next).filter(isCustomAddOnId),
+  ]);
+  for (const id of Array.from(pricedIds)) {
     for (const venue of venues) {
       const was = addOnUnitPrice(id, venue, before);
       oldPrice.set(`${id}|${venue.id}`, was);

@@ -143,6 +143,13 @@ export interface AddOnOptions {
   customName?: string;
   /** Admin-defined flat price in HK$ for custom add-on entries. */
   customPrice?: number;
+  /** 附加服務管理 custom add-ons (id `x-…`): how the entry was sold —
+   *  stamped when it is priced (pricing.stampAddOnPrices), together with
+   *  `customName` (the Chinese name) and `customCategory`, so a booking
+   *  still reads and adds up after staff rename or delete the add-on. */
+  customUnit?: 'person' | 'item' | 'flat';
+  /** The month-close column of a custom add-on, stamped likewise. */
+  customCategory?: string;
   // ── Catering add-on (id === 'catering') ──
   /** Pricing tier id from CATERING_TIERS (e.g. 'tier-10'). */
   tierId?: string;

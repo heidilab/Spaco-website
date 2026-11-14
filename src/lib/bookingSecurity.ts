@@ -1,5 +1,6 @@
 import { getPackageBySlug } from './packages';
-import { addOns as catalog } from './pricing';
+import { allAddOns } from './pricing';
+import { isCustomAddOnId } from './addOnConfig';
 import { amountOwed, paidBase } from './bookingMoney';
 import type { BookingRecord, AddOnOptions } from '@/types';
 
@@ -30,7 +31,9 @@ export function validateAddOns(value: unknown, packageSlug?: string): BookingRec
   return value.map((a) => {
     if (!a || typeof a.id !== 'string' || seen.has(a.id)) throw new BookingInputError('INVALID_ADDONS');
     seen.add(a.id);
-    const definition = packageSlug ? pkg?.addOns?.find(x => x.id === a.id) : catalog.find(x => x.id === a.id);
+    // allAddOns: the coded catalog plus 附加服務管理 custom add-ons (the
+    // route loads the settings before validating).
+    const definition = packageSlug ? pkg?.addOns?.find(x => x.id === a.id) : allAddOns().find(x => x.id === a.id);
     if (!definition) throw new BookingInputError('INVALID_ADDON');
     const maximum = 'maxQuantity' in definition ? definition.maxQuantity ?? 500 : 500;
     const quantity = finiteNumber(a.quantity, 0, maximum);
@@ -49,6 +52,8 @@ export function validateAddOns(value: unknown, packageSlug?: string): BookingRec
     // guest's BBQ instead of everyone's — drop it from customer requests.
     const options = a.options && typeof a.options === 'object' ? { ...(a.options as AddOnOptions) } : undefined;
     if (options) { delete options.pax; delete options.unitPrice; delete options.soldTotal; }
+    // Custom add-ons: what they are is stamped by the server, never sent.
+    if (options && isCustomAddOnId(a.id)) { delete options.customName; delete options.customPrice; delete options.customUnit; delete options.customCategory; }
     return { id: a.id, quantity, ...(options ? { options } : {}) };
   });
 }

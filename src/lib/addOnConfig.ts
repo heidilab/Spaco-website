@@ -55,9 +55,34 @@ export interface ShishaPriceSetting {
   staffSetup?: number;
 }
 
+/** Units a 附加服務管理 custom add-on can be sold by. */
+export type CustomAddOnUnit = 'person' | 'item' | 'flat';
+export const CUSTOM_ADDON_UNITS: readonly CustomAddOnUnit[] = ['person', 'item', 'flat'];
+/** The month-close column a custom add-on's money lands in. `other` =
+ *  加時/罰款, where everything outside the five sales columns goes. */
+export type CustomAddOnCategory = 'bbqHotpot' | 'shisha' | 'cater' | 'drinks' | 'other';
+export const CUSTOM_ADDON_CATEGORIES: readonly CustomAddOnCategory[] = ['bbqHotpot', 'shisha', 'cater', 'drinks', 'other'];
+
+/** An add-on staff created in 附加服務管理 — no entry in the coded catalog.
+ *  Its id starts with CUSTOM_ADDON_PREFIX; its price is the setting's
+ *  `price` / `venuePrices`, exactly like a built-in add-on's. */
+export interface CustomAddOnSetting {
+  name: { zh: string; en: string };
+  description?: { zh: string; en: string };
+  unit: CustomAddOnUnit;
+  /** `item` only: the most a customer can order. */
+  maxQuantity?: number;
+  category: CustomAddOnCategory;
+  /** true = CS must place a supplier order (the supplier email lists it). */
+  supplierOrder?: boolean;
+  sortOrder?: number;
+}
+
 export interface AddOnSetting {
   /** false = customers cannot pick it anywhere. Staff still can. */
   enabled?: boolean;
+  /** Present on a custom add-on (id `x-…`) only: what it is. */
+  custom?: CustomAddOnSetting;
   /** Venue ids it is offered at. Absent / null = the built-in rule
    *  (e.g. no BBQ where the venue has no BBQ area). */
   venueIds?: string[] | null;
@@ -165,6 +190,26 @@ export function sanitizeAddOnConfig(raw: unknown): AddOnConfig {
       if (items.zh.length > 0) setting.menu = { zh: items.zh, en: items.en, notesZh: notes.zh, notesEn: notes.en };
     }
 
+    if (isCustomAddOnId(id)) {
+      const c = (v.custom && typeof v.custom === 'object' ? v.custom : null) as Record<string, unknown> | null;
+      const name = c?.name && typeof c.name === 'object' ? (c.name as Record<string, unknown>) : null;
+      const nameZh = cleanText(name?.zh);
+      // A custom add-on without a name is nothing — drop the whole entry.
+      if (!nameZh) continue;
+      const desc = c?.description && typeof c.description === 'object' ? (c.description as Record<string, unknown>) : null;
+      const descZh = cleanText(desc?.zh);
+      const unit = CUSTOM_ADDON_UNITS.includes(c?.unit as CustomAddOnUnit) ? (c?.unit as CustomAddOnUnit) : 'item';
+      const category = CUSTOM_ADDON_CATEGORIES.includes(c?.category as CustomAddOnCategory) ? (c?.category as CustomAddOnCategory) : 'other';
+      const custom: CustomAddOnSetting = { name: { zh: nameZh, en: cleanText(name?.en) || nameZh }, unit, category };
+      if (descZh) custom.description = { zh: descZh, en: cleanText(desc?.en) || descZh };
+      const rawMax = c?.maxQuantity;
+      const maxQ = typeof rawMax === 'number' ? rawMax : typeof rawMax === 'string' && rawMax.trim() !== '' ? Number(rawMax) : NaN;
+      if (unit === 'item' && Number.isInteger(maxQ) && maxQ >= 1 && maxQ <= 500) custom.maxQuantity = maxQ;
+      if (c?.supplierOrder === true) custom.supplierOrder = true;
+      if (typeof c?.sortOrder === 'number' && Number.isFinite(c.sortOrder)) custom.sortOrder = Math.round(c.sortOrder);
+      setting.custom = custom;
+    }
+
     if (id === 'catering') {
       if (Array.isArray(v.dishes)) {
         const seen = new Set<string>();
@@ -262,4 +307,17 @@ export function addOnBlockedBySettings(id: string, venueId: string, config: AddO
   if (!s) return false;
   if (s.enabled === false) return true;
   return Array.isArray(s.venueIds) && !s.venueIds.includes(venueId);
+}
+
+// ── custom add-ons (created in 附加服務管理, no code entry) ──
+
+export const CUSTOM_ADDON_PREFIX = 'x-';
+export const isCustomAddOnId = (id: string): boolean => id.startsWith(CUSTOM_ADDON_PREFIX);
+
+/** The custom add-ons in a config, in display order. */
+export function customAddOnSettings(config: AddOnConfig = active): Array<{ id: string; setting: AddOnSetting; custom: CustomAddOnSetting }> {
+  return Object.entries(config)
+    .filter(([id, s]) => isCustomAddOnId(id) && !!s.custom)
+    .map(([id, s]) => ({ id, setting: s, custom: s.custom as CustomAddOnSetting }))
+    .sort((a, b) => (a.custom.sortOrder ?? 99) - (b.custom.sortOrder ?? 99) || a.id.localeCompare(b.id));
 }

@@ -10,7 +10,7 @@ import type { Venue, PeakDayConfig } from '@/types';
 import { getPeakDay } from '@/lib/peakDays';
 import { resolvePeakRule } from '@/lib/peakDayRules';
 import {
-  addOns as ALL_ADDONS,
+  allAddOns,
   calculatePricing,
   calculateDeposit,
   calculateSecurityDeposit,
@@ -1270,9 +1270,9 @@ export default function AdminNewBookingPage() {
           <div className="glass-card p-6">
             <h3 className="text-base font-bold mb-4 text-ink">{locale === 'zh' ? '加購項目（可選）' : 'Add-ons (optional)'}</h3>
             <div className="space-y-2">
-              {ALL_ADDONS.map((a) => {
+              {allAddOns().map((a) => {
                 const qty = addOnQty[a.id] || 0;
-                const max = a.maxQuantity ?? (a.unit === 'person' ? 1 : 5);
+                const max = a.maxQuantity ?? (a.unit === 'item' ? 5 : 1);
                 const isShisha = a.id === 'shisha';
                 const isCatering = a.id === 'catering';
                 // Per-head add-ons (BBQ packages / hotpot packages /

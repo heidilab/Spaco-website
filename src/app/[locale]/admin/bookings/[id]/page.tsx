@@ -39,7 +39,7 @@ import {
 } from '@/lib/hotpot';
 import {
   formatAddOnsForStaff,
-  addOns as ADDON_CATALOG,
+  allAddOns, findAddOn,
   calculatePricing,
   calcShishaPrice,
   calcCateringTotal,
@@ -1764,7 +1764,7 @@ export default function AdminBookingDetailPage() {
                     : 'Changes re-run pricing (rental / add-on subtotal / refundable / due / balance) on save.'}
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {ADDON_CATALOG.map((cfg) => {
+                  {allAddOns().map((cfg) => {
                     const qty = addOnQty[cfg.id] || 0;
                     const enabled = qty > 0;
                     // Per-head add-ons (BBQ / hotpot packages, drinks)
@@ -1863,7 +1863,7 @@ export default function AdminBookingDetailPage() {
                               </span>
                             </div>
                           )}
-                          {enabled && !isPerHead && (
+                          {enabled && !isPerHead && cfg.unit !== 'flat' && (
                             <div className="flex items-center gap-1.5 mt-1.5">
                               <button
                                 type="button"
@@ -2044,7 +2044,7 @@ export default function AdminBookingDetailPage() {
                 )}
 
                 {(addOnQty['shisha'] || 0) > 0 && (() => {
-                  const shishaCfg = ADDON_CATALOG.find((c) => c.id === 'shisha');
+                  const shishaCfg = findAddOn('shisha');
                   if (!shishaCfg?.variants) return null;
                   const heads = addOnQty['shisha'] || 0;
                   return (
@@ -2547,11 +2547,11 @@ export default function AdminBookingDetailPage() {
                     <ul className="space-y-0.5 text-sm">
                       {booking.addOns.map((a, idx) => {
                         const line = breakdown[idx];
-                        const meta = ADDON_CATALOG.find((c) => c.id === a.id);
+                        const meta = findAddOn(a.id);
                         return (
                           <li key={a.id} className="flex items-baseline justify-between gap-3">
                             <span className="text-violet-700">
-                              {line?.label[locale] || meta?.name[locale] || a.id}
+                              {line?.label[locale] || meta?.name[locale] || a.options?.customName || a.id}
                             </span>
                             {line && (
                               <span className="font-medium text-ink whitespace-nowrap">

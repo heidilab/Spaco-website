@@ -6,6 +6,7 @@ import { resolveVenueServer } from '@/lib/venueRegistryServer';
 import { formatAddOnsForStaff } from '@/lib/pricing';
 import type { BookingRecord, UserProfile } from '@/types';
 import { requireAdmin } from '@/lib/adminAuth';
+import { loadAddOnConfigServer } from '@/lib/addOnConfigServer';
 
 // POST /api/admin/notify-booking { bookingId, supplierOnly? }
 // Triggered when admin manually confirms a booking. Sends the staff
@@ -25,6 +26,7 @@ export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
   const _gate = await requireAdmin(req, 'bookings');
+  await loadAddOnConfigServer(); // 附加服務管理: custom add-on names + supplier flags
   if (!_gate.ok) return _gate.res;
 
   try {

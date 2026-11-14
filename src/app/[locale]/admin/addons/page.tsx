@@ -7,6 +7,9 @@
 //   適用分店     the built-in rule, or only the branches ticked here
 //   價錢         unit prices; 到會 tier prices and fees; 水煙 prices
 //   菜單         BBQ / hotpot menus, the 到會 dish list, 水煙 flavours
+//   新增附加服務  a custom add-on (name, per person / item / flat, price,
+//                month-close column, supplier order) — id `x-…`, appears
+//                in every booking form through pricing.allAddOns()
 //
 // Every list is edited ONE ROW PER ITEM, Chinese and English side by side
 // (the first version used two free-text boxes, which were hard to keep
@@ -25,7 +28,8 @@ import { loadAllVenues } from '@/lib/venueRegistry';
 import { loadAddOnConfig } from '@/lib/addOnConfigClient';
 import {
   MENU_EDITABLE_ADDON_IDS, PRICE_EDITABLE_ADDON_IDS, setAddOnConfig, sanitizeAddOnConfig,
-  type AddOnConfig, type AddOnSetting,
+  isCustomAddOnId, customAddOnSettings, CUSTOM_ADDON_PREFIX,
+  type AddOnConfig, type AddOnSetting, type CustomAddOnSetting, type CustomAddOnUnit, type CustomAddOnCategory,
 } from '@/lib/addOnConfig';
 import { addOns as ADDON_CATALOG, builtInAddOnMenu, builtInAddOnPrice, shishaPrices } from '@/lib/pricing';
 import { CATERING_CATEGORIES } from '@/lib/cateringMenu';
@@ -37,6 +41,12 @@ interface Pair { zh: string; en: string }
 interface DishRow { code: string; category: string; zh: string; en: string; price: string; hidden: boolean; tags?: string[] }
 interface FlavorRow { id: string; zh: string; en: string; hidden: boolean }
 type ShishaPriceKey = 'onePipe' | 'twoPipes' | 'extraHead' | 'staffSetup';
+
+/** A custom add-on's own fields (lib/addOnConfig CustomAddOnSetting). */
+interface CustomDraft {
+  nameZh: string; nameEn: string; descZh: string; descEn: string;
+  unit: CustomAddOnUnit; maxQuantity: string; category: CustomAddOnCategory; supplierOrder: boolean;
+}
 
 interface Draft {
   enabled: boolean;
@@ -54,10 +64,17 @@ interface Draft {
   // 水煙
   flavors: FlavorRow[];
   shisha: Record<ShishaPriceKey, string>;
+  // 自訂附加服務 (id `x-…`) only
+  custom?: CustomDraft;
 }
 
 const NO_SETTINGS: AddOnConfig = {};
-const isPriceEditable = (id: string) => (PRICE_EDITABLE_ADDON_IDS as readonly string[]).includes(id);
+const isPriceEditable = (id: string) => (PRICE_EDITABLE_ADDON_IDS as readonly string[]).includes(id) || isCustomAddOnId(id);
+const customDraftOf = (c?: CustomAddOnSetting): CustomDraft => ({
+  nameZh: c?.name.zh || '', nameEn: c?.name.en || '', descZh: c?.description?.zh || '', descEn: c?.description?.en || '',
+  unit: c?.unit || 'item', maxQuantity: c?.maxQuantity ? String(c.maxQuantity) : '',
+  category: c?.category || 'other', supplierOrder: !!c?.supplierOrder,
+});
 const isMenuEditable = (id: string) => (MENU_EDITABLE_ADDON_IDS as readonly string[]).includes(id);
 const num = (v: string): number | null => (v.trim() !== '' && Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : null);
 
@@ -105,6 +122,7 @@ function draftFrom(id: string, config: AddOnConfig): Draft {
       extraHead: typeof sp?.extraHead === 'number' ? String(sp.extraHead) : '',
       staffSetup: typeof sp?.staffSetup === 'number' ? String(sp.staffSetup) : '',
     },
+    ...(isCustomAddOnId(id) ? { custom: customDraftOf(setting?.custom) } : {}),
   };
 }
 
@@ -112,6 +130,19 @@ function draftFrom(id: string, config: AddOnConfig): Draft {
  *  catalog, so untouched parts keep following it. */
 function settingFrom(id: string, d: Draft): AddOnSetting {
   const s: AddOnSetting = {};
+  if (isCustomAddOnId(id) && d.custom) {
+    const c = d.custom;
+    const nameZh = c.nameZh.trim();
+    const maxQ = num(c.maxQuantity);
+    s.custom = {
+      name: { zh: nameZh, en: c.nameEn.trim() || nameZh },
+      ...(c.descZh.trim() ? { description: { zh: c.descZh.trim(), en: c.descEn.trim() || c.descZh.trim() } } : {}),
+      unit: c.unit,
+      category: c.category,
+      ...(c.unit === 'item' && maxQ ? { maxQuantity: Math.round(maxQ) } : {}),
+      ...(c.supplierOrder ? { supplierOrder: true } : {}),
+    };
+  }
   if (!d.enabled) s.enabled = false;
   if (d.limitVenues) s.venueIds = d.venueIds;
   if (isPriceEditable(id)) {
@@ -170,6 +201,11 @@ function settingFrom(id: string, d: Draft): AddOnSetting {
 function problemsOf(id: string, d: Draft, zh: boolean): string[] {
   const out: string[] = [];
   const dupes = (values: string[]) => values.filter((v, i) => v && values.indexOf(v) !== i);
+  if (isCustomAddOnId(id)) {
+    const name = d.custom?.nameZh.trim();
+    if (!name) out.push(zh ? '新增附加服務：未填中文名稱' : 'New add-on: Chinese name missing');
+    if (num(d.price) === null) out.push(zh ? `${name || '新增附加服務'}：未填價錢（免費請填 0）` : `${name || 'New add-on'}: price missing (enter 0 if free)`);
+  }
   if (id === 'catering') {
     const codes = d.dishes.map((r) => r.code.trim());
     if (d.dishes.some((r) => !r.code.trim() || !r.zh.trim())) out.push(zh ? '到會：有菜式未填編號或者中文名' : 'Catering: a dish has no code or Chinese name');
@@ -249,9 +285,13 @@ export default function AddOnsAdminPage() {
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [dishCategory, setDishCategory] = useState(CATERING_CATEGORIES[0].id);
+  /** Custom add-on ids in display order (the catalog ones come first). */
+  const [customIds, setCustomIds] = useState<string[]>([]);
 
   function hydrate(config: AddOnConfig) {
-    setDrafts(Object.fromEntries(ADDON_CATALOG.map((a) => [a.id, draftFrom(a.id, config)])));
+    const customs = customAddOnSettings(config).map((c) => c.id);
+    setCustomIds(customs);
+    setDrafts(Object.fromEntries([...ADDON_CATALOG.map((a) => a.id), ...customs].map((id) => [id, draftFrom(id, config)])));
   }
 
   useEffect(() => {
@@ -263,20 +303,40 @@ export default function AddOnsAdminPage() {
 
   const patch = (id: string, p: Partial<Draft>) =>
     setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...p } }));
+  const patchCustom = (id: string, p: Partial<CustomDraft>) =>
+    setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], custom: { ...customDraftOf(), ...(prev[id].custom || {}), ...p } } }));
 
+  /** Add a custom add-on — a new id; the name and price are filled in below. */
+  function addCustom() {
+    const id = `${CUSTOM_ADDON_PREFIX}${Date.now().toString(36)}`;
+    setDrafts((prev) => ({ ...prev, [id]: { ...draftFrom(id, NO_SETTINGS), custom: customDraftOf() } }));
+    setCustomIds((prev) => [...prev, id]);
+    setOpenId(id);
+  }
+  /** Remove a custom add-on from the settings (saved on 儲存). Bookings
+   *  that already have it keep the name and price stamped on them. */
+  function removeCustom(id: string) {
+    if (!window.confirm(zh ? '刪除呢個附加服務？已落咗嘅訂單會保留原本項目同價錢。' : 'Delete this add-on? Existing bookings keep it at the price they paid.')) return;
+    setCustomIds((prev) => prev.filter((x) => x !== id));
+    setDrafts((prev) => { const next = { ...prev }; delete next[id]; return next; });
+    if (openId === id) setOpenId(null);
+  }
+
+  const allIds = useMemo(() => [...ADDON_CATALOG.map((a) => a.id), ...customIds], [customIds]);
   const items = useMemo(() => {
     const out: AddOnConfig = {};
-    for (const a of ADDON_CATALOG) {
-      const d = drafts[a.id];
+    for (const id of allIds) {
+      const d = drafts[id];
       if (!d) continue;
-      const s = settingFrom(a.id, d);
-      if (Object.keys(s).length > 0) out[a.id] = s;
+      const s = settingFrom(id, d);
+      if (s.custom) s.custom.sortOrder = customIds.indexOf(id);
+      if (Object.keys(s).length > 0) out[id] = s;
     }
     return sanitizeAddOnConfig(out);
-  }, [drafts]);
+  }, [drafts, allIds, customIds]);
   const problems = useMemo(
-    () => ADDON_CATALOG.flatMap((a) => (drafts[a.id] ? problemsOf(a.id, drafts[a.id], zh) : [])),
-    [drafts, zh],
+    () => allIds.flatMap((id) => (drafts[id] ? problemsOf(id, drafts[id], zh) : [])),
+    [drafts, allIds, zh],
   );
 
   async function save() {
@@ -309,10 +369,20 @@ export default function AddOnsAdminPage() {
   if (!canAccess) return <div className="p-8 text-gray-500">{zh ? '冇權限' : 'No access'}</div>;
 
   const unit = (id: string) => {
-    const u = ADDON_CATALOG.find((a) => a.id === id)?.unit;
+    const u = isCustomAddOnId(id) ? drafts[id]?.custom?.unit : ADDON_CATALOG.find((a) => a.id === id)?.unit;
     if (id === 'early-setup' || id === 'bbq-helper') return zh ? '每小時' : 'per hour';
+    if (u === 'flat') return zh ? '每張訂單' : 'per booking';
     return u === 'person' ? (zh ? '每位' : 'per person') : (zh ? '每個' : 'each');
   };
+  /** The rows on the page: the coded catalog, then the custom add-ons. */
+  const rows: Array<{ id: string; name: { zh: string; en: string }; custom: boolean }> = [
+    ...ADDON_CATALOG.map((a) => ({ id: a.id, name: a.name, custom: false })),
+    ...customIds.map((id) => {
+      const c = drafts[id]?.custom;
+      const zhName = c?.nameZh.trim() || (zh ? '（未命名的新附加服務）' : '(unnamed new add-on)');
+      return { id, name: { zh: zhName, en: c?.nameEn.trim() || zhName }, custom: true };
+    }),
+  ];
   const priceField = (label: string, value: string, placeholder: string | number, onChange: (v: string) => void) => (
     <label className="block">
       <span className="text-xs text-gray-500">{label}</span>
@@ -338,7 +408,7 @@ export default function AddOnsAdminPage() {
         <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-gray-400" /></div>
       ) : (
         <>
-          {ADDON_CATALOG.map((a) => {
+          {rows.map((a) => {
             const d = drafts[a.id];
             if (!d) return null;
             const open = openId === a.id;
@@ -353,10 +423,13 @@ export default function AddOnsAdminPage() {
               a.id === 'shisha' ? (zh ? `${d.flavors.filter((f) => !f.hidden).length} 款口味` : `${d.flavors.filter((f) => !f.hidden).length} flavours`) : null,
             ].filter(Boolean).join(' · ');
             return (
-              <div key={a.id} className={`bg-white rounded-xl border ${d.enabled ? '' : 'opacity-70'}`}>
+              <div key={a.id} className={`bg-white rounded-xl border ${d.enabled ? '' : 'opacity-70'} ${a.custom ? 'border-pink/40' : ''}`}>
                 <div className="flex items-center gap-3 p-4">
                   <button type="button" onClick={() => setOpenId(open ? null : a.id)} className="flex-1 text-left">
-                    <div className="font-semibold">{a.name[locale]}</div>
+                    <div className="font-semibold">
+                      {a.name[locale]}
+                      {a.custom && <span className="ml-2 text-[11px] font-medium text-pink bg-pink/10 rounded-pill px-2 py-0.5 align-middle">{zh ? '自訂' : 'custom'}</span>}
+                    </div>
                     <div className="text-xs text-gray-500 mt-0.5">{summary}</div>
                   </button>
                   <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
@@ -370,6 +443,62 @@ export default function AddOnsAdminPage() {
 
                 {open && (
                   <div className="border-t p-4 space-y-6 text-sm">
+                    {/* ── custom add-on: what it is ── */}
+                    {a.custom && d.custom && (
+                      <div>
+                        <SectionTitle>{zh ? '基本資料' : 'Details'}</SectionTitle>
+                        <div className="grid md:grid-cols-2 gap-3">
+                          <label className="block">
+                            <span className="text-xs text-gray-500">{zh ? '名稱（中文）' : 'Name (Chinese)'} *</span>
+                            <input value={d.custom.nameZh} onChange={(e) => patchCustom(a.id, { nameZh: e.target.value })} placeholder={zh ? '例：生日蛋糕 / 氣球佈置' : 'e.g. Birthday cake'} className={`${INPUT} mt-1`} />
+                          </label>
+                          <label className="block">
+                            <span className="text-xs text-gray-500">{zh ? '名稱（英文，留空＝用中文）' : 'Name (English, blank = Chinese)'}</span>
+                            <input value={d.custom.nameEn} onChange={(e) => patchCustom(a.id, { nameEn: e.target.value })} className={`${INPUT} mt-1`} />
+                          </label>
+                          <label className="block">
+                            <span className="text-xs text-gray-500">{zh ? '簡介（中文）' : 'Description (Chinese)'}</span>
+                            <input value={d.custom.descZh} onChange={(e) => patchCustom(a.id, { descZh: e.target.value })} placeholder={zh ? '客人會喺訂場頁見到' : 'Shown to customers'} className={`${INPUT} mt-1`} />
+                          </label>
+                          <label className="block">
+                            <span className="text-xs text-gray-500">{zh ? '簡介（英文）' : 'Description (English)'}</span>
+                            <input value={d.custom.descEn} onChange={(e) => patchCustom(a.id, { descEn: e.target.value })} className={`${INPUT} mt-1`} />
+                          </label>
+                          <label className="block">
+                            <span className="text-xs text-gray-500">{zh ? '收費方式' : 'Charged'}</span>
+                            <select value={d.custom.unit} onChange={(e) => patchCustom(a.id, { unit: e.target.value as CustomAddOnUnit })} className={`${INPUT} mt-1`}>
+                              <option value="person">{zh ? '每位（按計價人數，小童計半）' : 'Per person (charged guests, children half)'}</option>
+                              <option value="item">{zh ? '每個（客人揀數量）' : 'Per item (customer picks a quantity)'}</option>
+                              <option value="flat">{zh ? '每張訂單一個價' : 'Flat, once per booking'}</option>
+                            </select>
+                          </label>
+                          {d.custom.unit === 'item' && (
+                            <label className="block">
+                              <span className="text-xs text-gray-500">{zh ? '最多可訂數量' : 'Maximum quantity'}</span>
+                              <input type="number" min={1} value={d.custom.maxQuantity} onChange={(e) => patchCustom(a.id, { maxQuantity: e.target.value })} placeholder="20" className={`${INPUT} mt-1`} />
+                            </label>
+                          )}
+                          <label className="block">
+                            <span className="text-xs text-gray-500">{zh ? '月結入邊一欄' : 'Month-close column'}</span>
+                            <select value={d.custom.category} onChange={(e) => patchCustom(a.id, { category: e.target.value as CustomAddOnCategory })} className={`${INPUT} mt-1`}>
+                              <option value="other">{zh ? '其他（計入「加時/罰款」欄）' : 'Other (加時/罰款 column)'}</option>
+                              <option value="bbqHotpot">BBQ / Hotpot</option>
+                              <option value="shisha">Shisha</option>
+                              <option value="cater">{zh ? '到會' : 'Catering'}</option>
+                              <option value="drinks">{zh ? '飲品' : 'Drinks'}</option>
+                            </select>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer md:mt-6">
+                            <input type="checkbox" checked={d.custom.supplierOrder} onChange={(e) => patchCustom(a.id, { supplierOrder: e.target.checked })} className="w-4 h-4" />
+                            <span>{zh ? '要向供應商落單（訂單確認後，供應商落單電郵會列出）' : 'Needs a supplier order (listed in the supplier email on confirmation)'}</span>
+                          </label>
+                        </div>
+                        <button type="button" onClick={() => removeCustom(a.id)} className="mt-3 text-xs text-red-600 hover:underline inline-flex items-center gap-1">
+                          <Trash2 className="w-3.5 h-3.5" />{zh ? '刪除呢個附加服務' : 'Delete this add-on'}
+                        </button>
+                      </div>
+                    )}
+
                     {/* ── branches ── */}
                     <div>
                       <SectionTitle>{zh ? '適用分店' : 'Branches'}</SectionTitle>
@@ -563,6 +692,15 @@ export default function AddOnsAdminPage() {
               </div>
             );
           })}
+
+          <button type="button" onClick={addCustom} className="w-full rounded-xl border-2 border-dashed border-pink/40 text-pink hover:bg-pink/5 p-4 text-sm font-semibold inline-flex items-center justify-center gap-2">
+            <Plus className="w-4 h-4" />{zh ? '新增附加服務（例如生日蛋糕、氣球佈置、投影機）' : 'Add an add-on (e.g. birthday cake, balloons, projector)'}
+          </button>
+          <p className="text-xs text-gray-500 -mt-2">
+            {zh
+              ? '新增後填好名稱、收費方式同價錢，撳「儲存全部設定」—— 客人訂場頁、員工開單、改單、收據、月結同供應商電郵都會自動有埋呢個項目。'
+              : 'Fill in the name, how it is charged and the price, then save — it appears in the customer booking page, staff forms, receipts, month close and the supplier email automatically.'}
+          </p>
 
           <div className="sticky bottom-3 bg-white/95 backdrop-blur rounded-xl border p-4 flex flex-wrap items-center gap-3 shadow">
             <button onClick={save} disabled={saving} className="btn-primary text-sm flex items-center gap-2 disabled:opacity-50">

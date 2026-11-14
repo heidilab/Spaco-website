@@ -1,4 +1,5 @@
 'use client';
+import { useAddOnConfig } from '@/lib/addOnConfigClient';
 
 import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
@@ -14,7 +15,7 @@ import {
   getUserProfile,
 } from '@/lib/firestore';
 import {
-  addOns as addOnConfig,
+  findAddOn, customAddOnEntryCost, customAddOnUnit,
   calculateSecurityDeposit,
   bbqStandardPriceByVenue,
   venueDrinksIncluded,
@@ -24,6 +25,7 @@ import {
   addOnPartialPax,
   addOnEntryUnitPrice, addOnEntryTotal,
 } from '@/lib/pricing';
+import { isCustomAddOnId } from '@/lib/addOnConfig';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { HOTPOT_EXTRA_SOUP_PRICE, hotpotSoupSummary, isHotpotPackage } from '@/lib/hotpot';
 import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
@@ -138,6 +140,7 @@ const BLANK_FORM: ReturnType<typeof emptyDoc> = {
 
 export default function AdminDocumentsPage() {
   const locale = useLocale() as 'zh' | 'en';
+  useAddOnConfig(); // 附加服務管理 (custom add-on names)
   // 分店管理 venues (registry-first; the built-in list is the fallback).
   useVenueRegistryReady();
   const { user, hasPermission } = useAuth();
@@ -337,7 +340,12 @@ export default function AdminDocumentsPage() {
           continue;
         }
 
-        const cfg = addOnConfig.find((a) => a.id === addOn.id);
+        // Coded catalog or a 附加服務管理 custom add-on; one deleted since
+        // still prints under the name stamped on the booking.
+        const cfg = findAddOn(addOn.id)
+          ?? (isCustomAddOnId(addOn.id) && addOn.options?.customName
+            ? { id: addOn.id, name: { zh: addOn.options.customName, en: addOn.options.customName }, pricePerUnit: addOn.options.unitPrice ?? 0, unit: customAddOnUnit(addOn) }
+            : undefined);
         if (!cfg) continue;
 
         let unitPrice: number;
@@ -400,6 +408,11 @@ export default function AdminDocumentsPage() {
           // $780" again on PDFs that re-derive amount.
           quantity = 1;
           unitPrice = amount;
+        } else if (isCustomAddOnId(addOn.id)) {
+          const unit = customAddOnUnit(addOn);
+          unitPrice = addOnEntryUnitPrice(addOn, { id: b.venueId });
+          quantity = unit === 'person' ? equiv : unit === 'item' ? addOn.quantity : 1;
+          amount = customAddOnEntryCost(addOn, equiv, { id: b.venueId });
         } else {
           // Fallback: per-unit
           unitPrice = cfg.pricePerUnit;

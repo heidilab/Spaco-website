@@ -1,4 +1,5 @@
 'use client';
+import { useAddOnConfig } from '@/lib/addOnConfigClient';
 
 import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
@@ -60,6 +61,7 @@ function defaultFromTo(): { from: string; to: string } {
 
 export default function FinanceOverviewPage() {
   const locale = useLocale() as 'zh' | 'en';
+  useAddOnConfig(); // 附加服務管理 (custom add-on names)
   const { hasPermission } = useAuth();
   const canAccess = hasPermission('documents');
   // CS is view-only here: no filters, no exports (Heidi 2026-09-07).

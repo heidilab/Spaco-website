@@ -5,9 +5,10 @@ import { Link } from '@/i18n/routing';
 import { useParams } from 'next/navigation';
 import { useState, useMemo, useEffect } from 'react';
 import { getVenueBySlug } from '@/lib/venues';
-import { addOns, calculatePricing, noBBQVenues, freeDrinksVenues, addOnUnitPrice, addOnAvailableAt, addOnMenu, calcShishaPrice, SHISHA_MAX_PIPES, subtractHours, shishaPrices, shishaFlavors as shishaFlavorOptions, shishaDescription,
+import { addOns, allAddOns, calculatePricing, noBBQVenues, freeDrinksVenues, addOnUnitPrice, addOnAvailableAt, addOnMenu, calcShishaPrice, SHISHA_MAX_PIPES, subtractHours, shishaPrices, shishaFlavors as shishaFlavorOptions, shishaDescription,
 } from '@/lib/pricing';
 import { useAddOnConfig } from '@/lib/addOnConfigClient';
+import { isCustomAddOnId } from '@/lib/addOnConfig';
 import {
   HOTPOT_EXTRA_SOUP_ID, HOTPOT_MIN_ADVANCE_DAYS, HOTPOT_TWO_SOUP_MIN_EQUIV,
   hotpotPackageEntry, hotpotSelectionError, hotpotSoupSlots, isHotpotAddOn, isHotpotPackage,
@@ -580,7 +581,7 @@ function BookingPageInner({ venue }: { venue: Venue }) {
   }, [minHours]);
 
   // Filter add-ons based on venue
-  const visibleAddOns = addOns.filter((a) => {
+  const visibleAddOns = allAddOns().filter((a) => {
     if (a.id === 'shisha') return false;
     // Catering renders its own card via CateringPickerModal — skip
     // it in the generic add-on grid so we don't get a useless
@@ -1284,6 +1285,62 @@ function BookingPageInner({ venue }: { venue: Venue }) {
                       </button>
                     );
                   })}
+
+                {/* 附加服務管理 custom add-ons — per person / per item / flat */}
+                {visibleAddOns.filter((a) => isCustomAddOnId(a.id)).map((addOn) => {
+                  const entry = selectedAddOns.find((a) => a.id === addOn.id);
+                  const qty = entry?.quantity || 0;
+                  const price = addOnUnitPrice(addOn.id, venue);
+                  const maxQty = addOn.maxQuantity ?? 20;
+                  const setQty = (n: number) => {
+                    const next = Math.max(0, Math.min(maxQty, n));
+                    if (next === 0) setSelectedAddOns(selectedAddOns.filter((a) => a.id !== addOn.id));
+                    else if (entry) setSelectedAddOns(selectedAddOns.map((a) => (a.id === addOn.id ? { ...a, quantity: next } : a)));
+                    else setSelectedAddOns([...selectedAddOns, { id: addOn.id, quantity: next }]);
+                  };
+                  const unitLabel = addOn.unit === 'person'
+                    ? (locale === 'zh' ? '/位' : '/pax')
+                    : addOn.unit === 'item' ? (locale === 'zh' ? '/個' : ' each') : '';
+                  if (addOn.unit === 'item') {
+                    return (
+                      <div key={addOn.id} className={`p-5 rounded-2xl border ${qty > 0 ? 'border-accent bg-accent/5' : 'border-charcoal/5'}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="font-semibold">{addOn.name[locale]}</p>
+                            {addOn.description?.[locale] && <p className="text-sm text-muted mt-1">{addOn.description[locale]}</p>}
+                            <p className="text-sm font-bold mt-1">+HK${price}{unitLabel}</p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button type="button" onClick={() => setQty(qty - 1)} disabled={qty <= 0} className="w-8 h-8 rounded-full border border-charcoal/20 flex items-center justify-center disabled:opacity-30">−</button>
+                            <span className="w-8 text-center font-bold">{qty}</span>
+                            <button type="button" onClick={() => setQty(qty + 1)} disabled={qty >= maxQty} className="w-8 h-8 rounded-full border border-charcoal/20 flex items-center justify-center disabled:opacity-30">+</button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <button
+                      key={addOn.id}
+                      type="button"
+                      onClick={() => toggleAddOn(addOn.id)}
+                      className={`w-full flex items-center justify-between p-5 rounded-2xl border transition-all text-left ${
+                        qty > 0 ? 'border-accent bg-accent/5' : 'border-charcoal/5 hover:border-charcoal/20'
+                      }`}
+                    >
+                      <div>
+                        <p className="font-semibold">{addOn.name[locale]}</p>
+                        {addOn.description?.[locale] && <p className="text-sm text-muted mt-1">{addOn.description[locale]}</p>}
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="font-bold">+HK${price}{unitLabel}</span>
+                        <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${qty > 0 ? 'border-accent bg-accent' : 'border-charcoal/20'}`}>
+                          {qty > 0 && <Check size={14} className="text-white" />}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
 
                 {/* TST free drinks note */}
                 {(venue.drinksIncluded ?? freeDrinksVenues.includes(venue.id)) && (
