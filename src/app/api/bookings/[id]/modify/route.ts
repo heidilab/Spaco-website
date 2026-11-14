@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { refreshPasscodeAfterTimeChange } from '@/lib/lockPasscode';
 import { getPeakDayAdmin } from '@/lib/peakDaysAdmin';
 import { resolvePeakRule } from '@/lib/peakDayRules';
 import { adminDb } from '@/lib/firebaseAdmin';
@@ -566,6 +567,10 @@ export async function POST(
     console.error('[/api/bookings/[id]/modify]', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
+
+  // A TTLock passcode issued for the old times is re-issued for the new
+  // ones (no-op when there is none or nothing changed).
+  try { await refreshPasscodeAfterTimeChange(id); } catch (err) { console.error('[/api/bookings/[id]/modify] passcode refresh failed', err); }
 
   return NextResponse.json({ balanceDue, subtotalDiff: computed.subtotal - oldSubtotal });
 }

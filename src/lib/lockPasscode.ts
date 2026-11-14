@@ -41,6 +41,18 @@ export const PASSCODE_GRACE_MINUTES_BEFORE = 60;
 // Helpers
 // ─────────────────────────────────────────────────────────────
 
+/** When a booking's passcode is valid: from the start of its early
+ *  set-up window (or 60 minutes before start, whichever is earlier) to
+ *  the end time (day 2 for overnight bookings). Site review 2026-11-13
+ *  (lock #5): a customer who paid for two set-up hours could not get in. */
+export function passcodeWindow(b: Pick<BookingRecord, 'date' | 'startTime' | 'endTime' | 'endDate' | 'earlySetupHours'>): { validFrom: number; validTo: number } {
+  const startMs = hkDateTimeToMs(b.date, b.startTime);
+  const endMs   = hkDateTimeToMs(b.endDate || b.date, b.endTime);
+  const setupMs = Math.max(0, Math.min(6, b.earlySetupHours || 0)) * 60 * 60 * 1000;
+  const graceMs = PASSCODE_GRACE_MINUTES_BEFORE * 60 * 1000;
+  return { validFrom: startMs - Math.max(graceMs, setupMs), validTo: endMs };
+}
+
 /** Convert "YYYY-MM-DD" + "HH:mm" (Hong Kong local time) → Unix ms. */
 function hkDateTimeToMs(dateYmd: string, timeHm: string): number {
   // Hong Kong is UTC+8 with no DST. Construct a UTC timestamp by shifting:
@@ -135,6 +147,8 @@ interface EligibilityCheck {
   shouldGenerate: boolean;
   /** Should we send a balance-due reminder? */
   shouldRemindBalance: boolean;
+  /** A passcode exists but its email never went out — send it. */
+  shouldEmailPending?: boolean;
   /** Booking status text (for logging) */
   reason: string;
 }
@@ -147,7 +161,10 @@ function checkEligibility(b: BookingRecord, now: number): EligibilityCheck {
     return { shouldGenerate: false, shouldRemindBalance: false, reason: `status=${b.status}` };
   }
   if (b.lockPasscode?.passcode) {
-    return { shouldGenerate: false, shouldRemindBalance: false, reason: 'passcode-exists' };
+    // Generated, but the customer never got the email (send failed, or
+    // the automation was off at the time): retry until the booking starts.
+    const emailPending = !b.lockPasscode.emailSentAt && now < hkDateTimeToMs(b.date, b.startTime);
+    return { shouldGenerate: false, shouldRemindBalance: false, shouldEmailPending: emailPending, reason: emailPending ? 'email-pending' : 'passcode-exists' };
   }
   const startMs = hkDateTimeToMs(b.date, b.startTime);
   const windowOpensAt = startMs - PASSCODE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
@@ -176,9 +193,49 @@ function checkEligibility(b: BookingRecord, now: number): EligibilityCheck {
 
 export interface ProcessResult {
   bookingId: string;
-  action: 'generated' | 'reminded' | 'skipped' | 'error';
+  action: 'generated' | 'reminded' | 'emailed' | 'skipped' | 'error';
   reason: string;
   error?: string;
+}
+
+/**
+ * Email an existing passcode to the booking's customer. Marks
+ * `emailSentAt` only when the email really went out — when the Email
+ * 自動化 switch is off the record used to say "sent" anyway (site review,
+ * lock #3). Returns whether it was sent.
+ */
+export async function emailPasscode(bookingId: string): Promise<{ sent: boolean; reason?: string }> {
+  const ref = adminDb.collection('bookings').doc(bookingId);
+  const snap = await ref.get();
+  if (!snap.exists) return { sent: false, reason: 'booking-not-found' };
+  const b = { id: bookingId, ...snap.data() } as BookingRecord;
+  if (!b.lockPasscode?.passcode) return { sent: false, reason: 'no-passcode' };
+  const contact = await getCustomerContact(b.userId);
+  if (!contact) return { sent: false, reason: 'no-contact' };
+  const venue = await resolveVenueServer(b.venueId);
+  const lockGuideImageUrl = await getLockGuideUrlForVenue(b.venueId);
+  const tpl = buildLockPasscodeEmail({
+    customerName: contact.name,
+    venueName:    venue?.name.zh || b.branchSlug,
+    venueAddress: venue?.address.zh,
+    date:         b.date,
+    startTime:    b.startTime,
+    endTime:      b.endTime,
+    endDate:      b.endDate,
+    passcode:     b.lockPasscode.passcode,
+    confirmKey:   lockConfirmKey(b.venueId, venue),
+    validFromMs:  b.lockPasscode.validFrom,
+    validToMs:    b.lockPasscode.validTo,
+    whatsappLink: 'https://wa.me/85292823060',
+    lockGuideImageUrl,
+  });
+  const out = await sendAutomatedEmail({ automationKey: 'lock_passcode', to: contact.email, subject: tpl.subject, html: tpl.html });
+  if (out.sent) {
+    await ref.update({ 'lockPasscode.emailSentAt': FieldValue.serverTimestamp(), 'lockPasscode.emailSkipped': FieldValue.delete() });
+  } else {
+    await ref.update({ 'lockPasscode.emailSkipped': out.reason || 'not-sent' });
+  }
+  return out;
 }
 
 /**
@@ -202,6 +259,17 @@ export async function processBookingForLockAccess(bookingId: string): Promise<Pr
 
   const now = Date.now();
   const check = checkEligibility(b, now);
+
+  if (check.shouldEmailPending) {
+    try {
+      const out = await emailPasscode(bookingId);
+      return out.sent
+        ? { bookingId, action: 'emailed', reason: 'email-pending' }
+        : { bookingId, action: 'skipped', reason: `email-not-sent:${out.reason || 'unknown'}` };
+    } catch (err) {
+      return { bookingId, action: 'error', reason: 'email-failed', error: err instanceof Error ? err.message : String(err) };
+    }
+  }
 
   if (!check.shouldGenerate && !check.shouldRemindBalance) {
     return { bookingId, action: 'skipped', reason: check.reason };
@@ -264,17 +332,11 @@ export async function processBookingForLockAccess(bookingId: string): Promise<Pr
     };
   }
 
-  // Overnight bookings carry the day-2 date as `endDate` — use it so the
-  // passcode stays valid until the actual end-time on day 2 rather than
-  // expiring at the rolled-over time on day 1.
-  const startMs = hkDateTimeToMs(b.date, b.startTime);
-  const endMs   = hkDateTimeToMs(b.endDate || b.date, b.endTime);
-  const validFrom = startMs - PASSCODE_GRACE_MINUTES_BEFORE * 60 * 1000;
-  const validTo   = endMs;
+  // Overnight bookings carry the day-2 date as `endDate` — the window
+  // runs to the actual end time on day 2; early set-up hours open it.
+  const { validFrom, validTo } = passcodeWindow(b);
 
   try {
-    const venue = await resolveVenueServer(b.venueId);
-    const venueName = venue?.name.zh || b.branchSlug;
     const passcodeName = `SPACO-${b.date.replace(/-/g, '')}-${bookingId.slice(0, 6)}`;
 
     const { passcode, keyboardPwdId } = await addKeyboardPasscode({
@@ -289,6 +351,7 @@ export async function processBookingForLockAccess(bookingId: string): Promise<Pr
         passcode,
         ttlockPwdId:  keyboardPwdId,
         lockId,
+        source:       'ttlock',
         validFrom,
         validTo,
         generatedAt:  FieldValue.serverTimestamp(),
@@ -297,31 +360,12 @@ export async function processBookingForLockAccess(bookingId: string): Promise<Pr
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    const contact = await getCustomerContact(b.userId);
-    if (contact) {
-      const lockGuideImageUrl = await getLockGuideUrlForVenue(b.venueId);
-      const tpl = buildLockPasscodeEmail({
-        customerName: contact.name,
-        venueName,
-        venueAddress: venue?.address.zh,
-        date:         b.date,
-        startTime:    b.startTime,
-        endTime:      b.endTime,
-        endDate:      b.endDate,
-        passcode,
-        confirmKey:   lockConfirmKey(b.venueId, venue),
-        validFromMs:  validFrom,
-        validToMs:    validTo,
-        whatsappLink: 'https://wa.me/85292823060',
-        lockGuideImageUrl,
-      });
-      await sendAutomatedEmail({
-        automationKey: 'lock_passcode',
-        to: contact.email,
-        subject: tpl.subject,
-        html: tpl.html,
-      });
-      await ref.update({ 'lockPasscode.emailSentAt': FieldValue.serverTimestamp() });
+    // The code is on the door now. A failed email is NOT a failed
+    // generation: it stays pending and the next run retries it.
+    try {
+      await emailPasscode(bookingId);
+    } catch (err) {
+      console.error('[lockPasscode] passcode email failed, will retry', bookingId, err);
     }
 
     return { bookingId, action: 'generated', reason: 'eligible' };
@@ -368,7 +412,89 @@ export async function sweepUpcomingBookings(): Promise<{
   for (const id of ids) {
     results.push(await processBookingForLockAccess(id));
   }
+  // What happened, for the 門鎖設定 page (the cron's JSON went nowhere).
+  try {
+    const count = (a: ProcessResult['action']) => results.filter((r) => r.action === a).length;
+    await adminDb.collection('system').doc('ttlock_status').set({
+      lastRunAt: FieldValue.serverTimestamp(),
+      scanned: ids.length,
+      generated: count('generated'), reminded: count('reminded'), emailed: count('emailed'),
+      skipped: count('skipped'), errors: count('error'),
+      problems: results.filter((r) => r.action === 'error').map((r) => ({ bookingId: r.bookingId, reason: r.reason, error: (r.error || '').slice(0, 300) })),
+    }, { merge: true });
+  } catch (err) {
+    console.warn('[lockPasscode] status write failed', err);
+  }
   return { scanned: ids.length, results };
+}
+
+/**
+ * The booking's time changed after a TTLock passcode was issued: delete
+ * the old code and issue one for the new window, then email it (site
+ * review, lock #6). Manual passcodes are left alone (staff set them).
+ * No-op when nothing changed or there is no passcode.
+ */
+export async function refreshPasscodeAfterTimeChange(bookingId: string): Promise<{ refreshed: boolean; reason?: string }> {
+  const ref = adminDb.collection('bookings').doc(bookingId);
+  const snap = await ref.get();
+  if (!snap.exists) return { refreshed: false, reason: 'not-found' };
+  const b = { id: bookingId, ...snap.data() } as BookingRecord;
+  const lp = b.lockPasscode;
+  if (!lp?.passcode || lp.source === 'manual' || lp.ttlockPwdId == null || lp.lockId == null) return { refreshed: false, reason: 'no-ttlock-passcode' };
+  if (b.status !== 'confirmed') return { refreshed: false, reason: `status=${b.status}` };
+  const { validFrom, validTo } = passcodeWindow(b);
+  if (validFrom === lp.validFrom && validTo === lp.validTo) return { refreshed: false, reason: 'unchanged' };
+  if (!isTTLockConfigured()) return { refreshed: false, reason: 'ttlock-not-configured' };
+  const lockId = (await getLockIdForVenue(b.venueId)) ?? lp.lockId;
+  try {
+    await deleteKeyboardPasscode({ lockId: lp.lockId, keyboardPwdId: lp.ttlockPwdId });
+  } catch (err) {
+    console.error('[lockPasscode] old passcode delete failed on time change', bookingId, err);
+    await ref.update({ 'lockPasscode.revokeFailedAt': FieldValue.serverTimestamp(), 'lockPasscode.revokeError': err instanceof Error ? err.message.slice(0, 300) : String(err).slice(0, 300) });
+    return { refreshed: false, reason: 'old-passcode-delete-failed' };
+  }
+  const { passcode, keyboardPwdId } = await addKeyboardPasscode({
+    lockId, startMs: validFrom, endMs: validTo, name: `SPACO-${b.date.replace(/-/g, '')}-${bookingId.slice(0, 6)}`,
+  });
+  await ref.update({
+    lockPasscode: { passcode, ttlockPwdId: keyboardPwdId, lockId, source: 'ttlock', validFrom, validTo, generatedAt: FieldValue.serverTimestamp(), emailSentAt: null },
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+  try { await emailPasscode(bookingId); } catch (err) { console.error('[lockPasscode] email after time change failed', bookingId, err); }
+  return { refreshed: true };
+}
+
+/**
+ * Everything the 門鎖設定 page shows about bookings: the next days'
+ * confirmed bookings and where each stands with its passcode.
+ */
+export async function upcomingLockReport(): Promise<Array<{
+  bookingId: string; date: string; startTime: string; endTime: string; venueId: string;
+  state: 'has-code' | 'email-pending' | 'revoke-failed' | 'no-code' | 'manual';
+  reason: string; passcodeValidFrom?: number; passcodeValidTo?: number; balanceDue: number;
+}>> {
+  const todayMs = Date.now();
+  const fromYmd = ymdInHkt(todayMs);
+  const toYmd = ymdInHkt(todayMs + (PASSCODE_WINDOW_DAYS + 1) * 24 * 60 * 60 * 1000);
+  const snap = await adminDb.collection('bookings').where('date', '>=', fromYmd).where('date', '<=', toYmd).get();
+  const lockMap = await getVenueLockMap();
+  const out: Awaited<ReturnType<typeof upcomingLockReport>> = [];
+  for (const d of snap.docs) {
+    const b = { id: d.id, ...d.data() } as BookingRecord;
+    if (b.status !== 'confirmed') continue;
+    if (b.isTest && process.env.VERCEL_ENV === 'production') continue;
+    const lp = b.lockPasscode;
+    const base = { bookingId: b.id, date: b.date, startTime: b.startTime, endTime: b.endTime, venueId: b.venueId, balanceDue: b.balanceDue ?? 0 };
+    if (lp?.passcode) {
+      const state = (lp as { revokeFailedAt?: unknown }).revokeFailedAt ? 'revoke-failed' : lp.source === 'manual' ? 'manual' : !lp.emailSentAt ? 'email-pending' : 'has-code';
+      out.push({ ...base, state, reason: state, passcodeValidFrom: lp.validFrom, passcodeValidTo: lp.validTo });
+      continue;
+    }
+    const check = checkEligibility(b, todayMs);
+    const reason = !lockMap[b.venueId] ? 'no-lockid' : check.reason;
+    out.push({ ...base, state: 'no-code', reason });
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
 }
 
 /** "YYYY-MM-DD" for the given Unix ms in HKT. */
@@ -397,10 +523,7 @@ export async function setManualPasscode(
   if (!snap.exists) return { ok: false, reason: 'booking-not-found' };
   const b = snap.data() as BookingRecord;
 
-  const startMs   = hkDateTimeToMs(b.date, b.startTime);
-  const endMs     = hkDateTimeToMs(b.endDate || b.date, b.endTime);
-  const validFrom = startMs - PASSCODE_GRACE_MINUTES_BEFORE * 60 * 1000;
-  const validTo   = endMs;
+  const { validFrom, validTo } = passcodeWindow(b);
 
   await ref.update({
     lockPasscode: {
@@ -414,34 +537,8 @@ export async function setManualPasscode(
     updatedAt: FieldValue.serverTimestamp(),
   });
 
-  const contact = await getCustomerContact(b.userId);
-  if (!contact) return { ok: false, reason: 'no-contact' };
-
-  const venue = await resolveVenueServer(b.venueId);
-  const lockGuideImageUrl = await getLockGuideUrlForVenue(b.venueId);
-  const tpl = buildLockPasscodeEmail({
-    customerName: contact.name,
-    venueName:    venue?.name.zh || b.branchSlug,
-    venueAddress: venue?.address.zh,
-    date:         b.date,
-    startTime:    b.startTime,
-    endTime:      b.endTime,
-    endDate:      b.endDate,
-    passcode,
-    confirmKey:   lockConfirmKey(b.venueId, venue),
-    validFromMs:  validFrom,
-    validToMs:    validTo,
-    whatsappLink: 'https://wa.me/85292823060',
-    lockGuideImageUrl,
-  });
-  await sendAutomatedEmail({
-    automationKey: 'lock_passcode',
-    to:            contact.email,
-    subject:       tpl.subject,
-    html:          tpl.html,
-  });
-  await ref.update({ 'lockPasscode.emailSentAt': FieldValue.serverTimestamp() });
-
+  const out = await emailPasscode(bookingId);
+  if (!out.sent && out.reason === 'no-contact') return { ok: false, reason: 'no-contact' };
   return { ok: true };
 }
 

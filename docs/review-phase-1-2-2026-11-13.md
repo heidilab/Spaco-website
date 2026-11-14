@@ -34,3 +34,26 @@ Follow-up to `docs/site-review-2026-11-13.md`. Numbers refer to its §5.
 - Finance key: `salesBranchKey` maps branchKey `sheung-wan` to `sw`; 分店管理 refuses the reserved keys `sw / cwb / wanchai / tst / sheung-wan` for a new branch.
 
 Still static (later phases): packages (`lib/packages.ts`), home filters' id lists, 內容管理 hero / card image slots for the original branches, `ZeroResultsFallback` suggestions, peak-day 全場優先 (Sheung Wan only), `branchInfo.ts` for LocalBusiness of the original four.
+
+## Phase 3 — 門鎖設定 (2026-11-14)
+
+- New admin page `/admin/locks` (系統管理 → 門鎖設定, `staff`), backed by
+  `/api/admin/ttlock/status`: environment names present, the token held,
+  「測試連線」 (fresh login + lock list), every venue from 分店管理 with a
+  lock picker (from the account), confirm key and door-guide image saved
+  on the venue doc, 「測試此門鎖」 (add + delete a 10-minute code, digits
+  never shown), a one-click copy of legacy 系統設定 `ttlock_*` /
+  `lockguide_*` values into venue docs, the last sweep
+  (`system/ttlock_status`, written by every sweep) and the next 3 days'
+  bookings with generate / retry-email / resend / revoke.
+- Engine (`lib/lockPasscode.ts`): `passcodeWindow` opens at the start of a
+  paid early set-up window; `emailPasscode` marks `emailSentAt` only when
+  the email went out (else `emailSkipped`), and the daily sweep retries
+  pending emails (`action: 'emailed'`); `refreshPasscodeAfterTimeChange`
+  re-issues a TTLock code after the customer modify route or an admin
+  follow-up changes the times.
+- `lib/ttlock.ts`: `listLocks` returns battery / gateway; `testTTLockConnection`,
+  `testLockRoundTrip`, `ttlockEnvStatus`, `cachedTokenInfo`.
+- Removed: `scan-ttlock-locks`, `scan-lock-eligibility`, `ttlock/locks`,
+  the unprotected `ttlock/oauth-callback` (login is by username + password
+  or a refresh token saved on Vercel).

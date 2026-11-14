@@ -13,14 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { FieldValue } from 'firebase-admin/firestore';
-import { adminDb } from '@/lib/firebaseAdmin';
-import { processBookingForLockAccess, revokeBookingPasscode, setManualPasscode, getLockGuideUrlForVenue } from '@/lib/lockPasscode';
-import { buildLockPasscodeEmail } from '@/lib/email';
-import { lockConfirmKey } from '@/lib/lockConfirmKey';
-import { sendAutomatedEmail } from '@/lib/emailAutomations';
-import { resolveVenueServer } from '@/lib/venueRegistryServer';
-import type { BookingRecord, UserProfile } from '@/types';
+import { processBookingForLockAccess, revokeBookingPasscode, setManualPasscode, emailPasscode } from '@/lib/lockPasscode';
 import { requireAdmin } from '@/lib/adminAuth';
 import { sweepUpcomingBookings } from '@/lib/lockPasscode';
 
@@ -81,47 +74,11 @@ export async function POST(req: NextRequest) {
     }
 
     if (body.action === 'resend') {
-      // Use the admin SDK throughout — the client SDK has no auth context
-      // on the server, so Firestore rules reject reads/writes with the
-      // "missing or insufficient permissions" error.
-      const ref = adminDb.collection('bookings').doc(bookingId);
-      const snap = await ref.get();
-      if (!snap.exists) {
-        return NextResponse.json({ error: 'booking-not-found' }, { status: 404 });
+      const out = await emailPasscode(bookingId);
+      if (!out.sent) {
+        const status = out.reason === 'booking-not-found' ? 404 : 400;
+        return NextResponse.json({ error: out.reason || 'not-sent', message: out.reason === 'disabled' ? 'Email 自動化入面「門鎖密碼」已關閉' : undefined }, { status });
       }
-      const b = snap.data() as BookingRecord;
-      if (!b.lockPasscode) {
-        return NextResponse.json({ error: 'no-passcode' }, { status: 400 });
-      }
-      const userSnap = await adminDb.collection('users').doc(b.userId).get();
-      if (!userSnap.exists) {
-        return NextResponse.json({ error: 'user-not-found' }, { status: 404 });
-      }
-      const profile = userSnap.data() as UserProfile;
-      const venue = await resolveVenueServer(b.venueId);
-      const lockGuideImageUrl = await getLockGuideUrlForVenue(b.venueId);
-      const tpl = buildLockPasscodeEmail({
-        customerName: profile.displayName || profile.email.split('@')[0],
-        venueName:    venue?.name.zh || b.branchSlug,
-        venueAddress: venue?.address.zh,
-        date:         b.date,
-        startTime:    b.startTime,
-        endTime:      b.endTime,
-        endDate:      b.endDate,
-        passcode:     b.lockPasscode.passcode,
-        confirmKey:   lockConfirmKey(b.venueId, venue),
-        validFromMs:  b.lockPasscode.validFrom,
-        validToMs:    b.lockPasscode.validTo,
-        whatsappLink: 'https://wa.me/85292823060',
-        lockGuideImageUrl,
-      });
-      await sendAutomatedEmail({
-        automationKey: 'lock_passcode',
-        to: profile.email,
-        subject: tpl.subject,
-        html: tpl.html,
-      });
-      await ref.update({ 'lockPasscode.emailSentAt': FieldValue.serverTimestamp() });
       return NextResponse.json({ ok: true });
     }
 

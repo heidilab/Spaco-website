@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { consumeBookingRewards } from '@/lib/bookingRewards';
+import { refreshPasscodeAfterTimeChange } from '@/lib/lockPasscode';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -199,6 +200,10 @@ export async function POST(req: NextRequest) {
     //    both surface Booking ID and we don't want "undefined".
     const freshData = (await bookingRef.get()).data() as BookingRecord;
     const fresh: BookingRecord = { ...freshData, id: bookingId };
+
+    // A TTLock passcode issued for the old times is re-issued for the new
+    // ones (no-op when nothing changed).
+    try { await refreshPasscodeAfterTimeChange(bookingId); } catch (err) { console.error('[booking-edit-followup] passcode refresh failed', err); }
 
     // Admin-direct (線下) bookings carry userId: null — .doc(null)
     // THROWS, which killed this whole route before the gcal sync ever

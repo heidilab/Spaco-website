@@ -517,8 +517,16 @@ export interface BookingRecord {
     validTo: number;
     /** Server timestamp the passcode was created */
     generatedAt: unknown;
-    /** Server timestamp the customer email was sent. null = email pending. */
+    /** Server timestamp the customer email was sent. null = email pending
+     *  (retried by the daily sweep until the booking starts). */
     emailSentAt: unknown | null;
+    /** Why the last email attempt did not go out (e.g. 'disabled' when the
+     *  Email 自動化 switch is off). Cleared when it is sent. */
+    emailSkipped?: string;
+    /** Set when TTLock refused to delete the code on cancel / time change:
+     *  the code is still live on the door until revoked again. */
+    revokeFailedAt?: unknown;
+    revokeError?: string;
   };
   /** Package booking only — chosen free decoration style.
    *  Optional so existing à-la-carte bookings stay valid. */

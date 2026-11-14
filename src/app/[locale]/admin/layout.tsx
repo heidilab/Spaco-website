@@ -8,7 +8,7 @@ import { signInWithGoogle } from '@/lib/auth';
 import {
   LayoutDashboard, CalendarDays, ListOrdered,
   ChevronLeft, ChevronDown, ChevronUp, Shield, Image, Users, UserCog, Receipt, FileText, HelpCircle, Search, CalendarClock, Mail, Tag, BarChart3,
-  BookOpen, LogIn, Menu, X, Newspaper, Store, Package,
+  BookOpen, LogIn, Menu, X, Newspaper, Store, Package, KeyRound,
 } from 'lucide-react';
 import AdminPushSetup from '@/components/admin/AdminPushSetup';
 import { Wallet, CalendarCheck, Award, Sparkles } from 'lucide-react';
@@ -63,6 +63,7 @@ const allSidebarLinks: NavItem[] = [
     children: [
       { href: '/admin/email-automation', icon: Mail, label: { zh: 'Email 自動化', en: 'Email Automation' }, permission: 'gcal' },
       { href: '/admin/calendar-sync', icon: CalendarClock, label: { zh: 'Google 同步', en: 'Google Sync' }, permission: 'gcal' },
+      { href: '/admin/locks', icon: KeyRound, label: { zh: '門鎖設定', en: 'Door locks' }, permission: 'staff' },
       { href: '/admin/help/lock-passcode-manual', icon: BookOpen, label: { zh: '門鎖密碼 SOP', en: 'Lock Passcode SOP' }, permission: 'bookings' },
     ],
   },

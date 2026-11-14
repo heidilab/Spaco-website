@@ -90,6 +90,10 @@ interface CachedToken {
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
+  /** Which grant produced it — shown on the 門鎖設定 page. */
+  method: 'refresh_token' | 'password';
+  /** When it was fetched (ms). */
+  fetchedAt: number;
 }
 
 let cachedToken: CachedToken | null = null;
@@ -172,6 +176,8 @@ async function fetchAccessToken(): Promise<CachedToken> {
         accessToken:  data.access_token,
         refreshToken: data.refresh_token,
         expiresAt:    Date.now() + (data.expires_in - 86400) * 1000,
+        method: 'refresh_token',
+        fetchedAt: Date.now(),
       };
     }
     lastErr = `refresh_token: ${data.errcode} ${data.errmsg || 'unknown'}`;
@@ -184,6 +190,8 @@ async function fetchAccessToken(): Promise<CachedToken> {
         accessToken:  data.access_token,
         refreshToken: data.refresh_token,
         expiresAt:    Date.now() + (data.expires_in - 86400) * 1000,
+        method: 'password',
+        fetchedAt: Date.now(),
       };
     }
     lastErr = `${lastErr ? lastErr + '; ' : ''}password: ${data.errcode} ${data.errmsg || 'unknown'}`;
@@ -209,12 +217,19 @@ async function getAccessToken(): Promise<string> {
  * to figure out the lockId for each venue's door — record those IDs into
  * `site_content` (admin → 設定 → TTLock) so the cron can map venueId → lockId.
  */
-export async function listLocks(pageSize = 100): Promise<Array<{
+export interface TTLockListedLock {
   lockId: number;
   lockAlias: string;
   lockName: string;
   lockMac: string;
-}>> {
+  /** Battery %, when the lock reported it. */
+  electricQuantity?: number;
+  /** Whether TTLock says a gateway is bound to the lock (cloud passcodes
+   *  need one). Absent when the API did not say. */
+  hasGateway?: boolean;
+}
+
+export async function listLocks(pageSize = 100): Promise<TTLockListedLock[]> {
   const accessToken = await getAccessToken();
   const clientId    = readEnvOrThrow('TTLOCK_CLIENT_ID');
 
@@ -236,7 +251,62 @@ export async function listLocks(pageSize = 100): Promise<Array<{
     lockAlias: l.lockAlias,
     lockName:  l.lockName,
     lockMac:   l.lockMac,
+    ...(typeof l.electricQuantity === 'number' ? { electricQuantity: l.electricQuantity } : {}),
+    ...(typeof l.hasGateway === 'number' ? { hasGateway: l.hasGateway === 1 } : {}),
   }));
+}
+
+/** Which TTLock settings exist in the environment — names only, never
+ *  values. For the 門鎖設定 page. */
+export function ttlockEnvStatus(): {
+  clientId: boolean; clientSecret: boolean; refreshToken: boolean; username: boolean; password: boolean; apiBase: string;
+} {
+  return {
+    clientId: !!process.env.TTLOCK_CLIENT_ID,
+    clientSecret: !!process.env.TTLOCK_CLIENT_SECRET,
+    refreshToken: !!process.env.TTLOCK_REFRESH_TOKEN,
+    username: !!process.env.TTLOCK_USERNAME,
+    password: !!(process.env.TTLOCK_PASSWORD_MD5 || process.env.TTLOCK_PASSWORD),
+    apiBase: TTLOCK_API_BASE,
+  };
+}
+
+/** Log in afresh and list the account's locks — the 「測試連線」 button.
+ *  Never throws; the result says what failed. */
+export async function testTTLockConnection(): Promise<{
+  ok: boolean;
+  method?: CachedToken['method'];
+  tokenExpiresAt?: number;
+  locks?: TTLockListedLock[];
+  error?: string;
+}> {
+  if (!isTTLockConfigured()) return { ok: false, error: 'not-configured' };
+  try {
+    cachedToken = await fetchAccessToken();
+    const locks = await listLocks(200);
+    return { ok: true, method: cachedToken.method, tokenExpiresAt: cachedToken.expiresAt, locks };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** The token the process currently holds, if any (no network). */
+export function cachedTokenInfo(): { method: CachedToken['method']; expiresAt: number; fetchedAt: number } | null {
+  return cachedToken ? { method: cachedToken.method, expiresAt: cachedToken.expiresAt, fetchedAt: cachedToken.fetchedAt } : null;
+}
+
+/** Add a short passcode on a lock and delete it straight away — proves the
+ *  door is reachable without handing anyone a working code. The digits are
+ *  never returned. */
+export async function testLockRoundTrip(lockId: number): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const start = Date.now() + 60 * 1000;
+    const { keyboardPwdId } = await addKeyboardPasscode({ lockId, startMs: start, endMs: start + 10 * 60 * 1000, name: `SPACO-TEST-${Date.now().toString(36)}` });
+    await deleteKeyboardPasscode({ lockId, keyboardPwdId });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 /**
