@@ -101,12 +101,28 @@ export async function restoreBlockedSlotsIfMissing(booking: BookingRecord): Prom
   });
 }
 
-interface FinalizeOpts {
+import { FINALIZE_STEPS, type FinalizeStep } from './finalizationSteps';
+export { FINALIZE_STEPS, type FinalizeStep };
+
+export interface FinalizeOpts {
   isBalancePayment: boolean;
   /** Human label for emails/notifications, e.g. 'KPay' or 'Stripe'. */
   paymentMethodLabel: string;
   /** Request origin for gcal redirectUri + admin URLs. */
   origin: string;
+  /** Steps already completed by an earlier attempt — not repeated, so a
+   *  retry never re-sends an email that went out (site review #8). */
+  done?: Partial<Record<FinalizeStep, boolean>>;
+  /** Manual confirmations by staff: no confirmation email to the customer. */
+  skipCustomerEmail?: boolean;
+  /** Default true: throw when any step failed (the job runner retries).
+   *  false = return the result and let the caller decide. */
+  throwOnFailure?: boolean;
+}
+
+export interface FinalizeResult {
+  done: Record<FinalizeStep, boolean>;
+  failures: Partial<Record<FinalizeStep, string>>;
 }
 
 /**
@@ -129,30 +145,46 @@ interface FinalizeOpts {
 export async function finalizeConfirmedBooking(
   bookingId: string,
   opts: FinalizeOpts,
-): Promise<void> {
+): Promise<FinalizeResult> {
   const { isBalancePayment, paymentMethodLabel, origin } = opts;
   const bookingRef = adminDb.collection('bookings').doc(bookingId);
   const redirectUri = `${origin}/api/google/callback`;
+  const done: Record<FinalizeStep, boolean> = {
+    slots: !!opts.done?.slots, email: !!opts.done?.email, lock: !!opts.done?.lock, staff: !!opts.done?.staff, gcal: !!opts.done?.gcal,
+  };
+  const failures: Partial<Record<FinalizeStep, string>> = {};
+  const fail = (step: FinalizeStep, err: unknown) => {
+    failures[step] = (err instanceof Error ? err.message : String(err)).slice(0, 300);
+  };
+  const finish = (): FinalizeResult => {
+    if (opts.throwOnFailure !== false && Object.keys(failures).length) throw new Error('Payment side effects incomplete');
+    return { done, failures };
+  };
 
   const current = await bookingRef.get();
   const currentBooking = current.data();
-  if (!currentBooking || !['confirmed', 'completed'].includes(currentBooking.status) || currentBooking.paymentReviewRequired) return;
-  const failures: unknown[] = [];
+  if (!currentBooking || !['confirmed', 'completed'].includes(currentBooking.status) || currentBooking.paymentReviewRequired) {
+    return { done: { slots: true, email: true, lock: true, staff: true, gcal: true }, failures: {} };
+  }
 
   // 1. blocked_slots restore (initial payment only).
-  if (!isBalancePayment) {
+  if (!isBalancePayment && !done.slots) {
     try {
       const snap = await bookingRef.get();
       const b = snap.data() as BookingRecord | undefined;
       if (b) await restoreBlockedSlotsIfMissing({ ...b, id: bookingId });
+      done.slots = true;
     } catch (err) {
-      failures.push(err);
+      fail('slots', err);
       console.error('[finalizeBooking] blocked_slots restore failed:', err);
     }
+  } else {
+    done.slots = true;
   }
 
   // 3. Confirmation email.
-  try {
+  if (opts.skipCustomerEmail) done.email = true;
+  if (!done.email) try {
     const snap = await bookingRef.get();
     const data = snap.data() as BookingRecord | undefined;
     const booking = data ? ({ ...data, id: bookingId } as BookingRecord) : undefined;
@@ -201,13 +233,14 @@ export async function finalizeConfirmedBooking(
         });
       }
     }
+    done.email = true;
   } catch (err) {
-      failures.push(err);
+    fail('email', err);
     console.warn('[finalizeBooking] confirmation email failed:', err);
   }
 
   // 4. Lock passcode / balance reminder.
-  try {
+  if (!done.lock) try {
     const lock = await processBookingForLockAccess(bookingId);
     // The processor reports problems as a result, not an exception. Log
     // anything other than a successful issue so a silent 'error' /
@@ -216,8 +249,11 @@ export async function finalizeConfirmedBooking(
     if (lock.action !== 'generated') {
       console.warn('[finalizeBooking] lock passcode not issued', { bookingId, action: lock.action, reason: lock.reason, error: lock.error });
     }
+    // A gateway error is reported as a result; the daily sweep retries
+    // it, so the step counts as done here.
+    done.lock = true;
   } catch (err) {
-      failures.push(err);
+    fail('lock', err);
     console.warn('[finalizeBooking] lock passcode trigger failed:', err);
   }
 
@@ -237,7 +273,7 @@ export async function finalizeConfirmedBooking(
   //    Google Calendar sync (slower, external) so the ops-critical "new
   //    booking" alert to staff goes out first — if a later step is slow
   //    or the function is near its time budget, staff are still notified.
-  try {
+  if (!done.staff) try {
     if (bookingForNotify) {
       const venue = await resolveVenueServer(bookingForNotify.venueId);
       await sendStaffBookingNotification({
@@ -273,13 +309,14 @@ export async function finalizeConfirmedBooking(
         adminUrl: `${origin}/zh/admin/bookings/${bookingForNotify.id}`,
       });
     }
+    done.staff = true;
   } catch (err) {
-      failures.push(err);
+    fail('staff', err);
     console.warn('[finalizeBooking] staff notify failed:', err);
   }
 
   // 6. Google Calendar sync (last — external + slowest, least critical).
-  try {
+  if (!done.gcal) try {
     if (bookingForNotify) {
       const customerName = profileForNotify?.displayName;
       if (bookingForNotify.googleEventId) {
@@ -289,9 +326,10 @@ export async function finalizeConfirmedBooking(
         if (eventId) await bookingRef.update({ googleEventId: eventId });
       }
     }
+    done.gcal = true;
   } catch (err) {
-      failures.push(err);
+    fail('gcal', err);
     console.warn('[finalizeBooking] gcal sync failed:', err);
   }
-  if (failures.length) throw new Error('Payment side effects incomplete');
+  return finish();
 }

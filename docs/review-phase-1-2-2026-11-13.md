@@ -85,3 +85,33 @@ the rules document (tokens `{{DEPOSIT_TIERS}}` / `{{DEDUCTIONS}}` /
 Not changed: package add-on prices are still the package's own (not
 附加服務管理's); the home filter vocabulary (capacity buckets, vibes,
 amenity ids) stays in the i18n files; FAQ text is edited in 常見問題管理.
+
+## Phase 5 — 流程中央化 (2026-11-14)
+
+- `lib/bookingLifecycle` (Admin SDK): `cancelBookingServer` — status +
+  audit, blocked_slots, points / promo refunded (#12) in ONE transaction,
+  then Calendar removal, passcode revoke, customer email, each recorded in
+  `cancelEffects`; `setBookingStatusServer` — status in a transaction,
+  slots rebuilt (conflict-checked) or released with it (#4), rewards
+  consumed, and on a manual confirm `finalizeConfirmedBooking` (passcode,
+  staff + supplier notices, Calendar; customer email only when the caller
+  asks, i.e. receipt approval), results in `statusEffects`;
+  `settleDepositServer` — refund, deductions, owed, status and points in
+  one transaction (#21: a double click cannot credit twice; the overflow's
+  points wait in `pointsPendingOverflow` until `creditPendingOverflowPoints`
+  runs from settle-balance / record-offline-payment). Routes:
+  `/api/admin/booking-cancel`, `booking-status`, `booking-settle-deposit`.
+- Browser: `lib/cancelBooking.cancelBooking / setBookingStatus` are thin
+  calls; the booking detail (status dropdown, settle / amend / recover
+  points), the bookings list and the receipts page use them; a failed
+  external step is shown as 「未完成…再做一次會重試」 (#13).
+- `finalizeConfirmedBooking` returns per-step results and skips steps
+  already done; `runPaymentFinalization` records `steps` on the job, so a
+  retry never re-sends an email, and after 6 attempts marks the job
+  `failed`, stamps `booking.finalizationFailed` and emails staff once (#8).
+- The customer modify route updates the Google Calendar event after a
+  time / guests / add-ons change.
+- Still client-side: the staff booking edit (`updateBookingDateTime` +
+  `booking-edit-followup`) — it already conflict-checks and migrates
+  slots, but a closed tab between the two calls leaves the Calendar /
+  email behind; next candidate for the same treatment.

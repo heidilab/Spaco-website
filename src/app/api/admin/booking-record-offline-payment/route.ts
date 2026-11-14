@@ -4,6 +4,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import type { BookingRecord } from '@/types';
 import { requireAdmin } from '@/lib/adminAuth';
 import { computeGrandTotal, restoreBlockedSlotsIfMissing } from '@/lib/finalizeBooking';
+import { creditPendingOverflowPoints } from '@/lib/bookingLifecycle';
 import { amountOwed } from '@/lib/bookingMoney';
 import { consumeBookingRewards } from '@/lib/bookingRewards';
 
@@ -185,12 +186,19 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // A settlement overflow now paid earns its points (review #21).
+    let overflowPoints = 0;
+    if (!body.isRefund && newBalanceDue === 0) {
+      try { overflowPoints = await creditPendingOverflowPoints(bookingId); } catch (err) { console.error('[record-offline-payment] overflow points failed:', err); }
+    }
+
     return NextResponse.json({
       ok: true,
       bookingId,
       newBalanceDue,
       status: nextStatus,
       slotsRestored,
+      overflowPoints,
     });
   } catch (err) {
     return NextResponse.json(

@@ -1,13 +1,12 @@
 'use client';
 
-import { adminApiFetch } from '@/lib/adminApiFetch';
 import { formatPasscode } from '@/lib/lockConfirmKey';
 import { useEffect, useMemo, useState, useRef, type ReactNode } from 'react';
 import { useLocale } from 'next-intl';
-import { getAllBookings, updateBookingStatus, updateBookingBalance, getAllUsers } from '@/lib/firestore';
+import { getAllBookings, updateBookingBalance, getAllUsers } from '@/lib/firestore';
 import { tryGenerateLockPasscode, resendLockPasscode, sweepLockPasscodes } from '@/lib/lockPasscodeClient';
 import { KeyRound } from 'lucide-react';
-import { cancelBooking } from '@/lib/cancelBooking';
+import { cancelBooking, setBookingStatus, effectsSummary } from '@/lib/cancelBooking';
 import { BookingRecord, BookingDraft } from '@/types';
 import { channelDisplayLabel } from '@/lib/marketingChannels';
 import { venues as staticVenues } from '@/lib/venues';
@@ -194,54 +193,31 @@ export default function AdminBookingsPage() {
   }, [statusFilter, search, selectedVenues, userNames, bookings]);
 
   const handleStatusChange = async (bookingId: string, newStatus: string) => {
+    const booking = bookings.find((b) => b.id === bookingId);
     if (newStatus === 'cancelled') {
-      // Cancel is IRREVERSIBLE — confirm before firing. Captures the
-      // current admin's uid / email / displayName as the cancelledBy
-      // audit fields so mis-clicks can be traced (Heidi's 2026-05-23
-      // spec post the awaiting_payment / 沒有完成付款 wash-up).
-      const booking = bookings.find((b) => b.id === bookingId);
+      // Cancel is IRREVERSIBLE — confirm before firing. The server
+      // records who cancelled (Heidi's 2026-05-23 spec).
       const label = booking
         ? `${booking.date} ${booking.startTime} · ${booking.venueId} · #${bookingId.slice(0, 8)}`
         : `#${bookingId.slice(0, 8)}`;
       if (!confirm(
         locale === 'zh'
-          ? `⚠️ 確定取消預訂？\n\n${label}\n\n取消後不能還原。會即時釋放時段、移除 Google Calendar event、通知客人。`
-          : `⚠️ Cancel this booking?\n\n${label}\n\nCannot be undone. Slot is released, gcal event removed, and customer is notified immediately.`,
+          ? `⚠️ 確定取消預訂？\n\n${label}\n\n取消後不能還原。會即時釋放時段、退回積分／優惠碼、移除 Google Calendar event、通知客人。`
+          : `⚠️ Cancel this booking?\n\n${label}\n\nCannot be undone. Slot released, points / promo refunded, gcal event removed, customer notified.`,
       )) return;
-      await cancelBooking(bookingId, {
-        uid: user?.uid,
-        email: user?.email || undefined,
-        displayName: user?.displayName || undefined,
-      });
-    } else {
-      await updateBookingStatus(bookingId, newStatus);
     }
-    // If transitioning into 'confirmed' (manual approve), trigger:
-    //   • TTLock passcode generation (no-op if > 2 days out)
-    //   • Push to Google Calendar (idempotent — no-op if already pushed)
-    //   • Staff notification email to CS + spacohk@gmail.com
-    // All non-blocking; status flip is the source of truth.
-    if (newStatus === 'confirmed') {
-      tryGenerateLockPasscode(bookingId).catch((err) =>
-        console.warn('[ttlock] post-confirm generate failed:', err),
-      );
-      adminApiFetch('/api/google/push-booking', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bookingId }),
-      }).catch(() => { /* gcal disconnected — fine */ });
-      // Rebuild the slots if the expiry cron removed them (with a
-      // conflict check) and consume points / promo — server side.
-      adminApiFetch('/api/admin/booking-confirmed', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bookingId }),
-      }).catch((err) => console.warn('[booking-confirmed] failed:', err));
-      adminApiFetch('/api/admin/notify-booking', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bookingId }),
-      }).catch((err) => console.warn('[notify] staff email failed:', err));
+    // One server call (lib/bookingLifecycle): status, slots and rewards in
+    // a transaction; a manual confirm then issues the passcode, notifies
+    // staff and syncs the Calendar — each step recorded on the booking.
+    try {
+      const actor = { uid: user?.uid, email: user?.email || undefined, displayName: user?.displayName || undefined };
+      const r = newStatus === 'cancelled'
+        ? await cancelBooking(bookingId, actor)
+        : await setBookingStatus(bookingId, newStatus, actor);
+      const note = effectsSummary(r.effects, r.errors, locale === 'zh');
+      if (note) alert(note);
+    } catch (err) {
+      alert((locale === 'zh' ? '改狀態失敗：' : 'Status change failed: ') + (err instanceof Error ? err.message : 'unknown'));
     }
     await loadBookings();
   };

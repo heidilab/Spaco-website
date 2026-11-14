@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { consumeBookingRewards } from '@/lib/bookingRewards';
+import { creditPendingOverflowPoints } from '@/lib/bookingLifecycle';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import type { BookingRecord } from '@/types';
@@ -113,8 +114,11 @@ export async function POST(req: NextRequest) {
     // Balance settled on a confirmed booking: make sure its rewards were
     // consumed (no-op when they already were).
     try { await consumeBookingRewards(bookingId); } catch (err) { console.error('[booking-settle-balance] rewards consumption failed:', err); }
+    // A settlement overflow now paid earns its points (review #21).
+    let overflowPoints = 0;
+    try { overflowPoints = await creditPendingOverflowPoints(bookingId); } catch (err) { console.error('[booking-settle-balance] overflow points failed:', err); }
 
-    return NextResponse.json({ ok: true, amountSettled: balance });
+    return NextResponse.json({ ok: true, amountSettled: balance, overflowPoints });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Settle failed' },

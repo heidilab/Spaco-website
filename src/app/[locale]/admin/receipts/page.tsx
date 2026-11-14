@@ -1,14 +1,12 @@
 'use client';
 
-import { adminApiFetch } from '@/lib/adminApiFetch';
 import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllBookings, getBooking, updateBookingStatus } from '@/lib/firestore';
 import { doc, updateDoc, arrayUnion, serverTimestamp, deleteField } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { tryGenerateLockPasscode } from '@/lib/lockPasscodeClient';
-import { cancelBooking } from '@/lib/cancelBooking';
+import { cancelBooking, setBookingStatus, effectsSummary } from '@/lib/cancelBooking';
 import { BookingRecord } from '@/types';
 import { findVenueNow, useVenueRegistryReady } from '@/lib/useRegistryVenue';
 import { Check, X, Eye, Clock, AlertCircle } from 'lucide-react';
@@ -200,46 +198,21 @@ export default function AdminReceiptsPage() {
       await updateDoc(doc(db, 'bookings', bookingId), { pendingExpiresAt: deleteField() });
     }
 
-    // Send the booking-confirmation email (mirrors Stripe webhook flow).
-    adminApiFetch('/api/email/payment-confirmed', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bookingId }),
-    }).catch((err) => console.warn('[payment-confirmed email] failed:', err));
-    // Staff notification — same email the Stripe webhook fires when a
-    // payment lands. Without this, offline payments were silently confirmed
-    // and admin/CS never got the "new confirmed booking" email.
-    adminApiFetch('/api/admin/notify-booking', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bookingId }),
-    }).catch((err) => console.warn('[notify-booking] failed:', err));
-    // Sync Google Calendar — use booking-edit-followup syncOnly path,
-    // which handles BOTH cases: updates the existing event if one is
-    // already pushed (so cleared balanceDue / new add-ons / refreshed
-    // pricing reflect on the calendar), or creates a fresh event if
-    // none exists yet. The older /api/google/push-booking POST was a
-    // no-op on already-pushed events, so a balance-receipt approval
-    // never refreshed the "⚠️ 未找清尾數" warning.
-    adminApiFetch('/api/admin/booking-edit-followup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bookingId, syncOnly: true }),
-    }).catch((err) => console.warn('[gcal sync] failed:', err));
-    // Slots rebuilt if the hold had lapsed (conflict-checked) and points /
-    // promo consumed — the payment-confirmed email route does the same,
-    // this covers approvals that send no email.
-    adminApiFetch('/api/admin/booking-confirmed', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bookingId }),
-    }).catch((err) => console.warn('[booking-confirmed] failed:', err));
-    // Trigger TTLock passcode generation. The API does eligibility checking,
-    // so this no-ops when the booking is > 2 days out (cron picks it up).
-    // Failures are non-fatal — admin can retry from the booking detail page.
-    tryGenerateLockPasscode(bookingId).catch((err) =>
-      console.warn('[ttlock] post-approve generate failed:', err),
-    );
+    // Everything a confirmed booking needs, once, on the server
+    // (lib/bookingLifecycle → finalizeConfirmedBooking): slots rebuilt
+    // with a conflict check, points / promo consumed, the confirmation
+    // email to the customer, the passcode, the staff and supplier
+    // notices, the Calendar event — each step recorded on the booking.
+    try {
+      const r = await setBookingStatus(bookingId, 'confirmed', {
+        uid: user?.uid, email: user?.email || undefined, displayName: user?.displayName || undefined,
+      }, { customerEmail: true });
+      const note = effectsSummary(r.effects, r.errors, locale === 'zh');
+      if (note) alert(note);
+      else if (r.slots === 'conflict') alert(locale === 'zh' ? '⚠️ 時段已被另一張單佔用，呢張單已標記為「需要覆核」。' : '⚠️ The time is taken by another booking; this one is flagged for review.');
+    } catch (err) {
+      alert((locale === 'zh' ? '確認後續工作失敗：' : 'Confirmation follow-up failed: ') + (err instanceof Error ? err.message : 'unknown'));
+    }
     await loadBookings();
   };
 

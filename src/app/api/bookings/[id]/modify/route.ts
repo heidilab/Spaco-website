@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { refreshPasscodeAfterTimeChange } from '@/lib/lockPasscode';
+import { updateBookingOnCalendar } from '@/lib/googleCalendar';
+import { getPublicOrigin } from '@/lib/kpay';
 import { getPeakDayAdmin } from '@/lib/peakDaysAdmin';
 import { resolvePeakRule } from '@/lib/peakDayRules';
 import { adminDb } from '@/lib/firebaseAdmin';
@@ -573,6 +575,16 @@ export async function POST(
   // A TTLock passcode issued for the old times is re-issued for the new
   // ones (no-op when there is none or nothing changed).
   try { await refreshPasscodeAfterTimeChange(id); } catch (err) { console.error('[/api/bookings/[id]/modify] passcode refresh failed', err); }
+  // The Google Calendar event follows the new time / guests / add-ons
+  // (phase 5: every change moves everything together).
+  try {
+    const fresh = await adminDb.collection('bookings').doc(id).get();
+    const fb = fresh.exists ? ({ ...(fresh.data() as BookingRecord), id } as BookingRecord) : null;
+    if (fb?.googleEventId) {
+      const prof = fb.userId ? (await adminDb.collection('users').doc(fb.userId).get()).data() as { displayName?: string } | undefined : undefined;
+      await updateBookingOnCalendar(`${getPublicOrigin(req.nextUrl.origin)}/api/google/callback`, { booking: fb, customerName: prof?.displayName });
+    }
+  } catch (err) { console.error('[/api/bookings/[id]/modify] calendar update failed', err); }
 
   return NextResponse.json({ balanceDue, subtotalDiff: computed.subtotal - oldSubtotal });
 }

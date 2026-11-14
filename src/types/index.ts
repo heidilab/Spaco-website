@@ -443,6 +443,22 @@ export interface BookingRecord {
    *  spec: refundable amount doesn't earn points, only what SPACO
    *  actually pocketed does). */
   pointsActuallyCredited?: number;
+  /** Points for a settlement overflow (deductions beyond the deposit),
+   *  credited once the overflow is paid (lib/bookingLifecycle). */
+  pointsPendingOverflow?: number;
+  pointsOverflowCreditedAt?: unknown;
+  /** Set when a cancel gave the redeemed points / promo use back. */
+  pointsRefundedAt?: unknown;
+  pointsRefunded?: number;
+  promoRefundedAt?: unknown;
+  /** Outcome of the external side effects of the last cancel / status
+   *  change (lib/bookingLifecycle): each step done / skipped / failed. */
+  cancelEffects?: { [step: string]: unknown; errors?: Record<string, string> };
+  statusEffects?: { [step: string]: unknown; errors?: Record<string, string> };
+  statusChangedAt?: unknown;
+  statusChangedBy?: string | null;
+  /** The payment follow-up job gave up (lib/paymentFinalization). */
+  finalizationFailed?: { steps: string[]; at: unknown } | null;
   /**
    * Booking lifecycle:
    *   awaiting_payment      — customer picked payment method, slot blocked,

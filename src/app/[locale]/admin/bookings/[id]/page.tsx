@@ -15,9 +15,6 @@ import {
   getBooking,
   getUserProfile,
   updateBookingDateTime,
-  updateBookingStatus,
-  deleteBlockedSlotsByBooking,
-  updateBookingDepositRefund,
   creditLoyaltyPoints,
   redeemLoyaltyPoints,
 } from '@/lib/firestore';
@@ -101,7 +98,7 @@ import {
 } from 'lucide-react';
 import { getSiteContent } from '@/lib/content';
 import { resendLockPasscode, setManualLockPasscode, tryGenerateLockPasscode } from '@/lib/lockPasscodeClient';
-import { cancelBooking } from '@/lib/cancelBooking';
+import { cancelBooking, setBookingStatus, effectsSummary } from '@/lib/cancelBooking';
 
 // Standard fixed deductions — from 預訂規則 (lib/bookingRules), the same
 // list the guidelines and terms print.
@@ -887,6 +884,37 @@ export default function AdminBookingDetailPage() {
    *  Recomputes refund/overflow, keeps balanceDue PAYMENT-AWARE (money
    *  already received toward the old overflow stays counted), and
    *  reconciles loyalty points against the new expected credit. */
+  /** Settlement, amendment and recovery go through one server route:
+   *  /api/admin/booking-settle-deposit (lib/bookingLifecycle) — refund,
+   *  deductions, what is owed, status and points in one transaction. */
+  async function settleOnServer(mode: 'settle' | 'amend' | 'recover-points', deductions: { label: string; amount: number }[]) {
+    const res = await adminApiFetch('/api/admin/booking-settle-deposit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bookingId: booking!.id, deductions, mode, actorEmail: user?.email || undefined }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      const code = String(data.error || '');
+      const known: Record<string, { zh: string; en: string }> = {
+        EVENT_NOT_ENDED: { zh: '活動結束後才可結算按金。', en: 'Deposit can only be settled after the event ends.' },
+        ALREADY_SETTLED: { zh: '呢張單已經結算過，請用「修改結算」。', en: 'Already settled — use amend.' },
+        NOT_SETTLED: { zh: '呢張單未結算。', en: 'Not settled yet.' },
+        USER_NOT_FOUND: { zh: '客戶 user doc 唔存在', en: 'user doc not found' },
+      };
+      throw new Error(known[code]?.[locale] || code || 'failed');
+    }
+    return data as { refund: number; owed: number; pointsApplied: number; pointsShortfall: number; pointsPendingOverflow: number };
+  }
+  const pointsNote = (r: { pointsApplied: number; pointsShortfall: number; pointsPendingOverflow: number }) => {
+    const parts: string[] = [];
+    if (r.pointsApplied > 0) parts.push(locale === 'zh' ? `已 credit ${r.pointsApplied.toLocaleString()} 積分` : `credited ${r.pointsApplied.toLocaleString()} pts`);
+    if (r.pointsApplied < 0) parts.push(locale === 'zh' ? `積分扣返 −${(-r.pointsApplied).toLocaleString()}` : `−${(-r.pointsApplied).toLocaleString()} pts`);
+    if (r.pointsShortfall > 0) parts.push(locale === 'zh' ? `尚有 ${r.pointsShortfall.toLocaleString()} 分客戶餘額不足未能扣，請手動調整` : `${r.pointsShortfall.toLocaleString()} pts could not be taken back — adjust manually`);
+    if (r.pointsPendingOverflow > 0) parts.push(locale === 'zh' ? `補付部分嘅 ${r.pointsPendingOverflow.toLocaleString()} 積分會喺收到錢後自動加` : `${r.pointsPendingOverflow.toLocaleString()} pts for the overflow are credited once it is paid`);
+    return parts.length ? `；${parts.join('；')}` : '';
+  };
+
   async function handleAmendSettle() {
     if (!booking || !booking.depositRefund) return;
     const total = totalDeductions();
@@ -905,59 +933,12 @@ export default function AdminBookingDetailPage() {
         }),
         ...customDeductions.filter((d) => d.label && d.amount > 0),
       ];
-
-      // Settlement already includes every credited payment; do not subtract
-      // payments above the original bill a second time.
-      const newBalance = overflowAmount;
-
-      const prevRefundedAt = (booking.depositRefund as { refundedAt?: unknown })?.refundedAt;
-      await updateDoc(doc(db, 'bookings', booking.id), {
-        depositRefund: {
-          amount: refundAmount,
-          deductions,
-          refundedAt: prevRefundedAt ?? serverTimestamp(),
-          amendedAt: serverTimestamp(),
-          amendedBy: user?.email ?? null,
-        },
-        balanceDue: newBalance,
-        status: newBalance > 0 ? 'confirmed' : 'completed',
-        updatedAt: serverTimestamp(),
-      });
-
-      // Loyalty reconciliation — same expected-credit formula as settle:
-      // net consumption + deposit actually consumed + overflow the
-      // customer pays out of pocket. Diff against what was credited.
-      let pointsMsg = '';
-      if (booking.userId && booking.pointsCreditedAt) {
-        const expected = pointsEarnedFor(netConsumption(booking) + total);
-        const oldCredited = booking.pointsActuallyCredited || 0;
-        const diff = expected - oldCredited;
-        if (diff > 0) {
-          const added = await creditLoyaltyPoints(booking.userId, diff);
-          await updateDoc(doc(db, 'bookings', booking.id), {
-            pointsActuallyCredited: oldCredited + added, updatedAt: serverTimestamp(),
-          });
-          pointsMsg = locale === 'zh' ? `；積分補加 +${added.toLocaleString()}` : `; +${added.toLocaleString()} pts`;
-        } else if (diff < 0) {
-          const taken = await redeemLoyaltyPoints(booking.userId, -diff);
-          if (taken) {
-            await updateDoc(doc(db, 'bookings', booking.id), {
-              pointsActuallyCredited: expected, updatedAt: serverTimestamp(),
-            });
-            pointsMsg = locale === 'zh' ? `；積分扣返 −${(-diff).toLocaleString()}` : `; −${(-diff).toLocaleString()} pts`;
-          } else {
-            pointsMsg = locale === 'zh'
-              ? `；積分需減 ${(-diff).toLocaleString()} 但客戶餘額不足，請手動調整`
-              : `; need −${(-diff).toLocaleString()} pts but balance too low — adjust manually`;
-          }
-        }
-      }
-
+      const r = await settleOnServer('amend', deductions);
       setSettleMsg({
         kind: 'ok',
         text: (locale === 'zh'
-          ? `✓ 已修改結算。新退款 HK$${refundAmount.toLocaleString()}${newBalance > 0 ? `；客人尚欠 HK$${newBalance.toLocaleString()}` : ''}`
-          : `✓ Settlement amended. Refund HK$${refundAmount.toLocaleString()}${newBalance > 0 ? `; customer owes HK$${newBalance.toLocaleString()}` : ''}`) + pointsMsg,
+          ? `✓ 已修改結算。新退款 HK$${r.refund.toLocaleString()}${r.owed > 0 ? `；客人尚欠 HK$${r.owed.toLocaleString()}` : ''}`
+          : `✓ Settlement amended. Refund HK$${r.refund.toLocaleString()}${r.owed > 0 ? `; customer owes HK$${r.owed.toLocaleString()}` : ''}`) + pointsNote(r),
       });
       const fresh = await getBooking(booking.id);
       if (fresh) setBooking(fresh);
@@ -976,25 +957,9 @@ export default function AdminBookingDetailPage() {
 
   async function handleSettleDeposit() {
     if (!booking) return;
-    // Deposit can only be settled AFTER the event ends — it's refunded
-    // once the guest has left and the venue is checked. Guard here too
-    // (not just the disabled button) so it can't fire early.
-    const settleEndDay = booking.endDate && booking.endDate !== booking.date ? booking.endDate : booking.date;
-    const eventEndMs = new Date(`${settleEndDay}T${booking.endTime}:00+08:00`).getTime();
-    if (Date.now() < eventEndMs) {
-      setSettleMsg({
-        kind: 'err',
-        text: locale === 'zh' ? '活動結束後才可結算按金。' : 'Deposit can only be settled after the event ends.',
-      });
-      return;
-    }
     setSettling(true);
     setSettleMsg(null);
     try {
-      const securityDeposit = depositSettlementAmounts(booking).available;
-      const total = totalDeductions();
-      const { refund: refundAmount, owed: overflowAmount } = depositSettlementAmounts(booking, total);
-
       const deductions = [
         ...selectedFixed.map((id) => {
           const item = FIXED_DEDUCTIONS.find((d) => d.id === id)!;
@@ -1002,60 +967,18 @@ export default function AdminBookingDetailPage() {
         }),
         ...customDeductions.filter((d) => d.label && d.amount > 0),
       ];
-
-      await updateBookingDepositRefund(booking.id, {
-        amount: refundAmount,
-        deductions,
-        overflowAmount,
-      });
-
-      // Credit loyalty points: subtotal (rental + add-ons) + the
-      // PORTION of deductions the deposit actually covered. The
-      // overflow ($250 in #B7PlO6qv's case) isn't credited yet —
-      // customer hasn't paid it. Admin can credit it manually after
-      // the offline payment via /admin/members → adjust points.
-      //
-      // MINUS the promo / points discounts (free items aren't "消費").
-      // Refunded portion doesn't count either — only money SPACO
-      // actually pocketed earns points. 1 HK$ = 1 point.
-      //
-      // Idempotency: skip if booking.pointsCreditedAt is already set.
-      let creditedPoints = 0;
-      if (booking.userId && !booking.pointsCreditedAt) {
-        const promoDiscount = booking.promoDiscount || 0;
-        const pointsDiscount = booking.pointsDiscount || 0;
-        const consumedDeposit = Math.min(total, securityDeposit);
-        // When deductions exceed the security deposit, the overflow
-        // amount is what the customer pays out-of-pocket on top
-        // (#udz81KFK: 加時 \$1,392 vs \$1,000 deposit → \$392 overflow
-        // paid by customer). That money is real consumption + must
-        // count for loyalty points too.
-        const overflowPaid = Math.max(0, total - securityDeposit);
-        // Derive earnable spend from primitives so the math is right
-        // regardless of whether pricing.subtotal happens to be stored
-        // PRE- or POST-promo (convention drift between admin/bookings/new
-        // and updateBookingPricing).
-        const effectiveSpend = netConsumption(booking);
-        const points = pointsEarnedFor(effectiveSpend + consumedDeposit + overflowPaid);
-        creditedPoints = await creditLoyaltyPoints(booking.userId, points);
-        if (creditedPoints > 0) {
-          await updateDoc(doc(db, 'bookings', booking.id), {
-            pointsCreditedAt: serverTimestamp(),
-            pointsActuallyCredited: creditedPoints,
-            updatedAt: serverTimestamp(),
-          });
-        }
-      }
-
+      // One transaction on the server: refund, deductions, what is owed,
+      // status and points (the overflow's points wait until it is paid).
+      const r = await settleOnServer('settle', deductions);
       setSettleMsg({
         kind: 'ok',
-        text: overflowAmount > 0
+        text: (r.owed > 0
           ? (locale === 'zh'
-              ? `✓ 結算完成。扣減超出按金 HK$${overflowAmount.toLocaleString()} — 客人需補付，請喺結算後用「已於線下付款」記錄收到嘅金額。已 credit ${creditedPoints.toLocaleString()} 積分。`
-              : `✓ Settled. Deductions exceed deposit by HK$${overflowAmount.toLocaleString()} — customer owes this amount; use 已於線下付款 to record receipt. Credited ${creditedPoints.toLocaleString()} pts.`)
+              ? `✓ 結算完成。扣減超出按金 HK$${r.owed.toLocaleString()} — 客人需補付，請喺收到錢後用「已於線下付款」記錄。`
+              : `✓ Settled. Deductions exceed deposit by HK$${r.owed.toLocaleString()} — customer owes this amount; use 已於線下付款 to record receipt.`)
           : (locale === 'zh'
-              ? `✓ 結算完成。退款 HK$${refundAmount.toLocaleString()}，已 credit ${creditedPoints.toLocaleString()} 積分。`
-              : `✓ Settled. Refund HK$${refundAmount.toLocaleString()}; credited ${creditedPoints.toLocaleString()} pts.`),
+              ? `✓ 結算完成。退款 HK$${r.refund.toLocaleString()}。`
+              : `✓ Settled. Refund HK$${r.refund.toLocaleString()}.`)) + pointsNote(r),
       });
       const fresh = await getBooking(booking.id);
       if (fresh) setBooking(fresh);
@@ -1081,44 +1004,15 @@ export default function AdminBookingDetailPage() {
     if (!booking || !booking.userId || booking.pointsCreditedAt) return;
     setRecoveringPoints(true);
     try {
-      const settledDeductions =
-        (booking.depositRefund as { deductions?: { amount: number }[] } | null)?.deductions
-          ?.reduce((s, d) => s + (d.amount || 0), 0) || 0;
-      // Match the settle-deposit formula. Derive earnable spend from
-      // primitives + split deductions into consumed-deposit and
-      // overflow-paid (#udz81KFK class — \$1,392 deductions on
-      // \$1,000 deposit leaves \$392 customer paid in cash, which
-      // counts as spend too).
-      const promoDiscount = booking.promoDiscount || 0;
-      const pointsDiscount = booking.pointsDiscount || 0;
-      const securityDepositAtSettle = booking.pricing.securityDeposit ?? 0;
-      const consumedDeposit = Math.min(settledDeductions, securityDepositAtSettle);
-      const overflowPaid = Math.max(0, settledDeductions - securityDepositAtSettle);
-      const effectiveSpend = netConsumption(booking);
-      const points = pointsEarnedFor(effectiveSpend + consumedDeposit + overflowPaid);
-      const credited = await creditLoyaltyPoints(booking.userId, points);
-      if (credited > 0) {
-        await updateDoc(doc(db, 'bookings', booking.id), {
-          pointsCreditedAt: serverTimestamp(),
-          pointsActuallyCredited: credited,
-          updatedAt: serverTimestamp(),
-        });
-        const fresh = await getBooking(booking.id);
-        if (fresh) setBooking(fresh);
-        setSettleMsg({
-          kind: 'ok',
-          text: locale === 'zh'
-            ? `✓ 已補加 ${credited.toLocaleString()} 積分`
-            : `✓ Credited ${credited.toLocaleString()} pts`,
-        });
-      } else {
-        setSettleMsg({
-          kind: 'err',
-          text: locale === 'zh'
-            ? '補加失敗：客戶 user doc 唔存在'
-            : 'Credit failed: user doc not found',
-        });
-      }
+      const r = await settleOnServer('recover-points', []);
+      const fresh = await getBooking(booking.id);
+      if (fresh) setBooking(fresh);
+      setSettleMsg({
+        kind: r.pointsApplied > 0 ? 'ok' : 'err',
+        text: r.pointsApplied > 0
+          ? (locale === 'zh' ? `✓ 已補加 ${r.pointsApplied.toLocaleString()} 積分` : `✓ Credited ${r.pointsApplied.toLocaleString()} pts`)
+          : (locale === 'zh' ? '冇積分需要補加' : 'Nothing to credit'),
+      });
     } catch (err) {
       setSettleMsg({
         kind: 'err',
@@ -1130,15 +1024,6 @@ export default function AdminBookingDetailPage() {
     }
   }
 
-  /** Fire after admin edit: optionally records a payment top-up,
-   *  re-sends the customer confirmation email, and updates the
-   *  matching Google Calendar event with the new schedule.
-   *
-   *  Records an offline payment (FPS / bank / cash / other) without
-   *  inflating pricing.* — pricing was already locked by the booking
-   *  edit save; this only logs what the customer paid and updates
-   *  balanceDue. After write, also fires a gcal-only sync so the
-   *  event description reflects the new balance line. */
   async function handleRecordOfflinePayment() {
     if (!booking || !user) return;
     setFollowupBusy(true);
@@ -1327,62 +1212,27 @@ export default function AdminBookingDetailPage() {
       const label = `${booking.date} ${booking.startTime} · ${booking.venueId} · #${booking.id.slice(0, 8)}`;
       if (!confirm(
         locale === 'zh'
-          ? `⚠️ 確定取消預訂？\n\n${label}\n\n取消後不能還原。會即時釋放時段、移除 Google Calendar event、通知客人。`
-          : `⚠️ Cancel this booking?\n\n${label}\n\nCannot be undone. Slot is released, gcal event removed, and customer is notified immediately.`,
+          ? `⚠️ 確定取消預訂？\n\n${label}\n\n取消後不能還原。會即時釋放時段、退回積分／優惠碼、移除 Google Calendar event、通知客人。`
+          : `⚠️ Cancel this booking?\n\n${label}\n\nCannot be undone. Slot released, points / promo refunded, gcal event removed, customer notified.`,
       )) return;
     }
     setStatusSaving(true);
     try {
-      if (next === 'cancelled') {
-        await cancelBooking(booking.id, {
-          uid: user?.uid,
-          email: user?.email || undefined,
-          displayName: user?.displayName || undefined,
-        });
-      } else {
-        await updateBookingStatus(booking.id, next);
-        if (next === 'confirmed') {
-          // Rebuild slots the expiry cron removed (with a conflict check)
-          // and consume points / promo — server side, once.
-          try {
-            const r = await adminApiFetch('/api/admin/booking-confirmed', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ bookingId: booking.id }),
-            });
-            const d = await r.json().catch(() => ({}));
-            if (d?.slots === false && d?.rewards) { /* slots existed or were flagged; nothing to say */ }
-          } catch (err) { console.warn('[booking-confirmed] failed:', err); }
-        } else if (next === 'payment_not_completed') {
-          // A dead booking must not keep blocking the calendar.
-          try { await deleteBlockedSlotsByBooking(booking.id); } catch (err) { console.warn('[status-change] slot release failed:', err); }
-        }
-        // Sync gcal so the event description reflects the new status
-        // (e.g. payment_not_completed should drop the booking from the
-        // active calendar surface; awaiting_review hints CS to review).
-        // Skipped for cancel since cancelBooking handles its own gcal
-        // removal. Fire-and-forget — booking is already saved.
-        adminApiFetch('/api/admin/booking-edit-followup', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bookingId: booking.id, syncOnly: true }),
-        }).catch((err) => console.warn('[status-change gcal sync] failed:', err));
-      }
+      // One server call (lib/bookingLifecycle): status, slots and rewards
+      // in a transaction, then Calendar / passcode / emails, each recorded.
+      const actor = { uid: user?.uid, email: user?.email || undefined, displayName: user?.displayName || undefined };
+      const r = next === 'cancelled'
+        ? await cancelBooking(booking.id, actor)
+        : await setBookingStatus(booking.id, next, actor);
       setStatusValue(next);
-      // Mirror the trigger that /admin/receipts and /admin/bookings (list)
-      // already fire: when admin manually flips a booking to "confirmed"
-      // and it's within the 2-day window, generate the lock passcode +
-      // email the customer right away. Fire-and-forget — the panel below
-      // also has a manual button so any silent failure can be retried.
-      if (next === 'confirmed') {
-        tryGenerateLockPasscode(booking.id).catch((err) =>
-          console.warn('[ttlock] status-change generate failed:', err),
-        );
-      }
+      const note = effectsSummary(r.effects, r.errors, locale === 'zh');
+      if (note) alert(note);
+      else if ('slots' in r && r.slots === 'conflict') alert(locale === 'zh' ? '⚠️ 時段已被另一張單佔用，呢張單已標記為「需要覆核」，未有重新鎖時段。' : '⚠️ The time is taken by another booking; this one is flagged for review and its slots were not rebuilt.');
       const fresh = await getBooking(booking.id);
       if (fresh) setBooking(fresh);
     } catch (err) {
       console.error(err);
+      alert((locale === 'zh' ? '改狀態失敗：' : 'Status change failed: ') + (err instanceof Error ? err.message : 'unknown'));
     } finally {
       setStatusSaving(false);
     }
