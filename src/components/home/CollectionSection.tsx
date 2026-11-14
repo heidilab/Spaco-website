@@ -8,7 +8,8 @@ import FilterBar from './FilterBar';
 import SplitHeading from '@/components/ui/SplitHeading';
 import VenueCard, { type BranchCardGroup } from './VenueCard';
 import ZeroResultsFallback from './ZeroResultsFallback';
-import { filterVenues, venues as allVenues } from '@/lib/venues';
+import { venues as allVenues } from '@/lib/venues';
+import { filterVenueList, hasActiveFilter } from '@/lib/homeFilters';
 import { loadActiveVenues } from '@/lib/venueRegistry';
 import { FilterState, Venue } from '@/types';
 
@@ -83,21 +84,9 @@ export default function CollectionSection() {
 
   const handleFilterChange = useCallback((newFilters: FilterState) => {
     setFilters(newFilters);
-    // Static filter maps only know the original 6 ids; venues created
-    // dynamically pass through unfiltered (shown in every filter state)
-    // until Phase 3 moves the filter attributes onto the venue doc.
-    const staticMatch = new Set(filterVenues(newFilters).map((v) => v.id));
-    const hasFilter = !!(newFilters.capacity || newFilters.vibe || newFilters.amenities.length);
-    setFilteredVenues(!hasFilter ? null : registryVenues.filter((v) => {
-      const isStaticVenue = allVenues.some((sv) => sv.id === v.id);
-      if (!isStaticVenue) {
-        // Dynamic venue: filter directly on its own attributes.
-        if (newFilters.vibe && !v.vibes.includes(newFilters.vibe)) return false;
-        for (const a of newFilters.amenities) if (!v.amenities.includes(a)) return false;
-        return true;
-      }
-      return staticMatch.has(v.id);
-    }));
+    // Every venue — original or added in 分店管理 — is filtered on its own
+    // capacity / vibes / amenities (lib/homeFilters).
+    setFilteredVenues(hasActiveFilter(newFilters) ? filterVenueList(registryVenues, newFilters) : null);
   }, [registryVenues]);
 
   return (

@@ -373,7 +373,7 @@ export default function PeakDaysPage() {
                 {ruleInputs('all', draft.all, (r) => setDraft({ ...draft, all: r }))}
               </div>
 
-              {/* 上環全場優先 — Room A/B held back until the release day */}
+              {/* 全場優先 — part rooms held back until the release day (every branch with a 全層) */}
               <div className="border-2 border-sky-200 bg-sky-50/50 rounded-lg p-3 space-y-2">
                 <label className="flex items-start gap-2 text-sm font-medium cursor-pointer">
                   <input
@@ -383,11 +383,11 @@ export default function PeakDaysPage() {
                     className="mt-0.5"
                   />
                   <span>
-                    🔒 {zh ? '上環全場優先 — 呢日只接全層 A+B 預訂' : 'SW full-floor first — only 全層 A+B bookable'}
+                    🔒 {zh ? '全場優先 — 有分拆房間嘅分店（上環、尖沙咀 HART…）呢日只接全層預訂' : 'Full-floor first — branches with split rooms (SW, TST HART…) take whole-floor bookings only'}
                     <span className="block text-xs font-normal text-gray-500 mt-0.5">
                       {zh
-                        ? 'Room A / Room B 唔會分開接客人網上預訂，直至去到下面設定嘅開放日仍未有全場預訂，先自動分返兩間房接單。（CS 後台開單唔受限制）'
-                        : 'Rooms A/B reject separate customer bookings until the release day below; existing A+B bookings keep blocking them as usual. Admin bookings unaffected.'}
+                        ? '每間有「全層」嘅分店，佢嘅 Room A / Room B 唔會分開接客人網上預訂，直至去到下面設定嘅開放日仍未有全場預訂，先自動分返房接單。房間關係跟分店管理嘅設定。（CS 後台開單唔受限制）'
+                        : 'At every branch with a combined room, the single rooms reject separate customer bookings until the release day below; existing whole-floor bookings keep blocking them as usual. Room relationships follow 分店管理. Admin bookings unaffected.'}
                     </span>
                   </span>
                 </label>

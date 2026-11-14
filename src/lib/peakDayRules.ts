@@ -3,6 +3,8 @@
 // peakDays.ts.
 
 import type { PeakDayConfig, PeakDayRule, Venue } from '@/types';
+import { conflictIdsFor } from './venueConflicts';
+import { venues as staticVenues, VENUE_CONFLICTS } from './venues';
 
 /** venueId → branch key (sw-a/sw-b/sw-ab share 'sw'). */
 export function peakBranchKey(venueId: string): string {
@@ -97,22 +99,54 @@ export function effectiveMinHours(venueMin: number, rule: PeakDayRule | null): n
 }
 
 /**
- * 上環全場優先 (Heidi 2026-09-20): true when `venueId` (sw-a / sw-b)
+ * Is `venueId` a PART of a combined room — Room A or Room B where a
+ * 全層 A+B also exists? Decided from the room relationships in 分店管理
+ * (conflictsWith / the static map), so it holds for 上環 and for any
+ * branch set up the same way (尖沙咀 HART Room A / B / A+B): some other
+ * venue conflicts with this one AND with at least one more room, while
+ * this one conflicts with fewer — that other venue is the combined room.
+ */
+export function isPartRoom(venueId: string, venues: readonly Venue[] = staticVenues): boolean {
+  const all = venues as Venue[];
+  // The registry's relationships, plus the static 上環 map for the coded
+  // rooms (a static venue carries no conflictsWith of its own).
+  const others = (id: string) => Array.from(new Set([...conflictIdsFor(id, all), ...(VENUE_CONFLICTS[id] || [])])).filter((x) => x !== id);
+  const mine = others(venueId);
+  if (mine.length === 0) return false;
+  return mine.some((otherId) => {
+    const theirs = others(otherId);
+    return theirs.includes(venueId) && theirs.length >= 2 && theirs.length > mine.length;
+  });
+}
+
+/**
+ * 全場優先 (Heidi 2026-09-20, 上環; any branch with split rooms since
+ * 2026-11-14): true when `venueId` is a part room (Room A / Room B) that
  * must NOT be bookable separately on this peak date yet — the date is
  * flagged full-floor-first and the release moment (date 00:00 HKT −
- * swSplitReleaseDays days) hasn't arrived. sw-ab and non-SW venues are
- * never blocked. Existing A+B bookings block A/B afterwards through the
- * normal conflict checks, so no full-floor lookup is needed here.
+ * swSplitReleaseDays days) hasn't arrived. Combined rooms and single-room
+ * venues are never blocked. Existing A+B bookings block A/B afterwards
+ * through the normal conflict checks, so no full-floor lookup is needed.
  */
+export function fullFloorSplitBlocked(
+  cfg: PeakDayConfig | null | undefined,
+  venueId: string,
+  venues: readonly Venue[] = staticVenues,
+  nowMs: number = Date.now(),
+): boolean {
+  if (!cfg?.swFullFloorFirst) return false;
+  if (!isPartRoom(venueId, venues)) return false;
+  const releaseDays = Math.max(0, cfg.swSplitReleaseDays || 0);
+  const dateStartMs = new Date(`${cfg.date}T00:00:00+08:00`).getTime();
+  const releaseMs = dateStartMs - releaseDays * 24 * 60 * 60 * 1000;
+  return nowMs < releaseMs;
+}
+
+/** The original 上環-only form: the static rooms. */
 export function swSplitBlocked(
   cfg: PeakDayConfig | null | undefined,
   venueId: string,
   nowMs: number = Date.now(),
 ): boolean {
-  if (!cfg?.swFullFloorFirst) return false;
-  if (venueId !== 'sw-a' && venueId !== 'sw-b') return false;
-  const releaseDays = Math.max(0, cfg.swSplitReleaseDays || 0);
-  const dateStartMs = new Date(`${cfg.date}T00:00:00+08:00`).getTime();
-  const releaseMs = dateStartMs - releaseDays * 24 * 60 * 60 * 1000;
-  return nowMs < releaseMs;
+  return fullFloorSplitBlocked(cfg, venueId, staticVenues, nowMs);
 }

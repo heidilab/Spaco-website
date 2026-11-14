@@ -20,7 +20,8 @@ import { calculateDeposit } from '@/lib/pricing';
 import { saveBookingCheckoutDraft } from '@/lib/bookingCheckoutDraft';
 import HolidayDatePicker from '@/components/booking/HolidayDatePicker';
 import { getPeakDay } from '@/lib/peakDays';
-import { resolvePeakRule, swSplitBlocked } from '@/lib/peakDayRules';
+import { resolvePeakRule, fullFloorSplitBlocked } from '@/lib/peakDayRules';
+import { venuesSnapshot } from '@/lib/venueRegistry';
 import type { PeakDayConfig } from '@/types';
 import AuthModal from '@/components/auth/AuthModal';
 import {
@@ -215,7 +216,8 @@ function PackageBookingPageInner({ pkg, locale }: { pkg: EventPackage; locale: '
     return () => { stale = true; };
   }, [selectedDate]);
   const peakRule = useMemo(() => resolvePeakRule(peakCfg, pkg.venueId), [peakCfg, pkg.venueId]);
-  const splitBlocked = useMemo(() => swSplitBlocked(peakCfg, pkg.venueId), [peakCfg, pkg.venueId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const splitBlocked = useMemo(() => fullFloorSplitBlocked(peakCfg, pkg.venueId, venuesSnapshot()), [peakCfg, pkg.venueId, venue]);
   // Package pax floor may be raised by the peak day's minimum headcount.
   const paxFloor = Math.max(pkg.basePax || 1, peakRule?.minHeadcount || 0);
 

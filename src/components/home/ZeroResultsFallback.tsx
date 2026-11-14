@@ -4,9 +4,9 @@ import { useLocale, useTranslations } from 'next-intl';
 import { Link } from '@/i18n/routing';
 import { Sparkles, ArrowUpRight } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { venues } from '@/lib/venues';
+import { venuesSnapshot } from '@/lib/venueRegistry';
 import { FilterState } from '@/types';
-import { generateFallbackSuggestions } from '@/lib/venues';
+import { fallbackSuggestions } from '@/lib/homeFilters';
 
 interface ZeroResultsFallbackProps {
   filters: FilterState;
@@ -15,7 +15,8 @@ interface ZeroResultsFallbackProps {
 export default function ZeroResultsFallback({ filters }: ZeroResultsFallbackProps) {
   const t = useTranslations('fallback');
   const locale = useLocale() as 'zh' | 'en';
-  const suggestions = generateFallbackSuggestions(filters);
+  // Suggestions come from the venues on sale (分店管理), not a fixed set.
+  const suggestions = fallbackSuggestions(filters, venuesSnapshot());
 
   return (
     <motion.div
@@ -29,9 +30,7 @@ export default function ZeroResultsFallback({ filters }: ZeroResultsFallbackProp
       </div>
 
       {suggestions.map((suggestion, i) => {
-        const suggestedVenues = venues.filter((v) =>
-          suggestion.venueIds.includes(v.id)
-        );
+        const suggestedVenues = suggestion.venues;
 
         return (
           <div

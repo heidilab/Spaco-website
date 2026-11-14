@@ -18,8 +18,8 @@ import {
 import HotpotSoupPicker from '@/components/booking/HotpotSoupPicker';
 import type { AddOnOptions, Venue, PeakDayConfig } from '@/types';
 import { getPeakDay } from '@/lib/peakDays';
-import { resolvePeakRule, effectiveMinGuests, effectiveMinHours, swSplitBlocked } from '@/lib/peakDayRules';
-import { loadAllVenues, conflictIdsFor } from '@/lib/venueRegistry';
+import { resolvePeakRule, effectiveMinGuests, effectiveMinHours, fullFloorSplitBlocked } from '@/lib/peakDayRules';
+import { loadAllVenues, conflictIdsFor, venuesSnapshot } from '@/lib/venueRegistry';
 import {
   ArrowLeft, ArrowRight, Calendar, Clock, Users,
   Plus, Minus, AlertCircle, Check, Info, MessageCircle,
@@ -119,8 +119,10 @@ function BookingPageInner({ venue }: { venue: Venue }) {
     return () => { stale = true; };
   }, [selectedDate]);
   const peakRule = useMemo(() => resolvePeakRule(peakCfg, venue.id), [peakCfg, venue]);
-  // 上環全場優先: Room A / B rejected separately until the release day.
-  const splitBlocked = useMemo(() => swSplitBlocked(peakCfg, venue.id), [peakCfg, venue]);
+  // 全場優先: a part room (Room A / B of any branch with a 全層) is
+  // rejected separately until the release day. Room relationships from
+  // 分店管理 (loaded above; static rooms until then).
+  const splitBlocked = useMemo(() => fullFloorSplitBlocked(peakCfg, venue.id, venuesSnapshot()), [peakCfg, venue]);
   const [hasBYOFood, setHasBYOFood] = useState(false);
   const [, setShowGrillWarning] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
