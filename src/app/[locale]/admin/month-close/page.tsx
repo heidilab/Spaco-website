@@ -27,7 +27,7 @@ import { branchKey as branchKeyOf, countsForFinance, financeBranches, monthClose
 import { buildMasterMonthSheet, type MasterSheetBooking } from '@/lib/financialMasterSheet';
 import { masterSheetToWorksheet } from '@/lib/financialMasterXlsx';
 import { bookingTransactions } from '@/lib/salesRecord';
-import { channelDisplayLabel } from '@/lib/marketingChannels';
+import { channelDisplayLabel, getChannelRegistry, excelChannelColumns, channelIdLabel, type ChannelDef } from '@/lib/marketingChannels';
 import { loadAllVenues } from '@/lib/venueRegistry';
 import { settlementCashTiming } from '@/lib/settlementDebt';
 import { listExpenses, getFinanceConfig, saveFinanceConfig, type FinanceConfig } from '@/lib/expenses';
@@ -139,6 +139,9 @@ export default function MonthClosePage() {
   const [allBookings, setAllBookings] = useState<BookingRecord[]>([]);
   const [venues, setVenues] = useState<Venue[]>([]);
   const [config, setConfig] = useState<FinanceConfig | null>(null);
+  // The channel registry (內容管理 → 來源渠道): Excel columns + labels.
+  const [channelRegistry, setChannelRegistry] = useState<ChannelDef[]>([]);
+  useEffect(() => { getChannelRegistry().then(setChannelRegistry).catch(() => {}); }, []);
   const [bonusCfg, setBonusCfg] = useState<BonusConfig>({ branches: {} });
   const [mc, setMc] = useState<MonthCloseRecord | null>(null);
   // Stored expense rows of each FY month (totals for the P&L, the rows
@@ -545,50 +548,54 @@ export default function MonthClosePage() {
       aoa.push([]);
       const t1Start = aoa.length;
       headerRows.add(aoa.length);
-      aoa.push(['', 'Total Sales', 'Total Expenses', 'Profit', 'GP', 'Number of Booking', 'Average sales of each booking', 'Reubird', '', '行家', '', 'CommonRoom', '']);
+      // One Sales / % column pair per channel ticked 「Excel」 in 內容管理 →
+      // 來源渠道 (her Master: Reubird / 行家 / CommonRoom), plus any other
+      // channel that had sales this year so nothing is left out.
+      const excelChannels = excelChannelColumns(channelRegistry).map((c) => c.id);
+      const soldChannels = Array.from(new Set(fy.flatMap(({ n }) => Object.keys(n.channelSales))))
+        .filter((id) => id !== 'unknown' && !excelChannels.includes(id) && channelRegistry.some((c) => c.id === id && c.platform));
+      const chanCols = [...excelChannels, ...soldChannels];
+      const chanHeader = chanCols.flatMap((id) => [channelIdLabel(id, 'zh', channelRegistry), '']);
+      const salesCols = chanCols.map((_, i) => 7 + i * 2);
+      const pctCols = chanCols.map((_, i) => 8 + i * 2);
+      const lastCol = 6 + chanCols.length * 2;
+      aoa.push(['', 'Total Sales', 'Total Expenses', 'Profit', 'GP', 'Number of Booking', 'Average sales of each booking', ...chanHeader]);
       headerRows.add(aoa.length);
-      aoa.push(['', '', '', '', '', '', '', 'Sales', '%', 'Sales', '%', 'Sales', '%']);
+      aoa.push(['', '', '', '', '', '', '', ...chanCols.flatMap(() => ['Sales', '%'])]);
       // channel bands span two columns; left columns span both header rows
       merges.push(
-        { s: { r: t1Start, c: 7 }, e: { r: t1Start, c: 8 } },
-        { s: { r: t1Start, c: 9 }, e: { r: t1Start, c: 10 } },
-        { s: { r: t1Start, c: 11 }, e: { r: t1Start, c: 12 } },
+        ...salesCols.map((c) => ({ s: { r: t1Start, c }, e: { r: t1Start, c: c + 1 } })),
         ...[0, 1, 2, 3, 4, 5, 6].map((c) => ({ s: { r: t1Start, c }, e: { r: t1Start + 1, c } })),
       );
       const MONEY = 'money' as const, PCT = 'pct' as const, INT = 'int' as const;
-      const tot = { sales: 0, expenses: 0, profit: 0, count: 0, reubird: 0, agent: 0, commonroom: 0 };
+      const tot = { sales: 0, expenses: 0, profit: 0, count: 0 };
+      const chanTot = chanCols.map(() => 0);
       for (const { m, n } of fy) {
-        const reubird = n.channelSales['reubird'] || 0;
-        const agent = n.channelSales['agent'] || 0;
-        const commonroom = n.channelSales['commonroom'] || 0;
+        const chanSales = chanCols.map((id) => n.channelSales[id] || 0);
         tot.sales += n.sales; tot.expenses += n.expenses; tot.profit += n.profit; tot.count += n.count;
-        tot.reubird += reubird; tot.agent += agent; tot.commonroom += commonroom;
+        chanSales.forEach((v, i) => { chanTot[i] += v; });
         const r = aoa.length;
-        mark(r, [1, 2, 3, 6, 7, 9, 11], MONEY); mark(r, [4, 8, 10, 12], PCT); mark(r, [5], INT);
+        mark(r, [1, 2, 3, 6, ...salesCols], MONEY); mark(r, [4, ...pctCols], PCT); mark(r, [5], INT);
         aoa.push([
           monthLabel(m),
           n.sales || '', n.expenses || '', n.profit || '',
           n.sales ? n.profit / n.sales : '',
           n.count || '', n.count ? n.sales / n.count : '',
-          reubird || '', n.sales ? reubird / n.sales : '',
-          agent || '', n.sales ? agent / n.sales : '',
-          commonroom || '', n.sales ? commonroom / n.sales : '',
+          ...chanSales.flatMap((v) => [v || '', n.sales ? v / n.sales : '']),
         ]);
       }
       {
         const r = aoa.length;
         totalRows.add(r);
-        mark(r, [1, 2, 3, 6, 7, 9, 11], MONEY); mark(r, [4, 8, 10, 12], PCT); mark(r, [5], INT);
+        mark(r, [1, 2, 3, 6, ...salesCols], MONEY); mark(r, [4, ...pctCols], PCT); mark(r, [5], INT);
         aoa.push([
           'Total :', tot.sales, tot.expenses, tot.profit,
           tot.sales ? tot.profit / tot.sales : '',
           tot.count, tot.count ? tot.sales / tot.count : '',
-          tot.reubird, tot.sales ? tot.reubird / tot.sales : '',
-          tot.agent, tot.sales ? tot.agent / tot.sales : '',
-          tot.commonroom, tot.sales ? tot.commonroom / tot.sales : '',
+          ...chanTot.flatMap((v) => [v, tot.sales ? v / tot.sales : '']),
         ]);
       }
-      tableRanges.push({ r1: t1Start, r2: aoa.length - 1, c2: 12 });
+      tableRanges.push({ r1: t1Start, r2: aoa.length - 1, c2: lastCol });
 
       // ── Table 2: profit-split payouts per month ──
       aoa.push([]);
@@ -628,14 +635,13 @@ export default function MonthClosePage() {
       // ── Table 3: commission paid per channel per month (行家 /
       // Reubird / CommonRoom …) — the section her Master keeps at H24. ──
       aoa.push([]);
-      const COMM_LABELS: Record<string, string> = { reubird: 'Reubird', agent: '行家', commonroom: 'CommonRoom' };
       const commChannels = Array.from(new Set([
         ...Object.keys(config?.commissionRules || {}),
         ...fy.flatMap(({ n }) => Object.keys(n.commissionByChannel)),
       ]));
       const t3Start = aoa.length;
       headerRows.add(aoa.length);
-      aoa.push(['Commission 佣金', ...commChannels.map((c) => COMM_LABELS[c] || c), 'Total']);
+      aoa.push(['Commission 佣金', ...commChannels.map((c) => channelIdLabel(c, 'zh', channelRegistry)), 'Total']);
       const commTotals = commChannels.map(() => 0);
       let commGrand = 0;
       for (const { m, n } of fy) {

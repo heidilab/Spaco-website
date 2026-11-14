@@ -31,7 +31,7 @@ import { calcCateringTotal } from '@/lib/pricing';
 import { getHoliday } from '@/lib/hkHolidays';
 import { normalizeHkPhone, isValidHkPhone, formatHkPhone } from '@/lib/whatsapp';
 import { adminApiFetch } from '@/lib/adminApiFetch';
-import { getMarketingChannelOptions, type MarketingChannelOption } from '@/lib/marketingChannels';
+import { getChannelRegistry, staffChannelOptions, type MarketingChannelOption } from '@/lib/marketingChannels';
 import {
   Calendar, Clock, Users, Plus, Minus, Link as LinkIcon, Copy, Check, ArrowLeft, MessageCircle,
   Loader2, AlertCircle, Tag, Package as PackageIcon, X as XIcon, Calculator,
@@ -187,17 +187,9 @@ export default function AdminNewBookingPage() {
     return `${c.label}${c.bookingId ? ` #${c.bookingId.slice(0, 8)}` : ''} ${when}`;
   };
   useEffect(() => {
-    // Broker presets first (Phase-2 commission rules key on these ids),
-    // then whatever Heidi configured in 內容管理 → 系統設定.
-    getMarketingChannelOptions().then((opts) => {
-      const presets: MarketingChannelOption[] = [
-        { id: 'agent', zh: '行家', en: 'Agent (行家)' },
-        { id: 'reubird', zh: 'Reubird', en: 'Reubird' },
-        { id: 'commonroom', zh: 'Common Room', en: 'Common Room' },
-      ];
-      const merged = [...presets, ...opts.filter((o) => !presets.some((x) => x.id === o.id))];
-      setChannelOptions(merged);
-    }).catch(() => {});
+    // The channel registry (內容管理 → 來源渠道): broker / platform channels
+    // first (commission rules key on their ids), then the rest.
+    getChannelRegistry().then((registry) => setChannelOptions(staffChannelOptions(registry))).catch(() => {});
   }, []);
   const [customerWhatsapp, setCustomerWhatsapp] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');

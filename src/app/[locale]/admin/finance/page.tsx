@@ -11,9 +11,9 @@ import {
 } from '@/lib/finance';
 import { loadAllVenues } from '@/lib/venueRegistry';
 import {
-  BookingRecord, MarketingChannel, MARKETING_CHANNEL_LABELS, Venue,
+  BookingRecord, Venue,
 } from '@/types';
-import { channelDisplayLabel, getMarketingChannelOptions, type MarketingChannelOption } from '@/lib/marketingChannels';
+import { channelDisplayLabel, getChannelRegistry, channelIdLabel, type ChannelDef } from '@/lib/marketingChannels';
 import { listExpenses, getFinanceConfig } from '@/lib/expenses';
 import { commissionForBooking, splitAmounts, adminDiscountAmount } from '@/lib/bookingMoney';
 import { getMonthClose, listKpayStatements } from '@/lib/monthClose';
@@ -76,11 +76,9 @@ export default function FinanceOverviewPage() {
   const [{ from, to }, setRange] = useState(defaultFromTo());
   // Admin-configured channel options — so aggregated channel ids that
   // aren't built-ins still render their display label.
-  const [channelLabelById, setChannelLabelById] = useState<Map<string, MarketingChannelOption>>(new Map());
+  const [channelRegistry, setChannelRegistry] = useState<ChannelDef[]>([]);
   useEffect(() => {
-    getMarketingChannelOptions()
-      .then((opts) => setChannelLabelById(new Map(opts.map((o) => [o.id, o]))))
-      .catch(() => {});
+    getChannelRegistry().then(setChannelRegistry).catch(() => {});
   }, []);
   const [branch, setBranch] = useState<string>('all');
   const [channel, setChannel] = useState<FinanceFilter['channel']>('all');
@@ -125,7 +123,7 @@ export default function FinanceOverviewPage() {
   function channelLabel(ch: string): string {
     if (ch === 'loyalty_member') return locale === 'zh' ? '🌟 老會員' : '🌟 Loyalty';
     if (ch === 'unknown') return locale === 'zh' ? '（未填）' : '(unspecified)';
-    return MARKETING_CHANNEL_LABELS[ch as MarketingChannel]?.[locale] || channelLabelById.get(ch)?.[locale] || ch;
+    return channelIdLabel(ch, locale, channelRegistry);
   }
 
   /** Display name for the branch filter — handles the 'sw' group key. */
@@ -649,7 +647,7 @@ export default function FinanceOverviewPage() {
         body: result.byChannel.map((r) => {
           const ch = r.channel === 'loyalty_member' ? 'Loyalty Member'
             : r.channel === 'unknown' ? '(unspecified)'
-            : MARKETING_CHANNEL_LABELS[r.channel as MarketingChannel]?.en || channelLabelById.get(r.channel)?.en || r.channel;
+            : channelIdLabel(r.channel, 'en', channelRegistry);
           return [ch, r.bookings, fmt(r.revenue)];
         }),
         styles: { font: 'helvetica', fontSize: 9, cellPadding: 5, lineColor: [200, 200, 200], lineWidth: 0.5 },
@@ -870,8 +868,8 @@ export default function FinanceOverviewPage() {
             >
               <option value="all">{locale === 'zh' ? '全部' : 'All'}</option>
               <option value="loyalty_member">{locale === 'zh' ? '🌟 老會員' : '🌟 Loyalty Member'}</option>
-              {(Object.keys(MARKETING_CHANNEL_LABELS) as MarketingChannel[]).map((c) => (
-                <option key={c} value={c}>{MARKETING_CHANNEL_LABELS[c][locale]}</option>
+              {[...channelRegistry.map((c) => c.id), 'other'].map((c) => (
+                <option key={c} value={c}>{channelIdLabel(c, locale, channelRegistry)}</option>
               ))}
             </select>
           </div>

@@ -15,17 +15,11 @@ import { doc, updateDoc, serverTimestamp, deleteField } from 'firebase/firestore
 import { Loader2, Pencil } from 'lucide-react';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/contexts/AuthContext';
-import { channelDisplayLabel, getMarketingChannelOptions, type MarketingChannelOption } from '@/lib/marketingChannels';
+import { channelDisplayLabel, getChannelRegistry, staffChannelOptions, type MarketingChannelOption } from '@/lib/marketingChannels';
 import { getFinanceConfig, type FinanceConfig } from '@/lib/expenses';
 import { commissionForBooking } from '@/lib/bookingMoney';
 import type { BookingRecord } from '@/types';
 
-/** Broker / platform channels — the ids the commission rules key on. */
-const BROKER_PRESETS: MarketingChannelOption[] = [
-  { id: 'agent', zh: '行家', en: 'Agent (行家)' },
-  { id: 'reubird', zh: 'Reubird', en: 'Reubird' },
-  { id: 'commonroom', zh: 'Common Room', en: 'Common Room' },
-];
 const LOYALTY: MarketingChannelOption = { id: 'loyalty_member', zh: '老會員', en: 'Loyalty Member' };
 
 export default function BookingSourceEditor({
@@ -48,9 +42,10 @@ export default function BookingSourceEditor({
 
   useEffect(() => {
     if (!editing) return;
-    getMarketingChannelOptions()
-      .then((opts) => setOptions([...BROKER_PRESETS, ...opts.filter((o) => !BROKER_PRESETS.some((p) => p.id === o.id)), LOYALTY]))
-      .catch(() => setOptions([...BROKER_PRESETS, LOYALTY]));
+    // The channel registry (內容管理 → 來源渠道): platform channels first.
+    getChannelRegistry()
+      .then((registry) => setOptions([...staffChannelOptions(registry), LOYALTY]))
+      .catch(() => setOptions([LOYALTY]));
     getFinanceConfig().then(setConfig).catch(() => setConfig(null));
   }, [editing]);
 

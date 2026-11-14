@@ -29,7 +29,7 @@ import {
 import { commissionForBooking, commissionBase, depositDeductionsKept } from '@/lib/bookingMoney';
 import { listKpayStatements } from '@/lib/monthClose';
 import { reconcileKpayFees, kpayFeeOf, sumKpayFees, type KpayReconciliation } from '@/lib/kpayReconcile';
-import { channelDisplayLabel, getMarketingChannelOptions, type MarketingChannelOption } from '@/lib/marketingChannels';
+import { channelDisplayLabel, getChannelRegistry, platformChannelIds, type MarketingChannelOption } from '@/lib/marketingChannels';
 import type { BookingRecord, ExpenseRecord, ExpenseTemplate, Venue } from '@/types';
 import {
   Wallet, Plus, Trash2, Loader2, Check, Settings2, RefreshCw,
@@ -61,8 +61,13 @@ export default function ExpensesPage() {
   // KPay fee per booking, reconciled against the uploaded statements.
   const [kpayRecon, setKpayRecon] = useState<KpayReconciliation | null>(null);
   const [channelNames, setChannelNames] = useState<Map<string, MarketingChannelOption>>(new Map());
+  // Broker / platform channel ids (內容管理 → 來源渠道), for the no-rule warning.
+  const [platformIds, setPlatformIds] = useState<string[]>([]);
   useEffect(() => {
-    getMarketingChannelOptions().then((opts) => setChannelNames(new Map(opts.map((o) => [o.id, o])))).catch(() => {});
+    getChannelRegistry().then((registry) => {
+      setChannelNames(new Map(registry.map((o) => [o.id, o])));
+      setPlatformIds(platformChannelIds(registry));
+    }).catch(() => {});
   }, []);
   const [loading, setLoading] = useState(true);
   const [flash, setFlash] = useState<string | null>(null);
@@ -135,17 +140,16 @@ export default function ExpensesPage() {
   // why. Its amount can still be typed by hand.
   const commissionRows = useMemo(() => {
     if (!config) return [];
-    const BROKER_CHANNELS = ['agent', 'reubird', 'commonroom'];
     return bookings
       .map((b) => {
         const ch = b.marketingChannel || '';
         const rule = config.commissionRules[ch];
         const amount = commissionForBooking(b, rule);
-        return { booking: b, rule, amount, channel: ch, noRule: !rule && BROKER_CHANNELS.includes(ch) };
+        return { booking: b, rule, amount, channel: ch, noRule: !rule && platformIds.includes(ch) };
       })
       .filter((r) => r.rule || r.noRule || typeof r.booking.commissionOverride === 'number')
       .filter((r) => r.amount > 0 || r.noRule || typeof r.booking.commissionOverride === 'number');
-  }, [bookings, config]);
+  }, [bookings, config, platformIds]);
 
   const kpayFeeRows = useMemo(() => {
     if (!kpayRecon) return [];
@@ -517,13 +521,12 @@ export default function ExpensesPage() {
               <h2 className="font-bold mb-3 flex items-center gap-2"><Settings2 size={15} /> {locale === 'zh' ? '規則設定（只限 Admin）' : 'Rules (admin only)'}</h2>
               <p className="text-xs text-ink-soft mb-3">
                 {locale === 'zh'
-                  ? '呢度同「內容管理 → 系統設定 → 來源渠道選項」係同一份佣金數據 — 邊度改都會同步。新增渠道佣金請去渠道選項度剔。'
-                  : 'Same data as 內容管理 → 系統設定 channel options — edit in either place. Add new channel rules there.'}
+                  ? '呢度同「內容管理 → 系統設定 → 來源渠道」係同一份佣金數據 — 邊度改都會同步。新增渠道（包括行家／平台）同佣金請去「來源渠道」。'
+                  : 'Same data as 內容管理 → 系統設定 → channels — edit in either place. Add channels (brokers / platforms too) and their rules there.'}
               </p>
               <div className="space-y-2 text-sm mb-3">
                 {Object.entries(config.commissionRules).map(([id, rule]) => {
-                  const preset = ({ agent: '行家', reubird: 'Reubird', commonroom: 'Common Room' } as Record<string, string>)[id];
-                  const label = preset || channelNames.get(id)?.[locale] || id;
+                  const label = channelNames.get(id)?.[locale] || id;
                   return (
                     <div key={id} className="flex items-center gap-2 flex-wrap">
                       <span className="w-32 truncate">{label}</span>
