@@ -192,13 +192,28 @@ export async function disconnectGoogle(): Promise<void> {
  *  UTC hours and store 19:00 HKT bookings as 11:00. Use Intl with
  *  explicit timeZone to format in Hong Kong time regardless of host. */
 
-interface SyncResult {
+/** What Google currently holds for an event the website pushed
+ *  (direction A). Collected during the direction-B scan so the
+ *  self-heal step (`googleCalendarRefresh.ts`) can compare the stored
+ *  text against a fresh rebuild without a second Google read. */
+export interface PushedEventSnapshot {
+  calendarId: string;
+  eventId: string;
+  bookingId: string;
+  summary: string;
+  description: string;
+}
+
+export interface SyncResult {
   scanned: number;
   added: number;
   updated: number;
   removed: number;
   errors: string[];
   syncedAt: string;
+  /** Website-pushed events seen this run (not persisted / not returned
+   *  to the cron caller — see the route). */
+  pushedEvents: PushedEventSnapshot[];
 }
 
 /** Pull events from each branch calendar (next 6 months) and mirror into
@@ -235,7 +250,7 @@ export async function syncCalendars(redirectUri: string): Promise<SyncResult> {
 
   const result: SyncResult = {
     scanned: 0, added: 0, updated: 0, removed: 0,
-    errors: [], syncedAt: now.toISOString(),
+    errors: [], syncedAt: now.toISOString(), pushedEvents: [],
   };
   const seenKeys = new Set<string>();
   /** Venues whose calendar failed to load this run (see the catch below). */
@@ -279,7 +294,22 @@ export async function syncCalendars(redirectUri: string): Promise<SyncResult> {
       // its own blocked_slot with reason='booking'; mirroring it back as
       // 'gcal' would just duplicate. Same for site visits / deliveries:
       // those are informational and must NOT become blocking slots.
-      if (ev.extendedProperties?.private?.spaco_booking_id) continue;
+      const pushedBookingId = ev.extendedProperties?.private?.spaco_booking_id;
+      if (pushedBookingId) {
+        // Remember it for the text self-heal (a renamed add-on label,
+        // a changed description format) — only events we wrote
+        // ourselves, never staff-entered ones.
+        if (ev.extendedProperties?.private?.spaco_synced_from === 'website') {
+          result.pushedEvents.push({
+            calendarId: calId,
+            eventId,
+            bookingId: pushedBookingId,
+            summary: ev.summary || '',
+            description: ev.description || '',
+          });
+        }
+        continue;
+      }
       if (ev.extendedProperties?.private?.spaco_event_type) continue;
 
       // One slot per calendar day the event covers: an event crossing
@@ -461,7 +491,7 @@ async function calendarVenueLabel(venueId: string): Promise<string> {
 }
 
 /** Build the canonical event title used by direction A pushes. */
-async function buildEventSummary(b: BookingRecord, customerName?: string): Promise<string> {
+export async function buildEventSummary(b: BookingRecord, customerName?: string): Promise<string> {
   const venueLabel = await calendarVenueLabel(b.venueId);
   const phone = b.whatsappPhone ? ` ${formatPhone(b.whatsappPhone)}` : '';
   const name = customerName ? ` · ${customerName}${phone}` : phone ? ` ·${phone}` : '';
@@ -485,7 +515,14 @@ function eventStartTime(b: BookingRecord): string {
   return setupHours > 0 ? gcalSubtractHours(b.startTime, setupHours) : b.startTime;
 }
 
-function buildEventDescription(b: BookingRecord, customerName?: string, notes?: string): string {
+/** Lines the website generates. `googleCalendarRefresh.ts` uses the
+ *  prefixes to tell a stale generated line from text a person typed. */
+export const GENERATED_DESCRIPTION_PREFIXES = [
+  '🎈 ', '⚠️ 未找清尾數', '📝 備註 Remark:', 'Booking ID:', '姓名:', 'WhatsApp:',
+  'No. of people:', 'BYO food', 'Add-ons:', '— Auto-synced from spacohk.com',
+] as const;
+
+export function buildEventDescription(b: BookingRecord, customerName?: string, notes?: string): string {
   const lines: string[] = [];
   // Early setup note at the top — staff must know the customer arrives
   // before the "real" booking start (e.g. "15:00-16:00 提早入場佈置").

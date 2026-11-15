@@ -11,7 +11,9 @@ export async function POST(req: NextRequest) {
   try {
     const origin = req.nextUrl.origin;
     const redirectUri = `${origin}/api/google/callback`;
-    const result = await syncCalendars(redirectUri);
+    // `pushedEvents` carries event text for the cron's self-heal step —
+    // the admin panel only needs the counts.
+    const { pushedEvents: _pushed, ...result } = await syncCalendars(redirectUri);
     return NextResponse.json(result);
   } catch (err) {
     return NextResponse.json(
