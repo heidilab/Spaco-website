@@ -945,7 +945,44 @@ export interface Article {
 
 // ============ Finance Phase 2: expenses ============
 
-export type ExpenseSource = 'manual' | 'recurring';
+export type ExpenseSource = 'manual' | 'recurring' | 'receipt';
+
+export type ReceiptConfidence = 'high' | 'medium' | 'low';
+
+/** The OneDrive receipt a `source: 'receipt'` row was read from
+ *  (單據自動入帳, 2026-11). Numbers come from Claude reading the file;
+ *  `flags` lists what Heidi should look at before ticking 已核數. */
+export interface ExpenseReceiptMeta {
+  driveItemId: string;
+  fileName: string;
+  webUrl?: string;
+  folderPath?: string;
+  vendor?: string;
+  currency?: string;
+  category?: string;
+  confidence: ReceiptConfidence;
+  /** 'no_date' | 'no_amount' | 'possible_duplicate' | 'multiple_receipts'
+   *  | 'foreign_currency' | 'unreadable' | 'date_fallback' */
+  flags: string[];
+  /** Another receipt row with the same branch, date and amount. */
+  possibleDuplicateOf?: string;
+  /** The file has since been deleted/moved in OneDrive; the row stays. */
+  fileDeleted?: boolean;
+  /** One-line summary of what was bought. */
+  summary?: string;
+  /** Free-text doubts from the reader (e.g. tip handwritten). */
+  readerNotes?: string;
+  extractedAt?: unknown;
+}
+
+/** Mirror state of this row in Heidi's own OneDrive Excel. */
+export interface ExpenseExcelSync {
+  synced: boolean;
+  syncedAt?: unknown;
+  error?: string;
+  /** Workbook driveItem id the row was written into. */
+  workbookId?: string;
+}
 
 /** One expense row in a branch-month ledger (支出管理). Auto items
  *  (commission / KPay fee) are DERIVED live from bookings, not stored —
@@ -965,8 +1002,52 @@ export interface ExpenseRecord {
   source: ExpenseSource;
   /** For recurring rows: the template id they were seeded from. */
   templateId?: string;
+  /** 已核數 — Heidi has checked this row against the receipt (receipt
+   *  rows start false; manual/recurring rows leave it unset). */
+  reviewed?: boolean;
+  reviewedAt?: unknown;
+  /** Present on `source: 'receipt'` rows. */
+  receipt?: ExpenseReceiptMeta;
+  /** Present once the row has been pushed to the OneDrive Excel. */
+  excel?: ExpenseExcelSync;
   createdBy: string;
   createdAt: unknown;
+}
+
+// ============ OneDrive receipt sync (單據自動入帳) ============
+
+/** Which Excel column (letter) each field goes to. Only `id` is
+ *  required — it is how an edited/deleted row is found again. */
+export type ExcelColumnKey = 'id' | 'date' | 'branch' | 'item' | 'vendor' | 'amount' | 'category' | 'note' | 'reviewed' | 'link';
+
+export interface OneDriveFolderRef {
+  id: string;
+  name: string;
+  /** Human path under the drive root, e.g. 「單據/銅鑼灣」. */
+  path: string;
+}
+
+/** `system/onedrive_receipts` — what Heidi picked in 後台 → OneDrive 連結. */
+export interface OneDriveReceiptsConfig {
+  receiptsFolder?: OneDriveFolderRef;
+  /** Sub-folders of receiptsFolder, each assigned to a finance branch key. */
+  branchFolders: Array<OneDriveFolderRef & { branchKey: string }>;
+  excel?: {
+    itemId: string;
+    name: string;
+    path: string;
+    worksheet: string;
+    /** Excel Table name when the rows live in a formatted table (preferred). */
+    table?: string;
+    /** 1-based header row (plain-sheet mode). */
+    headerRow: number;
+    columns: Partial<Record<ExcelColumnKey, string>>;
+  };
+  /** Graph delta link for receiptsFolder — advanced after each scan. */
+  deltaLink?: string;
+  lastScanAt?: unknown;
+  lastScanError?: string;
+  updatedAt?: unknown;
 }
 
 /** Recurring fixed-expense definition per branch (rent, mgmt fee, …).

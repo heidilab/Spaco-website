@@ -1,0 +1,374 @@
+// 單據自動入帳 — the network half: OneDrive folder → Claude → `expenses`
+// → Heidi's Excel. Driven by /api/cron/onedrive-receipts every 15 min and
+// by the 「立即同步」 button.
+//
+// State:
+//   system/onedrive_receipts   what she picked (folder, branch map, Excel) + deltaLink
+//   receipt_files/{driveItemId} one doc per file seen: queued → done | error | skipped | no_branch
+//   expenses/{id}               the row itself (source 'receipt'), read by 支出管理 and 月結
+//
+// Scanning and processing are separate steps so a slow Claude call never
+// loses a delta page: every new file is queued first, the deltaLink is
+// advanced, then up to `maxFiles` queued files are read per run.
+
+import 'server-only';
+import { FieldValue } from 'firebase-admin/firestore';
+import { adminDb } from './firebaseAdmin';
+import {
+  GraphError, folderDelta, getItem, downloadContent, downloadThumbnailJpeg, displayPath,
+  getReceiptsConfig, saveReceiptsConfig, getUsedRangeAddress, getTableRange, tableAddRow, tableDeleteRow,
+  readRange, writeCell, deleteSheetRow, type DriveItem,
+} from './msgraph';
+import {
+  attachmentPlan, parseReceiptJson, buildReceiptExpense, findPossibleDuplicate, excelRowValues, tableRowArray,
+  parseRangeAddress, receiptPrompt, RECEIPT_SYSTEM_PROMPT, type ParsedReceipt, type BranchOption,
+} from './receiptExtract';
+import { callClaudeWithAttachment } from './llm';
+import { financeBranches } from './finance';
+import { loadAllVenuesServer } from './venueRegistryServer';
+import { sendStaffPush } from './webPushServer';
+import type { ExpenseRecord, OneDriveReceiptsConfig } from '@/types';
+
+export type ReceiptFileStatus = 'queued' | 'done' | 'error' | 'skipped' | 'no_branch';
+
+export interface ReceiptFileDoc {
+  id: string;
+  name: string;
+  size?: number;
+  mimeType?: string;
+  webUrl?: string;
+  createdDateTime?: string;
+  parentId?: string;
+  folderPath?: string;
+  status: ReceiptFileStatus;
+  attempts: number;
+  error?: string;
+  branchKey?: string;
+  expenseId?: string;
+  fileDeleted?: boolean;
+  queuedAt?: unknown;
+  processedAt?: unknown;
+}
+
+const FILES = 'receipt_files';
+const MAX_ATTEMPTS = 3;
+
+export async function branchOptions(): Promise<BranchOption[]> {
+  try {
+    const registry = await loadAllVenuesServer();
+    return financeBranches(registry).map((b) => ({ key: b.key, zh: b.name.zh, en: b.name.en }));
+  } catch {
+    return [
+      { key: 'cwb', zh: '銅鑼灣店', en: 'Causeway Bay' }, { key: 'sw', zh: '上環海景旗艦店', en: 'Sheung Wan Flagship' },
+      { key: 'tst', zh: '尖沙咀店', en: 'Tsim Sha Tsui' }, { key: 'wanchai', zh: '灣仔店', en: 'Wan Chai' },
+    ];
+  }
+}
+
+// ── Step 1: scan ───────────────────────────────────────────────────────
+
+export interface ScanResult { seen: number; queued: number; deleted: number; resynced: boolean }
+
+export async function scanReceiptsFolder(cfg?: OneDriveReceiptsConfig): Promise<ScanResult> {
+  const config = cfg || await getReceiptsConfig();
+  if (!config.receiptsFolder) throw new Error('receipts folder not chosen');
+  let resynced = false;
+  let delta;
+  try {
+    delta = await folderDelta(config.receiptsFolder.id, config.deltaLink || 'latest');
+  } catch (e) {
+    // 410 Gone = token too old; Graph hands back a fresh enumeration. We
+    // restart from 'latest' instead so years of old receipts are not
+    // re-read as new expenses.
+    if (e instanceof GraphError && e.status === 410) {
+      delta = await folderDelta(config.receiptsFolder.id, 'latest');
+      resynced = true;
+    } else throw e;
+  }
+  let queued = 0; let deleted = 0;
+  for (const item of delta.items) {
+    if (item.id === config.receiptsFolder.id) continue;
+    const ref = adminDb.collection(FILES).doc(item.id);
+    if (item.deleted) {
+      const snap = await ref.get();
+      if (snap.exists) {
+        const d = snap.data() as ReceiptFileDoc;
+        await ref.set({ fileDeleted: true }, { merge: true });
+        if (d.expenseId) {
+          await adminDb.collection('expenses').doc(d.expenseId).set({ receipt: { fileDeleted: true } }, { merge: true }).catch(() => {});
+        }
+        deleted++;
+      }
+      continue;
+    }
+    if (!item.file) continue;
+    const snap = await ref.get();
+    const base = {
+      name: item.name, size: item.size || 0, mimeType: item.file.mimeType || '', webUrl: item.webUrl || '',
+      createdDateTime: item.createdDateTime || '', parentId: item.parentReference?.id || '',
+      folderPath: displayPath(item), fileDeleted: false,
+    };
+    if (!snap.exists) {
+      await ref.set({ ...base, status: 'queued', attempts: 0, queuedAt: FieldValue.serverTimestamp() });
+      queued++;
+    } else {
+      // Renamed / moved / re-uploaded: keep its status, refresh the facts.
+      await ref.set(base, { merge: true });
+    }
+  }
+  await saveReceiptsConfig({ deltaLink: delta.deltaLink, lastScanAt: FieldValue.serverTimestamp(), lastScanError: '' });
+  return { seen: delta.items.length, queued, deleted, resynced };
+}
+
+// ── Step 2: read queued files ──────────────────────────────────────────
+
+export interface ProcessResult {
+  processed: number;
+  created: Array<{ id: string; item: string; amount: number; branchKey: string; flags: string[] }>;
+  errors: string[];
+}
+
+/** Branch for a file: walk up its parents until one is a mapped branch
+ *  folder. Files sitting directly in the receipts root have no branch. */
+async function resolveBranch(parentId: string, cfg: OneDriveReceiptsConfig, cache: Map<string, DriveItem>): Promise<string | null> {
+  const byId = new Map(cfg.branchFolders.map((b) => [b.id, b.branchKey]));
+  let cur = parentId;
+  for (let i = 0; i < 8 && cur; i++) {
+    const hit = byId.get(cur);
+    if (hit) return hit;
+    if (cfg.receiptsFolder && cur === cfg.receiptsFolder.id) return null;
+    let it = cache.get(cur);
+    if (!it) {
+      try { it = await getItem(cur); cache.set(cur, it); } catch { return null; }
+    }
+    cur = it.parentReference?.id || '';
+  }
+  return null;
+}
+
+const UNREADABLE: ParsedReceipt = {
+  date: null, vendor: null, total: null, currency: 'HKD', summary: null, category: null,
+  confidence: 'low', multipleReceipts: false, notes: 'Claude 無法讀出內容',
+};
+
+export async function processQueuedReceipts(maxFiles = 4, cfg?: OneDriveReceiptsConfig): Promise<ProcessResult> {
+  const config = cfg || await getReceiptsConfig();
+  const result: ProcessResult = { processed: 0, created: [], errors: [] };
+  const snap = await adminDb.collection(FILES).where('status', 'in', ['queued', 'error']).limit(50).get();
+  const docs = snap.docs
+    .map((d) => ({ id: d.id, ...d.data() } as ReceiptFileDoc))
+    .filter((d) => !d.fileDeleted && (d.attempts || 0) < MAX_ATTEMPTS)
+    .sort((a, b) => (a.createdDateTime || '').localeCompare(b.createdDateTime || ''))
+    .slice(0, maxFiles);
+  if (docs.length === 0) return result;
+
+  const branches = await branchOptions();
+  const branchName = (key: string) => branches.find((b) => b.key === key)?.zh || key;
+  const parentCache = new Map<string, DriveItem>();
+
+  for (const f of docs) {
+    const ref = adminDb.collection(FILES).doc(f.id);
+    try {
+      const branchKey = await resolveBranch(f.parentId || '', config, parentCache);
+      if (!branchKey) {
+        await ref.set({ status: 'no_branch', processedAt: FieldValue.serverTimestamp() }, { merge: true });
+        continue;
+      }
+      const plan = attachmentPlan({ name: f.name, size: f.size, mimeType: f.mimeType });
+      if (!plan) {
+        await ref.set({ status: 'skipped', error: 'unsupported file type', processedAt: FieldValue.serverTimestamp() }, { merge: true });
+        continue;
+      }
+      const bytes = plan.viaThumbnail ? await downloadThumbnailJpeg(f.id) : await downloadContent(f.id);
+      const base64 = Buffer.from(bytes).toString('base64');
+      let parsed: ParsedReceipt;
+      try {
+        const text = await callClaudeWithAttachment({
+          system: RECEIPT_SYSTEM_PROMPT, prompt: receiptPrompt(f.name),
+          attachment: { kind: plan.kind, mediaType: plan.mediaType, base64 },
+        });
+        parsed = parseReceiptJson(text);
+      } catch (e) {
+        // A reply we cannot parse still becomes a row (0, flagged) — Heidi
+        // asked for everything to show up; API/network errors retry instead.
+        if (e instanceof Error && /no JSON|unterminated/.test(e.message)) parsed = UNREADABLE;
+        else throw e;
+      }
+      const expense = buildReceiptExpense(parsed, {
+        driveItemId: f.id, fileName: f.name, webUrl: f.webUrl, folderPath: f.folderPath, createdDateTime: f.createdDateTime,
+      }, branchKey);
+
+      // Same branch + date + amount already on a receipt row → flag it.
+      const dupSnap = await adminDb.collection('expenses')
+        .where('branchKey', '==', branchKey).where('date', '==', expense.date).where('source', '==', 'receipt').get();
+      const dup = findPossibleDuplicate(dupSnap.docs.map((d) => ({ id: d.id, ...d.data() } as ExpenseRecord)), expense);
+      if (dup && expense.receipt) {
+        expense.receipt.flags = [...expense.receipt.flags, 'possible_duplicate'];
+        expense.receipt.possibleDuplicateOf = dup.id;
+      }
+
+      const docRef = adminDb.collection('expenses').doc();
+      await docRef.set({ ...expense, receipt: { ...expense.receipt, extractedAt: FieldValue.serverTimestamp() }, createdAt: FieldValue.serverTimestamp() });
+      const saved = { id: docRef.id, ...expense } as ExpenseRecord;
+      const excel = await syncExpenseToExcel(saved, 'upsert', config, branchName(branchKey));
+      if (excel) await docRef.set({ excel }, { merge: true });
+
+      await ref.set({ status: 'done', branchKey, expenseId: docRef.id, error: '', processedAt: FieldValue.serverTimestamp() }, { merge: true });
+      result.processed++;
+      result.created.push({ id: docRef.id, item: expense.item, amount: expense.amount, branchKey, flags: expense.receipt?.flags || [] });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      result.errors.push(`${f.name}: ${msg}`);
+      await ref.set({ status: 'error', error: msg.slice(0, 500), attempts: FieldValue.increment(1), processedAt: FieldValue.serverTimestamp() }, { merge: true });
+    }
+  }
+  return result;
+}
+
+// ── Excel mirror ───────────────────────────────────────────────────────
+
+type ExcelState = NonNullable<ExpenseRecord['excel']>;
+
+/** Write/refresh (or remove) this row in Heidi's workbook. Returns the
+ *  state to store on the expense, or null when no workbook is configured.
+ *  Never throws — an Excel hiccup must not undo the expense itself. */
+export async function syncExpenseToExcel(
+  row: ExpenseRecord, op: 'upsert' | 'delete', cfg?: OneDriveReceiptsConfig, branchNameZh?: string,
+): Promise<ExcelState | null> {
+  const config = cfg || await getReceiptsConfig();
+  const x = config.excel;
+  if (!x || !x.itemId || !x.worksheet || !x.columns.id) return null;
+  try {
+    const idCol = x.columns.id.toUpperCase();
+    const headerRow = x.headerRow || 1;
+    const used = parseRangeAddress(await getUsedRangeAddress(x.itemId, x.worksheet));
+    const lastRow = Math.max(used.endRow, headerRow);
+    let foundRow: number | null = null;
+    if (lastRow > headerRow) {
+      const ids = await readRange(x.itemId, x.worksheet, `${idCol}${headerRow + 1}:${idCol}${lastRow}`);
+      const idx = ids.findIndex((r) => String(r[0] ?? '') === row.id);
+      if (idx >= 0) foundRow = headerRow + 1 + idx;
+    }
+    if (op === 'delete') {
+      if (foundRow !== null) {
+        if (x.table) {
+          const tr = parseRangeAddress((await getTableRange(x.itemId, x.table)).address);
+          await tableDeleteRow(x.itemId, x.table, foundRow - tr.startRow - 1);
+        } else {
+          await deleteSheetRow(x.itemId, x.worksheet, foundRow);
+        }
+      }
+      return { synced: true, syncedAt: FieldValue.serverTimestamp(), workbookId: x.itemId };
+    }
+    const cells = excelRowValues(x.columns, row, { branchName: branchNameZh || row.branchKey });
+    if (foundRow !== null) {
+      for (const [col, v] of Object.entries(cells)) {
+        if (col === idCol) continue;
+        await writeCell(x.itemId, x.worksheet, `${col}${foundRow}`, v);
+      }
+    } else if (x.table) {
+      const tr = await getTableRange(x.itemId, x.table);
+      const addr = parseRangeAddress(tr.address);
+      await tableAddRow(x.itemId, x.table, tableRowArray(cells, addr.startCol, tr.columnCount));
+    } else {
+      const newRow = lastRow + 1;
+      for (const [col, v] of Object.entries(cells)) await writeCell(x.itemId, x.worksheet, `${col}${newRow}`, v);
+    }
+    return { synced: true, syncedAt: FieldValue.serverTimestamp(), workbookId: x.itemId };
+  } catch (e) {
+    return { synced: false, error: (e instanceof Error ? e.message : String(e)).slice(0, 400), workbookId: x.itemId };
+  }
+}
+
+// ── Edits from 支出管理 ─────────────────────────────────────────────────
+
+export interface ReceiptExpensePatch {
+  item?: string; amount?: number; date?: string; note?: string; reviewed?: boolean;
+}
+
+export async function updateReceiptExpense(id: string, patch: ReceiptExpensePatch, uid: string): Promise<ExpenseRecord> {
+  const ref = adminDb.collection('expenses').doc(id);
+  const snap = await ref.get();
+  if (!snap.exists) throw new Error('expense not found');
+  const before = { id, ...snap.data() } as ExpenseRecord;
+  const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp(), updatedBy: uid };
+  if (typeof patch.item === 'string' && patch.item.trim()) update.item = patch.item.trim().slice(0, 100);
+  if (typeof patch.amount === 'number' && Number.isFinite(patch.amount) && patch.amount >= 0) update.amount = Math.round(patch.amount * 100) / 100;
+  if (typeof patch.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(patch.date)) { update.date = patch.date; update.month = patch.date.slice(0, 7); }
+  if (typeof patch.note === 'string') update.note = patch.note.slice(0, 300);
+  if (typeof patch.reviewed === 'boolean') {
+    update.reviewed = patch.reviewed;
+    update.reviewedAt = patch.reviewed ? FieldValue.serverTimestamp() : null;
+    update.reviewedBy = patch.reviewed ? uid : null;
+  }
+  await ref.set(update, { merge: true });
+  const after = { ...before, ...update } as ExpenseRecord;
+  if (after.source === 'receipt') {
+    const branches = await branchOptions();
+    const excel = await syncExpenseToExcel(after, 'upsert', undefined, branches.find((b) => b.key === after.branchKey)?.zh);
+    if (excel) { await ref.set({ excel }, { merge: true }); after.excel = excel; }
+  }
+  return after;
+}
+
+export async function deleteReceiptExpense(id: string): Promise<void> {
+  const ref = adminDb.collection('expenses').doc(id);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  const row = { id, ...snap.data() } as ExpenseRecord;
+  if (row.source === 'receipt') {
+    await syncExpenseToExcel(row, 'delete');
+    if (row.receipt?.driveItemId) {
+      // Let the file be re-read if she deletes the row by mistake and
+      // re-uploads; mark rather than delete so history stays.
+      await adminDb.collection(FILES).doc(row.receipt.driveItemId).set({ status: 'skipped', error: 'row deleted in 支出管理', expenseId: '' }, { merge: true }).catch(() => {});
+    }
+  }
+  await ref.delete();
+}
+
+// ── Whole run ──────────────────────────────────────────────────────────
+
+export interface IngestSummary {
+  scan?: ScanResult;
+  process?: ProcessResult;
+  skipped?: string;
+  error?: string;
+}
+
+export async function runReceiptIngest(opts: { maxFiles?: number } = {}): Promise<IngestSummary> {
+  const cfg = await getReceiptsConfig();
+  if (!cfg.receiptsFolder) return { skipped: 'no folder chosen' };
+  const summary: IngestSummary = {};
+  try {
+    summary.scan = await scanReceiptsFolder(cfg);
+    const fresh = await getReceiptsConfig();
+    summary.process = await processQueuedReceipts(opts.maxFiles ?? 4, fresh);
+    const n = summary.process.created.length;
+    if (n > 0) {
+      const attention = summary.process.created.filter((c) => c.flags.length > 0).length;
+      await sendStaffPush({
+        title: '單據已自動入帳',
+        body: `${n} 張新單據已入支出管理${attention ? `，${attention} 張需要留意` : ''}，請核數。`,
+        url: '/zh/admin/expenses',
+        tag: 'onedrive-receipts',
+      });
+    }
+  } catch (e) {
+    summary.error = e instanceof Error ? e.message : String(e);
+    await saveReceiptsConfig({ lastScanError: summary.error.slice(0, 400) }).catch(() => {});
+  }
+  return summary;
+}
+
+export async function listRecentReceiptFiles(limit = 30): Promise<ReceiptFileDoc[]> {
+  const snap = await adminDb.collection(FILES).orderBy('queuedAt', 'desc').limit(limit).get();
+  return snap.docs.map((d) => {
+    const data = d.data() as ReceiptFileDoc & { queuedAt?: { toDate?: () => Date }; processedAt?: { toDate?: () => Date } };
+    return {
+      ...data, id: d.id,
+      queuedAt: data.queuedAt?.toDate ? data.queuedAt.toDate().toISOString() : undefined,
+      processedAt: data.processedAt?.toDate ? data.processedAt.toDate().toISOString() : undefined,
+    };
+  });
+}

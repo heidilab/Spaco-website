@@ -8,7 +8,7 @@ import { signInWithGoogle } from '@/lib/auth';
 import {
   LayoutDashboard, CalendarDays, ListOrdered,
   ChevronLeft, ChevronDown, ChevronUp, Shield, Image, Users, UserCog, Receipt, FileText, HelpCircle, Search, CalendarClock, Mail, Tag, BarChart3,
-  BookOpen, LogIn, Menu, X, Newspaper, Store, Package, KeyRound, Gift, Scale, Megaphone,
+  BookOpen, LogIn, Menu, X, Newspaper, Store, Package, KeyRound, Gift, Scale, Megaphone, Cloud,
 } from 'lucide-react';
 import AdminPushSetup from '@/components/admin/AdminPushSetup';
 import { Wallet, CalendarCheck, Award, Sparkles } from 'lucide-react';
@@ -38,6 +38,7 @@ const allSidebarLinks: NavItem[] = [
       { href: '/admin/expenses', icon: Wallet, label: { zh: '支出管理', en: 'Expenses' }, permission: 'staff' },
       { href: '/admin/channels', icon: Megaphone, label: { zh: '來源渠道／佣金', en: 'Channels & commission' }, permission: 'staff' },
       { href: '/admin/month-close', icon: CalendarCheck, label: { zh: '月結', en: 'Month Close' }, permission: 'staff' },
+      { href: '/admin/onedrive', icon: Cloud, label: { zh: 'OneDrive 單據連結', en: 'OneDrive Receipts' }, permission: 'staff' },
       { href: '/admin/bonus', icon: Award, label: { zh: 'CS 獎金', en: 'CS Bonus' }, permission: 'documents' },
       { href: '/admin/documents', icon: FileText, label: { zh: '單據管理', en: 'Documents' }, permission: 'documents' },
     ],

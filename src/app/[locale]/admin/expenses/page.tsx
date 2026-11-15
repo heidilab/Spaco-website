@@ -28,11 +28,12 @@ import {
 } from '@/lib/expenses';
 import { commissionForBooking, commissionBase, depositDeductionsKept } from '@/lib/bookingMoney';
 import { listKpayStatements } from '@/lib/monthClose';
+import { adminApiFetch } from '@/lib/adminApiFetch';
 import { reconcileKpayFees, kpayFeeOf, sumKpayFees, type KpayReconciliation } from '@/lib/kpayReconcile';
 import { channelDisplayLabel, getChannelRegistry, platformChannelIds, type MarketingChannelOption } from '@/lib/marketingChannels';
 import type { BookingRecord, ExpenseRecord, ExpenseTemplate, Venue } from '@/types';
 import {
-  Wallet, Plus, Trash2, Loader2, Check, Settings2, RefreshCw,
+  Wallet, Plus, Trash2, Loader2, Check, Settings2, RefreshCw, ExternalLink, AlertTriangle, Cloud,
 } from 'lucide-react';
 
 // Branch tabs come from the venue registry (finance.financeBranches): the
@@ -93,6 +94,10 @@ export default function ExpensesPage() {
   // Inline edits (amount drafts by expense id / booking id)
   const [amountDrafts, setAmountDrafts] = useState<Record<string, string>>({});
   const [overrideDrafts, setOverrideDrafts] = useState<Record<string, string>>({});
+  // Receipt rows: item/date drafts (amount shares amountDrafts).
+  const [itemDrafts, setItemDrafts] = useState<Record<string, string>>({});
+  const [dateDrafts, setDateDrafts] = useState<Record<string, string>>({});
+  const [receiptBusy, setReceiptBusy] = useState<string | null>(null);
 
   async function load() {
     if (!user) return;
@@ -162,13 +167,17 @@ export default function ExpensesPage() {
 
   const recurringRows = rows.filter((r) => r.source === 'recurring');
   const manualRows = rows.filter((r) => r.source === 'manual');
+  // 單據自動入帳 (OneDrive) — counted like one-offs; 月結 reads them the same way.
+  const receiptRows = rows.filter((r) => r.source === 'receipt');
+  const unreviewedReceipts = receiptRows.filter((r) => !r.reviewed).length;
   const totals = {
     recurring: recurringRows.reduce((s, r) => s + r.amount, 0),
     manual: manualRows.reduce((s, r) => s + r.amount, 0),
+    receipt: receiptRows.reduce((s, r) => s + r.amount, 0),
     commission: commissionRows.reduce((s, r) => s + r.amount, 0),
     kpay: kpayTotals.fee,
   };
-  const grandTotal = totals.recurring + totals.manual + totals.commission + totals.kpay;
+  const grandTotal = totals.recurring + totals.manual + totals.receipt + totals.commission + totals.kpay;
 
   async function handleAddManual() {
     if (!user || !newItem.trim() || !(parseFloat(newAmount) > 0)) return;
@@ -192,8 +201,45 @@ export default function ExpensesPage() {
     if (draft === undefined) return;
     const v = parseFloat(draft);
     if (!Number.isFinite(v) || v < 0 || v === r.amount) return;
+    if (r.source === 'receipt') { await patchReceipt(r.id, { amount: v }); return; }
     await updateExpense(r.id, { amount: v });
     await load();
+  }
+
+  /** Receipt rows are edited through the server so the same row in
+   *  Heidi's Excel changes too (單據自動入帳). */
+  async function patchReceipt(id: string, patch: { item?: string; amount?: number; date?: string; reviewed?: boolean }) {
+    setReceiptBusy(id);
+    try {
+      const res = await adminApiFetch('/api/onedrive/expense', {
+        method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, ...patch }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      if (data.excel && data.excel.synced === false) {
+        setFlash(locale === 'zh' ? `已儲存，但 Excel 未同步：${data.excel.error || ''}` : `Saved, but Excel not synced: ${data.excel.error || ''}`);
+      } else {
+        setFlash(locale === 'zh' ? '✓ 已儲存' + (data.excel ? '，Excel 已同步' : '') : '✓ Saved' + (data.excel ? ', Excel synced' : ''));
+      }
+      setTimeout(() => setFlash(null), 2500);
+      await load();
+    } catch (e) {
+      setFlash((locale === 'zh' ? '儲存失敗：' : 'Save failed: ') + (e instanceof Error ? e.message : ''));
+      setTimeout(() => setFlash(null), 4000);
+    } finally { setReceiptBusy(null); }
+  }
+
+  async function removeReceipt(r: ExpenseRecord) {
+    if (!window.confirm(locale === 'zh' ? `刪除單據「${r.item}」？Excel 嗰行都會刪。` : `Delete receipt "${r.item}"? The Excel row goes too.`)) return;
+    setReceiptBusy(r.id);
+    try {
+      const res = await adminApiFetch(`/api/onedrive/expense?id=${encodeURIComponent(r.id)}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+      await load();
+    } catch (e) {
+      setFlash((locale === 'zh' ? '刪除失敗：' : 'Delete failed: ') + (e instanceof Error ? e.message : ''));
+      setTimeout(() => setFlash(null), 4000);
+    } finally { setReceiptBusy(null); }
   }
 
   /** Save the typed commission for one booking (null = back to auto). A
@@ -269,10 +315,11 @@ export default function ExpensesPage() {
       ) : (
         <div className="space-y-5">
           {/* Totals */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
             {[
               [locale === 'zh' ? '固定開支' : 'Recurring', totals.recurring],
               [locale === 'zh' ? '雜項' : 'One-offs', totals.manual],
+              [locale === 'zh' ? '單據' : 'Receipts', totals.receipt],
               [locale === 'zh' ? '佣金' : 'Commission', totals.commission],
               [
                 kpayTotals.estimatedLines === 0 && kpayTotals.actualLines > 0
@@ -284,7 +331,7 @@ export default function ExpensesPage() {
               ],
               [locale === 'zh' ? '總支出' : 'Total', grandTotal],
             ].map(([label, v], i) => (
-              <div key={i} className={`glass-card p-4 ${i === 4 ? 'border-2 border-pink/30' : ''}`}>
+              <div key={i} className={`glass-card p-4 ${i === 5 ? 'border-2 border-pink/30' : ''}`}>
                 <p className="text-[11px] text-ink-soft uppercase tracking-wider">{label}</p>
                 <p className="text-lg font-bold font-display">HK${(v as number).toLocaleString()}</p>
               </div>
@@ -387,6 +434,72 @@ export default function ExpensesPage() {
               {recurringRows.length === 0 && (
                 <p className="text-xs text-ink-soft italic">{locale === 'zh' ? '本月未有固定開支 — 先喺「設定固定項目」加項目。' : 'None this month — define templates first.'}</p>
               )}
+            </div>
+          </div>
+
+          {/* 單據支出（OneDrive 自動入帳） */}
+          <div className="glass-card p-6">
+            <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
+              <h2 className="font-bold flex items-center gap-2"><Cloud size={15} className="text-pink" /> {locale === 'zh' ? '單據支出（OneDrive 自動入帳）' : 'Receipt expenses (OneDrive auto)'}
+                {unreviewedReceipts > 0 && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">{locale === 'zh' ? `${unreviewedReceipts} 張未核數` : `${unreviewedReceipts} to review`}</span>}
+              </h2>
+              <a href={`/${locale}/admin/onedrive`} className="text-xs text-ink-soft hover:text-pink">{locale === 'zh' ? '連結設定 →' : 'Settings →'}</a>
+            </div>
+            <p className="text-xs text-ink-soft mb-3">
+              {locale === 'zh'
+                ? '上載到 OneDrive 分店資料夾嘅單據會自動讀入呢度（已計入總支出）。對完數剔「已核數」；改日期、項目或金額會同步改你 Excel 嗰行。'
+                : 'Receipts uploaded to the branch folder are read in here automatically (already in the total). Tick 已核數 after checking; edits sync to the same Excel row.'}
+            </p>
+            <div className="space-y-1.5">
+              {receiptRows.map((r) => {
+                const flags = r.receipt?.flags || [];
+                const FLAG: Record<string, { zh: string; en: string }> = {
+                  no_date: { zh: '睇唔到日期', en: 'no date' }, date_fallback: { zh: '用上載日', en: 'upload date used' }, no_amount: { zh: '睇唔到金額', en: 'no amount' },
+                  possible_duplicate: { zh: '疑似重複', en: 'possible duplicate' }, multiple_receipts: { zh: '一張相多張單', en: 'several receipts' },
+                  foreign_currency: { zh: `外幣 ${r.receipt?.currency || ''}`, en: `foreign ${r.receipt?.currency || ''}` }, unreadable: { zh: '讀唔到', en: 'unreadable' },
+                };
+                const conf = r.receipt?.confidence;
+                const busyRow = receiptBusy === r.id;
+                return (
+                  <div key={r.id} className={`rounded-xl px-2 py-1.5 ${r.reviewed ? '' : 'bg-amber-50/60'} ${busyRow ? 'opacity-60' : ''}`}>
+                    <div className="flex items-center gap-2 text-sm flex-wrap">
+                      <label className="flex items-center gap-1 text-xs cursor-pointer select-none" title={locale === 'zh' ? '已核數' : 'Reviewed'}>
+                        <input type="checkbox" checked={!!r.reviewed} disabled={busyRow}
+                          onChange={(e) => patchReceipt(r.id, { reviewed: e.target.checked })} className="accent-pink w-4 h-4" />
+                        <span className={r.reviewed ? 'text-emerald-700' : 'text-amber-700'}>{locale === 'zh' ? '已核' : 'OK'}</span>
+                      </label>
+                      <input type="date" value={dateDrafts[r.id] ?? r.date} disabled={busyRow}
+                        onChange={(e) => setDateDrafts((p) => ({ ...p, [r.id]: e.target.value }))}
+                        onBlur={() => { const v = dateDrafts[r.id]; if (v && v !== r.date) patchReceipt(r.id, { date: v }); }}
+                        className={`${inputCls} text-xs w-[8.5rem]`} />
+                      <input value={itemDrafts[r.id] ?? r.item} disabled={busyRow}
+                        onChange={(e) => setItemDrafts((p) => ({ ...p, [r.id]: e.target.value }))}
+                        onBlur={() => { const v = (itemDrafts[r.id] ?? '').trim(); if (v && v !== r.item) patchReceipt(r.id, { item: v }); }}
+                        className={`flex-1 min-w-[160px] ${inputCls}`} />
+                      <input type="number" value={amountDrafts[r.id] ?? String(r.amount)} disabled={busyRow}
+                        onChange={(e) => setAmountDrafts((p) => ({ ...p, [r.id]: e.target.value }))}
+                        onBlur={() => saveAmount(r)}
+                        className={`w-28 text-right ${inputCls} ${r.amount === 0 ? 'border-rose-300 bg-rose-50' : ''}`} />
+                      {r.receipt?.webUrl && (
+                        <a href={r.receipt.webUrl} target="_blank" rel="noreferrer" title={r.receipt.fileName}
+                          className="w-7 h-7 rounded-lg hover:bg-cream text-ink-soft hover:text-pink flex items-center justify-center"><ExternalLink size={13} /></a>
+                      )}
+                      <button onClick={() => removeReceipt(r)} disabled={busyRow}
+                        className="w-7 h-7 rounded-lg hover:bg-rose-50 text-rose-400 flex items-center justify-center"><Trash2 size={12} /></button>
+                    </div>
+                    {(flags.length > 0 || conf === 'low' || r.excel?.synced === false || r.receipt?.fileDeleted) && (
+                      <div className="flex flex-wrap gap-1 mt-1 pl-1 text-[11px]">
+                        {conf === 'low' && <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 inline-flex items-center gap-1"><AlertTriangle size={10} /> {locale === 'zh' ? '辨識信心低' : 'low confidence'}</span>}
+                        {flags.map((f) => <span key={f} className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">{FLAG[f] ? FLAG[f][locale] : f}</span>)}
+                        {r.receipt?.fileDeleted && <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{locale === 'zh' ? 'OneDrive 檔案已刪' : 'file deleted in OneDrive'}</span>}
+                        {r.excel?.synced === false && <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-700" title={r.excel.error}>{locale === 'zh' ? 'Excel 未同步' : 'Excel not synced'}</span>}
+                        {r.receipt?.readerNotes && <span className="text-ink-soft">{r.receipt.readerNotes}</span>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {receiptRows.length === 0 && <p className="text-xs text-ink-soft italic">{locale === 'zh' ? '本月未有自動讀入嘅單據。' : 'No receipts read in this month.'}</p>}
             </div>
           </div>
 
