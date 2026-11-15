@@ -273,6 +273,53 @@ export default function OneDrivePage() {
     no_branch: { zh: '未知分店', en: 'No branch', cls: 'bg-amber-50 text-amber-700' },
   };
 
+  const browserPanel = browseMode ? (
+            <div className="glass-card p-5 border-2 border-pink/30">
+              <div className="flex items-center gap-2 mb-3 text-sm flex-wrap">
+                <span className="font-semibold">{browseMode === 'folder'
+                  ? (zh ? `揀「${status.branches.find((b) => b.key === folderForBranch)?.zh || ''}」嘅單據資料夾` : `Choose receipts folder for ${status.branches.find((b) => b.key === folderForBranch)?.en || ''}`)
+                  : (zh ? '揀 Excel 檔' : 'Choose workbook')}</span>
+                <span className="text-ink-soft">·</span>
+                {crumbs.map((c, i) => (
+                  <span key={c.id} className="flex items-center gap-1">
+                    {i > 0 && <ChevronRight size={12} className="text-ink-soft" />}
+                    <button onClick={() => crumbTo(i)} className={`hover:text-pink ${i === crumbs.length - 1 ? 'font-medium' : 'text-ink-soft'}`}>{c.name}</button>
+                  </span>
+                ))}
+                <button onClick={() => setBrowseMode(null)} className="ml-auto text-ink-soft hover:text-rose-600"><X size={16} /></button>
+              </div>
+              {browseBusy || !browse ? (
+                <p className="text-xs text-ink-soft flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> …</p>
+              ) : (
+                <div className="space-y-1 max-h-80 overflow-auto">
+                  {browse.children.length === 0 && <p className="text-xs text-ink-soft italic">{zh ? '空資料夾' : 'Empty folder'}</p>}
+                  {browse.children.map((c) => (
+                    <div key={c.id} className="flex items-center gap-2 text-sm">
+                      {c.isFolder ? (
+                        <button onClick={() => enter(c)} className="flex-1 flex items-center gap-2 text-left px-2 py-1.5 rounded-lg hover:bg-cream">
+                          <Folder size={14} className="text-amber-500" /> <span className="truncate">{c.name}</span>
+                          <span className="text-[11px] text-ink-soft ml-auto">{c.childCount}</span><ChevronRight size={12} className="text-ink-soft" />
+                        </button>
+                      ) : browseMode === 'excel' ? (
+                        <button onClick={() => pickExcel(c)} className="flex-1 flex items-center gap-2 text-left px-2 py-1.5 rounded-lg hover:bg-emerald-50">
+                          <FileSpreadsheet size={14} className="text-emerald-600" /> <span className="truncate">{c.name}</span>
+                          <span className="text-[11px] text-pink ml-auto">{zh ? '選用' : 'Use'}</span>
+                        </button>
+                      ) : (
+                        <span className="flex-1 flex items-center gap-2 px-2 py-1.5 text-ink-soft/60"><FileSpreadsheet size={14} /> {c.name}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {browseMode === 'folder' && browse && browse.item.id !== 'root' && (
+                <button onClick={chooseCurrentFolder} disabled={busy === 'folder'} className="btn-primary text-xs mt-3 flex items-center gap-1">
+                  {busy === 'folder' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {zh ? `選用「${browse.item.name}」做${status.branches.find((b) => b.key === folderForBranch)?.zh || ''}嘅單據資料夾` : `Use "${browse.item.name}" for ${status.branches.find((b) => b.key === folderForBranch)?.en || ''}`}
+                </button>
+              )}
+            </div>
+  ) : null;
+
   return (
     <div className="max-w-5xl">
       <div className="mb-6">
@@ -345,6 +392,8 @@ export default function OneDrivePage() {
             </div>
           </div>
 
+          {browseMode === 'folder' && browserPanel}
+
           {/* 3. Excel */}
           <div className={`glass-card p-6 ${!connected ? 'opacity-50 pointer-events-none' : ''}`}>
             <h2 className="font-bold mb-1">{zh ? '3 · 同步到我的 Excel' : '3 · Mirror into my Excel'}</h2>
@@ -407,53 +456,7 @@ export default function OneDrivePage() {
             )}
           </div>
 
-          {/* Browser panel */}
-          {browseMode && (
-            <div className="glass-card p-5 border-2 border-pink/30">
-              <div className="flex items-center gap-2 mb-3 text-sm flex-wrap">
-                <span className="font-semibold">{browseMode === 'folder'
-                  ? (zh ? `揀「${status.branches.find((b) => b.key === folderForBranch)?.zh || ''}」嘅單據資料夾` : `Choose receipts folder for ${status.branches.find((b) => b.key === folderForBranch)?.en || ''}`)
-                  : (zh ? '揀 Excel 檔' : 'Choose workbook')}</span>
-                <span className="text-ink-soft">·</span>
-                {crumbs.map((c, i) => (
-                  <span key={c.id} className="flex items-center gap-1">
-                    {i > 0 && <ChevronRight size={12} className="text-ink-soft" />}
-                    <button onClick={() => crumbTo(i)} className={`hover:text-pink ${i === crumbs.length - 1 ? 'font-medium' : 'text-ink-soft'}`}>{c.name}</button>
-                  </span>
-                ))}
-                <button onClick={() => setBrowseMode(null)} className="ml-auto text-ink-soft hover:text-rose-600"><X size={16} /></button>
-              </div>
-              {browseBusy || !browse ? (
-                <p className="text-xs text-ink-soft flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> …</p>
-              ) : (
-                <div className="space-y-1 max-h-80 overflow-auto">
-                  {browse.children.length === 0 && <p className="text-xs text-ink-soft italic">{zh ? '空資料夾' : 'Empty folder'}</p>}
-                  {browse.children.map((c) => (
-                    <div key={c.id} className="flex items-center gap-2 text-sm">
-                      {c.isFolder ? (
-                        <button onClick={() => enter(c)} className="flex-1 flex items-center gap-2 text-left px-2 py-1.5 rounded-lg hover:bg-cream">
-                          <Folder size={14} className="text-amber-500" /> <span className="truncate">{c.name}</span>
-                          <span className="text-[11px] text-ink-soft ml-auto">{c.childCount}</span><ChevronRight size={12} className="text-ink-soft" />
-                        </button>
-                      ) : browseMode === 'excel' ? (
-                        <button onClick={() => pickExcel(c)} className="flex-1 flex items-center gap-2 text-left px-2 py-1.5 rounded-lg hover:bg-emerald-50">
-                          <FileSpreadsheet size={14} className="text-emerald-600" /> <span className="truncate">{c.name}</span>
-                          <span className="text-[11px] text-pink ml-auto">{zh ? '選用' : 'Use'}</span>
-                        </button>
-                      ) : (
-                        <span className="flex-1 flex items-center gap-2 px-2 py-1.5 text-ink-soft/60"><FileSpreadsheet size={14} /> {c.name}</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {browseMode === 'folder' && browse && browse.item.id !== 'root' && (
-                <button onClick={chooseCurrentFolder} disabled={busy === 'folder'} className="btn-primary text-xs mt-3 flex items-center gap-1">
-                  {busy === 'folder' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {zh ? `選用「${browse.item.name}」做${status.branches.find((b) => b.key === folderForBranch)?.zh || ''}嘅單據資料夾` : `Use "${browse.item.name}" for ${status.branches.find((b) => b.key === folderForBranch)?.en || ''}`}
-                </button>
-              )}
-            </div>
-          )}
+          {browseMode === 'excel' && browserPanel}
 
           {/* 4. Sync + log */}
           <div className={`glass-card p-6 ${!connected ? 'opacity-50 pointer-events-none' : ''}`}>
