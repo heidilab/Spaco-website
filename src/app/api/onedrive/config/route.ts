@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/adminAuth';
 import { folderDelta, getReceiptsConfig, saveReceiptsConfig } from '@/lib/msgraph';
-import type { ExcelColumnKey, OneDriveReceiptsConfig } from '@/types';
+import type { ExcelColumnKey, OneDriveExcelTarget, OneDriveReceiptsConfig } from '@/types';
 
 export const runtime = 'nodejs';
 
@@ -13,7 +13,11 @@ const COLUMN_KEYS: ExcelColumnKey[] = ['id', 'date', 'branch', 'item', 'vendor',
 export async function POST(req: NextRequest) {
   const gate = await requireAdmin(req, 'staff');
   if (!gate.ok) return gate.res;
-  let body: Partial<OneDriveReceiptsConfig> & { clearExcel?: boolean };
+  let body: Partial<OneDriveReceiptsConfig> & {
+    clearExcel?: boolean;
+    excelForBranch?: { branchKey: string; excel: Partial<OneDriveExcelTarget> };
+    clearExcelForBranch?: string;
+  };
   try { body = await req.json(); } catch { return NextResponse.json({ error: 'bad json' }, { status: 400 }); }
   const current = await getReceiptsConfig();
   const patch: Partial<OneDriveReceiptsConfig> = {};
@@ -35,24 +39,37 @@ export async function POST(req: NextRequest) {
       patch.lastScanError = '';
     }
     if (body.clearExcel) {
-      patch.excel = undefined;
       await saveReceiptsConfig({ ...patch, excel: null as unknown as undefined });
       return NextResponse.json({ ok: true, config: await getReceiptsConfig() });
     }
-    if (body.excel && body.excel.itemId) {
-      const x = body.excel;
+    if (body.clearExcelForBranch) {
+      const next = { ...(current.excelByBranch || {}) };
+      delete next[body.clearExcelForBranch];
+      patch.excelByBranch = next;
+    }
+    const parseTarget = (x: Partial<OneDriveExcelTarget>): OneDriveExcelTarget | string => {
       const columns: Partial<Record<ExcelColumnKey, string>> = {};
       for (const k of COLUMN_KEYS) {
         const v = x.columns?.[k];
         if (typeof v === 'string' && /^[A-Za-z]{1,3}$/.test(v)) columns[k] = v.toUpperCase();
       }
-      if (!columns.id) return NextResponse.json({ error: 'id column required' }, { status: 400 });
-      patch.excel = {
+      if (!columns.id) return 'id column required';
+      if (!x.worksheet) return 'worksheet required';
+      return {
         itemId: String(x.itemId), name: String(x.name || ''), path: String(x.path || ''),
-        worksheet: String(x.worksheet || ''), ...(x.table ? { table: String(x.table) } : {}),
+        worksheet: String(x.worksheet), ...(x.table ? { table: String(x.table) } : {}),
         headerRow: Number(x.headerRow) >= 1 ? Math.floor(Number(x.headerRow)) : 1, columns,
       };
-      if (!patch.excel.worksheet) return NextResponse.json({ error: 'worksheet required' }, { status: 400 });
+    };
+    if (body.excelForBranch && body.excelForBranch.branchKey && body.excelForBranch.excel?.itemId) {
+      const t = parseTarget(body.excelForBranch.excel);
+      if (typeof t === 'string') return NextResponse.json({ error: t }, { status: 400 });
+      patch.excelByBranch = { ...(patch.excelByBranch || current.excelByBranch || {}), [String(body.excelForBranch.branchKey)]: t };
+    }
+    if (body.excel && body.excel.itemId) {
+      const t = parseTarget(body.excel);
+      if (typeof t === 'string') return NextResponse.json({ error: t }, { status: 400 });
+      patch.excel = t;
     }
     await saveReceiptsConfig(patch);
     const saved = await getReceiptsConfig();

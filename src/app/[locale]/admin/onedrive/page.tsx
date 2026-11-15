@@ -37,16 +37,16 @@ interface WorkbookMeta {
 }
 
 const COLUMN_FIELDS: Array<{ key: ExcelColumnKey; zh: string; en: string; required?: boolean }> = [
-  { key: 'id', zh: 'SPACO ID（必須，用來搵返同一行）', en: 'SPACO ID (required — how a row is found again)', required: true },
+  { key: 'id', zh: 'SPACO ID', en: 'SPACO ID', required: true },
   { key: 'date', zh: '日期', en: 'Date' },
-  { key: 'branch', zh: '分店', en: 'Branch' },
   { key: 'item', zh: '項目（商戶 · 內容）', en: 'Item (vendor · summary)' },
-  { key: 'vendor', zh: '商戶', en: 'Vendor' },
   { key: 'amount', zh: '金額', en: 'Amount' },
-  { key: 'category', zh: '類別', en: 'Category' },
-  { key: 'note', zh: '備註', en: 'Note' },
-  { key: 'reviewed', zh: '已核數（✓）', en: 'Reviewed (✓)' },
-  { key: 'link', zh: '單據連結', en: 'Receipt link' },
+  { key: 'vendor', zh: '商戶（可選）', en: 'Vendor (optional)' },
+  { key: 'category', zh: '類別（可選）', en: 'Category (optional)' },
+  { key: 'note', zh: '備註（可選）', en: 'Note (optional)' },
+  { key: 'reviewed', zh: '已核數 ✓（可選）', en: 'Reviewed ✓ (optional)' },
+  { key: 'link', zh: '單據連結（可選）', en: 'Receipt link (optional)' },
+  { key: 'branch', zh: '分店名（可選）', en: 'Branch name (optional)' },
 ];
 
 function colLetter(i: number): string {
@@ -81,8 +81,8 @@ export default function OneDrivePage() {
   // Which branch the folder browser is choosing for.
   const [folderForBranch, setFolderForBranch] = useState<string | null>(null);
 
-  // Excel mapping draft
-  const [excelPick, setExcelPick] = useState<{ itemId: string; name: string; path: string } | null>(null);
+  // Excel mapping draft — for one branch at a time.
+  const [excelPick, setExcelPick] = useState<{ branchKey: string; itemId: string; name: string; path: string } | null>(null);
   const [meta, setMeta] = useState<WorkbookMeta | null>(null);
   const [sheet, setSheet] = useState('');
   const [table, setTable] = useState('');
@@ -115,7 +115,7 @@ export default function OneDrivePage() {
 
   async function openBrowser(mode: 'folder' | 'excel', branchKey?: string) {
     setBrowseMode(mode);
-    setFolderForBranch(mode === 'folder' ? branchKey || null : null);
+    setFolderForBranch(branchKey || null);
     setCrumbs([{ id: 'root', name: 'OneDrive' }]);
     await goTo('root');
   }
@@ -171,7 +171,9 @@ export default function OneDrivePage() {
   }
 
   async function pickExcel(item: BrowseItem) {
-    setExcelPick({ itemId: item.id, name: item.name, path: item.path });
+    if (!folderForBranch) return;
+    const branchKey = folderForBranch;
+    setExcelPick({ branchKey, itemId: item.id, name: item.name, path: item.path });
     setBrowseMode(null);
     setMeta(null);
     setBusy('meta');
@@ -180,11 +182,14 @@ export default function OneDrivePage() {
       const data: WorkbookMeta & { error?: string } = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       setMeta(data);
-      const first = data.worksheets[0];
+      // Re-editing the same workbook: start from what she saved last time.
+      const saved = status?.config.excelByBranch?.[branchKey];
+      const same = saved && saved.itemId === item.id;
+      const first = same ? data.worksheets.find((w) => w.name === saved.worksheet) || data.worksheets[0] : data.worksheets[0];
       setSheet(first?.name || '');
-      setTable('');
-      setHeaderRow(1);
-      setColumns(autoMap(first?.headers || []));
+      setTable(same ? saved.table || '' : '');
+      setHeaderRow(same ? saved.headerRow || 1 : 1);
+      setColumns(same ? saved.columns : autoMap(first?.headers || []));
     } catch (e) { say('err', e instanceof Error ? e.message : 'workbook read failed'); } finally { setBusy(null); }
   }
 
@@ -212,19 +217,20 @@ export default function OneDrivePage() {
 
   async function saveExcel() {
     if (!excelPick || !sheet) return;
-    if (!columns.id) { say('err', zh ? '請揀「SPACO ID」欄 — 建議喺 Excel 最右加一欄，可以隱藏' : 'Pick the SPACO ID column — add one at the far right (it can be hidden)'); return; }
+    if (!columns.id) { say('err', zh ? '請揀「SPACO ID」欄 — 建議喺嗰張 sheet 最右加一欄，可以隱藏' : 'Pick the SPACO ID column — add one at the far right of the sheet (it can be hidden)'); return; }
     setBusy('excel');
     try {
-      await saveConfig({ excel: { ...excelPick, worksheet: sheet, table: table || undefined, headerRow, columns } },
-        zh ? '✓ Excel 已連結，新單據會寫入呢張 sheet' : '✓ Excel linked — new receipts will be written to this sheet');
+      const { branchKey, ...file } = excelPick;
+      await saveConfig({ excelForBranch: { branchKey, excel: { ...file, worksheet: sheet, table: table || undefined, headerRow, columns } } },
+        zh ? '✓ Excel 已連結，呢間舖嘅新單據會寫入嗰張 sheet' : '✓ Excel linked — this branch\'s new receipts will be written to that sheet');
       setExcelPick(null); setMeta(null);
     } catch (e) { say('err', e instanceof Error ? e.message : 'save failed'); } finally { setBusy(null); }
   }
 
-  async function clearExcel() {
-    if (!confirm(zh ? '取消 Excel 同步？已寫入嘅行唔會刪除。' : 'Stop syncing to Excel? Existing rows stay.')) return;
+  async function clearExcel(branchKey: string) {
+    if (!confirm(zh ? '取消呢間舖嘅 Excel 同步？已寫入嘅行唔會刪除。' : 'Stop syncing this branch to Excel? Existing rows stay.')) return;
     setBusy('excel');
-    try { await saveConfig({ clearExcel: true }, zh ? '已取消 Excel 同步' : 'Excel sync removed'); }
+    try { await saveConfig({ clearExcelForBranch: branchKey }, zh ? '已取消 Excel 同步' : 'Excel sync removed'); }
     catch (e) { say('err', e instanceof Error ? e.message : 'failed'); } finally { setBusy(null); }
   }
 
@@ -278,7 +284,7 @@ export default function OneDrivePage() {
               <div className="flex items-center gap-2 mb-3 text-sm flex-wrap">
                 <span className="font-semibold">{browseMode === 'folder'
                   ? (zh ? `揀「${status?.branches.find((b) => b.key === folderForBranch)?.zh || ''}」嘅單據資料夾` : `Choose receipts folder for ${status?.branches.find((b) => b.key === folderForBranch)?.en || ''}`)
-                  : (zh ? '揀 Excel 檔' : 'Choose workbook')}</span>
+                  : (zh ? `揀「${status?.branches.find((b) => b.key === folderForBranch)?.zh || ''}」嘅 Excel 檔` : `Choose workbook for ${status?.branches.find((b) => b.key === folderForBranch)?.en || ''}`)}</span>
                 <span className="text-ink-soft">·</span>
                 {crumbs.map((c, i) => (
                   <span key={c.id} className="flex items-center gap-1">
@@ -394,66 +400,80 @@ export default function OneDrivePage() {
 
           {browseMode === 'folder' && browserPanel}
 
-          {/* 3. Excel */}
+          {/* 3. Excel — one workbook per branch */}
           <div className={`glass-card p-6 ${!connected ? 'opacity-50 pointer-events-none' : ''}`}>
-            <h2 className="font-bold mb-1">{zh ? '3 · 同步到我的 Excel' : '3 · Mirror into my Excel'}</h2>
+            <h2 className="font-bold mb-1">{zh ? '3 · 同步到每間舖嘅 Excel' : '3 · Mirror into each branch\'s Excel'}</h2>
             <p className="text-xs text-ink-soft mb-3">
-              {zh ? '揀你 OneDrive 入面嘅 Excel 檔同 sheet，再對應每欄。一定要有一欄放 SPACO ID（可以隱藏）— 改數或刪除時先搵得返同一行。' : 'Pick the workbook and sheet in your OneDrive, then map the columns. One column must hold the SPACO ID (can be hidden) so edits and deletes find the same row.'}
+              {zh
+                ? '每間舖揀自己嗰個 Excel 檔同 sheet，再對應每欄。嗰張 sheet 一定要有一欄放 SPACO ID（可以隱藏）— 改數或刪除時先搵得返同一行。'
+                : 'Pick each branch\'s own workbook and sheet, then map the columns. The sheet must have a SPACO ID column (can be hidden) so edits and deletes find the same row.'}
             </p>
-            {cfg?.excel && !excelPick && (
-              <div className="flex flex-wrap items-center gap-3 text-sm mb-2">
-                <span className="inline-flex items-center gap-1.5"><FileSpreadsheet size={15} className="text-emerald-600" /> <span className="font-medium">{cfg.excel.path || cfg.excel.name}</span></span>
-                <span className="text-xs text-ink-soft">{zh ? 'sheet' : 'sheet'} 「{cfg.excel.worksheet}」{cfg.excel.table ? ` · ${zh ? '表格' : 'table'} ${cfg.excel.table}` : ''} · {Object.entries(cfg.excel.columns).map(([k, v]) => `${k}=${v}`).join(' ')}</span>
-                <button onClick={clearExcel} disabled={busy === 'excel'} className={`${btn} ml-auto text-rose-600`}><X size={12} /> {zh ? '取消同步' : 'Remove'}</button>
-              </div>
-            )}
-            {!excelPick && (
-              <button onClick={() => openBrowser('excel')} className={btn}><FileSpreadsheet size={12} /> {cfg?.excel ? (zh ? '改 Excel 檔 / 欄' : 'Change workbook / columns') : (zh ? '揀 Excel 檔' : 'Choose workbook')}</button>
-            )}
-            {excelPick && (
-              <div className="border border-charcoal/10 rounded-xl p-4 space-y-3 text-sm">
-                <div className="flex items-center gap-2"><FileSpreadsheet size={15} className="text-emerald-600" /> <span className="font-medium">{excelPick.path}</span>
-                  <button onClick={() => { setExcelPick(null); setMeta(null); }} className="ml-auto text-ink-soft hover:text-rose-600"><X size={14} /></button></div>
-                {busy === 'meta' || !meta ? (
-                  <p className="text-xs text-ink-soft flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> {zh ? '讀取 sheet 同標題…' : 'Reading sheets and headers…'}</p>
-                ) : (
-                  <>
-                    <div className="flex flex-wrap gap-3">
-                      <label className="block"><span className="text-xs font-semibold text-ink-soft">{zh ? 'Sheet' : 'Sheet'}</span>
-                        <select value={sheet} onChange={(e) => { setSheet(e.target.value); setTable(''); setColumns(autoMap(meta.worksheets.find((w) => w.name === e.target.value)?.headers || [])); }} className={`mt-1 block ${inputCls}`}>
-                          {meta.worksheets.map((w) => <option key={w.id} value={w.name}>{w.name}</option>)}
-                        </select></label>
-                      {sheetTables.length > 0 && (
-                        <label className="block"><span className="text-xs font-semibold text-ink-soft">{zh ? '格式化表格（建議）' : 'Formatted table (recommended)'}</span>
-                          <select value={table} onChange={(e) => setTable(e.target.value)} className={`mt-1 block ${inputCls}`}>
-                            <option value="">{zh ? '（唔用表格，直接加落最尾一行）' : '(no table — append below last row)'}</option>
-                            {sheetTables.map((t) => <option key={t.id} value={t.name}>{t.name} · {t.address.split('!').pop()}</option>)}
-                          </select></label>
-                      )}
-                      <label className="block"><span className="text-xs font-semibold text-ink-soft">{zh ? '標題喺第幾行' : 'Header row'}</span>
-                        <input type="number" min={1} value={headerRow} onChange={(e) => setHeaderRow(Math.max(1, parseInt(e.target.value) || 1))} className={`mt-1 block w-20 ${inputCls}`} /></label>
+            <div className="space-y-2">
+              {status.branches.map((b) => {
+                const x = cfg?.excelByBranch?.[b.key];
+                const editing = excelPick?.branchKey === b.key;
+                return (
+                  <div key={b.key}>
+                    <div className="flex items-center gap-3 text-sm flex-wrap">
+                      <span className="w-36 shrink-0 font-medium">{zh ? b.zh : b.en}</span>
+                      {x ? (
+                        <span className="flex-1 min-w-[200px] truncate text-xs">
+                          <FileSpreadsheet size={14} className="inline text-emerald-600 mr-1" />{x.name}
+                          <span className="text-ink-soft"> · sheet「{x.worksheet}」{x.table ? ` · ${zh ? '表格' : 'table'} ${x.table}` : ''} · ID={x.columns.id}{x.columns.date ? ` 日期=${x.columns.date}` : ''}{x.columns.item ? ` 項目=${x.columns.item}` : ''}{x.columns.amount ? ` 金額=${x.columns.amount}` : ''}</span>
+                        </span>
+                      ) : <span className="text-ink-soft italic flex-1 min-w-[200px]">{zh ? '未揀' : 'Not chosen'}</span>}
+                      <button onClick={() => openBrowser('excel', b.key)} disabled={busy === 'excel' || busy === 'meta'} className={btn}><FileSpreadsheet size={12} /> {x ? (zh ? '改' : 'Change') : (zh ? '揀 Excel 檔' : 'Choose')}</button>
+                      {x && <button onClick={() => clearExcel(b.key)} disabled={busy === 'excel'} className={`${btn} text-rose-600`}><X size={12} /></button>}
                     </div>
-                    {sheetMeta && sheetMeta.headers.length > 0 && (
-                      <p className="text-xs text-ink-soft">{zh ? '第一行標題：' : 'First row: '}{sheetMeta.headers.filter(Boolean).join(' · ') || '—'}</p>
+                    {editing && excelPick && (
+                      <div className="mt-2 ml-0 md:ml-36 border border-charcoal/10 rounded-xl p-4 space-y-3 text-sm bg-white/60">
+                        <div className="flex items-center gap-2"><FileSpreadsheet size={15} className="text-emerald-600" /> <span className="font-medium truncate">{excelPick.path}</span>
+                          <button onClick={() => { setExcelPick(null); setMeta(null); }} className="ml-auto text-ink-soft hover:text-rose-600"><X size={14} /></button></div>
+                        {busy === 'meta' || !meta ? (
+                          <p className="text-xs text-ink-soft flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> {zh ? '讀取 sheet 同標題…' : 'Reading sheets and headers…'}</p>
+                        ) : (
+                          <>
+                            <div className="flex flex-wrap gap-3">
+                              <label className="block"><span className="text-xs font-semibold text-ink-soft">{zh ? '寫入邊張 sheet' : 'Sheet'}</span>
+                                <select value={sheet} onChange={(e) => { setSheet(e.target.value); setTable(''); setColumns(autoMap(meta.worksheets.find((w) => w.name === e.target.value)?.headers || [])); }} className={`mt-1 block ${inputCls}`}>
+                                  {meta.worksheets.map((w) => <option key={w.id} value={w.name}>{w.name}</option>)}
+                                </select></label>
+                              {sheetTables.length > 0 && (
+                                <label className="block"><span className="text-xs font-semibold text-ink-soft">{zh ? '格式化表格（建議）' : 'Formatted table (recommended)'}</span>
+                                  <select value={table} onChange={(e) => setTable(e.target.value)} className={`mt-1 block ${inputCls}`}>
+                                    <option value="">{zh ? '（唔用表格，加落最尾一行）' : '(no table — append below last row)'}</option>
+                                    {sheetTables.map((t) => <option key={t.id} value={t.name}>{t.name} · {t.address.split('!').pop()}</option>)}
+                                  </select></label>
+                              )}
+                              <label className="block"><span className="text-xs font-semibold text-ink-soft">{zh ? '標題喺第幾行' : 'Header row'}</span>
+                                <input type="number" min={1} value={headerRow} onChange={(e) => setHeaderRow(Math.max(1, parseInt(e.target.value) || 1))} className={`mt-1 block w-20 ${inputCls}`} /></label>
+                            </div>
+                            {sheetMeta && (
+                              <p className="text-xs text-ink-soft">{zh ? '呢張 sheet 第一行：' : 'First row of this sheet: '}{sheetMeta.headers.filter(Boolean).join(' · ') || (zh ? '（空）' : '(empty)')}</p>
+                            )}
+                            <p className="text-xs font-semibold">{zh ? '每個資料寫入邊一欄（揀欄位字母）：' : 'Which column each field goes to:'}</p>
+                            <div className="space-y-1.5">
+                              {COLUMN_FIELDS.map((f) => (
+                                <label key={f.key} className="flex items-center gap-2">
+                                  <span className={`text-xs w-40 shrink-0 ${f.required ? 'font-semibold' : 'text-ink-soft'}`}>{zh ? f.zh : f.en}{f.required ? (zh ? '（必須）' : ' (required)') : ''}</span>
+                                  <select value={columns[f.key] || ''} onChange={(e) => setColumns((c) => ({ ...c, [f.key]: e.target.value || undefined }))} className={`w-full max-w-xs ${inputCls} ${f.required && !columns[f.key] ? 'border-rose-300' : ''}`}>
+                                    <option value="">{zh ? '— 唔寫 —' : '— skip —'}</option>
+                                    {headerOptions.map((o) => <option key={o.letter} value={o.letter}>{o.label}</option>)}
+                                  </select>
+                                </label>
+                              ))}
+                            </div>
+                            <button onClick={saveExcel} disabled={busy === 'excel'} className="btn-primary text-xs flex items-center gap-1">
+                              {busy === 'excel' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {zh ? '儲存呢間舖嘅 Excel 設定' : 'Save this branch\'s Excel settings'}
+                            </button>
+                          </>
+                        )}
+                      </div>
                     )}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      {COLUMN_FIELDS.map((f) => (
-                        <label key={f.key} className="flex items-center gap-2">
-                          <span className={`text-xs w-56 shrink-0 ${f.required ? 'font-semibold' : 'text-ink-soft'}`}>{zh ? f.zh : f.en}</span>
-                          <select value={columns[f.key] || ''} onChange={(e) => setColumns((c) => ({ ...c, [f.key]: e.target.value || undefined }))} className={`flex-1 ${inputCls} ${f.required && !columns[f.key] ? 'border-rose-300' : ''}`}>
-                            <option value="">{zh ? '— 唔寫 —' : '— skip —'}</option>
-                            {headerOptions.map((o) => <option key={o.letter} value={o.letter}>{o.label}</option>)}
-                          </select>
-                        </label>
-                      ))}
-                    </div>
-                    <button onClick={saveExcel} disabled={busy === 'excel'} className="btn-primary text-xs flex items-center gap-1">
-                      {busy === 'excel' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {zh ? '儲存 Excel 設定' : 'Save Excel settings'}
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           {browseMode === 'excel' && browserPanel}

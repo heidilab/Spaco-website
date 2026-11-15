@@ -57,7 +57,7 @@ Master export without further changes.
   `MS_OAUTH_CLIENT_SECRET`, optional `RECEIPT_MODEL`. `ANTHROPIC_API_KEY`
   and `CRON_SECRET` already exist.
 - 後台 → 財務總覽 → OneDrive 單據連結: sign in → pick one folder per
-  branch → pick the workbook, sheet (table) and
+  branch → per branch pick its workbook, sheet (table) and
   columns (ID column required) → 立即同步 to test.
 
 ## Data
@@ -65,7 +65,7 @@ Master export without further changes.
 | Where | What |
 |---|---|
 | `secrets/onedrive_oauth` | refresh token (rotated on every refresh — personal accounts issue a new one), connected email |
-| `system/onedrive_receipts` | branchFolders (one per branch), Excel mapping, deltaLinks per folder, lastScanAt/Error |
+| `system/onedrive_receipts` | branchFolders (one per branch), excelByBranch (one workbook/sheet/columns per branch; legacy `excel` as fallback), deltaLinks per folder, lastScanAt/Error |
 | `receipt_files/{driveItemId}` | per-file status: queued / done / error (≤3 attempts) / skipped / no_branch |
 | `expenses` (`source: 'receipt'`) | the row; `receipt.*`, `reviewed`, `excel.{synced,error}` |
 

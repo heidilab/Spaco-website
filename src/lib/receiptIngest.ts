@@ -258,7 +258,7 @@ export async function syncExpenseToExcel(
   row: ExpenseRecord, op: 'upsert' | 'delete', cfg?: OneDriveReceiptsConfig, branchNameZh?: string,
 ): Promise<ExcelState | null> {
   const config = cfg || await getReceiptsConfig();
-  const x = config.excel;
+  const x = config.excelByBranch?.[row.branchKey] || config.excel;
   if (!x || !x.itemId || !x.worksheet || !x.columns.id) return null;
   try {
     const idCol = x.columns.id.toUpperCase();

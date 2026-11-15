@@ -1020,6 +1020,19 @@ export interface ExpenseRecord {
  *  required — it is how an edited/deleted row is found again. */
 export type ExcelColumnKey = 'id' | 'date' | 'branch' | 'item' | 'vendor' | 'amount' | 'category' | 'note' | 'reviewed' | 'link';
 
+/** One workbook + sheet + column letters to mirror receipt rows into. */
+export interface OneDriveExcelTarget {
+  itemId: string;
+  name: string;
+  path: string;
+  worksheet: string;
+  /** Excel Table name when the rows live in a formatted table (preferred). */
+  table?: string;
+  /** 1-based header row (plain-sheet mode). */
+  headerRow: number;
+  columns: Partial<Record<ExcelColumnKey, string>>;
+}
+
 export interface OneDriveFolderRef {
   id: string;
   name: string;
@@ -1035,17 +1048,11 @@ export interface OneDriveReceiptsConfig {
   branchFolders: Array<OneDriveFolderRef & { branchKey: string }>;
   /** Graph delta link per branch folder id — advanced after each scan. */
   deltaLinks?: Record<string, string>;
-  excel?: {
-    itemId: string;
-    name: string;
-    path: string;
-    worksheet: string;
-    /** Excel Table name when the rows live in a formatted table (preferred). */
-    table?: string;
-    /** 1-based header row (plain-sheet mode). */
-    headerRow: number;
-    columns: Partial<Record<ExcelColumnKey, string>>;
-  };
+  /** Each branch has its own Financial Master workbook. */
+  excelByBranch?: Record<string, OneDriveExcelTarget>;
+  /** Legacy single workbook (first version of the page); used only for a
+   *  branch with no entry in excelByBranch. */
+  excel?: OneDriveExcelTarget;
   lastScanAt?: unknown;
   lastScanError?: string;
   updatedAt?: unknown;
