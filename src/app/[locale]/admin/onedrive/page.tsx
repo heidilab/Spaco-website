@@ -277,7 +277,7 @@ export default function OneDrivePage() {
             <div className="glass-card p-5 border-2 border-pink/30">
               <div className="flex items-center gap-2 mb-3 text-sm flex-wrap">
                 <span className="font-semibold">{browseMode === 'folder'
-                  ? (zh ? `揀「${status.branches.find((b) => b.key === folderForBranch)?.zh || ''}」嘅單據資料夾` : `Choose receipts folder for ${status.branches.find((b) => b.key === folderForBranch)?.en || ''}`)
+                  ? (zh ? `揀「${status?.branches.find((b) => b.key === folderForBranch)?.zh || ''}」嘅單據資料夾` : `Choose receipts folder for ${status?.branches.find((b) => b.key === folderForBranch)?.en || ''}`)
                   : (zh ? '揀 Excel 檔' : 'Choose workbook')}</span>
                 <span className="text-ink-soft">·</span>
                 {crumbs.map((c, i) => (
@@ -314,7 +314,7 @@ export default function OneDrivePage() {
               )}
               {browseMode === 'folder' && browse && browse.item.id !== 'root' && (
                 <button onClick={chooseCurrentFolder} disabled={busy === 'folder'} className="btn-primary text-xs mt-3 flex items-center gap-1">
-                  {busy === 'folder' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {zh ? `選用「${browse.item.name}」做${status.branches.find((b) => b.key === folderForBranch)?.zh || ''}嘅單據資料夾` : `Use "${browse.item.name}" for ${status.branches.find((b) => b.key === folderForBranch)?.en || ''}`}
+                  {busy === 'folder' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {zh ? `選用「${browse.item.name}」做${status?.branches.find((b) => b.key === folderForBranch)?.zh || ''}嘅單據資料夾` : `Use "${browse.item.name}" for ${status?.branches.find((b) => b.key === folderForBranch)?.en || ''}`}
                 </button>
               )}
             </div>
