@@ -2,16 +2,18 @@
 
 // OneDrive 單據連結 (2026-11) — Heidi connects her personal OneDrive once,
 // picks one folder per branch (they live in different places in her
-// drive; month sub-folders inside are read automatically) and the Excel
-// workbook + columns the rows should mirror into. From then on
-// /api/cron/onedrive-receipts reads every new file into 支出管理.
+// drive; month sub-folders inside are read automatically) and each
+// branch's Financial Master workbook. Rows land on the month's own sheet
+// (NOV-2026 …) in the Expenses block — the month decides the sheet, so
+// nothing is picked by hand. From then on /api/cron/onedrive-receipts
+// reads every new file into 支出管理.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { adminApiFetch } from '@/lib/adminApiFetch';
-import type { ExcelColumnKey, OneDriveReceiptsConfig } from '@/types';
+import type { OneDriveReceiptsConfig } from '@/types';
 import {
   Cloud, Link2, Unlink, Loader2, Folder, FolderOpen, FileSpreadsheet, ChevronRight, Check, RefreshCw,
   AlertTriangle, ExternalLink, X,
@@ -31,29 +33,15 @@ interface Status {
 }
 interface BrowseItem { id: string; name: string; isFolder: boolean; isExcel: boolean; childCount: number; size: number; path: string }
 interface BrowseState { item: { id: string; name: string; path: string; parentId: string | null }; children: BrowseItem[] }
+interface MonthLayout { headerRow: number; vendorColumn: string; amountColumn: string }
 interface WorkbookMeta {
-  worksheets: Array<{ id: string; name: string; headers: string[]; usedAddress?: string }>;
+  worksheets: Array<{ id: string; name: string; headers: string[]; usedAddress?: string; monthLayout?: MonthLayout }>;
   tables: Array<{ id: string; name: string; worksheet: string; address: string; columns: string[] }>;
 }
 
-const COLUMN_FIELDS: Array<{ key: ExcelColumnKey; zh: string; en: string; required?: boolean }> = [
-  { key: 'id', zh: 'SPACO ID', en: 'SPACO ID', required: true },
-  { key: 'date', zh: '日期', en: 'Date' },
-  { key: 'item', zh: '項目（商戶 · 內容）', en: 'Item (vendor · summary)' },
-  { key: 'amount', zh: '金額', en: 'Amount' },
-  { key: 'vendor', zh: '商戶（可選）', en: 'Vendor (optional)' },
-  { key: 'category', zh: '類別（可選）', en: 'Category (optional)' },
-  { key: 'note', zh: '備註（可選）', en: 'Note (optional)' },
-  { key: 'reviewed', zh: '已核數 ✓（可選）', en: 'Reviewed ✓ (optional)' },
-  { key: 'link', zh: '單據連結（可選）', en: 'Receipt link (optional)' },
-  { key: 'branch', zh: '分店名（可選）', en: 'Branch name (optional)' },
-];
+/** Sheet names that look like a month (NOV-2026, Nov 2026, 2026-11 …). */
+const MONTHISH = /^(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s_-]*\d{2,4}|\d{4}[\s_-]*(?:\d{2}|[a-z]{3,9})|\d{2}[\s_-]*\d{4})$/i;
 
-function colLetter(i: number): string {
-  let n = i + 1; let s = '';
-  while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); }
-  return s;
-}
 function fmtTime(iso?: string | null): string {
   if (!iso) return '—';
   return new Date(iso).toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong', hour12: false });
@@ -81,13 +69,13 @@ export default function OneDrivePage() {
   // Which branch the folder browser is choosing for.
   const [folderForBranch, setFolderForBranch] = useState<string | null>(null);
 
-  // Excel mapping draft — for one branch at a time.
+  // Excel draft — for one branch at a time (her month-sheet layout).
   const [excelPick, setExcelPick] = useState<{ branchKey: string; itemId: string; name: string; path: string } | null>(null);
   const [meta, setMeta] = useState<WorkbookMeta | null>(null);
-  const [sheet, setSheet] = useState('');
-  const [table, setTable] = useState('');
-  const [headerRow, setHeaderRow] = useState(1);
-  const [columns, setColumns] = useState<Partial<Record<ExcelColumnKey, string>>>({});
+  const [headerRow, setHeaderRow] = useState(5);
+  const [vendorCol, setVendorCol] = useState('Q');
+  const [amountCol, setAmountCol] = useState('R');
+  const [idCol, setIdCol] = useState('V');
 
   const say = (kind: 'ok' | 'err', text: string) => { setFlash({ kind, text }); setTimeout(() => setFlash(null), 6000); };
 
@@ -182,47 +170,29 @@ export default function OneDrivePage() {
       const data: WorkbookMeta & { error?: string } = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       setMeta(data);
-      // Re-editing the same workbook: start from what she saved last time.
+      // Prefer the layout found on a month sheet; else what she saved last time; else her usual Q/R row 5.
       const saved = status?.config.excelByBranch?.[branchKey];
-      const same = saved && saved.itemId === item.id;
-      const first = same ? data.worksheets.find((w) => w.name === saved.worksheet) || data.worksheets[0] : data.worksheets[0];
-      setSheet(first?.name || '');
-      setTable(same ? saved.table || '' : '');
-      setHeaderRow(same ? saved.headerRow || 1 : 1);
-      setColumns(same ? saved.columns : autoMap(first?.headers || []));
+      const found = data.worksheets.find((w) => w.monthLayout && MONTHISH.test(w.name))?.monthLayout
+        || data.worksheets.find((w) => w.monthLayout)?.monthLayout;
+      if (found) { setHeaderRow(found.headerRow); setVendorCol(found.vendorColumn); setAmountCol(found.amountColumn); }
+      else if (saved && saved.itemId === item.id && saved.vendorColumn) { setHeaderRow(saved.headerRow || 5); setVendorCol(saved.vendorColumn); setAmountCol(saved.amountColumn || 'R'); }
+      else { setHeaderRow(5); setVendorCol('Q'); setAmountCol('R'); }
+      setIdCol(saved && saved.itemId === item.id && saved.idColumn ? saved.idColumn : 'V');
     } catch (e) { say('err', e instanceof Error ? e.message : 'workbook read failed'); } finally { setBusy(null); }
   }
 
-  /** Pre-fill the mapping from header text (she confirms). */
-  function autoMap(headers: string[]): Partial<Record<ExcelColumnKey, string>> {
-    const out: Partial<Record<ExcelColumnKey, string>> = {};
-    const rules: Array<[ExcelColumnKey, RegExp]> = [
-      ['id', /spaco|^id$|編號|識別/i], ['date', /date|日期/i], ['branch', /branch|分店|店/i], ['amount', /amount|金額|total|hk\$|\$/i],
-      ['vendor', /vendor|supplier|商戶|供應商|shop/i], ['category', /category|類別|分類/i], ['item', /item|項目|description|內容|詳情/i],
-      ['note', /note|remark|備註/i], ['reviewed', /review|核|checked|✓/i], ['link', /link|連結|url|receipt/i],
-    ];
-    headers.forEach((h, i) => {
-      for (const [k, re] of rules) if (!out[k] && h && re.test(h)) { out[k] = colLetter(i); break; }
-    });
-    return out;
-  }
-
-  const sheetMeta = useMemo(() => meta?.worksheets.find((w) => w.name === sheet), [meta, sheet]);
-  const sheetTables = useMemo(() => (meta?.tables || []).filter((t) => t.worksheet === sheet), [meta, sheet]);
-  const headerOptions = useMemo(() => {
-    const hs = sheetMeta?.headers || [];
-    const n = Math.max(hs.length, 26);
-    return Array.from({ length: n }, (_, i) => ({ letter: colLetter(i), label: hs[i] ? `${colLetter(i)} · ${hs[i]}` : colLetter(i) }));
-  }, [sheetMeta]);
+  const monthSheets = useMemo(() => (meta?.worksheets || []).filter((w) => MONTHISH.test(w.name)), [meta]);
+  const detectedOn = useMemo(() => (meta?.worksheets || []).filter((w) => w.monthLayout).map((w) => w.name), [meta]);
 
   async function saveExcel() {
-    if (!excelPick || !sheet) return;
-    if (!columns.id) { say('err', zh ? '請揀「SPACO ID」欄 — 建議喺嗰張 sheet 最右加一欄，可以隱藏' : 'Pick the SPACO ID column — add one at the far right of the sheet (it can be hidden)'); return; }
+    if (!excelPick) return;
+    const L = /^[A-Za-z]{1,3}$/;
+    if (!L.test(vendorCol) || !L.test(amountCol) || !L.test(idCol)) { say('err', zh ? '欄位請填英文字母（例如 Q）' : 'Columns must be letters (e.g. Q)'); return; }
     setBusy('excel');
     try {
       const { branchKey, ...file } = excelPick;
-      await saveConfig({ excelForBranch: { branchKey, excel: { ...file, worksheet: sheet, table: table || undefined, headerRow, columns } } },
-        zh ? '✓ Excel 已連結，呢間舖嘅新單據會寫入嗰張 sheet' : '✓ Excel linked — this branch\'s new receipts will be written to that sheet');
+      await saveConfig({ excelForBranch: { branchKey, excel: { ...file, mode: 'month', headerRow, vendorColumn: vendorCol.toUpperCase(), amountColumn: amountCol.toUpperCase(), idColumn: idCol.toUpperCase() } } },
+        zh ? '✓ Excel 已連結，呢間舖嘅新單據會寫入對應月份嗰張 sheet' : '✓ Excel linked — this branch\'s new receipts go onto the matching month sheet');
       setExcelPick(null); setMeta(null);
     } catch (e) { say('err', e instanceof Error ? e.message : 'save failed'); } finally { setBusy(null); }
   }
@@ -333,7 +303,7 @@ export default function OneDrivePage() {
         <h1 className="text-heading font-display"><span className="text-gradient-pink">{zh ? 'OneDrive 單據連結' : 'OneDrive receipts'}</span></h1>
         <p className="text-ink-soft mt-2 text-sm max-w-2xl">
           {zh
-            ? '單據放入 OneDrive 指定資料夾 → 每 15 分鐘自動讀取 → 入支出管理（未核數）→ 同步寫入你自己嘅 Excel。喺支出管理改數，Excel 同一行會跟住改。'
+            ? '單據放入 OneDrive 分店資料夾 → 每 15 分鐘自動讀取 → 入支出管理（未核數）→ 同步寫入你 Financial Master 對應月份嗰張 sheet。喺支出管理改數或刪除，Excel 同一行會跟住改。'
             : 'Drop receipts into the chosen OneDrive folder → read every 15 min → 支出管理 rows (unreviewed) → mirrored into your own Excel. Edits in 支出管理 update the same Excel row.'}
         </p>
       </div>
@@ -400,18 +370,19 @@ export default function OneDrivePage() {
 
           {browseMode === 'folder' && browserPanel}
 
-          {/* 3. Excel — one workbook per branch */}
+          {/* 3. Excel — one Financial Master workbook per branch */}
           <div className={`glass-card p-6 ${!connected ? 'opacity-50 pointer-events-none' : ''}`}>
-            <h2 className="font-bold mb-1">{zh ? '3 · 同步到每間舖嘅 Excel' : '3 · Mirror into each branch\'s Excel'}</h2>
+            <h2 className="font-bold mb-1">{zh ? '3 · 同步到每間舖嘅 Financial Master Excel' : '3 · Mirror into each branch\'s Financial Master'}</h2>
             <p className="text-xs text-ink-soft mb-3">
               {zh
-                ? '每間舖揀自己嗰個 Excel 檔同 sheet，再對應每欄。嗰張 sheet 一定要有一欄放 SPACO ID（可以隱藏）— 改數或刪除時先搵得返同一行。'
-                : 'Pick each branch\'s own workbook and sheet, then map the columns. The sheet must have a SPACO ID column (can be hidden) so edits and deletes find the same row.'}
+                ? '每間舖揀自己嗰個 Excel 檔就得。唔使揀 sheet：每張單據會按佢嘅月份自動寫入嗰張月份 sheet（例如 NOV-2026）嘅 Expenses 欄 — Vendor 欄寫項目、Amount 欄寫金額，放喺「Total Expenses」上面第一個空行。另外會喺嗰行寫一個 SPACO ID 落一個你冇用嘅欄（預設 V 欄），改數或刪除時先搵得返同一行。'
+                : 'Pick each branch\'s workbook. No sheet to choose: every receipt goes onto its own month sheet (e.g. NOV-2026) in the Expenses block — item under Vendor, amount under Amount, on the first empty line above “Total Expenses”. A SPACO ID is written in an unused column (V by default) so edits and deletes find the same line.'}
             </p>
             <div className="space-y-2">
               {status.branches.map((b) => {
                 const x = cfg?.excelByBranch?.[b.key];
                 const editing = excelPick?.branchKey === b.key;
+                const monthMode = x && (x.mode === 'month' || (!x.mode && !x.worksheet));
                 return (
                   <div key={b.key}>
                     <div className="flex items-center gap-3 text-sm flex-wrap">
@@ -419,7 +390,11 @@ export default function OneDrivePage() {
                       {x ? (
                         <span className="flex-1 min-w-[200px] truncate text-xs">
                           <FileSpreadsheet size={14} className="inline text-emerald-600 mr-1" />{x.name}
-                          <span className="text-ink-soft"> · sheet「{x.worksheet}」{x.table ? ` · ${zh ? '表格' : 'table'} ${x.table}` : ''} · ID={x.columns.id}{x.columns.date ? ` 日期=${x.columns.date}` : ''}{x.columns.item ? ` 項目=${x.columns.item}` : ''}{x.columns.amount ? ` 金額=${x.columns.amount}` : ''}</span>
+                          <span className="text-ink-soft">
+                            {monthMode
+                              ? ` · ${zh ? '按月份 sheet' : 'month sheets'} · Vendor=${x.vendorColumn || 'Q'} Amount=${x.amountColumn || 'R'} ID=${x.idColumn || 'V'}`
+                              : ` · sheet「${x.worksheet}」· ID=${x.columns?.id}`}
+                          </span>
                         </span>
                       ) : <span className="text-ink-soft italic flex-1 min-w-[200px]">{zh ? '未揀' : 'Not chosen'}</span>}
                       <button onClick={() => openBrowser('excel', b.key)} disabled={busy === 'excel' || busy === 'meta'} className={btn}><FileSpreadsheet size={12} /> {x ? (zh ? '改' : 'Change') : (zh ? '揀 Excel 檔' : 'Choose')}</button>
@@ -430,39 +405,30 @@ export default function OneDrivePage() {
                         <div className="flex items-center gap-2"><FileSpreadsheet size={15} className="text-emerald-600" /> <span className="font-medium truncate">{excelPick.path}</span>
                           <button onClick={() => { setExcelPick(null); setMeta(null); }} className="ml-auto text-ink-soft hover:text-rose-600"><X size={14} /></button></div>
                         {busy === 'meta' || !meta ? (
-                          <p className="text-xs text-ink-soft flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> {zh ? '讀取 sheet 同標題…' : 'Reading sheets and headers…'}</p>
+                          <p className="text-xs text-ink-soft flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> {zh ? '讀取 sheet…' : 'Reading sheets…'}</p>
                         ) : (
                           <>
+                            <p className="text-xs">
+                              {monthSheets.length > 0
+                                ? (zh ? `搵到 ${monthSheets.length} 張月份 sheet：` : `${monthSheets.length} month sheets found: `) + monthSheets.map((w) => w.name).join('、')
+                                : (zh ? '⚠ 呢個檔案未見有月份 sheet（例如 NOV-2026）— 單據會等到嗰個月嘅 sheet 開咗先寫入。' : '⚠ No month sheets (e.g. NOV-2026) yet — rows wait until that month\'s sheet exists.')}
+                            </p>
+                            <p className="text-xs">
+                              {detectedOn.length > 0
+                                ? <span className="text-emerald-700 inline-flex items-center gap-1"><Check size={12} /> {zh ? `已自動認出 Vendor / Amount 欄（喺 ${detectedOn.slice(0, 3).join('、')}${detectedOn.length > 3 ? '…' : ''}）` : `Vendor / Amount columns detected (on ${detectedOn.slice(0, 3).join(', ')}${detectedOn.length > 3 ? '…' : ''})`}</span>
+                                : <span className="text-amber-700 inline-flex items-center gap-1"><AlertTriangle size={12} /> {zh ? '未認出「Vendor | Amount」標題，請喺下面填返欄位' : 'Could not find the “Vendor | Amount” header — fill the columns below'}</span>}
+                            </p>
                             <div className="flex flex-wrap gap-3">
-                              <label className="block"><span className="text-xs font-semibold text-ink-soft">{zh ? '寫入邊張 sheet' : 'Sheet'}</span>
-                                <select value={sheet} onChange={(e) => { setSheet(e.target.value); setTable(''); setColumns(autoMap(meta.worksheets.find((w) => w.name === e.target.value)?.headers || [])); }} className={`mt-1 block ${inputCls}`}>
-                                  {meta.worksheets.map((w) => <option key={w.id} value={w.name}>{w.name}</option>)}
-                                </select></label>
-                              {sheetTables.length > 0 && (
-                                <label className="block"><span className="text-xs font-semibold text-ink-soft">{zh ? '格式化表格（建議）' : 'Formatted table (recommended)'}</span>
-                                  <select value={table} onChange={(e) => setTable(e.target.value)} className={`mt-1 block ${inputCls}`}>
-                                    <option value="">{zh ? '（唔用表格，加落最尾一行）' : '(no table — append below last row)'}</option>
-                                    {sheetTables.map((t) => <option key={t.id} value={t.name}>{t.name} · {t.address.split('!').pop()}</option>)}
-                                  </select></label>
-                              )}
-                              <label className="block"><span className="text-xs font-semibold text-ink-soft">{zh ? '標題喺第幾行' : 'Header row'}</span>
-                                <input type="number" min={1} value={headerRow} onChange={(e) => setHeaderRow(Math.max(1, parseInt(e.target.value) || 1))} className={`mt-1 block w-20 ${inputCls}`} /></label>
+                              <label className="block"><span className="text-xs font-semibold text-ink-soft">{zh ? 'Vendor（項目）欄' : 'Vendor column'}</span>
+                                <input value={vendorCol} onChange={(e) => setVendorCol(e.target.value.toUpperCase())} className={`mt-1 block w-16 ${inputCls}`} /></label>
+                              <label className="block"><span className="text-xs font-semibold text-ink-soft">{zh ? 'Amount（金額）欄' : 'Amount column'}</span>
+                                <input value={amountCol} onChange={(e) => setAmountCol(e.target.value.toUpperCase())} className={`mt-1 block w-16 ${inputCls}`} /></label>
+                              <label className="block"><span className="text-xs font-semibold text-ink-soft">{zh ? '標題行' : 'Header row'}</span>
+                                <input type="number" min={1} value={headerRow} onChange={(e) => setHeaderRow(Math.max(1, parseInt(e.target.value) || 1))} className={`mt-1 block w-16 ${inputCls}`} /></label>
+                              <label className="block"><span className="text-xs font-semibold text-ink-soft">{zh ? 'SPACO ID 寫入邊欄（空欄）' : 'SPACO ID column (unused)'}</span>
+                                <input value={idCol} onChange={(e) => setIdCol(e.target.value.toUpperCase())} className={`mt-1 block w-16 ${inputCls}`} /></label>
                             </div>
-                            {sheetMeta && (
-                              <p className="text-xs text-ink-soft">{zh ? '呢張 sheet 第一行：' : 'First row of this sheet: '}{sheetMeta.headers.filter(Boolean).join(' · ') || (zh ? '（空）' : '(empty)')}</p>
-                            )}
-                            <p className="text-xs font-semibold">{zh ? '每個資料寫入邊一欄（揀欄位字母）：' : 'Which column each field goes to:'}</p>
-                            <div className="space-y-1.5">
-                              {COLUMN_FIELDS.map((f) => (
-                                <label key={f.key} className="flex items-center gap-2">
-                                  <span className={`text-xs w-40 shrink-0 ${f.required ? 'font-semibold' : 'text-ink-soft'}`}>{zh ? f.zh : f.en}{f.required ? (zh ? '（必須）' : ' (required)') : ''}</span>
-                                  <select value={columns[f.key] || ''} onChange={(e) => setColumns((c) => ({ ...c, [f.key]: e.target.value || undefined }))} className={`w-full max-w-xs ${inputCls} ${f.required && !columns[f.key] ? 'border-rose-300' : ''}`}>
-                                    <option value="">{zh ? '— 唔寫 —' : '— skip —'}</option>
-                                    {headerOptions.map((o) => <option key={o.letter} value={o.letter}>{o.label}</option>)}
-                                  </select>
-                                </label>
-                              ))}
-                            </div>
+                            <p className="text-xs text-ink-soft">{zh ? '每張月份 sheet 都會再自動對一次標題；上面嘅欄位只係認唔出時先用。' : 'Each month sheet is re-checked for the header; the letters above are only the fallback.'}</p>
                             <button onClick={saveExcel} disabled={busy === 'excel'} className="btn-primary text-xs flex items-center gap-1">
                               {busy === 'excel' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {zh ? '儲存呢間舖嘅 Excel 設定' : 'Save this branch\'s Excel settings'}
                             </button>

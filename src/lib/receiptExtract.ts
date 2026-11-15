@@ -351,3 +351,107 @@ export function tableRowArray(
   }
   return arr;
 }
+
+// ── Month-sheet layout (her Financial Master workbooks) ────────────────
+
+const MONTH_ABBR = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+const MONTH_FULL = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
+
+function normSheetName(name: string): string {
+  return name.toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+/** The sheet for an expense month, e.g. 2026-11 → 「NOV-2026」. Case,
+ *  spaces and dashes do not matter (NOV 2026, Nov-2026, 2026-11 …). */
+export function findMonthSheet(sheetNames: string[], month: string): string | null {
+  const m = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!m) return null;
+  const yyyy = m[1]; const mi = +m[2] - 1;
+  if (mi < 0 || mi > 11) return null;
+  const mm = m[2];
+  const abbr = MONTH_ABBR[mi]; const full = MONTH_FULL[mi];
+  const wanted = new Set([
+    `${abbr}${yyyy}`, `${full}${yyyy}`, `${yyyy}${abbr}`, `${yyyy}${full}`,
+    `${yyyy}${mm}`, `${mm}${yyyy}`, `${abbr}${yyyy.slice(2)}`, `${yyyy.slice(2)}${abbr}`,
+  ]);
+  for (const n of sheetNames) if (wanted.has(normSheetName(n))) return n;
+  return null;
+}
+
+export interface MonthLayout { headerRow: number; vendorColumn: string; amountColumn: string }
+
+/** Find the 「Vendor | Amount」 header pair in a sheet's used range
+ *  (values as Graph returns them; `origin` is the used range's top-left). */
+export function detectMonthLayout(
+  values: unknown[][], origin: { startCol: string; startRow: number } = { startCol: 'A', startRow: 1 },
+): MonthLayout | null {
+  const c0 = columnLetterToIndex(origin.startCol);
+  for (let r = 0; r < values.length; r++) {
+    const row = values[r] || [];
+    for (let c = 0; c < row.length - 1; c++) {
+      const a = String(row[c] ?? '').trim().toLowerCase();
+      const b = String(row[c + 1] ?? '').trim().toLowerCase();
+      if ((a === 'vendor' || a === '商戶' || a === '供應商') && (a !== b) && /^(amount|金額|hk\$)/.test(b)) {
+        return { headerRow: origin.startRow + r, vendorColumn: indexToColumnLetter(c0 + c), amountColumn: indexToColumnLetter(c0 + c + 1) };
+      }
+    }
+  }
+  return null;
+}
+
+export interface MonthWritePlan {
+  /** Line that already carries this SPACO ID (edit / delete target). */
+  foundRow: number | null;
+  /** First free line in the Expenses block, or null when the block is full. */
+  freeRow: number | null;
+  /** Line with 「Total Expenses:」 (insert point when the block is full). */
+  totalRow: number | null;
+}
+
+/** Blank for line-picking purposes: nothing, or a formula that shows 0
+ *  (her Total column is =SUM(...) on every line, so empty lines read 0). */
+const isBlank = (v: unknown) => v === null || v === undefined || v === '' || v === 0;
+
+/** Where a receipt line goes on a month sheet. `values` is the whole used
+ *  range (valuesOnly). A free line is one with nothing in ANY column —
+ *  her merged transaction groups and bookings are left alone. */
+export function planMonthWrite(
+  values: unknown[][], origin: { startCol: string; startRow: number },
+  layout: MonthLayout & { idColumn: string }, id: string, formulas?: unknown[][],
+): MonthWritePlan {
+  const c0 = columnLetterToIndex(origin.startCol);
+  const col = (letter: string) => columnLetterToIndex(letter) - c0;
+  const vi = col(layout.vendorColumn); const ii = col(layout.idColumn);
+  const cell = (r: number, ci: number) => (ci < 0 ? null : (values[r] || [])[ci]);
+  const rowNo = (r: number) => origin.startRow + r;
+  let foundRow: number | null = null; let freeRow: number | null = null; let totalRow: number | null = null;
+  const firstData = layout.headerRow - origin.startRow + 1;
+  for (let r = Math.max(0, firstData); r < values.length; r++) {
+    const vendor = String(cell(r, vi) ?? '').trim();
+    if (/^total\s*expenses?/i.test(vendor)) { totalRow = rowNo(r); break; }
+    if (foundRow === null && String(cell(r, ii) ?? '') === id) foundRow = rowNo(r);
+    if (freeRow === null && (values[r] || []).every(isBlank) && !isReservedRow(formulas, r, rowNo(r))) freeRow = rowNo(r);
+  }
+  return { foundRow, freeRow, totalRow };
+}
+
+/** A blank line just under a booking whose payment group spans into it
+ *  (=SUM(O15:O16) on the line above) belongs to that group — her merged
+ *  cells (Kpay fee across the group) sit there, so it is not free. Only
+ *  short ranges count; block totals like SUM(R6:R39) are ignored. */
+export function isReservedRow(formulas: unknown[][] | undefined, r: number, rowNumber: number): boolean {
+  if (!formulas) return false;
+  for (let k = 1; k <= 4 && r - k >= 0; k++) {
+    for (const f of formulas[r - k] || []) {
+      if (typeof f !== 'string' || !f.startsWith('=')) continue;
+      const re = /\$?[A-Z]{1,3}\$?(\d+):\$?[A-Z]{1,3}\$?(\d+)/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(f))) {
+        const a = +m[1]; const b = +m[2];
+        if (b - a > 6) continue;
+        if (a < rowNumber && rowNumber <= b) return true;
+      }
+    }
+  }
+  return false;
+}

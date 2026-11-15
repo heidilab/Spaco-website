@@ -14,6 +14,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from './firebaseAdmin';
 import type { OneDriveReceiptsConfig } from '@/types';
+import { detectMonthLayout, parseRangeAddress, type MonthLayout } from './receiptExtract';
 
 const AUTHORITY = 'https://login.microsoftonline.com/consumers/oauth2/v2.0';
 export const GRAPH = 'https://graph.microsoft.com/v1.0';
@@ -266,7 +267,11 @@ export async function downloadThumbnailJpeg(itemId: string): Promise<ArrayBuffer
 // ── Excel (workbook API) ───────────────────────────────────────────────
 
 export interface WorkbookMeta {
-  worksheets: Array<{ id: string; name: string; headers: string[]; headerAddress?: string; usedAddress?: string }>;
+  worksheets: Array<{
+    id: string; name: string; headers: string[]; headerAddress?: string; usedAddress?: string;
+    /** Set when the sheet has her 「Vendor | Amount」 expenses block. */
+    monthLayout?: MonthLayout;
+  }>;
   tables: Array<{ id: string; name: string; worksheet: string; address: string; columns: string[] }>;
 }
 
@@ -287,10 +292,13 @@ export async function getWorkbookMeta(itemId: string): Promise<WorkbookMeta> {
       const used: { address: string; values: unknown[][] } = await graphFetch(
         `${ws(itemId, s.name)}/usedRange(valuesOnly=true)?$select=address,values`);
       const first = (used.values && used.values[0]) || [];
+      const origin = parseRangeAddress(used.address);
+      const monthLayout = detectMonthLayout(used.values || [], origin) || undefined;
       worksheets.push({
         id: s.id, name: s.name, usedAddress: used.address,
         headers: first.map((v) => (v === null || v === undefined ? '' : String(v))),
         headerAddress: used.address,
+        ...(monthLayout ? { monthLayout } : {}),
       });
     } catch {
       worksheets.push({ id: s.id, name: s.name, headers: [] });
@@ -326,6 +334,35 @@ export async function tableAddRow(itemId: string, table: string, values: Array<s
 
 export async function tableDeleteRow(itemId: string, table: string, index: number): Promise<void> {
   await graphFetch(`${wb(itemId)}/tables/${encodeURIComponent(table)}/rows/itemAt(index=${index})`, { method: 'DELETE' });
+}
+
+export async function listWorksheetNames(itemId: string): Promise<string[]> {
+  const r: { value: Array<{ name: string }> } = await graphFetch(`${wb(itemId)}/worksheets?$select=name`);
+  return r.value.map((w) => w.name);
+}
+
+/** Whole used range of a sheet, values only (formulas come back as their
+ *  results; empty cells as ''). Her month sheets are ~50 × 22 cells. */
+export async function getUsedRange(itemId: string, worksheet: string): Promise<{ address: string; values: unknown[][]; formulas: unknown[][] }> {
+  const r: { address: string; values: unknown[][]; formulas: unknown[][] } = await graphFetch(
+    `${ws(itemId, worksheet)}/usedRange(valuesOnly=true)?$select=address,values,formulas`);
+  return { address: r.address, values: r.values || [], formulas: r.formulas || [] };
+}
+
+/** Empty the cells (values only — number formats, borders and merges stay). */
+export async function clearRange(itemId: string, worksheet: string, address: string): Promise<void> {
+  await graphFetch(`${ws(itemId, worksheet)}/range(address='${encodeURIComponent(address)}')/clear`, {
+    method: 'POST', body: JSON.stringify({ applyTo: 'Contents' }),
+  });
+}
+
+/** Insert blank cells at `address`, pushing what was there down. Only the
+ *  named columns move, so the booking / transaction columns beside the
+ *  Expenses block are untouched. */
+export async function insertCellsDown(itemId: string, worksheet: string, address: string): Promise<void> {
+  await graphFetch(`${ws(itemId, worksheet)}/range(address='${encodeURIComponent(address)}')/insert`, {
+    method: 'POST', body: JSON.stringify({ shift: 'Down' }),
+  });
 }
 
 export async function readRange(itemId: string, worksheet: string, address: string): Promise<unknown[][]> {

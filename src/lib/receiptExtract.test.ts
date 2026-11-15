@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   attachmentPlan, parseReceiptJson, normalizeDate, buildReceiptExpense, findPossibleDuplicate,
   guessBranchKey, columnLetterToIndex, indexToColumnLetter, parseRangeAddress, excelRowValues, tableRowArray,
-  MAX_DIRECT_IMAGE_BYTES,
+  MAX_DIRECT_IMAGE_BYTES, findMonthSheet, detectMonthLayout, planMonthWrite,
 } from './receiptExtract';
 import type { ExpenseRecord } from '@/types';
 
@@ -112,5 +112,64 @@ describe('Excel plumbing', () => {
     const cells = excelRowValues({ date: 'B', item: 'C', amount: 'E', reviewed: 'F', id: 'H' }, row, { branchName: '銅鑼灣店' });
     expect(cells).toEqual({ B: '2026-11-03', C: '惠康 · 飲品', E: 1234.5, F: '✓', H: 'exp1' });
     expect(tableRowArray(cells, 'B', 7)).toEqual(['2026-11-03', '惠康 · 飲品', null, 1234.5, '✓', null, 'exp1']);
+  });
+});
+
+describe('month-sheet layout (Financial Master)', () => {
+  const names = ['Master', 'Charts', 'DEC-2026', 'NOV-2026', 'OCT-2026', 'BLANK'];
+  it('finds the sheet for a month whatever the spelling', () => {
+    expect(findMonthSheet(names, '2026-11')).toBe('NOV-2026');
+    expect(findMonthSheet(['nov 2026'], '2026-11')).toBe('nov 2026');
+    expect(findMonthSheet(['2026-11'], '2026-11')).toBe('2026-11');
+    expect(findMonthSheet(['November 2026'], '2026-11')).toBe('November 2026');
+    expect(findMonthSheet(names, '2026-03')).toBeNull();
+    expect(findMonthSheet(names, 'garbage')).toBeNull();
+  });
+  it('detects the Vendor | Amount header pair', () => {
+    const values = [
+      [' NOV- 2026 (CWB)'],
+      ['CR', '', '', '', 'DR', '', 'Source'],
+      ['Date', 'Time', 'ppl', 'Total ', 'Vendor', 'Amount', 'Source'],
+    ];
+    expect(detectMonthLayout(values)).toEqual({ headerRow: 3, vendorColumn: 'E', amountColumn: 'F' });
+    expect(detectMonthLayout([['a', 'b']])).toBeNull();
+  });
+  it('plans: existing id line, first fully-empty line, total line', () => {
+    const layout = { headerRow: 5, vendorColumn: 'Q', amountColumn: 'R', idColumn: 'V' };
+    const w = 22; // A..V
+    const row = (fill: Record<number, unknown>) => Array.from({ length: w }, (_, i) => fill[i] ?? '');
+    const Q = 16, R = 17, L = 11, V = 21;
+    const values = [
+      row({}), row({}), row({}), row({}), row({ [Q]: 'Vendor', [R]: 'Amount' }),           // rows 1-5
+      row({ 0: '2026-11-01', [L]: 3750, [Q]: 'Kpay', [R]: 12 }),                              // 6 booking + expense
+      row({ 0: '2026-11-06', [L]: 100 }),                                                 // 7 booking only → not free
+      row({ [L]: 0 }),                                                                    // 8 free (SUM shows 0)
+      row({ [L]: 0, [Q]: 'Taobao', [R]: 65.81, [V]: 'exp_abc' }),                               // 9 ours
+      row({ [Q]: 'Total Expenses: ', [R]: 999 }),                                           // 10
+      row({ [Q]: 'Rent', [R]: 35000 }),                                                     // 11 (after total: ignored)
+    ];
+    expect(planMonthWrite(values, { startCol: 'A', startRow: 1 }, layout, 'exp_abc')).toEqual({ foundRow: 9, freeRow: 8, totalRow: 10 });
+    expect(planMonthWrite(values, { startCol: 'A', startRow: 1 }, layout, 'nope')).toEqual({ foundRow: null, freeRow: 8, totalRow: 10 });
+    // Block full → no free line; total line still found.
+    const full = values.filter((_, i) => i !== 7);
+    expect(planMonthWrite(full, { startCol: 'A', startRow: 1 }, layout, 'nope')).toEqual({ foundRow: null, freeRow: null, totalRow: 9 });
+  });
+  it('a blank line that a payment group above still spans is not free', () => {
+    const layout = { headerRow: 5, vendorColumn: 'Q', amountColumn: 'R', idColumn: 'V' };
+    const w = 22;
+    const row = (fill: Record<number, unknown>) => Array.from({ length: w }, (_, i) => fill[i] ?? '');
+    const [L, O, P, Q, R] = [11, 14, 15, 16, 17];
+    const values = [
+      row({}), row({}), row({}), row({}), row({ [Q]: 'Vendor', [R]: 'Amount' }),
+      row({ 0: '2026-11-26', [L]: 4000, [O]: 3850, [P]: 3850, [Q]: '行家' }),      // 6: group 6-7, R6:R7 merged in Excel
+      row({}),                                                                       // 7: reserved by =SUM(O6:O7)
+      row({ [L]: 0 }),                                                               // 8: free
+      row({ [Q]: 'Total Expenses: ' }),
+    ];
+    const formulas = values.map((v) => v.map(() => ''));
+    formulas[5][P] = '=SUM(O6:O7)'; formulas[5][L] = '=SUM(D6:K6)'; formulas[7][L] = '=SUM(D8:K8)';
+    formulas[8][R] = '=SUM(R6:R39)'; // block total: long range, ignored
+    expect(planMonthWrite(values, { startCol: 'A', startRow: 1 }, layout, 'x', formulas)).toEqual({ foundRow: null, freeRow: 8, totalRow: 9 });
+    expect(planMonthWrite(values, { startCol: 'A', startRow: 1 }, layout, 'x')).toEqual({ foundRow: null, freeRow: 7, totalRow: 9 });
   });
 });

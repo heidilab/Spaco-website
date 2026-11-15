@@ -24,10 +24,22 @@ file once and writes both.
    date (upload day in HKT when unreadable, flagged). An unreadable amount
    still creates a 0 row flagged `no_amount` — Heidi asked for everything
    to appear.
-5. The same row is appended to her Excel (Graph workbook API — table
-   `rows/add` when she mapped a formatted table, else the first empty row
-   below the used range). The SPACO expense id is written to the mapped
-   ID column so later edits/deletes find the row again.
+5. The same row is written into her Financial Master workbook for that
+   branch (Graph workbook API), **month-sheet mode** (2026-11-16): the
+   expense month picks the sheet (2026-11 → `NOV-2026`; case/spacing
+   tolerant), the 「Vendor | Amount」 header pair is re-detected on that
+   sheet, `item` goes under Vendor and `amount` under Amount on the first
+   line that is empty in every column above 「Total Expenses:」. A line a
+   payment group above still spans (`=SUM(O15:O16)` on the line above —
+   where her merged Kpay-fee cells sit) is skipped. When the block is
+   full, two cells are inserted above its last line so the SUM keeps
+   covering it. The SPACO expense id is written in an unused column
+   (default V, header 「SPACO ID」 added once) so edits/deletes find the
+   same line; delete clears the three cells, never shifts anything.
+   Missing month sheet → the row stays `excel.synced:false` and every run
+   retries up to 10 such rows (`resyncPendingExcel`), so creating the
+   sheet later is enough. Legacy `mode:'sheet'` (fixed sheet + column
+   letters, table `rows/add`) is still supported by the sync code.
 6. Staff get a push: 「N 張新單據已自動入帳 … 請核數」 (no amounts — CS
    devices receive pushes too).
 
@@ -57,17 +69,18 @@ Master export without further changes.
   `MS_OAUTH_CLIENT_SECRET`, optional `RECEIPT_MODEL`. `ANTHROPIC_API_KEY`
   and `CRON_SECRET` already exist.
 - 後台 → 財務總覽 → OneDrive 單據連結: sign in → pick one folder per
-  branch → per branch pick its workbook, sheet (table) and
-  columns (ID column required) → 立即同步 to test.
+  branch → per branch pick its Financial Master workbook (no sheet to
+  choose; Vendor/Amount columns auto-detected, ID column default V) →
+  立即同步 to test.
 
 ## Data
 
 | Where | What |
 |---|---|
 | `secrets/onedrive_oauth` | refresh token (rotated on every refresh — personal accounts issue a new one), connected email |
-| `system/onedrive_receipts` | branchFolders (one per branch), excelByBranch (one workbook/sheet/columns per branch; legacy `excel` as fallback), deltaLinks per folder, lastScanAt/Error |
+| `system/onedrive_receipts` | branchFolders (one per branch), excelByBranch (one workbook per branch: mode month + vendor/amount/id columns; legacy sheet mode and `excel` as fallback), deltaLinks per folder, lastScanAt/Error |
 | `receipt_files/{driveItemId}` | per-file status: queued / done / error (≤3 attempts) / skipped / no_branch |
-| `expenses` (`source: 'receipt'`) | the row; `receipt.*`, `reviewed`, `excel.{synced,error}` |
+| `expenses` (`source: 'receipt'`) | the row; `receipt.*`, `reviewed`, `excel.{synced,error,sheet,row}` |
 
 All new collections are server-only (Admin SDK); no Firestore rules change.
 
@@ -77,8 +90,14 @@ All new collections are server-only (Admin SDK); no Firestore rules change.
 - A file whose parent chain does not reach a chosen branch folder is
   marked `no_branch` (cannot normally happen now that delta runs per
   branch folder).
-- Excel sync needs the ID column. Appending below a formatted table via
-  plain range writes does not extend the table — map the table instead.
+- Month mode writes only `item` and `amount` (her block has no date /
+  note columns); the receipt link, category and reviewed tick live in
+  支出管理 only. Vendor cell = 支出管理 項目 text.
+- Graph exposes no merged-cell info; the reserved-line guard relies on
+  her payment-group SUM formulas. A merge without such a formula directly
+  under the last booking could still be hit once the free band is used
+  up from the top (verified against the real CWB workbook: NOV → line 17,
+  OCT → 20, BLANK → 6).
 - A deleted OneDrive file only flags the row (`receipt.fileDeleted`); the
   expense stays.
 - Delta tokens older than Graph keeps (HTTP 410) restart from `latest`;

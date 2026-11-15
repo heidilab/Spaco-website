@@ -492,7 +492,7 @@ export default function ExpensesPage() {
                         {conf === 'low' && <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 inline-flex items-center gap-1"><AlertTriangle size={10} /> {locale === 'zh' ? '辨識信心低' : 'low confidence'}</span>}
                         {flags.map((f) => <span key={f} className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">{FLAG[f] ? FLAG[f][locale] : f}</span>)}
                         {r.receipt?.fileDeleted && <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{locale === 'zh' ? 'OneDrive 檔案已刪' : 'file deleted in OneDrive'}</span>}
-                        {r.excel?.synced === false && <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-700" title={r.excel.error}>{locale === 'zh' ? 'Excel 未同步' : 'Excel not synced'}</span>}
+                        {r.excel?.synced === false && <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-700" title={r.excel.error}>{locale === 'zh' ? `Excel 未同步${r.excel.error ? `：${r.excel.error}` : ''}` : `Excel not synced${r.excel.error ? `: ${r.excel.error}` : ''}`}</span>}
                         {r.receipt?.readerNotes && <span className="text-ink-soft">{r.receipt.readerNotes}</span>}
                       </div>
                     )}

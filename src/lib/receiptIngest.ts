@@ -17,17 +17,18 @@ import { adminDb } from './firebaseAdmin';
 import {
   GraphError, folderDelta, getItem, downloadContent, downloadThumbnailJpeg, displayPath,
   getReceiptsConfig, saveReceiptsConfig, getUsedRangeAddress, getTableRange, tableAddRow, tableDeleteRow,
-  readRange, writeCell, deleteSheetRow, type DriveItem,
+  readRange, writeCell, deleteSheetRow, listWorksheetNames, getUsedRange, clearRange, insertCellsDown, type DriveItem,
 } from './msgraph';
 import {
   attachmentPlan, parseReceiptJson, buildReceiptExpense, findPossibleDuplicate, excelRowValues, tableRowArray,
-  parseRangeAddress, receiptPrompt, RECEIPT_SYSTEM_PROMPT, type ParsedReceipt, type BranchOption,
+  parseRangeAddress, receiptPrompt, RECEIPT_SYSTEM_PROMPT, findMonthSheet, detectMonthLayout, planMonthWrite,
+  type ParsedReceipt, type BranchOption,
 } from './receiptExtract';
 import { callClaudeWithAttachment } from './llm';
 import { financeBranches } from './finance';
 import { loadAllVenuesServer } from './venueRegistryServer';
 import { sendStaffPush } from './webPushServer';
-import type { ExpenseRecord, OneDriveReceiptsConfig } from '@/types';
+import type { ExpenseRecord, OneDriveExcelTarget, OneDriveReceiptsConfig } from '@/types';
 
 export type ReceiptFileStatus = 'queued' | 'done' | 'error' | 'skipped' | 'no_branch';
 
@@ -259,7 +260,10 @@ export async function syncExpenseToExcel(
 ): Promise<ExcelState | null> {
   const config = cfg || await getReceiptsConfig();
   const x = config.excelByBranch?.[row.branchKey] || config.excel;
-  if (!x || !x.itemId || !x.worksheet || !x.columns.id) return null;
+  if (!x || !x.itemId) return null;
+  const mode = x.mode || (x.vendorColumn ? 'month' : 'sheet');
+  if (mode === 'month') return syncMonthSheet(row, op, x);
+  if (!x.worksheet || !x.columns?.id) return null;
   try {
     const idCol = x.columns.id.toUpperCase();
     const headerRow = x.headerRow || 1;
@@ -300,6 +304,91 @@ export async function syncExpenseToExcel(
   } catch (e) {
     return { synced: false, error: (e instanceof Error ? e.message : String(e)).slice(0, 400), workbookId: x.itemId };
   }
+}
+
+/** Month-sheet mode — her Financial Master layout. The expense month
+ *  picks the sheet (2026-11 → NOV-2026); the line goes in the Expenses
+ *  block: `item` under Vendor, `amount` under Amount, the SPACO ID in the
+ *  ID column (V by default, outside her layout) so the same line is found
+ *  again on edit / delete. Nothing else on the sheet is touched: a free
+ *  line is one that is empty in every column, and when the block is full
+ *  two cells are inserted above its last line so 「Total Expenses」 keeps
+ *  summing. Never throws. */
+async function syncMonthSheet(row: ExpenseRecord, op: 'upsert' | 'delete', x: OneDriveExcelTarget): Promise<ExcelState> {
+  const fail = (error: string, extra: Partial<ExcelState> = {}): ExcelState =>
+    ({ synced: false, error: error.slice(0, 400), workbookId: x.itemId, ...extra });
+  try {
+    const idColumn = (x.idColumn || 'V').toUpperCase();
+    const names = await listWorksheetNames(x.itemId);
+    const sheet = findMonthSheet(names, row.month);
+    if (!sheet) return fail(`Excel 入面搵唔到 ${row.month} 嘅月份 sheet（例如 ${monthSheetLabel(row.month)}）— 開咗嗰張 sheet 之後會自動補寫`);
+    const used = await getUsedRange(x.itemId, sheet);
+    const origin = parseRangeAddress(used.address);
+    const detected = detectMonthLayout(used.values, origin);
+    const layout = detected || (x.vendorColumn && x.amountColumn
+      ? { headerRow: x.headerRow || 5, vendorColumn: x.vendorColumn.toUpperCase(), amountColumn: x.amountColumn.toUpperCase() }
+      : null);
+    if (!layout) return fail(`「${sheet}」sheet 搵唔到 Vendor / Amount 標題`);
+    const plan = planMonthWrite(used.values, origin, { ...layout, idColumn }, row.id, used.formulas);
+    const V = layout.vendorColumn; const A = layout.amountColumn;
+    if (op === 'delete') {
+      if (plan.foundRow !== null) {
+        for (const col of [V, A, idColumn]) await clearRange(x.itemId, sheet, `${col}${plan.foundRow}:${col}${plan.foundRow}`);
+      }
+      return { synced: true, syncedAt: FieldValue.serverTimestamp(), workbookId: x.itemId, sheet };
+    }
+    let target = plan.foundRow ?? plan.freeRow;
+    if (target === null) {
+      if (plan.totalRow !== null) {
+        // Block full: open a line above its last entry (inside the SUM range).
+        target = Math.max(layout.headerRow + 1, plan.totalRow - 1);
+        await insertCellsDown(x.itemId, sheet, `${V}${target}:${A}${target}`);
+        if (idColumn !== V && idColumn !== A) await insertCellsDown(x.itemId, sheet, `${idColumn}${target}:${idColumn}${target}`);
+      } else {
+        target = origin.endRow + 1;
+      }
+    }
+    // Label the ID column once per sheet so she knows what it is.
+    const hdr = (used.values[layout.headerRow - origin.startRow] || [])[columnIdx(idColumn) - columnIdx(origin.startCol)];
+    if (plan.foundRow === null && (hdr === undefined || hdr === null || hdr === '')) {
+      await writeCell(x.itemId, sheet, `${idColumn}${layout.headerRow}`, 'SPACO ID').catch(() => {});
+    }
+    await writeCell(x.itemId, sheet, `${V}${target}`, row.item);
+    await writeCell(x.itemId, sheet, `${A}${target}`, row.amount);
+    if (plan.foundRow === null) await writeCell(x.itemId, sheet, `${idColumn}${target}`, row.id);
+    return { synced: true, syncedAt: FieldValue.serverTimestamp(), workbookId: x.itemId, sheet, row: target };
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : String(e));
+  }
+}
+
+function columnIdx(letter: string): number {
+  let n = 0;
+  for (const ch of letter.toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+}
+
+function monthSheetLabel(month: string): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!m) return month;
+  const abbr = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'][+m[2] - 1] || m[2];
+  return `${abbr}-${m[1]}`;
+}
+
+/** Rows whose Excel write failed earlier (month sheet not created yet,
+ *  Graph hiccup) get another go on every run. */
+export async function resyncPendingExcel(cfg: OneDriveReceiptsConfig, max = 10): Promise<{ retried: number; fixed: number }> {
+  const snap = await adminDb.collection('expenses')
+    .where('source', '==', 'receipt').where('excel.synced', '==', false).limit(max).get();
+  let fixed = 0;
+  for (const d of snap.docs) {
+    const row = { id: d.id, ...d.data() } as ExpenseRecord;
+    const excel = await syncExpenseToExcel(row, 'upsert', cfg);
+    if (!excel) continue;
+    await d.ref.set({ excel }, { merge: true });
+    if (excel.synced) fixed++;
+  }
+  return { retried: snap.size, fixed };
 }
 
 // ── Edits from 支出管理 ─────────────────────────────────────────────────
@@ -354,6 +443,7 @@ export async function deleteReceiptExpense(id: string): Promise<void> {
 export interface IngestSummary {
   scan?: ScanResult;
   process?: ProcessResult;
+  excelRetry?: { retried: number; fixed: number };
   skipped?: string;
   error?: string;
 }
@@ -366,6 +456,7 @@ export async function runReceiptIngest(opts: { maxFiles?: number } = {}): Promis
     summary.scan = await scanReceiptsFolder(cfg);
     const fresh = await getReceiptsConfig();
     summary.process = await processQueuedReceipts(opts.maxFiles ?? 4, fresh);
+    summary.excelRetry = await resyncPendingExcel(fresh).catch(() => ({ retried: 0, fixed: 0 }));
     const n = summary.process.created.length;
     if (n > 0) {
       const attention = summary.process.created.filter((c) => c.flags.length > 0).length;

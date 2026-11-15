@@ -47,7 +47,21 @@ export async function POST(req: NextRequest) {
       delete next[body.clearExcelForBranch];
       patch.excelByBranch = next;
     }
+    const letter = (v: unknown): string | null => (typeof v === 'string' && /^[A-Za-z]{1,3}$/.test(v.trim()) ? v.trim().toUpperCase() : null);
     const parseTarget = (x: Partial<OneDriveExcelTarget>): OneDriveExcelTarget | string => {
+      if (x.mode === 'month' || (!x.mode && !x.worksheet)) {
+        // Her Financial Master layout: the month picks the sheet.
+        const vendorColumn = letter(x.vendorColumn) || 'Q';
+        const amountColumn = letter(x.amountColumn) || 'R';
+        const idColumn = letter(x.idColumn) || 'V';
+        if (vendorColumn === amountColumn) return 'vendor and amount columns must differ';
+        if (idColumn === vendorColumn || idColumn === amountColumn) return 'SPACO ID column must be a column outside Vendor / Amount';
+        return {
+          itemId: String(x.itemId), name: String(x.name || ''), path: String(x.path || ''),
+          mode: 'month', vendorColumn, amountColumn, idColumn,
+          headerRow: Number(x.headerRow) >= 1 ? Math.floor(Number(x.headerRow)) : 5,
+        };
+      }
       const columns: Partial<Record<ExcelColumnKey, string>> = {};
       for (const k of COLUMN_KEYS) {
         const v = x.columns?.[k];
@@ -56,7 +70,7 @@ export async function POST(req: NextRequest) {
       if (!columns.id) return 'id column required';
       if (!x.worksheet) return 'worksheet required';
       return {
-        itemId: String(x.itemId), name: String(x.name || ''), path: String(x.path || ''),
+        itemId: String(x.itemId), name: String(x.name || ''), path: String(x.path || ''), mode: 'sheet',
         worksheet: String(x.worksheet), ...(x.table ? { table: String(x.table) } : {}),
         headerRow: Number(x.headerRow) >= 1 ? Math.floor(Number(x.headerRow)) : 1, columns,
       };

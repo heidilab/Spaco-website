@@ -982,6 +982,10 @@ export interface ExpenseExcelSync {
   error?: string;
   /** Workbook driveItem id the row was written into. */
   workbookId?: string;
+  /** Month-mode: which sheet / line the row sits on (for display only —
+   *  the line is always re-found by SPACO ID before writing). */
+  sheet?: string;
+  row?: number;
 }
 
 /** One expense row in a branch-month ledger (支出管理). Auto items
@@ -1020,17 +1024,35 @@ export interface ExpenseRecord {
  *  required — it is how an edited/deleted row is found again. */
 export type ExcelColumnKey = 'id' | 'date' | 'branch' | 'item' | 'vendor' | 'amount' | 'category' | 'note' | 'reviewed' | 'link';
 
-/** One workbook + sheet + column letters to mirror receipt rows into. */
+/** One workbook to mirror receipt rows into.
+ *
+ *  `mode: 'month'` (her Financial Master layout, the default): the row goes
+ *  into the sheet named after the expense month (NOV-2026 …), in the
+ *  Expenses block — Vendor column + Amount column, first empty line above
+ *  「Total Expenses:」. The SPACO ID is written in `idColumn` on the same
+ *  line so an edit or delete finds the line again. No sheet is chosen by
+ *  hand: the month decides.
+ *
+ *  `mode: 'sheet'` (legacy): one fixed worksheet with column letters. */
 export interface OneDriveExcelTarget {
   itemId: string;
   name: string;
   path: string;
-  worksheet: string;
+  mode?: 'month' | 'sheet';
+  // ── month mode ──
+  /** Column letter that holds the vendor / item name (her sheets: Q). */
+  vendorColumn?: string;
+  /** Column letter that holds the amount (her sheets: R). */
+  amountColumn?: string;
+  /** Column letter for the SPACO ID, outside her layout (default V). */
+  idColumn?: string;
+  // ── sheet mode (legacy) ──
+  worksheet?: string;
   /** Excel Table name when the rows live in a formatted table (preferred). */
   table?: string;
-  /** 1-based header row (plain-sheet mode). */
+  /** 1-based header row: the row with 「Vendor / Amount」 in month mode. */
   headerRow: number;
-  columns: Partial<Record<ExcelColumnKey, string>>;
+  columns?: Partial<Record<ExcelColumnKey, string>>;
 }
 
 export interface OneDriveFolderRef {
