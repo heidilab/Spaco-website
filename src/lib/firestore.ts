@@ -21,7 +21,7 @@ import { venuesSharingSpace, getVenueById } from './venues';
 import { loadAllVenues, conflictIdsFor } from './venueRegistry';
 import { calculatePricing, calculateDeposit, freeDrinksVenues } from './pricing';
 import { getPeakDay } from './peakDays';
-import { adminDiscountAmount } from '@/lib/bookingMoney';
+import { adminDiscountAmount, computeBalanceDue } from '@/lib/bookingMoney';
 import { resolvePeakRule } from './peakDayRules';
 import { calcPromoDiscount } from './promoCodes';
 import { getHoliday } from './hkHolidays';
@@ -664,26 +664,11 @@ export async function updateBookingDateTime(
         Math.max(0, baseSubtotal - promoDiscount - pointsDiscount - adminDisc) + stickyDeposit;
       const effectiveDeposit = calculateDeposit(effectiveGrandTotal, next.date);
 
-      // How much the customer has already paid against this booking.
-      // Confirmed/completed bookings: grandTotal − balanceDue (the old
-      // pricing already reflects past payments via the followup route's
-      // pricing.* mutations). Otherwise sum the logged payments[].
       // payments[] is the SINGLE SOURCE OF TRUTH for what the customer
-      // has paid. Every Stripe webhook charge, every offline receipt
-      // approval, every admin top-up writes an entry here, and the
-      // 2026-05 batch-freeze migrated all legacy synth rows into
-      // permanent entries — so for any booking in the system, the sum
-      // of payments[] reflects reality.
-      //
-      // The previous formula derived paidSoFar from `oldGrandTotal −
-      // oldBalanceDue`, which compounded past errors: a wrong subtotal
-      // save left a wrong balanceDue, and that pair got baked into the
-      // next save's paidSoFar (the $4 phantom on #hlJJh9K5). Switched
-      // to loggedSum so that pricing edits no longer move "what was
-      // paid" — that number lives in payments[] and only changes when
-      // a new payment is recorded (via Stripe webhook or the
-      // 「已於線下付款」 admin action).
-      const paidSoFar = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+      // has paid (computeBalanceDue sums it via paidBase). Deriving it
+      // from `oldGrandTotal − oldBalanceDue` compounded past errors (the
+      // $4 phantom on #hlJJh9K5), so pricing edits never move "what was
+      // paid" — only a recorded payment does.
 
       patch['pricing.baseCharge'] = newBaseCharge;
       patch['pricing.addOnTotal'] = newAddOnTotal;
@@ -695,7 +680,19 @@ export async function updateBookingDateTime(
       // balanceDue = what the customer still owes after past payments.
       // Clamp to 0 when customer overpaid (admin handles any refund out
       // of band — we don't auto-issue refunds from a booking edit).
-      const newBalanceDue = Math.max(0, effectiveGrandTotal - paidSoFar);
+      // Canonical: after 按金結算 the deposit is no longer collectable, so
+      // computeBalanceDue switches to the settlement-derived figure. The
+      // inline `effectiveGrandTotal − paid` re-added the settled
+      // deposit and left #iMp5qQYR owing $899 after a post-settlement
+      // save (pre-settlement the two formulas agree exactly).
+      const newBalanceDue = computeBalanceDue({
+        pricing: { baseCharge: newBaseCharge, addOnTotal: newAddOnTotal, securityDeposit: stickyDeposit },
+        promoDiscount,
+        pointsDiscount,
+        adminDiscount: booking.adminDiscount,
+        payments: booking.payments,
+        depositRefund: booking.depositRefund,
+      });
       patch.balanceDue = newBalanceDue;
       // Adding a charge (pax / add-on) to a booking that was already
       // settled ('completed') creates a fresh balance the customer must

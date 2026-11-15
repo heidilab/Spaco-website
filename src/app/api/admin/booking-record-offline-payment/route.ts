@@ -77,12 +77,13 @@ export async function POST(req: NextRequest) {
     // Refunds are money OUT — flip the sign once here and every formula
     // below nets correctly.
     const signedTotal = body.isRefund ? -Math.abs(total) : total;
-    // After deposit settlement the debt lives in balanceDue (the bill
-    // itself is already covered), so grandTotal − paid is ≤ 0 and the old
-    // formula cleared ANY partial payment to zero — which would also lift
-    // the booking block (Heidi 2026-10-18). Reduce the actual debt instead.
-    const newBalanceDue = booking.depositRefund && !body.isRefund
-      ? Math.max(0, Math.round((amountOwed(booking) - signedTotal) * 100) / 100)
+    // After deposit settlement the balance is settlement-derived (see
+    // computeBalanceDue): re-derive it from payments[] as they will be
+    // after this entry. Covers partial payments toward an overflow
+    // (Heidi 2026-10-18) AND refund entries, which the pre-settlement
+    // formula below would otherwise re-add the settled deposit to.
+    const newBalanceDue = booking.depositRefund
+      ? amountOwed({ ...booking, payments: [...(booking.payments || []), { amount: signedTotal }] })
       : Math.max(0, grandTotal - loggedSum - signedTotal);
 
     // Status advancement (mirrors booking-edit-followup):

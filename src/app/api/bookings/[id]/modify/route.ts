@@ -367,7 +367,9 @@ export async function POST(
     },
     promoDiscount,
     pointsDiscount,
+    adminDiscount: booking.adminDiscount,
     payments: booking.payments,
+    depositRefund: booking.depositRefund,
   };
   const grandTotal = computeGrandTotal(repriced);
   const effectiveDeposit = calculateDeposit(grandTotal, booking.date);

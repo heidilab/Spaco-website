@@ -219,8 +219,43 @@ export function paidGateway(booking: MoneyBooking): number {
   return Math.round((paidBase(booking) + surchargePaid(booking)) * 100) / 100;
 }
 
-/** Canonical balance still owed on the bill: grand total − credited payments. */
+// ── Deposit settlement state ───────────────────────────────────────────
+
+/** True once admin has settled the deposit (按金結算): `depositRefund` is
+ *  the settlement record (refund amount + deductions). */
+export function isDepositSettled(booking: MoneyBooking): boolean {
+  return !!booking.depositRefund;
+}
+
+/** Sum of the deductions recorded at settlement — 0 when unsettled or
+ *  none. Negative / malformed entries are ignored, as in the settle UI. */
+export function settledDeductionsTotal(booking: MoneyBooking): number {
+  const record = booking.depositRefund as
+    { deductions?: Array<{ amount?: number }> } | null | undefined;
+  if (!record || !Array.isArray(record.deductions)) return 0;
+  return record.deductions.reduce((s, d) => s + Math.max(0, d?.amount || 0), 0);
+}
+
+/**
+ * Canonical balance still owed on the bill.
+ *
+ * BEFORE settlement: grand total (consumption + refundable deposit) −
+ * credited payments. The deposit is still something to collect.
+ *
+ * AFTER settlement the deposit has been consumed and/or refunded, so it
+ * is no longer collectable; what remains is settlement-derived —
+ * deductions − (paid − net consumption), i.e. `depositSettlementAmounts().owed`.
+ *
+ * #iMp5qQYR (2026-11-15): customer paid $2,740 on a $3,639 bill (deposit
+ * $1,000); admin settled with no deductions and refunded the $101 credit,
+ * yet the pre-settlement formula kept reporting $899 owed — the deposit
+ * shortfall the settlement had already absorbed. That phantom debt also
+ * blocked the customer from booking again (settlementDebt).
+ */
 export function computeBalanceDue(booking: MoneyBooking): number {
+  if (isDepositSettled(booking)) {
+    return depositSettlementAmounts(booking, settledDeductionsTotal(booking)).owed;
+  }
   return Math.max(0, computeGrandTotal(booking) - paidBase(booking));
 }
 
@@ -245,9 +280,18 @@ export function computeBalanceDue(booking: MoneyBooking): number {
  *      computeBalanceDue is 0 and keying on it alone hid the card —
  *      #LSi5Z31A ($650 owed, nowhere to record it).
  *
- * Taking the max covers both. Do not narrow this to one term again.
+ * Taking the max covers both BEFORE settlement. Do not narrow that again.
+ *
+ * AFTER settlement computeBalanceDue is itself settlement-derived: it
+ * already carries the overflow (deductions beyond the credit) plus any
+ * later top-up or payment, and every post-settlement write path stores
+ * `balanceDue` from it. A stored value that disagrees is stale —
+ * #iMp5qQYR carried balanceDue 899 left behind by a pre-fix pricing save
+ * — so it must not win, or the customer stays blocked and gets debt
+ * reminder emails for money nobody owes.
  */
 export function amountOwed(booking: MoneyBooking): number {
+  if (isDepositSettled(booking)) return computeBalanceDue(booking);
   return Math.max(computeBalanceDue(booking), booking.balanceDue ?? 0);
 }
 
@@ -262,11 +306,7 @@ export function hasOutstanding(booking: MoneyBooking): boolean {
  * charge differently in that case.
  */
 export function isSettlementOverflow(booking: MoneyBooking): boolean {
-  return (
-    computeBalanceDue(booking) <= 0
-    && (booking.balanceDue ?? 0) > 0
-    && !!booking.depositRefund
-  );
+  return isDepositSettled(booking) && amountOwed(booking) > 0;
 }
 
 // ── Broker / platform commission (Finance Phase 2) ─────────────────────
