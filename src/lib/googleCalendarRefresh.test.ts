@@ -125,6 +125,14 @@ describe('decideEventRefresh', () => {
   });
 });
 
+describe('calendar title venue label', () => {
+  it('spells the Sheung Wan full floor as SW(A+B) (Heidi 2026-11-15)', async () => {
+    const title = await buildEventSummary(booking({ venueId: 'sw-ab' }), 'Alice');
+    expect(title.startsWith('SW(A+B) · ')).toBe(true);
+    expect(title).not.toContain('Full Floor');
+  });
+});
+
 describe('refreshStaleBookingEvents', () => {
   it('updates Google when the stored text differs from the rebuilt text', async () => {
     const b = booking();

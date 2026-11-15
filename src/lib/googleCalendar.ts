@@ -481,9 +481,18 @@ function legacyRoomTag(venueId: string): string {
     : '';
 }
 
+/** Titles Heidi wants spelled a fixed way on the staff calendars,
+ *  whatever 分店管理 holds (2026-11-15: the Sheung Wan full floor reads
+ *  "SW(A+B)", not "[Full Floor (A+B)] SW"). */
+const CALENDAR_VENUE_LABEL_OVERRIDES: Record<string, string> = {
+  'sw-ab': 'SW(A+B)',
+};
+
 /** `[Room B] HART`-style label for an event title: the registry venue's
  *  room label + branch tag; built-in rooms keep their old tags. */
 async function calendarVenueLabel(venueId: string): Promise<string> {
+  const override = CALENDAR_VENUE_LABEL_OVERRIDES[venueId];
+  if (override) return override;
   const venue = await resolveVenueServer(venueId);
   if (!venue) return venueId;
   if (venue.roomLabel?.en || venue.roomLabel?.zh) return venueStaffLabel(venue, venueId, 'en');
