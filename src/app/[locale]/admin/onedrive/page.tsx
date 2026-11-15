@@ -1,8 +1,9 @@
 'use client';
 
 // OneDrive 單據連結 (2026-11) — Heidi connects her personal OneDrive once,
-// picks the receipts folder (and which sub-folder is which branch) and the
-// Excel workbook + columns the rows should mirror into. From then on
+// picks one folder per branch (they live in different places in her
+// drive; month sub-folders inside are read automatically) and the Excel
+// workbook + columns the rows should mirror into. From then on
 // /api/cron/onedrive-receipts reads every new file into 支出管理.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -10,7 +11,6 @@ import { useLocale } from 'next-intl';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { adminApiFetch } from '@/lib/adminApiFetch';
-import { guessBranchKey } from '@/lib/receiptExtract';
 import type { ExcelColumnKey, OneDriveReceiptsConfig } from '@/types';
 import {
   Cloud, Link2, Unlink, Loader2, Folder, FolderOpen, FileSpreadsheet, ChevronRight, Check, RefreshCw,
@@ -27,7 +27,7 @@ interface Status {
   connection: { connected: boolean; email?: string; name?: string; connectedAt?: string };
   branches: Branch[];
   recent: RecentFile[];
-  config: Omit<OneDriveReceiptsConfig, 'deltaLink'> & { lastScanAt?: string | null; hasDelta?: boolean };
+  config: Omit<OneDriveReceiptsConfig, 'deltaLinks'> & { lastScanAt?: string | null };
 }
 interface BrowseItem { id: string; name: string; isFolder: boolean; isExcel: boolean; childCount: number; size: number; path: string }
 interface BrowseState { item: { id: string; name: string; path: string; parentId: string | null }; children: BrowseItem[] }
@@ -78,9 +78,8 @@ export default function OneDrivePage() {
   const [browseBusy, setBrowseBusy] = useState(false);
   const [crumbs, setCrumbs] = useState<Array<{ id: string; name: string }>>([{ id: 'root', name: 'OneDrive' }]);
 
-  // Branch mapping draft
-  const [subfolders, setSubfolders] = useState<BrowseItem[] | null>(null);
-  const [branchMap, setBranchMap] = useState<Record<string, string>>({});
+  // Which branch the folder browser is choosing for.
+  const [folderForBranch, setFolderForBranch] = useState<string | null>(null);
 
   // Excel mapping draft
   const [excelPick, setExcelPick] = useState<{ itemId: string; name: string; path: string } | null>(null);
@@ -114,30 +113,9 @@ export default function OneDrivePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // When the config has a receipts folder, load its sub-folders for branch mapping.
-  const receiptsFolder = status?.config.receiptsFolder;
-  useEffect(() => {
-    if (!receiptsFolder || !status?.connection.connected) { setSubfolders(null); return; }
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await adminApiFetch(`/api/onedrive/browse?itemId=${encodeURIComponent(receiptsFolder.id)}`);
-        const data: BrowseState = await res.json();
-        if (cancelled || !res.ok) return;
-        const folders = data.children.filter((c) => c.isFolder);
-        setSubfolders(folders);
-        const existing = new Map((status.config.branchFolders || []).map((b) => [b.id, b.branchKey]));
-        const draft: Record<string, string> = {};
-        for (const f of folders) draft[f.id] = existing.get(f.id) || guessBranchKey(f.name, status.branches) || '';
-        setBranchMap(draft);
-      } catch { /* shown as empty */ }
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [receiptsFolder?.id, status?.connection.connected]);
-
-  async function openBrowser(mode: 'folder' | 'excel') {
+  async function openBrowser(mode: 'folder' | 'excel', branchKey?: string) {
     setBrowseMode(mode);
+    setFolderForBranch(mode === 'folder' ? branchKey || null : null);
     setCrumbs([{ id: 'root', name: 'OneDrive' }]);
     await goTo('root');
   }
@@ -170,22 +148,25 @@ export default function OneDrivePage() {
     await load();
   }
 
+  /** Assign the folder currently open in the browser to `folderForBranch`. */
   async function chooseCurrentFolder() {
-    if (!browse || browse.item.id === 'root') return;
+    if (!browse || browse.item.id === 'root' || !folderForBranch || !status) return;
     setBusy('folder');
     try {
-      await saveConfig({ receiptsFolder: { id: browse.item.id, name: browse.item.name, path: browse.item.path } },
-        zh ? '✓ 已設定單據資料夾，由而家開始上載嘅新檔案會自動入帳' : '✓ Receipts folder set — files uploaded from now on are read automatically');
-      setBrowseMode(null);
+      const others = (status.config.branchFolders || []).filter((b) => b.branchKey !== folderForBranch);
+      const branchFolders = [...others, { id: browse.item.id, name: browse.item.name, path: browse.item.path, branchKey: folderForBranch }];
+      await saveConfig({ branchFolders },
+        zh ? '✓ 已設定分店資料夾，由而家開始上載嘅新檔案會自動入帳（月份子資料夾一樣會讀）' : '✓ Branch folder set — files uploaded from now on are read automatically (month sub-folders included)');
+      setBrowseMode(null); setFolderForBranch(null);
     } catch (e) { say('err', e instanceof Error ? e.message : 'save failed'); } finally { setBusy(null); }
   }
 
-  async function saveBranchMap() {
-    if (!subfolders) return;
-    setBusy('branches');
+  async function removeBranchFolder(branchKey: string) {
+    if (!status) return;
+    if (!confirm(zh ? '取消呢間舖嘅資料夾？已入帳嘅支出唔會刪。' : 'Remove this branch folder? Existing expenses stay.')) return;
+    setBusy('folder');
     try {
-      const branchFolders = subfolders.filter((f) => branchMap[f.id]).map((f) => ({ id: f.id, name: f.name, path: f.path, branchKey: branchMap[f.id] }));
-      await saveConfig({ branchFolders }, zh ? '✓ 分店對應已儲存' : '✓ Branch mapping saved');
+      await saveConfig({ branchFolders: (status.config.branchFolders || []).filter((b) => b.branchKey !== branchKey) }, zh ? '已取消' : 'Removed');
     } catch (e) { say('err', e instanceof Error ? e.message : 'save failed'); } finally { setBusy(null); }
   }
 
@@ -339,43 +320,29 @@ export default function OneDrivePage() {
             )}
           </div>
 
-          {/* 2. Receipts folder + branch mapping */}
+          {/* 2. One folder per branch */}
           <div className={`glass-card p-6 ${!connected ? 'opacity-50 pointer-events-none' : ''}`}>
-            <h2 className="font-bold mb-1">{zh ? '2 · 單據資料夾' : '2 · Receipts folder'}</h2>
+            <h2 className="font-bold mb-1">{zh ? '2 · 每間舖嘅單據資料夾' : '2 · Receipts folder per branch'}</h2>
             <p className="text-xs text-ink-soft mb-3">
-              {zh ? '揀一個總資料夾；入面每間舖一個子資料夾。設定後只會讀由而家開始新上載嘅檔案，舊單據唔會重複入帳。' : 'Pick the top folder; one sub-folder per branch. Only files uploaded from now on are read — old receipts are not re-entered.'}
+              {zh
+                ? '每間舖揀自己嗰個資料夾（可以喺 OneDrive 唔同位置）。資料夾入面再分年份／月份子資料夾都冇問題，全部會自動讀。設定後只會讀由而家開始新上載嘅檔案，舊單據唔會重複入帳。'
+                : 'Pick each branch\'s own folder (they can live anywhere in OneDrive). Year/month sub-folders inside are read automatically. Only files uploaded from now on are read — old receipts are not re-entered.'}
             </p>
-            <div className="flex flex-wrap items-center gap-3 text-sm mb-3">
-              {cfg?.receiptsFolder ? (
-                <span className="inline-flex items-center gap-1.5"><FolderOpen size={15} className="text-pink" /> <span className="font-medium">{cfg.receiptsFolder.path || cfg.receiptsFolder.name}</span></span>
-              ) : <span className="text-ink-soft italic">{zh ? '未揀' : 'Not chosen'}</span>}
-              <button onClick={() => openBrowser('folder')} className={`${btn} ml-auto`}><Folder size={12} /> {cfg?.receiptsFolder ? (zh ? '改資料夾' : 'Change folder') : (zh ? '揀資料夾' : 'Choose folder')}</button>
-            </div>
-            {cfg?.receiptsFolder && (
-              <div className="border-t border-charcoal/10 pt-3">
-                <h3 className="text-sm font-semibold mb-2">{zh ? '子資料夾 → 分店' : 'Sub-folders → branch'}</h3>
-                {subfolders === null ? (
-                  <p className="text-xs text-ink-soft flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> …</p>
-                ) : subfolders.length === 0 ? (
-                  <p className="text-xs text-amber-700">{zh ? '呢個資料夾未有子資料夾。請喺 OneDrive 每間舖開一個，再返嚟對應。' : 'No sub-folders yet — create one per branch in OneDrive, then map them here.'}</p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {subfolders.map((f) => (
-                      <div key={f.id} className="flex items-center gap-2 text-sm">
-                        <Folder size={14} className="text-ink-soft" /><span className="flex-1 truncate">{f.name}</span>
-                        <select value={branchMap[f.id] || ''} onChange={(e) => setBranchMap((m) => ({ ...m, [f.id]: e.target.value }))} className={inputCls}>
-                          <option value="">{zh ? '（唔讀）' : '(ignore)'}</option>
-                          {status.branches.map((b) => <option key={b.key} value={b.key}>{zh ? b.zh : b.en}</option>)}
-                        </select>
-                      </div>
-                    ))}
-                    <button onClick={saveBranchMap} disabled={busy === 'branches'} className="btn-primary text-xs mt-2 flex items-center gap-1">
-                      {busy === 'branches' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {zh ? '儲存分店對應' : 'Save mapping'}
-                    </button>
+            <div className="space-y-2">
+              {status.branches.map((b) => {
+                const chosen = (cfg?.branchFolders || []).find((f) => f.branchKey === b.key);
+                return (
+                  <div key={b.key} className="flex items-center gap-3 text-sm flex-wrap">
+                    <span className="w-36 shrink-0 font-medium">{zh ? b.zh : b.en}</span>
+                    {chosen ? (
+                      <span className="inline-flex items-center gap-1.5 flex-1 min-w-[200px] truncate"><FolderOpen size={15} className="text-pink shrink-0" /> <span className="truncate">{chosen.path || chosen.name}</span></span>
+                    ) : <span className="text-ink-soft italic flex-1 min-w-[200px]">{zh ? '未揀' : 'Not chosen'}</span>}
+                    <button onClick={() => openBrowser('folder', b.key)} disabled={busy === 'folder'} className={btn}><Folder size={12} /> {chosen ? (zh ? '改' : 'Change') : (zh ? '揀資料夾' : 'Choose')}</button>
+                    {chosen && <button onClick={() => removeBranchFolder(b.key)} disabled={busy === 'folder'} className={`${btn} text-rose-600`}><X size={12} /></button>}
                   </div>
-                )}
-              </div>
-            )}
+                );
+              })}
+            </div>
           </div>
 
           {/* 3. Excel */}
@@ -444,7 +411,9 @@ export default function OneDrivePage() {
           {browseMode && (
             <div className="glass-card p-5 border-2 border-pink/30">
               <div className="flex items-center gap-2 mb-3 text-sm flex-wrap">
-                <span className="font-semibold">{browseMode === 'folder' ? (zh ? '揀單據總資料夾' : 'Choose receipts folder') : (zh ? '揀 Excel 檔' : 'Choose workbook')}</span>
+                <span className="font-semibold">{browseMode === 'folder'
+                  ? (zh ? `揀「${status.branches.find((b) => b.key === folderForBranch)?.zh || ''}」嘅單據資料夾` : `Choose receipts folder for ${status.branches.find((b) => b.key === folderForBranch)?.en || ''}`)
+                  : (zh ? '揀 Excel 檔' : 'Choose workbook')}</span>
                 <span className="text-ink-soft">·</span>
                 {crumbs.map((c, i) => (
                   <span key={c.id} className="flex items-center gap-1">
@@ -480,7 +449,7 @@ export default function OneDrivePage() {
               )}
               {browseMode === 'folder' && browse && browse.item.id !== 'root' && (
                 <button onClick={chooseCurrentFolder} disabled={busy === 'folder'} className="btn-primary text-xs mt-3 flex items-center gap-1">
-                  {busy === 'folder' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {zh ? `選用「${browse.item.name}」做單據總資料夾` : `Use "${browse.item.name}" as the receipts folder`}
+                  {busy === 'folder' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {zh ? `選用「${browse.item.name}」做${status.branches.find((b) => b.key === folderForBranch)?.zh || ''}嘅單據資料夾` : `Use "${browse.item.name}" for ${status.branches.find((b) => b.key === folderForBranch)?.en || ''}`}
                 </button>
               )}
             </div>
@@ -492,7 +461,7 @@ export default function OneDrivePage() {
               <h2 className="font-bold">{zh ? '4 · 同步狀態' : '4 · Sync'}</h2>
               <span className="text-xs text-ink-soft">{zh ? '上次掃描：' : 'Last scan: '}{fmtTime(cfg?.lastScanAt)}</span>
               {cfg?.lastScanError && <span className="text-xs text-rose-600 inline-flex items-center gap-1"><AlertTriangle size={12} /> {cfg.lastScanError}</span>}
-              <button onClick={syncNow} disabled={busy === 'sync' || !cfg?.receiptsFolder} className={`${btn} ml-auto`}>
+              <button onClick={syncNow} disabled={busy === 'sync' || !(cfg?.branchFolders || []).length} className={`${btn} ml-auto`}>
                 {busy === 'sync' ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} {zh ? '立即同步' : 'Sync now'}
               </button>
             </div>

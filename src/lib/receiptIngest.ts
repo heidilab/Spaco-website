@@ -3,7 +3,7 @@
 // by the 「立即同步」 button.
 //
 // State:
-//   system/onedrive_receipts   what she picked (folder, branch map, Excel) + deltaLink
+//   system/onedrive_receipts   what she picked (one folder per branch, Excel) + deltaLinks
 //   receipt_files/{driveItemId} one doc per file seen: queued → done | error | skipped | no_branch
 //   expenses/{id}               the row itself (source 'receipt'), read by 支出管理 and 月結
 //
@@ -67,27 +67,51 @@ export async function branchOptions(): Promise<BranchOption[]> {
 
 // ── Step 1: scan ───────────────────────────────────────────────────────
 
-export interface ScanResult { seen: number; queued: number; deleted: number; resynced: boolean }
+export interface ScanResult { seen: number; queued: number; deleted: number; resynced: boolean; folders: number }
 
+/** Scan every branch folder (each keeps its own delta link). Month
+ *  sub-folders need no setup: delta covers the whole sub-tree. */
 export async function scanReceiptsFolder(cfg?: OneDriveReceiptsConfig): Promise<ScanResult> {
   const config = cfg || await getReceiptsConfig();
-  if (!config.receiptsFolder) throw new Error('receipts folder not chosen');
+  if (config.branchFolders.length === 0) throw new Error('no branch folder chosen');
+  const result: ScanResult = { seen: 0, queued: 0, deleted: 0, resynced: false, folders: 0 };
+  const deltaLinks: Record<string, string> = { ...(config.deltaLinks || {}) };
+  const errors: string[] = [];
+  for (const folder of config.branchFolders) {
+    try {
+      const r = await scanOneFolder(folder, deltaLinks[folder.id] || 'latest');
+      deltaLinks[folder.id] = r.deltaLink;
+      result.seen += r.seen; result.queued += r.queued; result.deleted += r.deleted;
+      result.resynced = result.resynced || r.resynced;
+      result.folders++;
+    } catch (e) {
+      errors.push(`${folder.name}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  await saveReceiptsConfig({ deltaLinks, lastScanAt: FieldValue.serverTimestamp(), lastScanError: errors.join(' | ').slice(0, 400) });
+  if (result.folders === 0 && errors.length > 0) throw new Error(errors[0]);
+  return result;
+}
+
+async function scanOneFolder(
+  folder: { id: string; name: string }, deltaLink: string,
+): Promise<{ seen: number; queued: number; deleted: number; resynced: boolean; deltaLink: string }> {
   let resynced = false;
   let delta;
   try {
-    delta = await folderDelta(config.receiptsFolder.id, config.deltaLink || 'latest');
+    delta = await folderDelta(folder.id, deltaLink);
   } catch (e) {
     // 410 Gone = token too old; Graph hands back a fresh enumeration. We
     // restart from 'latest' instead so years of old receipts are not
     // re-read as new expenses.
     if (e instanceof GraphError && e.status === 410) {
-      delta = await folderDelta(config.receiptsFolder.id, 'latest');
+      delta = await folderDelta(folder.id, 'latest');
       resynced = true;
     } else throw e;
   }
   let queued = 0; let deleted = 0;
   for (const item of delta.items) {
-    if (item.id === config.receiptsFolder.id) continue;
+    if (item.id === folder.id) continue;
     const ref = adminDb.collection(FILES).doc(item.id);
     if (item.deleted) {
       const snap = await ref.get();
@@ -116,8 +140,7 @@ export async function scanReceiptsFolder(cfg?: OneDriveReceiptsConfig): Promise<
       await ref.set(base, { merge: true });
     }
   }
-  await saveReceiptsConfig({ deltaLink: delta.deltaLink, lastScanAt: FieldValue.serverTimestamp(), lastScanError: '' });
-  return { seen: delta.items.length, queued, deleted, resynced };
+  return { seen: delta.items.length, queued, deleted, resynced, deltaLink: delta.deltaLink };
 }
 
 // ── Step 2: read queued files ──────────────────────────────────────────
@@ -128,15 +151,14 @@ export interface ProcessResult {
   errors: string[];
 }
 
-/** Branch for a file: walk up its parents until one is a mapped branch
- *  folder. Files sitting directly in the receipts root have no branch. */
+/** Branch for a file: walk up its parents (month sub-folder → year
+ *  sub-folder → …) until one is a chosen branch folder. */
 async function resolveBranch(parentId: string, cfg: OneDriveReceiptsConfig, cache: Map<string, DriveItem>): Promise<string | null> {
   const byId = new Map(cfg.branchFolders.map((b) => [b.id, b.branchKey]));
   let cur = parentId;
   for (let i = 0; i < 8 && cur; i++) {
     const hit = byId.get(cur);
     if (hit) return hit;
-    if (cfg.receiptsFolder && cur === cfg.receiptsFolder.id) return null;
     let it = cache.get(cur);
     if (!it) {
       try { it = await getItem(cur); cache.set(cur, it); } catch { return null; }
@@ -338,7 +360,7 @@ export interface IngestSummary {
 
 export async function runReceiptIngest(opts: { maxFiles?: number } = {}): Promise<IngestSummary> {
   const cfg = await getReceiptsConfig();
-  if (!cfg.receiptsFolder) return { skipped: 'no folder chosen' };
+  if (cfg.branchFolders.length === 0) return { skipped: 'no branch folder chosen' };
   const summary: IngestSummary = {};
   try {
     summary.scan = await scanReceiptsFolder(cfg);

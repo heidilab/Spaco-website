@@ -7,9 +7,9 @@ export const runtime = 'nodejs';
 
 const COLUMN_KEYS: ExcelColumnKey[] = ['id', 'date', 'branch', 'item', 'vendor', 'amount', 'category', 'note', 'reviewed', 'link'];
 
-// POST /api/onedrive/config — save what Heidi picked. Choosing a new
-// receipts folder starts the delta from NOW (token=latest): files already
-// in the folder are hers from before and are already in her Excel.
+// POST /api/onedrive/config — save what Heidi picked. A newly chosen
+// branch folder starts its delta from NOW (token=latest): files already in
+// it are hers from before and are already in her Excel.
 export async function POST(req: NextRequest) {
   const gate = await requireAdmin(req, 'staff');
   if (!gate.ok) return gate.res;
@@ -18,19 +18,21 @@ export async function POST(req: NextRequest) {
   const current = await getReceiptsConfig();
   const patch: Partial<OneDriveReceiptsConfig> = {};
   try {
-    if (body.receiptsFolder && body.receiptsFolder.id) {
-      const f = body.receiptsFolder;
-      patch.receiptsFolder = { id: String(f.id), name: String(f.name || ''), path: String(f.path || '') };
-      if (f.id !== current.receiptsFolder?.id) {
-        patch.deltaLink = (await folderDelta(f.id, 'latest')).deltaLink;
-        patch.branchFolders = [];
-        patch.lastScanError = '';
-      }
-    }
     if (Array.isArray(body.branchFolders)) {
-      patch.branchFolders = body.branchFolders
+      const folders = body.branchFolders
         .filter((b) => b && b.id && b.branchKey)
         .map((b) => ({ id: String(b.id), name: String(b.name || ''), path: String(b.path || ''), branchKey: String(b.branchKey) }));
+      // One folder per branch; the same folder may serve several branches
+      // only by mistake, so keep the last choice per branch key.
+      const byBranch = new Map(folders.map((f) => [f.branchKey, f]));
+      patch.branchFolders = Array.from(byBranch.values());
+      const deltaLinks: Record<string, string> = {};
+      for (const f of patch.branchFolders) {
+        const existing = current.deltaLinks?.[f.id];
+        deltaLinks[f.id] = existing || (await folderDelta(f.id, 'latest')).deltaLink;
+      }
+      patch.deltaLinks = deltaLinks;
+      patch.lastScanError = '';
     }
     if (body.clearExcel) {
       patch.excel = undefined;
@@ -55,7 +57,7 @@ export async function POST(req: NextRequest) {
     await saveReceiptsConfig(patch);
     const saved = await getReceiptsConfig();
     const safe: Partial<OneDriveReceiptsConfig> = { ...saved };
-    delete safe.deltaLink;
+    delete safe.deltaLinks;
     return NextResponse.json({ ok: true, config: safe });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : 'save failed' }, { status: 502 });

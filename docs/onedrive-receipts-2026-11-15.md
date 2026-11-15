@@ -7,9 +7,11 @@ file once and writes both.
 
 ## Flow
 
-1. Heidi drops a photo / PDF into `單據/<分店>/…` in OneDrive.
+1. Heidi drops a photo / PDF into the branch's receipts folder (each
+   branch has its own folder somewhere in her OneDrive; year/month
+   sub-folders inside are fine — delta is recursive).
 2. `/api/cron/onedrive-receipts` (every 15 min, also 「立即同步」 in 後台)
-   calls Graph `delta` on the receipts folder and queues every new file in
+   calls Graph `delta` on each branch folder (own delta link each) and queues every new file in
    `receipt_files/{driveItemId}` (status `queued`). The deltaLink is
    advanced immediately so a slow read never loses a page.
 3. Up to 4 queued files per run are downloaded (HEIC and photos over
@@ -54,8 +56,8 @@ Master export without further changes.
 - Vercel env (Preview + Production): `MS_OAUTH_CLIENT_ID`,
   `MS_OAUTH_CLIENT_SECRET`, optional `RECEIPT_MODEL`. `ANTHROPIC_API_KEY`
   and `CRON_SECRET` already exist.
-- 後台 → 財務總覽 → OneDrive 單據連結: sign in → pick receipts folder →
-  map sub-folders to branches → pick the workbook, sheet (table) and
+- 後台 → 財務總覽 → OneDrive 單據連結: sign in → pick one folder per
+  branch → pick the workbook, sheet (table) and
   columns (ID column required) → 立即同步 to test.
 
 ## Data
@@ -63,7 +65,7 @@ Master export without further changes.
 | Where | What |
 |---|---|
 | `secrets/onedrive_oauth` | refresh token (rotated on every refresh — personal accounts issue a new one), connected email |
-| `system/onedrive_receipts` | folder, branch map, Excel mapping, deltaLink, lastScanAt/Error |
+| `system/onedrive_receipts` | branchFolders (one per branch), Excel mapping, deltaLinks per folder, lastScanAt/Error |
 | `receipt_files/{driveItemId}` | per-file status: queued / done / error (≤3 attempts) / skipped / no_branch |
 | `expenses` (`source: 'receipt'`) | the row; `receipt.*`, `reviewed`, `excel.{synced,error}` |
 
@@ -72,8 +74,9 @@ All new collections are server-only (Admin SDK); no Firestore rules change.
 ## Limits / known gaps
 - Choosing a folder starts from **now** (`delta?token=latest`); files
   already there are not imported (they are already in her Excel).
-- Files directly in the receipts root (not in a branch sub-folder) are
-  marked `no_branch` and not entered.
+- A file whose parent chain does not reach a chosen branch folder is
+  marked `no_branch` (cannot normally happen now that delta runs per
+  branch folder).
 - Excel sync needs the ID column. Appending below a formatted table via
   plain range writes does not extend the table — map the table instead.
 - A deleted OneDrive file only flags the row (`receipt.fileDeleted`); the

@@ -1029,9 +1029,12 @@ export interface OneDriveFolderRef {
 
 /** `system/onedrive_receipts` — what Heidi picked in 後台 → OneDrive 連結. */
 export interface OneDriveReceiptsConfig {
-  receiptsFolder?: OneDriveFolderRef;
-  /** Sub-folders of receiptsFolder, each assigned to a finance branch key. */
+  /** One folder per finance branch, anywhere in her OneDrive (her
+   *  branches' folders are not siblings). Month sub-folders inside each
+   *  are read automatically — delta is recursive. */
   branchFolders: Array<OneDriveFolderRef & { branchKey: string }>;
+  /** Graph delta link per branch folder id — advanced after each scan. */
+  deltaLinks?: Record<string, string>;
   excel?: {
     itemId: string;
     name: string;
@@ -1043,8 +1046,6 @@ export interface OneDriveReceiptsConfig {
     headerRow: number;
     columns: Partial<Record<ExcelColumnKey, string>>;
   };
-  /** Graph delta link for receiptsFolder — advanced after each scan. */
-  deltaLink?: string;
   lastScanAt?: unknown;
   lastScanError?: string;
   updatedAt?: unknown;

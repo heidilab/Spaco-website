@@ -18,10 +18,10 @@ export async function GET(req: Request) {
     listRecentReceiptFiles(30).catch(() => []),
   ]);
   const safeCfg = { ...cfg } as Partial<typeof cfg>;
-  delete safeCfg.deltaLink;
+  delete safeCfg.deltaLinks;
   const toIso = (v: unknown) => (v && typeof (v as { toDate?: () => Date }).toDate === 'function' ? (v as { toDate: () => Date }).toDate().toISOString() : null);
   return NextResponse.json({
     configured, connection, branches, recent,
-    config: { ...safeCfg, lastScanAt: toIso(cfg.lastScanAt), updatedAt: toIso(cfg.updatedAt), hasDelta: !!cfg.deltaLink },
+    config: { ...safeCfg, lastScanAt: toIso(cfg.lastScanAt), updatedAt: toIso(cfg.updatedAt) },
   });
 }
