@@ -46,7 +46,11 @@ describe('trusted prices and booking validation', () => {
   it('supports balance payments and settlement overflow', () => {
     const paid = {...booking,status:'confirmed',payments:[{amount:6900}]} as BookingRecord;
     expect(checkoutAmount(paid,true,now)).toBe(7000);
-    expect(checkoutAmount({...paid, payments:[{amount:13900}] as BookingRecord['payments'],balanceDue:650,depositRefund:{} as BookingRecord['depositRefund']},true,now)).toBe(650);
+    // Settled: paid 13,900 against 11,900 net consumption = 2,000 credit; 2,650 of deductions → 650 owed.
+    const settled = {...paid, payments:[{amount:13900}] as BookingRecord['payments'],balanceDue:650,depositRefund:{amount:0,deductions:[{label:'加時',amount:2650}],refundedAt:'x'}};
+    expect(checkoutAmount(settled,true,now)).toBe(650);
+    // #iMp5qQYR: once settled, a stale stored balanceDue must not let the link charge money nobody owes.
+    expect(()=>checkoutAmount({...settled,depositRefund:{amount:2000,deductions:[],refundedAt:'x'}},true,now)).toThrow('INVALID_NUMBER');
   });
   it('lets a paid booking settle its balance after the 30-minute hold lapsed (TST 2026-10-31: FPS approval never cleared pendingExpiresAt)', () => {
     const paid = {...booking,status:'confirmed',payments:[{amount:6900}],pendingExpiresAt:now-3600000} as BookingRecord;

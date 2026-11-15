@@ -23,7 +23,7 @@ import { getVenueById, venues as staticVenues } from './venues';
 import {
   calculatePricing, calculateDeposit, fixedRentOf, venueDrinksIncluded, stampAddOnPrices, subtractHours, formatAddOnsForStaff,
 } from './pricing';
-import { adminDiscountAmount } from './bookingMoney';
+import { adminDiscountAmount, computeBalanceDue } from './bookingMoney';
 import { resolvePeakRule } from './peakDayRules';
 import { calcPromoDiscount } from './promoCodes';
 import { promoEligibilityReason } from './promoEligibility';
@@ -272,13 +272,25 @@ export async function updateBookingServer(
         : (wasPaid || booking.isCommercial) && typeof booking.pricing.securityDeposit === 'number' ? booking.pricing.securityDeposit : computed.securityDeposit;
       const adminDisc = adminDiscountAmount({ pricing: { baseCharge: newBaseCharge, addOnTotal: newAddOnTotal, subtotal: baseSubtotal, deposit: 0 }, adminDiscount: booking.adminDiscount });
       const effectiveGrandTotal = Math.max(0, baseSubtotal - promoDiscount - pointsDiscount - adminDisc) + stickyDeposit;
-      const paidSoFar = (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
       patch['pricing.baseCharge'] = newBaseCharge;
       patch['pricing.addOnTotal'] = newAddOnTotal;
       patch['pricing.subtotal'] = baseSubtotal;
       patch['pricing.securityDeposit'] = stickyDeposit;
       patch['pricing.deposit'] = calculateDeposit(effectiveGrandTotal, next.date);
-      balanceDue = Math.max(0, effectiveGrandTotal - paidSoFar);
+      // Canonical: after 按金結算 the deposit is no longer collectable, so
+      // computeBalanceDue switches to the settlement-derived figure. The
+      // inline `effectiveGrandTotal − paid` re-added the settled deposit
+      // and left #iMp5qQYR owing $899 after a post-settlement save
+      // (pre-settlement the two formulas agree exactly; paidBase also
+      // keeps refund entries out, as the rest of the money math does).
+      balanceDue = computeBalanceDue({
+        pricing: { baseCharge: newBaseCharge, addOnTotal: newAddOnTotal, securityDeposit: stickyDeposit },
+        promoDiscount,
+        pointsDiscount,
+        adminDiscount: booking.adminDiscount,
+        payments: booking.payments,
+        depositRefund: booking.depositRefund,
+      });
       patch.balanceDue = balanceDue;
       if (balanceDue > 0 && booking.status === 'completed') patch.status = 'confirmed';
 

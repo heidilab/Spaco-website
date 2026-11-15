@@ -210,17 +210,19 @@ describe('amountOwed — the outstanding-balance card gate', () => {
     expect(isSettlementOverflow(b)).toBe(false);
   });
 
-  it('#LSi5Z31A — settlement overflow: bill fully paid but balanceDue is owed', () => {
-    // Deposit settled; deductions exceeded the deposit by $650, written to
-    // balanceDue. The original bill is fully paid, so the derived balance
-    // is 0 — gating on that alone hid the card and the record button.
+  it('#LSi5Z31A — settlement overflow: bill fully paid but deductions exceed the deposit', () => {
+    // Deposit settled; $1,650 of deductions against a $1,000 deposit, so
+    // $650 is owed and written to balanceDue. The original bill is fully
+    // paid, so the OLD pre-settlement formula (grand total − paid) gave 0
+    // — gating on that alone hid the card and the record button. Since
+    // #iMp5qQYR the derived balance itself is settlement-aware.
     const b = {
       pricing: { baseCharge: 3000, addOnTotal: 0, securityDeposit: 1000 },
       balanceDue: 650,
       payments: [{ amount: 4000 }],
-      depositRefund: { amount: 350, settledAt: 'x' },
+      depositRefund: { amount: 0, deductions: [{ label: '加時', amount: 1650 }], refundedAt: 'x' },
     };
-    expect(computeBalanceDue(b)).toBe(0);
+    expect(computeBalanceDue(b)).toBe(650);
     expect(amountOwed(b)).toBe(650);
     expect(hasOutstanding(b)).toBe(true);   // card MUST show
     expect(isSettlementOverflow(b)).toBe(true);
@@ -254,6 +256,65 @@ describe('amountOwed — the outstanding-balance card gate', () => {
     };
     expect(computeBalanceDue(b)).toBe(500);
     expect(amountOwed(b)).toBe(800);
+  });
+});
+
+describe('after deposit settlement — the deposit is no longer owed (#iMp5qQYR)', () => {
+  // Customer paid $2,740 via KPay on a $3,639 bill ($2,639 rent + $1,000
+  // deposit). Admin settled after the event with NO deductions: credit =
+  // 2,740 − 2,639 = $101, refunded. Nothing is owed — the $899 the deposit
+  // was short by was absorbed by the settlement. Yet every surface kept
+  // showing 尚欠 $899, and settlementDebt blocked the customer.
+  const settled = {
+    pricing: { baseCharge: 2639, addOnTotal: 0, securityDeposit: 1000, deposit: 3639 },
+    balanceDue: 0,
+    payments: [{ amount: 2740 }],
+    depositRefund: { amount: 101, deductions: [], refundedAt: 'x' },
+  };
+
+  it('BEFORE settlement the shortfall is still chased', () => {
+    const b = { ...settled, depositRefund: null, balanceDue: 899 };
+    expect(computeBalanceDue(b)).toBe(899);
+    expect(amountOwed(b)).toBe(899);
+  });
+
+  it('AFTER settlement with no deductions nothing is owed and $101 was refundable', () => {
+    expect(depositSettlementAmounts(settled).refund).toBe(101);
+    expect(computeBalanceDue(settled)).toBe(0);
+    expect(amountOwed(settled)).toBe(0);
+    expect(hasOutstanding(settled)).toBe(false);
+    expect(isSettlementOverflow(settled)).toBe(false);
+  });
+
+  it('a stale stored balanceDue left by an old pricing save does not resurrect the debt', () => {
+    // The live record carried balanceDue 899 (written by the pre-fix
+    // updateBookingPricing after the settlement). Post-settlement the
+    // derived figure is authoritative.
+    const b = { ...settled, balanceDue: 899 };
+    expect(amountOwed(b)).toBe(0);
+    expect(hasOutstanding(b)).toBe(false);
+  });
+
+  it('deductions beyond the credit become the amount owed', () => {
+    const b = { ...settled, depositRefund: { amount: 0, deductions: [{ label: '清潔', amount: 300 }], refundedAt: 'x' } };
+    expect(computeBalanceDue(b)).toBe(199);   // 300 − 101 credit
+    expect(amountOwed(b)).toBe(199);
+    expect(isSettlementOverflow(b)).toBe(true);
+  });
+
+  it('a post-settlement top-up (admin adds pax) is owed on top of the settled bill', () => {
+    const b = { ...settled, pricing: { ...settled.pricing, baseCharge: 3000 } };
+    expect(computeBalanceDue(b)).toBe(260);   // 3,000 consumption − 2,740 paid
+    expect(amountOwed(b)).toBe(260);
+  });
+
+  it('a payment recorded after settlement clears the overflow', () => {
+    const b = {
+      ...settled,
+      payments: [{ amount: 2740 }, { amount: 199 }],
+      depositRefund: { amount: 0, deductions: [{ label: '清潔', amount: 300 }], refundedAt: 'x' },
+    };
+    expect(amountOwed(b)).toBe(0);
   });
 });
 

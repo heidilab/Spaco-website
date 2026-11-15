@@ -2494,7 +2494,10 @@ export default function AdminBookingDetailPage() {
                 computeGrandTotal(booking);
               const actualPaid =
                 (booking.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
-              const outstanding = Math.max(0, grandTotal - actualPaid);
+              // Canonical figure — after 按金結算 the deposit is no longer
+              // owed, so the inline grandTotal − paid showed a phantom
+              // $899 on #iMp5qQYR.
+              const outstanding = amountOwed(booking);
               const isPaid =
                 booking.status === 'confirmed' ||
                 booking.status === 'completed' ||
@@ -3373,10 +3376,10 @@ function DepositSettlement(props: DepositSettlementProps) {
            *  settlement. Render an amber warning so admin remembers to
            *  chase the customer for the difference + record receipt
            *  via 已於線下付款 in the Outstanding Balance card above. */}
-          {(booking.balanceDue ?? 0) > 0 && booking.status === 'confirmed' ? (
+          {amountOwed(booking) > 0 ? (
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
               <p className="font-semibold text-amber-800 mb-1">
-                ⚠️ {locale === 'zh' ? '結算完成 — 客人尚欠' : 'Settled — customer owes'} HK${(booking.balanceDue || 0).toLocaleString()}
+                ⚠️ {locale === 'zh' ? '結算完成 — 客人尚欠' : 'Settled — customer owes'} HK${amountOwed(booking).toLocaleString()}
               </p>
               <p className="text-xs text-amber-700">
                 {locale === 'zh'
