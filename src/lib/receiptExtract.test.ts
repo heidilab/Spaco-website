@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   attachmentPlan, parseReceiptJson, normalizeDate, buildReceiptExpense, findPossibleDuplicate,
   guessBranchKey, columnLetterToIndex, indexToColumnLetter, parseRangeAddress, excelRowValues, tableRowArray,
-  MAX_DIRECT_IMAGE_BYTES, findMonthSheet, detectMonthLayout, planMonthWrite,
+  MAX_DIRECT_IMAGE_BYTES, findMonthSheet, detectMonthLayout, planMonthWrite, excelDateSerial,
 } from './receiptExtract';
 import type { ExpenseRecord } from '@/types';
 
@@ -131,8 +131,19 @@ describe('month-sheet layout (Financial Master)', () => {
       ['CR', '', '', '', 'DR', '', 'Source'],
       ['Date', 'Time', 'ppl', 'Total ', 'Vendor', 'Amount', 'Source'],
     ];
-    expect(detectMonthLayout(values)).toEqual({ headerRow: 3, vendorColumn: 'E', amountColumn: 'F' });
+    expect(detectMonthLayout(values)).toEqual({ headerRow: 3, vendorColumn: 'E', amountColumn: 'F', dateColumn: 'A' });
     expect(detectMonthLayout([['a', 'b']])).toBeNull();
+    // Her real banner: Remarks in row 2, Transaction Date (M) left of Vendor (Q).
+    const real = [
+      [' NOV- 2026 (CWB)'],
+      ['CR', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'DR', '', 'Source', 'Returned Deposit', 'Remarks'],
+      [], [],
+      ['Date', 'Time', 'ppl', 'Rent', 'BBQ/ Hotpot', 'Shisha', '到會', 'Drinks', '會員積分優惠', '信用卡手續費', '加時/罰款', 'Total ', 'Date', 'Payment Methods', 'Amount', 'Total', 'Vendor', 'Amount'],
+    ];
+    expect(detectMonthLayout(real)).toEqual({ headerRow: 5, vendorColumn: 'Q', amountColumn: 'R', dateColumn: 'M', noteColumn: 'U' });
+    expect(excelDateSerial('2026-11-16')).toBe(46342);
+    expect(excelDateSerial('1900-03-01')).toBe(61);
+    expect(excelDateSerial('nope')).toBeNull();
   });
   it('plans: existing id line, first fully-empty line, total line', () => {
     const layout = { headerRow: 5, vendorColumn: 'Q', amountColumn: 'R', idColumn: 'V' };

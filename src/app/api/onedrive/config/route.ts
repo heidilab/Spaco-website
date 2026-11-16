@@ -56,9 +56,14 @@ export async function POST(req: NextRequest) {
         const idColumn = letter(x.idColumn) || 'V';
         if (vendorColumn === amountColumn) return 'vendor and amount columns must differ';
         if (idColumn === vendorColumn || idColumn === amountColumn) return 'SPACO ID column must be a column outside Vendor / Amount';
+        // '' means "don't write"; a letter means that column; omitted = auto-detect.
+        const optional = (v: unknown): string | undefined => (v === undefined || v === null ? undefined : letter(v) || '');
+        const dateColumn = optional(x.dateColumn); const noteColumn = optional(x.noteColumn);
+        for (const c of [dateColumn, noteColumn]) if (c && (c === vendorColumn || c === amountColumn || c === idColumn)) return 'date / remarks column clashes with another column';
         return {
           itemId: String(x.itemId), name: String(x.name || ''), path: String(x.path || ''),
           mode: 'month', vendorColumn, amountColumn, idColumn,
+          ...(dateColumn !== undefined ? { dateColumn } : {}), ...(noteColumn !== undefined ? { noteColumn } : {}),
           headerRow: Number(x.headerRow) >= 1 ? Math.floor(Number(x.headerRow)) : 5,
         };
       }

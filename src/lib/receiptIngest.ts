@@ -21,7 +21,7 @@ import {
 } from './msgraph';
 import {
   attachmentPlan, parseReceiptJson, buildReceiptExpense, findPossibleDuplicate, excelRowValues, tableRowArray,
-  parseRangeAddress, receiptPrompt, RECEIPT_SYSTEM_PROMPT, findMonthSheet, detectMonthLayout, planMonthWrite,
+  parseRangeAddress, receiptPrompt, RECEIPT_SYSTEM_PROMPT, findMonthSheet, detectMonthLayout, planMonthWrite, excelDateSerial,
   type ParsedReceipt, type BranchOption,
 } from './receiptExtract';
 import { callClaudeWithAttachment } from './llm';
@@ -331,9 +331,14 @@ async function syncMonthSheet(row: ExpenseRecord, op: 'upsert' | 'delete', x: On
     if (!layout) return fail(`「${sheet}」sheet 搵唔到 Vendor / Amount 標題`);
     const plan = planMonthWrite(used.values, origin, { ...layout, idColumn }, row.id, used.formulas);
     const V = layout.vendorColumn; const A = layout.amountColumn;
+    // Date / Remarks: what she saved wins ('' = don't write); else what the sheet shows.
+    const pick = (saved: string | undefined, found: string | undefined) =>
+      (saved === undefined ? found : saved.trim() ? saved.trim().toUpperCase() : undefined);
+    const D = pick(x.dateColumn, layout.dateColumn); const N = pick(x.noteColumn, layout.noteColumn);
+    const cols = [V, A, idColumn, ...(D ? [D] : []), ...(N ? [N] : [])];
     if (op === 'delete') {
       if (plan.foundRow !== null) {
-        for (const col of [V, A, idColumn]) await clearRange(x.itemId, sheet, `${col}${plan.foundRow}:${col}${plan.foundRow}`);
+        for (const col of cols) await clearRange(x.itemId, sheet, `${col}${plan.foundRow}:${col}${plan.foundRow}`);
       }
       return { synced: true, syncedAt: FieldValue.serverTimestamp(), workbookId: x.itemId, sheet };
     }
@@ -355,6 +360,11 @@ async function syncMonthSheet(row: ExpenseRecord, op: 'upsert' | 'delete', x: On
     }
     await writeCell(x.itemId, sheet, `${V}${target}`, row.item);
     await writeCell(x.itemId, sheet, `${A}${target}`, row.amount);
+    if (D) {
+      const serial = excelDateSerial(row.date);
+      if (serial !== null) await writeCell(x.itemId, sheet, `${D}${target}`, serial, 'd/m/yyyy;@');
+    }
+    if (N) await writeCell(x.itemId, sheet, `${N}${target}`, (row.note || row.receipt?.summary || '').slice(0, 200));
     if (plan.foundRow === null) await writeCell(x.itemId, sheet, `${idColumn}${target}`, row.id);
     return { synced: true, syncedAt: FieldValue.serverTimestamp(), workbookId: x.itemId, sheet, row: target };
   } catch (e) {

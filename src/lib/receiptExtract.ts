@@ -378,25 +378,47 @@ export function findMonthSheet(sheetNames: string[], month: string): string | nu
   return null;
 }
 
-export interface MonthLayout { headerRow: number; vendorColumn: string; amountColumn: string }
+export interface MonthLayout {
+  headerRow: number; vendorColumn: string; amountColumn: string;
+  /** The row-level 「Date」 column nearest left of Vendor (her Transaction date, M). */
+  dateColumn?: string;
+  /** The 「Remarks」 column (U), from the banner rows above the header. */
+  noteColumn?: string;
+}
 
 /** Find the 「Vendor | Amount」 header pair in a sheet's used range
- *  (values as Graph returns them; `origin` is the used range's top-left). */
+ *  (values as Graph returns them; `origin` is the used range's top-left),
+ *  plus the Date column left of it and the Remarks column if present. */
 export function detectMonthLayout(
   values: unknown[][], origin: { startCol: string; startRow: number } = { startCol: 'A', startRow: 1 },
 ): MonthLayout | null {
   const c0 = columnLetterToIndex(origin.startCol);
+  const txt = (v: unknown) => String(v ?? '').trim().toLowerCase();
   for (let r = 0; r < values.length; r++) {
     const row = values[r] || [];
     for (let c = 0; c < row.length - 1; c++) {
-      const a = String(row[c] ?? '').trim().toLowerCase();
-      const b = String(row[c + 1] ?? '').trim().toLowerCase();
+      const a = txt(row[c]); const b = txt(row[c + 1]);
       if ((a === 'vendor' || a === '商戶' || a === '供應商') && (a !== b) && /^(amount|金額|hk\$)/.test(b)) {
-        return { headerRow: origin.startRow + r, vendorColumn: indexToColumnLetter(c0 + c), amountColumn: indexToColumnLetter(c0 + c + 1) };
+        const out: MonthLayout = { headerRow: origin.startRow + r, vendorColumn: indexToColumnLetter(c0 + c), amountColumn: indexToColumnLetter(c0 + c + 1) };
+        for (let k = c - 1; k >= 0; k--) if (/^(date|日期)$/.test(txt(row[k]))) { out.dateColumn = indexToColumnLetter(c0 + k); break; }
+        for (let rr = 0; rr <= r && !out.noteColumn; rr++) {
+          const hr = values[rr] || [];
+          for (let k = 0; k < hr.length; k++) if (/^(remarks?|備註|備注)$/.test(txt(hr[k]))) { out.noteColumn = indexToColumnLetter(c0 + k); break; }
+        }
+        return out;
       }
     }
   }
   return null;
+}
+
+/** Excel serial for a YYYY-MM-DD date (days since 1899-12-30), so the
+ *  cell is a real date like the ones she types, not text. */
+export function excelDateSerial(date: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!m) return null;
+  const ms = Date.UTC(+m[1], +m[2] - 1, +m[3]) - Date.UTC(1899, 11, 30);
+  return Math.round(ms / 86400000);
 }
 
 export interface MonthWritePlan {

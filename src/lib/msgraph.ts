@@ -370,9 +370,11 @@ export async function readRange(itemId: string, worksheet: string, address: stri
   return r.values || [];
 }
 
-export async function writeCell(itemId: string, worksheet: string, address: string, value: string | number): Promise<void> {
+export async function writeCell(
+  itemId: string, worksheet: string, address: string, value: string | number, numberFormat?: string,
+): Promise<void> {
   await graphFetch(`${ws(itemId, worksheet)}/range(address='${encodeURIComponent(address)}')`, {
-    method: 'PATCH', body: JSON.stringify({ values: [[value]] }),
+    method: 'PATCH', body: JSON.stringify({ values: [[value]], ...(numberFormat ? { numberFormat: [[numberFormat]] } : {}) }),
   });
 }
 

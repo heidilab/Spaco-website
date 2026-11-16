@@ -29,7 +29,11 @@ file once and writes both.
    expense month picks the sheet (2026-11 → `NOV-2026`; case/spacing
    tolerant), the 「Vendor | Amount」 header pair is re-detected on that
    sheet, `item` goes under Vendor and `amount` under Amount on the first
-   line that is empty in every column above 「Total Expenses:」. A line a
+   line that is empty in every column above 「Total Expenses:」; the
+   receipt date goes in the row-level Transaction 「Date」 column (M, as a
+   real date `d/m/yyyy`) and the note / Claude summary in 「Remarks」 (U) —
+   both auto-detected per sheet, overridable or blanked in the config
+   (2026-11-16, Heidi: the month sheets do have date / remarks columns). A line a
    payment group above still spans (`=SUM(O15:O16)` on the line above —
    where her merged Kpay-fee cells sit) is skipped. When the block is
    full, two cells are inserted above its last line so the SUM keeps
@@ -90,9 +94,10 @@ All new collections are server-only (Admin SDK); no Firestore rules change.
 - A file whose parent chain does not reach a chosen branch folder is
   marked `no_branch` (cannot normally happen now that delta runs per
   branch folder).
-- Month mode writes only `item` and `amount` (her block has no date /
-  note columns); the receipt link, category and reviewed tick live in
-  支出管理 only. Vendor cell = 支出管理 項目 text.
+- Month mode writes item, amount, date (M) and note (U); the receipt
+  link, category and reviewed tick live in 支出管理 only. Vendor cell =
+  支出管理 項目 text. Column A (booking Date) is never written — her
+  Cleaning fee / booking-count formulas COUNT it.
 - Graph exposes no merged-cell info; the reserved-line guard relies on
   her payment-group SUM formulas. A merge without such a formula directly
   under the last booking could still be hit once the free band is used

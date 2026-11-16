@@ -33,7 +33,7 @@ interface Status {
 }
 interface BrowseItem { id: string; name: string; isFolder: boolean; isExcel: boolean; childCount: number; size: number; path: string }
 interface BrowseState { item: { id: string; name: string; path: string; parentId: string | null }; children: BrowseItem[] }
-interface MonthLayout { headerRow: number; vendorColumn: string; amountColumn: string }
+interface MonthLayout { headerRow: number; vendorColumn: string; amountColumn: string; dateColumn?: string; noteColumn?: string }
 interface WorkbookMeta {
   worksheets: Array<{ id: string; name: string; headers: string[]; usedAddress?: string; monthLayout?: MonthLayout }>;
   tables: Array<{ id: string; name: string; worksheet: string; address: string; columns: string[] }>;
@@ -76,6 +76,8 @@ export default function OneDrivePage() {
   const [vendorCol, setVendorCol] = useState('Q');
   const [amountCol, setAmountCol] = useState('R');
   const [idCol, setIdCol] = useState('V');
+  const [dateCol, setDateCol] = useState('M');
+  const [noteCol, setNoteCol] = useState('U');
 
   const say = (kind: 'ok' | 'err', text: string) => { setFlash({ kind, text }); setTimeout(() => setFlash(null), 6000); };
 
@@ -174,10 +176,13 @@ export default function OneDrivePage() {
       const saved = status?.config.excelByBranch?.[branchKey];
       const found = data.worksheets.find((w) => w.monthLayout && MONTHISH.test(w.name))?.monthLayout
         || data.worksheets.find((w) => w.monthLayout)?.monthLayout;
+      const same = saved && saved.itemId === item.id;
       if (found) { setHeaderRow(found.headerRow); setVendorCol(found.vendorColumn); setAmountCol(found.amountColumn); }
-      else if (saved && saved.itemId === item.id && saved.vendorColumn) { setHeaderRow(saved.headerRow || 5); setVendorCol(saved.vendorColumn); setAmountCol(saved.amountColumn || 'R'); }
+      else if (same && saved.vendorColumn) { setHeaderRow(saved.headerRow || 5); setVendorCol(saved.vendorColumn); setAmountCol(saved.amountColumn || 'R'); }
       else { setHeaderRow(5); setVendorCol('Q'); setAmountCol('R'); }
-      setIdCol(saved && saved.itemId === item.id && saved.idColumn ? saved.idColumn : 'V');
+      setIdCol(same && saved.idColumn ? saved.idColumn : 'V');
+      setDateCol(same && saved.dateColumn !== undefined ? saved.dateColumn : (found?.dateColumn ?? 'M'));
+      setNoteCol(same && saved.noteColumn !== undefined ? saved.noteColumn : (found?.noteColumn ?? 'U'));
     } catch (e) { say('err', e instanceof Error ? e.message : 'workbook read failed'); } finally { setBusy(null); }
   }
 
@@ -187,11 +192,11 @@ export default function OneDrivePage() {
   async function saveExcel() {
     if (!excelPick) return;
     const L = /^[A-Za-z]{1,3}$/;
-    if (!L.test(vendorCol) || !L.test(amountCol) || !L.test(idCol)) { say('err', zh ? '欄位請填英文字母（例如 Q）' : 'Columns must be letters (e.g. Q)'); return; }
+    if (!L.test(vendorCol) || !L.test(amountCol) || !L.test(idCol) || (dateCol && !L.test(dateCol)) || (noteCol && !L.test(noteCol))) { say('err', zh ? '欄位請填英文字母（例如 Q）' : 'Columns must be letters (e.g. Q)'); return; }
     setBusy('excel');
     try {
       const { branchKey, ...file } = excelPick;
-      await saveConfig({ excelForBranch: { branchKey, excel: { ...file, mode: 'month', headerRow, vendorColumn: vendorCol.toUpperCase(), amountColumn: amountCol.toUpperCase(), idColumn: idCol.toUpperCase() } } },
+      await saveConfig({ excelForBranch: { branchKey, excel: { ...file, mode: 'month', headerRow, vendorColumn: vendorCol.toUpperCase(), amountColumn: amountCol.toUpperCase(), idColumn: idCol.toUpperCase(), dateColumn: dateCol.trim().toUpperCase(), noteColumn: noteCol.trim().toUpperCase() } } },
         zh ? '✓ Excel 已連結，呢間舖嘅新單據會寫入對應月份嗰張 sheet' : '✓ Excel linked — this branch\'s new receipts go onto the matching month sheet');
       setExcelPick(null); setMeta(null);
     } catch (e) { say('err', e instanceof Error ? e.message : 'save failed'); } finally { setBusy(null); }
@@ -375,8 +380,8 @@ export default function OneDrivePage() {
             <h2 className="font-bold mb-1">{zh ? '3 · 同步到每間舖嘅 Financial Master Excel' : '3 · Mirror into each branch\'s Financial Master'}</h2>
             <p className="text-xs text-ink-soft mb-3">
               {zh
-                ? '每間舖揀自己嗰個 Excel 檔就得。唔使揀 sheet：每張單據會按佢嘅月份自動寫入嗰張月份 sheet（例如 NOV-2026）嘅 Expenses 欄 — Vendor 欄寫項目、Amount 欄寫金額，放喺「Total Expenses」上面第一個空行。另外會喺嗰行寫一個 SPACO ID 落一個你冇用嘅欄（預設 V 欄），改數或刪除時先搵得返同一行。'
-                : 'Pick each branch\'s workbook. No sheet to choose: every receipt goes onto its own month sheet (e.g. NOV-2026) in the Expenses block — item under Vendor, amount under Amount, on the first empty line above “Total Expenses”. A SPACO ID is written in an unused column (V by default) so edits and deletes find the same line.'}
+                ? '每間舖揀自己嗰個 Excel 檔就得。唔使揀 sheet：每張單據會按佢嘅月份自動寫入嗰張月份 sheet（例如 NOV-2026），放喺「Total Expenses」上面第一個空行 — Vendor 欄寫項目、Amount 欄寫金額、Date 欄（M）寫單據日期、Remarks 欄（U）寫備註。另外會喺嗰行寫一個 SPACO ID 落一個你冇用嘅欄（預設 V 欄），改數或刪除時先搵得返同一行。'
+                : 'Pick each branch\'s workbook. No sheet to choose: every receipt goes onto its own month sheet (e.g. NOV-2026) on the first empty line above “Total Expenses” — item under Vendor, amount under Amount, receipt date in the Date column (M), note in Remarks (U). A SPACO ID is written in an unused column (V by default) so edits and deletes find the same line.'}
             </p>
             <div className="space-y-2">
               {status.branches.map((b) => {
@@ -392,7 +397,7 @@ export default function OneDrivePage() {
                           <FileSpreadsheet size={14} className="inline text-emerald-600 mr-1" />{x.name}
                           <span className="text-ink-soft">
                             {monthMode
-                              ? ` · ${zh ? '按月份 sheet' : 'month sheets'} · Vendor=${x.vendorColumn || 'Q'} Amount=${x.amountColumn || 'R'} ID=${x.idColumn || 'V'}`
+                              ? ` · ${zh ? '按月份 sheet' : 'month sheets'} · Vendor=${x.vendorColumn || 'Q'} Amount=${x.amountColumn || 'R'}${x.dateColumn ? ` ${zh ? '日期' : 'Date'}=${x.dateColumn}` : ''}${x.noteColumn ? ` ${zh ? '備註' : 'Remarks'}=${x.noteColumn}` : ''} ID=${x.idColumn || 'V'}`
                               : ` · sheet「${x.worksheet}」· ID=${x.columns?.id}`}
                           </span>
                         </span>
@@ -415,7 +420,7 @@ export default function OneDrivePage() {
                             </p>
                             <p className="text-xs">
                               {detectedOn.length > 0
-                                ? <span className="text-emerald-700 inline-flex items-center gap-1"><Check size={12} /> {zh ? `已自動認出 Vendor / Amount 欄（喺 ${detectedOn.slice(0, 3).join('、')}${detectedOn.length > 3 ? '…' : ''}）` : `Vendor / Amount columns detected (on ${detectedOn.slice(0, 3).join(', ')}${detectedOn.length > 3 ? '…' : ''})`}</span>
+                                ? <span className="text-emerald-700 inline-flex items-center gap-1"><Check size={12} /> {zh ? `已自動認出 Vendor / Amount / Date / Remarks 欄（喺 ${detectedOn.slice(0, 3).join('、')}${detectedOn.length > 3 ? '…' : ''}）` : `Vendor / Amount / Date / Remarks columns detected (on ${detectedOn.slice(0, 3).join(', ')}${detectedOn.length > 3 ? '…' : ''})`}</span>
                                 : <span className="text-amber-700 inline-flex items-center gap-1"><AlertTriangle size={12} /> {zh ? '未認出「Vendor | Amount」標題，請喺下面填返欄位' : 'Could not find the “Vendor | Amount” header — fill the columns below'}</span>}
                             </p>
                             <div className="flex flex-wrap gap-3">
@@ -425,6 +430,10 @@ export default function OneDrivePage() {
                                 <input value={amountCol} onChange={(e) => setAmountCol(e.target.value.toUpperCase())} className={`mt-1 block w-16 ${inputCls}`} /></label>
                               <label className="block"><span className="text-xs font-semibold text-ink-soft">{zh ? '標題行' : 'Header row'}</span>
                                 <input type="number" min={1} value={headerRow} onChange={(e) => setHeaderRow(Math.max(1, parseInt(e.target.value) || 1))} className={`mt-1 block w-16 ${inputCls}`} /></label>
+                              <label className="block"><span className="text-xs font-semibold text-ink-soft">{zh ? '日期欄（留空＝唔寫）' : 'Date column (blank = skip)'}</span>
+                                <input value={dateCol} onChange={(e) => setDateCol(e.target.value.toUpperCase())} className={`mt-1 block w-16 ${inputCls}`} /></label>
+                              <label className="block"><span className="text-xs font-semibold text-ink-soft">{zh ? '備註欄（留空＝唔寫）' : 'Remarks column (blank = skip)'}</span>
+                                <input value={noteCol} onChange={(e) => setNoteCol(e.target.value.toUpperCase())} className={`mt-1 block w-16 ${inputCls}`} /></label>
                               <label className="block"><span className="text-xs font-semibold text-ink-soft">{zh ? 'SPACO ID 寫入邊欄（空欄）' : 'SPACO ID column (unused)'}</span>
                                 <input value={idCol} onChange={(e) => setIdCol(e.target.value.toUpperCase())} className={`mt-1 block w-16 ${inputCls}`} /></label>
                             </div>
