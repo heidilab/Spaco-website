@@ -444,7 +444,9 @@ export interface MonthWritePlan {
    *  very likely Heidi typed this expense by hand already. Reported, not
    *  touched: she decides which one stays. */
   sameAmountRow: number | null;
-  /** First free line in the Expenses block, or null when the block is full. */
+  /** The LAST free line in the Expenses block (just above her fixed
+   *  costs — Taobao / 管理費 / Rent sit at the bottom), or null when the
+   *  block is full. Receipts stack upward from there (Heidi 2026-11-16). */
   freeRow: number | null;
   /** Line with 「Total Expenses:」 (insert point when the block is full). */
   totalRow: number | null;
@@ -456,7 +458,8 @@ const isBlank = (v: unknown) => v === null || v === undefined || v === '' || v =
 
 /** Where a receipt line goes on a month sheet. `values` is the whole used
  *  range (valuesOnly). A free line is one with nothing in ANY column —
- *  her merged transaction groups and bookings are left alone. */
+ *  her merged transaction groups and bookings are left alone — and the
+ *  last such line (nearest her fixed costs) is the one to use. */
 export function planMonthWrite(
   values: unknown[][], origin: { startCol: string; startRow: number },
   layout: MonthLayout & { idColumn: string }, id: string, formulas?: unknown[][],
@@ -479,7 +482,7 @@ export function planMonthWrite(
       if (match.vendors.some((v) => v.trim() === vendor)) { if (orphanRow === null) orphanRow = rowNo(r); }
       else if (sameAmountRow === null) sameAmountRow = rowNo(r);
     }
-    if (freeRow === null && (values[r] || []).every(isBlank) && !isReservedRow(formulas, r, rowNo(r))) freeRow = rowNo(r);
+    if ((values[r] || []).every(isBlank) && !isReservedRow(formulas, r, rowNo(r))) freeRow = rowNo(r);
   }
   return { foundRow, orphanRow, sameAmountRow, freeRow, totalRow };
 }

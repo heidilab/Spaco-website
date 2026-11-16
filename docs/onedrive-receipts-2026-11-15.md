@@ -28,8 +28,10 @@ file once and writes both.
    branch (Graph workbook API), **month-sheet mode** (2026-11-16): the
    expense month picks the sheet (2026-11 → `NOV-2026`; case/spacing
    tolerant), the 「Vendor | Amount」 header pair is re-detected on that
-   sheet, `item` goes under Vendor and `amount` under Amount on the first
-   line that is empty in every column above 「Total Expenses:」; the
+   sheet, the vendor part of `item` (before 「 · 」) goes under Vendor and
+   `amount` under Amount on the LAST line that is empty in every column
+   above her fixed costs (receipts stack upward from just above Taobao /
+   管理費 — Heidi 2026-11-16); the rest of `item` / her note under Remarks; the
    receipt date goes in the sheet's 「Date」 column (A, as a real date
    `d/m/yyyy`) and the note / Claude summary in 「Remarks」 (U) — both
    auto-detected per sheet, overridable or blanked in the config
@@ -40,6 +42,12 @@ file once and writes both.
    covering it. The SPACO expense id is written in an unused column
    (default V, header 「SPACO ID」 added once) so edits/deletes find the
    same line; delete clears the three cells, never shifts anything.
+   The SPACO ID cell is written first so a run that dies mid-line is
+   resumed by ID; a no-ID line with the same vendor + amount is reused
+   (or cleared on delete), and a no-ID line with the same amount but
+   another name is reported as `excel.sameAmountRow` (she typed it by
+   hand). 後台 「重寫 Excel 單據行」 (`/api/onedrive/excel-rewrite`)
+   clears and re-places every receipt line under the current rule.
    Missing month sheet → the row stays `excel.synced:false` and every run
    retries up to 10 such rows (`resyncPendingExcel`), so creating the
    sheet later is enough. Legacy `mode:'sheet'` (fixed sheet + column

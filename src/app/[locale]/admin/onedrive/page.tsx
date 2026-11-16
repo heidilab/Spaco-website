@@ -250,6 +250,25 @@ export default function OneDrivePage() {
     finally { setBusy(null); }
   }
 
+  /** 「重寫 Excel」: move every receipt line to where the current rule puts
+   *  it (bottom-up since 2026-11-16). Relays like syncNow. */
+  async function rewriteExcel() {
+    if (!confirm(zh ? '將所有單據行喺 Excel 清走再按而家嘅規則重寫（由底部向上疊）？你手動入嘅行唔會郁。' : 'Clear every receipt line in Excel and write it again under the current rule (bottom-up)? Hand-typed lines are not touched.')) return;
+    setBusy('rewrite'); setSyncResult(null);
+    let done = 0; let errors: string[] = [];
+    try {
+      for (let round = 1; round <= 10; round++) {
+        const res = await adminApiFetch('/api/onedrive/excel-rewrite', { method: 'POST' });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || res.statusText);
+        done += d.done || 0; errors = errors.concat(d.errors || []);
+        setSyncResult(zh ? `已重寫 ${done} 行${d.remaining ? `，仲有 ${d.remaining} 行…` : ''}${errors.length ? `，${errors.length} 行失敗：${errors.join('；')}` : ''}` : `Rewrote ${done} lines${d.remaining ? `, ${d.remaining} to go…` : ''}${errors.length ? `, ${errors.length} failed: ${errors.join('; ')}` : ''}`);
+        if (!d.remaining) break;
+      }
+    } catch (e) { setSyncResult((zh ? '錯誤：' : 'Error: ') + (e instanceof Error ? e.message : 'failed')); }
+    finally { setBusy(null); }
+  }
+
   if (!canAccess) return <div className="text-center py-20 text-ink-soft">{zh ? '無權限存取' : 'Access Denied'}</div>;
 
   const connected = status?.connection.connected === true;
@@ -390,7 +409,7 @@ export default function OneDrivePage() {
             <h2 className="font-bold mb-1">{zh ? '3 · 同步到每間舖嘅 Financial Master Excel' : '3 · Mirror into each branch\'s Financial Master'}</h2>
             <p className="text-xs text-ink-soft mb-3">
               {zh
-                ? '每間舖揀自己嗰個 Excel 檔就得。唔使揀 sheet：每張單據會按佢嘅月份自動寫入嗰張月份 sheet（例如 NOV-2026），放喺「Total Expenses」上面第一個空行 — Vendor 欄寫項目、Amount 欄寫金額、Date 欄（A）寫單據日期、Remarks 欄（U）寫備註。另外會喺嗰行寫一個 SPACO ID 落一個你冇用嘅欄（預設 V 欄），改數或刪除時先搵得返同一行。'
+                ? '每間舖揀自己嗰個 Excel 檔就得。唔使揀 sheet：每張單據會按佢嘅月份自動寫入嗰張月份 sheet（例如 NOV-2026），Vendor 欄寫商戶、Amount 欄寫金額、Date 欄（A）寫單據日期、Remarks 欄（U）寫摘要／備註；由固定支出上面第一個空行開始，一張張向上疊。另外會喺嗰行寫一個 SPACO ID 落一個你冇用嘅欄（預設 V 欄），改數或刪除時先搵得返同一行。'
                 : 'Pick each branch\'s workbook. No sheet to choose: every receipt goes onto its own month sheet (e.g. NOV-2026) on the first empty line above “Total Expenses” — item under Vendor, amount under Amount, receipt date in the Date column (A), note in Remarks (U). A SPACO ID is written in an unused column (V by default) so edits and deletes find the same line.'}
             </p>
             <div className="space-y-2">
@@ -469,7 +488,10 @@ export default function OneDrivePage() {
               <h2 className="font-bold">{zh ? '4 · 同步狀態' : '4 · Sync'}</h2>
               <span className="text-xs text-ink-soft">{zh ? '上次掃描：' : 'Last scan: '}{fmtTime(cfg?.lastScanAt)}</span>
               {cfg?.lastScanError && <span className="text-xs text-rose-600 inline-flex items-center gap-1"><AlertTriangle size={12} /> {cfg.lastScanError}</span>}
-              <button onClick={syncNow} disabled={busy === 'sync' || !(cfg?.branchFolders || []).length} className={`${btn} ml-auto`}>
+              <button onClick={rewriteExcel} disabled={busy === 'rewrite' || busy === 'sync' || !Object.keys(cfg?.excelByBranch || {}).length} className={`${btn} ml-auto`} title={zh ? '將所有單據行按而家嘅規則重新放入 Excel' : 'Re-place every receipt line in Excel under the current rule'}>
+                {busy === 'rewrite' ? <Loader2 size={12} className="animate-spin" /> : <FileSpreadsheet size={12} />} {zh ? '重寫 Excel 單據行' : 'Rewrite Excel lines'}
+              </button>
+              <button onClick={syncNow} disabled={busy === 'sync' || busy === 'rewrite' || !(cfg?.branchFolders || []).length} className={btn}>
                 {busy === 'sync' ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} {zh ? '立即同步' : 'Sync now'}
               </button>
             </div>

@@ -989,6 +989,8 @@ export interface ExpenseExcelSync {
   /** Month-mode: a line on the same sheet with the same amount and no
    *  SPACO ID — she probably typed this expense by hand already. */
   sameAmountRow?: number;
+  /** Set once by the 「重寫 Excel」 action so it skips rows it has done. */
+  rewrittenAt?: unknown;
 }
 
 /** One expense row in a branch-month ledger (支出管理). Auto items

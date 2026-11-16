@@ -369,8 +369,9 @@ async function syncMonthSheet(row: ExpenseRecord, op: 'upsert' | 'delete', x: On
     const D = pick(x.dateColumn, layout.dateColumn); const N = pick(x.noteColumn, layout.noteColumn);
     const cols = [V, A, idColumn, ...(D ? [D] : []), ...(N ? [N] : [])];
     if (op === 'delete') {
-      if (plan.foundRow !== null) {
-        for (const col of cols) await clearRange(x.itemId, sheet, `${col}${plan.foundRow}:${col}${plan.foundRow}`);
+      for (const r of [plan.foundRow, plan.orphanRow]) {
+        if (r === null) continue;
+        for (const col of cols) await clearRange(x.itemId, sheet, `${col}${r}:${col}${r}`);
       }
       return { synced: true, syncedAt: FieldValue.serverTimestamp(), workbookId: x.itemId, sheet };
     }
@@ -431,6 +432,35 @@ function monthSheetLabel(month: string): string {
   if (!m) return month;
   const abbr = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'][+m[2] - 1] || m[2];
   return `${abbr}-${m[1]}`;
+}
+
+/** Re-place every receipt line in Excel (clear where it is, write it
+ *  again where the current rule puts it) — used after a layout change,
+ *  e.g. the 2026-11-16 switch to bottom-up stacking. Oldest first so the
+ *  earliest receipt ends nearest her fixed costs. Time-budgeted; the
+ *  caller relays while `remaining` > 0. `after` = createdAt cursor. */
+export async function rewriteReceiptExcelRows(deadlineAt: number, max = 30): Promise<{ done: number; remaining: number; errors: string[] }> {
+  const cfg = await getReceiptsConfig();
+  const branches = await branchOptions();
+  const snap = await adminDb.collection('expenses').where('source', '==', 'receipt').get();
+  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() } as ExpenseRecord))
+    .filter((r) => !r.excel?.rewrittenAt)
+    .sort((a, b) => (a.date + a.id).localeCompare(b.date + b.id))
+    .slice(0, max);
+  const out = { done: 0, remaining: 0, errors: [] as string[] };
+  for (let i = 0; i < rows.length; i++) {
+    if (Date.now() > deadlineAt) { out.remaining = rows.length - i; break; }
+    const row = rows[i];
+    const zh = branches.find((b) => b.key === row.branchKey)?.zh;
+    await syncExpenseToExcel(row, 'delete', cfg, zh);
+    const excel = await syncExpenseToExcel(row, 'upsert', cfg, zh);
+    if (!excel) continue;
+    await adminDb.collection('expenses').doc(row.id).set({ excel: { ...excel, rewrittenAt: FieldValue.serverTimestamp() } }, { merge: true });
+    if (excel.synced) out.done++; else out.errors.push(`${row.item.slice(0, 30)}: ${excel.error || ''}`);
+  }
+  const total = snap.docs.filter((d) => !(d.data() as ExpenseRecord).excel?.rewrittenAt).length;
+  out.remaining = Math.max(out.remaining, total - rows.length);
+  return out;
 }
 
 /** Rows whose Excel write failed earlier (month sheet not created yet,
