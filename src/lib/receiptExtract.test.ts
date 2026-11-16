@@ -159,11 +159,11 @@ describe('month-sheet layout (Financial Master)', () => {
       row({ [Q]: 'Total Expenses: ', [R]: 999 }),                                           // 10
       row({ [Q]: 'Rent', [R]: 35000 }),                                                     // 11 (after total: ignored)
     ];
-    expect(planMonthWrite(values, { startCol: 'A', startRow: 1 }, layout, 'exp_abc')).toEqual({ foundRow: 9, orphanRow: null, freeRow: 8, totalRow: 10 });
-    expect(planMonthWrite(values, { startCol: 'A', startRow: 1 }, layout, 'nope')).toEqual({ foundRow: null, orphanRow: null, freeRow: 8, totalRow: 10 });
+    expect(planMonthWrite(values, { startCol: 'A', startRow: 1 }, layout, 'exp_abc')).toEqual({ foundRow: 9, orphanRow: null, sameAmountRow: null, freeRow: 8, totalRow: 10 });
+    expect(planMonthWrite(values, { startCol: 'A', startRow: 1 }, layout, 'nope')).toEqual({ foundRow: null, orphanRow: null, sameAmountRow: null, freeRow: 8, totalRow: 10 });
     // Block full → no free line; total line still found.
     const full = values.filter((_, i) => i !== 7);
-    expect(planMonthWrite(full, { startCol: 'A', startRow: 1 }, layout, 'nope')).toEqual({ foundRow: null, orphanRow: null, freeRow: null, totalRow: 9 });
+    expect(planMonthWrite(full, { startCol: 'A', startRow: 1 }, layout, 'nope')).toEqual({ foundRow: null, orphanRow: null, sameAmountRow: null, freeRow: null, totalRow: 9 });
   });
   it('vendor / remarks cells come from 項目「vendor · summary」, her note first', () => {
     expect(monthSheetCells({ item: 'Taobao · 氣球 20 個', amount: 65.81 })).toEqual({ vendor: 'Taobao', amount: 65.81, note: '氣球 20 個' });
@@ -179,9 +179,12 @@ describe('month-sheet layout (Financial Master)', () => {
       row({ [Q]: 'Haier', [R]: 92.86, [V]: 'exp_1' }),         // 7: ours
       row({}), row({ [Q]: 'Total Expenses: ' })];
     expect(planMonthWrite(values, { startCol: 'A', startRow: 1 }, layout, 'exp_1', undefined, { vendors: ['Haier', 'Haier · remote'], amount: 92.86 }))
-      .toEqual({ foundRow: 7, orphanRow: 6, freeRow: 8, totalRow: 9 });
+      .toEqual({ foundRow: 7, orphanRow: 6, sameAmountRow: null, freeRow: 8, totalRow: 9 });
     expect(planMonthWrite(values, { startCol: 'A', startRow: 1 }, layout, 'exp_2', undefined, { vendors: ['Haier', 'Haier · remote'], amount: 92.86 }).orphanRow).toBe(6);
     expect(planMonthWrite(values, { startCol: 'A', startRow: 1 }, layout, 'exp_2', undefined, { vendors: ['Haier'], amount: 1 }).orphanRow).toBeNull();
+    // Her own hand-typed line with the same amount but another name → reported, not reused.
+    const p = planMonthWrite(values, { startCol: 'A', startRow: 1 }, layout, 'exp_2', undefined, { vendors: ['海爾遙控器'], amount: 92.86 });
+    expect(p.orphanRow).toBeNull(); expect(p.sameAmountRow).toBe(6);
   });
   it('a blank line that a payment group above still spans is not free', () => {
     const layout = { headerRow: 5, vendorColumn: 'Q', amountColumn: 'R', idColumn: 'V' };
@@ -198,7 +201,7 @@ describe('month-sheet layout (Financial Master)', () => {
     const formulas = values.map((v) => v.map(() => ''));
     formulas[5][P] = '=SUM(O6:O7)'; formulas[5][L] = '=SUM(D6:K6)'; formulas[7][L] = '=SUM(D8:K8)';
     formulas[8][R] = '=SUM(R6:R39)'; // block total: long range, ignored
-    expect(planMonthWrite(values, { startCol: 'A', startRow: 1 }, layout, 'x', formulas)).toEqual({ foundRow: null, orphanRow: null, freeRow: 8, totalRow: 9 });
-    expect(planMonthWrite(values, { startCol: 'A', startRow: 1 }, layout, 'x')).toEqual({ foundRow: null, orphanRow: null, freeRow: 7, totalRow: 9 });
+    expect(planMonthWrite(values, { startCol: 'A', startRow: 1 }, layout, 'x', formulas)).toEqual({ foundRow: null, orphanRow: null, sameAmountRow: null, freeRow: 8, totalRow: 9 });
+    expect(planMonthWrite(values, { startCol: 'A', startRow: 1 }, layout, 'x')).toEqual({ foundRow: null, orphanRow: null, sameAmountRow: null, freeRow: 7, totalRow: 9 });
   });
 });

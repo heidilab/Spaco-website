@@ -986,6 +986,9 @@ export interface ExpenseExcelSync {
    *  the line is always re-found by SPACO ID before writing). */
   sheet?: string;
   row?: number;
+  /** Month-mode: a line on the same sheet with the same amount and no
+   *  SPACO ID — she probably typed this expense by hand already. */
+  sameAmountRow?: number;
 }
 
 /** One expense row in a branch-month ledger (支出管理). Auto items

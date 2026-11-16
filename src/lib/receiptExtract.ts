@@ -440,6 +440,10 @@ export interface MonthWritePlan {
   /** Line with this exact Vendor text + amount but no ID: left by a run
    *  that died mid-write. Reused (or cleared) instead of adding another. */
   orphanRow: number | null;
+  /** Another line (no ID, different vendor text) with the same amount —
+   *  very likely Heidi typed this expense by hand already. Reported, not
+   *  touched: she decides which one stays. */
+  sameAmountRow: number | null;
   /** First free line in the Expenses block, or null when the block is full. */
   freeRow: number | null;
   /** Line with 「Total Expenses:」 (insert point when the block is full). */
@@ -463,17 +467,21 @@ export function planMonthWrite(
   const vi = col(layout.vendorColumn); const ai = col(layout.amountColumn); const ii = col(layout.idColumn);
   const cell = (r: number, ci: number) => (ci < 0 ? null : (values[r] || [])[ci]);
   const rowNo = (r: number) => origin.startRow + r;
-  let foundRow: number | null = null; let orphanRow: number | null = null; let freeRow: number | null = null; let totalRow: number | null = null;
+  let foundRow: number | null = null; let orphanRow: number | null = null; let sameAmountRow: number | null = null;
+  let freeRow: number | null = null; let totalRow: number | null = null;
   const firstData = layout.headerRow - origin.startRow + 1;
   for (let r = Math.max(0, firstData); r < values.length; r++) {
     const vendor = String(cell(r, vi) ?? '').trim();
     if (/^total\s*expenses?/i.test(vendor)) { totalRow = rowNo(r); break; }
     const idCell = String(cell(r, ii) ?? '');
     if (foundRow === null && idCell === id) foundRow = rowNo(r);
-    if (orphanRow === null && match && idCell === '' && match.vendors.some((v) => v.trim() === vendor) && Number(cell(r, ai)) === match.amount) orphanRow = rowNo(r);
+    if (match && idCell === '' && vendor !== '' && Number(cell(r, ai)) === match.amount) {
+      if (match.vendors.some((v) => v.trim() === vendor)) { if (orphanRow === null) orphanRow = rowNo(r); }
+      else if (sameAmountRow === null) sameAmountRow = rowNo(r);
+    }
     if (freeRow === null && (values[r] || []).every(isBlank) && !isReservedRow(formulas, r, rowNo(r))) freeRow = rowNo(r);
   }
-  return { foundRow, orphanRow, freeRow, totalRow };
+  return { foundRow, orphanRow, sameAmountRow, freeRow, totalRow };
 }
 
 /** A blank line just under a booking whose payment group spans into it

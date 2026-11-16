@@ -411,7 +411,10 @@ async function syncMonthSheet(row: ExpenseRecord, op: 'upsert' | 'delete', x: On
     if (plan.foundRow !== null && plan.orphanRow !== null && plan.orphanRow !== target) {
       for (const col of cols) await clearRange(x.itemId, sheet, `${col}${plan.orphanRow}:${col}${plan.orphanRow}`).catch(() => {});
     }
-    return { synced: true, syncedAt: FieldValue.serverTimestamp(), workbookId: x.itemId, sheet, row: target };
+    return {
+      synced: true, syncedAt: FieldValue.serverTimestamp(), workbookId: x.itemId, sheet, row: target,
+      ...(plan.sameAmountRow !== null ? { sameAmountRow: plan.sameAmountRow } : {}),
+    };
   } catch (e) {
     return fail(e instanceof Error ? e.message : String(e));
   }

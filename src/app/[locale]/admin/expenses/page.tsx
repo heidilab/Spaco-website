@@ -487,11 +487,12 @@ export default function ExpensesPage() {
                       <button onClick={() => removeReceipt(r)} disabled={busyRow}
                         className="w-7 h-7 rounded-lg hover:bg-rose-50 text-rose-400 flex items-center justify-center"><Trash2 size={12} /></button>
                     </div>
-                    {(flags.length > 0 || conf === 'low' || r.excel?.synced === false || r.receipt?.fileDeleted) && (
+                    {(flags.length > 0 || conf === 'low' || r.excel?.synced === false || r.excel?.sameAmountRow || r.receipt?.fileDeleted) && (
                       <div className="flex flex-wrap gap-1 mt-1 pl-1 text-[11px]">
                         {conf === 'low' && <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 inline-flex items-center gap-1"><AlertTriangle size={10} /> {locale === 'zh' ? '辨識信心低' : 'low confidence'}</span>}
                         {flags.map((f) => <span key={f} className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">{FLAG[f] ? FLAG[f][locale] : f}</span>)}
                         {r.receipt?.fileDeleted && <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{locale === 'zh' ? 'OneDrive 檔案已刪' : 'file deleted in OneDrive'}</span>}
+                        {r.excel?.sameAmountRow && <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">{locale === 'zh' ? `Excel「${r.excel.sheet}」第 ${r.excel.sameAmountRow} 行已有同金額 — 可能你手動入咗，留一個就夠` : `Excel “${r.excel.sheet}” row ${r.excel.sameAmountRow} already has this amount — maybe typed by hand; keep one`}</span>}
                         {r.excel?.synced === false && <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-700" title={r.excel.error}>{locale === 'zh' ? `Excel 未同步${r.excel.error ? `：${r.excel.error}` : ''}` : `Excel not synced${r.excel.error ? `: ${r.excel.error}` : ''}`}</span>}
                         {r.receipt?.readerNotes && <span className="text-ink-soft">{r.receipt.readerNotes}</span>}
                       </div>
