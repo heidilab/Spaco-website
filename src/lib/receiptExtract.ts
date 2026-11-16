@@ -421,9 +421,25 @@ export function excelDateSerial(date: string): number | null {
   return Math.round(ms / 86400000);
 }
 
+/** What goes in the Vendor / Remarks cells. 支出管理's 項目 is
+ *  「vendor · summary」, and her Vendor column holds short names
+ *  (Taobao, Brilliant Balloon), so the part before 「 · 」 goes under
+ *  Vendor and the rest under Remarks (her note first when she wrote one).
+ *  Editing 項目 in 支出管理 therefore updates both cells. */
+export function monthSheetCells(row: Pick<ExpenseRecord, 'item' | 'amount' | 'note' | 'receipt'>): { vendor: string; amount: number; note: string } {
+  const [head, ...rest] = (row.item || '').split(' · ');
+  const vendor = (head || row.item || '').trim().slice(0, 100);
+  const tail = rest.join(' · ').trim();
+  const note = (row.note?.trim() || tail || row.receipt?.summary || '').slice(0, 200);
+  return { vendor, amount: row.amount, note };
+}
+
 export interface MonthWritePlan {
   /** Line that already carries this SPACO ID (edit / delete target). */
   foundRow: number | null;
+  /** Line with this exact Vendor text + amount but no ID: left by a run
+   *  that died mid-write. Reused (or cleared) instead of adding another. */
+  orphanRow: number | null;
   /** First free line in the Expenses block, or null when the block is full. */
   freeRow: number | null;
   /** Line with 「Total Expenses:」 (insert point when the block is full). */
@@ -440,21 +456,24 @@ const isBlank = (v: unknown) => v === null || v === undefined || v === '' || v =
 export function planMonthWrite(
   values: unknown[][], origin: { startCol: string; startRow: number },
   layout: MonthLayout & { idColumn: string }, id: string, formulas?: unknown[][],
+  match?: { vendors: string[]; amount: number },
 ): MonthWritePlan {
   const c0 = columnLetterToIndex(origin.startCol);
   const col = (letter: string) => columnLetterToIndex(letter) - c0;
-  const vi = col(layout.vendorColumn); const ii = col(layout.idColumn);
+  const vi = col(layout.vendorColumn); const ai = col(layout.amountColumn); const ii = col(layout.idColumn);
   const cell = (r: number, ci: number) => (ci < 0 ? null : (values[r] || [])[ci]);
   const rowNo = (r: number) => origin.startRow + r;
-  let foundRow: number | null = null; let freeRow: number | null = null; let totalRow: number | null = null;
+  let foundRow: number | null = null; let orphanRow: number | null = null; let freeRow: number | null = null; let totalRow: number | null = null;
   const firstData = layout.headerRow - origin.startRow + 1;
   for (let r = Math.max(0, firstData); r < values.length; r++) {
     const vendor = String(cell(r, vi) ?? '').trim();
     if (/^total\s*expenses?/i.test(vendor)) { totalRow = rowNo(r); break; }
-    if (foundRow === null && String(cell(r, ii) ?? '') === id) foundRow = rowNo(r);
+    const idCell = String(cell(r, ii) ?? '');
+    if (foundRow === null && idCell === id) foundRow = rowNo(r);
+    if (orphanRow === null && match && idCell === '' && match.vendors.some((v) => v.trim() === vendor) && Number(cell(r, ai)) === match.amount) orphanRow = rowNo(r);
     if (freeRow === null && (values[r] || []).every(isBlank) && !isReservedRow(formulas, r, rowNo(r))) freeRow = rowNo(r);
   }
-  return { foundRow, freeRow, totalRow };
+  return { foundRow, orphanRow, freeRow, totalRow };
 }
 
 /** A blank line just under a booking whose payment group spans into it

@@ -21,7 +21,7 @@ import {
 } from './msgraph';
 import {
   attachmentPlan, parseReceiptJson, buildReceiptExpense, findPossibleDuplicate, excelRowValues, tableRowArray,
-  parseRangeAddress, receiptPrompt, RECEIPT_SYSTEM_PROMPT, findMonthSheet, detectMonthLayout, planMonthWrite, excelDateSerial,
+  parseRangeAddress, receiptPrompt, RECEIPT_SYSTEM_PROMPT, findMonthSheet, detectMonthLayout, planMonthWrite, excelDateSerial, monthSheetCells,
   type ParsedReceipt, type BranchOption,
 } from './receiptExtract';
 import { callClaudeWithAttachment } from './llm';
@@ -360,7 +360,8 @@ async function syncMonthSheet(row: ExpenseRecord, op: 'upsert' | 'delete', x: On
       ? { headerRow: x.headerRow || 5, vendorColumn: x.vendorColumn.toUpperCase(), amountColumn: x.amountColumn.toUpperCase() }
       : null);
     if (!layout) return fail(`「${sheet}」sheet 搵唔到 Vendor / Amount 標題`);
-    const plan = planMonthWrite(used.values, origin, { ...layout, idColumn }, row.id, used.formulas);
+    const cellsOut = monthSheetCells(row);
+    const plan = planMonthWrite(used.values, origin, { ...layout, idColumn }, row.id, used.formulas, { vendors: [cellsOut.vendor, row.item], amount: cellsOut.amount });
     const V = layout.vendorColumn; const A = layout.amountColumn;
     // Date / Remarks: what she saved wins ('' = don't write); else what the sheet shows.
     const pick = (saved: string | undefined, found: string | undefined) =>
@@ -373,7 +374,9 @@ async function syncMonthSheet(row: ExpenseRecord, op: 'upsert' | 'delete', x: On
       }
       return { synced: true, syncedAt: FieldValue.serverTimestamp(), workbookId: x.itemId, sheet };
     }
-    let target = plan.foundRow ?? plan.freeRow;
+    // Order of preference: our own line → a half-written line from a run
+    // that died (same vendor + amount, no ID) → first free line.
+    let target = plan.foundRow ?? plan.orphanRow ?? plan.freeRow;
     if (target === null) {
       if (plan.totalRow !== null) {
         // Block full: open a line above its last entry (inside the SUM range).
@@ -389,8 +392,11 @@ async function syncMonthSheet(row: ExpenseRecord, op: 'upsert' | 'delete', x: On
     if (plan.foundRow === null && (hdr === undefined || hdr === null || hdr === '')) {
       await writeCell(x.itemId, sheet, `${idColumn}${layout.headerRow}`, 'SPACO ID').catch(() => {});
     }
-    await writeCell(x.itemId, sheet, `${V}${target}`, row.item);
-    await writeCell(x.itemId, sheet, `${A}${target}`, row.amount);
+    // The ID goes down FIRST: if the function dies after this, the next
+    // run finds the line by ID and completes it instead of adding another.
+    if (plan.foundRow === null) await writeCell(x.itemId, sheet, `${idColumn}${target}`, row.id);
+    await writeCell(x.itemId, sheet, `${V}${target}`, cellsOut.vendor);
+    await writeCell(x.itemId, sheet, `${A}${target}`, cellsOut.amount);
     if (D) {
       const serial = excelDateSerial(row.date);
       if (serial !== null) {
@@ -400,8 +406,11 @@ async function syncMonthSheet(row: ExpenseRecord, op: 'upsert' | 'delete', x: On
         await writeCell(x.itemId, sheet, `${D}${target}`, serial, fmt === 'General' ? 'd/m/yyyy;@' : undefined);
       }
     }
-    if (N) await writeCell(x.itemId, sheet, `${N}${target}`, (row.note || row.receipt?.summary || '').slice(0, 200));
-    if (plan.foundRow === null) await writeCell(x.itemId, sheet, `${idColumn}${target}`, row.id);
+    if (N) await writeCell(x.itemId, sheet, `${N}${target}`, cellsOut.note);
+    // Our line exists AND a half-written twin is still there → clear the twin.
+    if (plan.foundRow !== null && plan.orphanRow !== null && plan.orphanRow !== target) {
+      for (const col of cols) await clearRange(x.itemId, sheet, `${col}${plan.orphanRow}:${col}${plan.orphanRow}`).catch(() => {});
+    }
     return { synced: true, syncedAt: FieldValue.serverTimestamp(), workbookId: x.itemId, sheet, row: target };
   } catch (e) {
     return fail(e instanceof Error ? e.message : String(e));
