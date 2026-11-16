@@ -1046,8 +1046,8 @@ export interface OneDriveExcelTarget {
   amountColumn?: string;
   /** Column letter for the SPACO ID, outside her layout (default V). */
   idColumn?: string;
-  /** Her sheets' row-level Date column (the Transaction 「Date」, M) —
-   *  receipt date goes here on the same line; '' = don't write. */
+  /** Her sheets' 「Date」 column (A) — the receipt date goes there on the
+   *  same line (Heidi 2026-11-16); '' = don't write. */
   dateColumn?: string;
   /** Her 「Remarks」 column (U) — receipt summary / note; '' = don't write. */
   noteColumn?: string;

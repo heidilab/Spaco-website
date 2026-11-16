@@ -133,14 +133,14 @@ describe('month-sheet layout (Financial Master)', () => {
     ];
     expect(detectMonthLayout(values)).toEqual({ headerRow: 3, vendorColumn: 'E', amountColumn: 'F', dateColumn: 'A' });
     expect(detectMonthLayout([['a', 'b']])).toBeNull();
-    // Her real banner: Remarks in row 2, Transaction Date (M) left of Vendor (Q).
+    // Her real banner: Remarks in row 2, the Date column is A (Heidi 2026-11-16).
     const real = [
       [' NOV- 2026 (CWB)'],
       ['CR', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'DR', '', 'Source', 'Returned Deposit', 'Remarks'],
       [], [],
       ['Date', 'Time', 'ppl', 'Rent', 'BBQ/ Hotpot', 'Shisha', '到會', 'Drinks', '會員積分優惠', '信用卡手續費', '加時/罰款', 'Total ', 'Date', 'Payment Methods', 'Amount', 'Total', 'Vendor', 'Amount'],
     ];
-    expect(detectMonthLayout(real)).toEqual({ headerRow: 5, vendorColumn: 'Q', amountColumn: 'R', dateColumn: 'M', noteColumn: 'U' });
+    expect(detectMonthLayout(real)).toEqual({ headerRow: 5, vendorColumn: 'Q', amountColumn: 'R', dateColumn: 'A', noteColumn: 'U' });
     expect(excelDateSerial('2026-11-16')).toBe(46342);
     expect(excelDateSerial('1900-03-01')).toBe(61);
     expect(excelDateSerial('nope')).toBeNull();

@@ -76,7 +76,7 @@ export default function OneDrivePage() {
   const [vendorCol, setVendorCol] = useState('Q');
   const [amountCol, setAmountCol] = useState('R');
   const [idCol, setIdCol] = useState('V');
-  const [dateCol, setDateCol] = useState('M');
+  const [dateCol, setDateCol] = useState('A');
   const [noteCol, setNoteCol] = useState('U');
 
   const say = (kind: 'ok' | 'err', text: string) => { setFlash({ kind, text }); setTimeout(() => setFlash(null), 6000); };
@@ -181,7 +181,7 @@ export default function OneDrivePage() {
       else if (same && saved.vendorColumn) { setHeaderRow(saved.headerRow || 5); setVendorCol(saved.vendorColumn); setAmountCol(saved.amountColumn || 'R'); }
       else { setHeaderRow(5); setVendorCol('Q'); setAmountCol('R'); }
       setIdCol(same && saved.idColumn ? saved.idColumn : 'V');
-      setDateCol(same && saved.dateColumn !== undefined ? saved.dateColumn : (found?.dateColumn ?? 'M'));
+      setDateCol(same && saved.dateColumn !== undefined ? saved.dateColumn : (found?.dateColumn ?? 'A'));
       setNoteCol(same && saved.noteColumn !== undefined ? saved.noteColumn : (found?.noteColumn ?? 'U'));
     } catch (e) { say('err', e instanceof Error ? e.message : 'workbook read failed'); } finally { setBusy(null); }
   }
@@ -380,8 +380,8 @@ export default function OneDrivePage() {
             <h2 className="font-bold mb-1">{zh ? '3 · 同步到每間舖嘅 Financial Master Excel' : '3 · Mirror into each branch\'s Financial Master'}</h2>
             <p className="text-xs text-ink-soft mb-3">
               {zh
-                ? '每間舖揀自己嗰個 Excel 檔就得。唔使揀 sheet：每張單據會按佢嘅月份自動寫入嗰張月份 sheet（例如 NOV-2026），放喺「Total Expenses」上面第一個空行 — Vendor 欄寫項目、Amount 欄寫金額、Date 欄（M）寫單據日期、Remarks 欄（U）寫備註。另外會喺嗰行寫一個 SPACO ID 落一個你冇用嘅欄（預設 V 欄），改數或刪除時先搵得返同一行。'
-                : 'Pick each branch\'s workbook. No sheet to choose: every receipt goes onto its own month sheet (e.g. NOV-2026) on the first empty line above “Total Expenses” — item under Vendor, amount under Amount, receipt date in the Date column (M), note in Remarks (U). A SPACO ID is written in an unused column (V by default) so edits and deletes find the same line.'}
+                ? '每間舖揀自己嗰個 Excel 檔就得。唔使揀 sheet：每張單據會按佢嘅月份自動寫入嗰張月份 sheet（例如 NOV-2026），放喺「Total Expenses」上面第一個空行 — Vendor 欄寫項目、Amount 欄寫金額、Date 欄（A）寫單據日期、Remarks 欄（U）寫備註。另外會喺嗰行寫一個 SPACO ID 落一個你冇用嘅欄（預設 V 欄），改數或刪除時先搵得返同一行。'
+                : 'Pick each branch\'s workbook. No sheet to choose: every receipt goes onto its own month sheet (e.g. NOV-2026) on the first empty line above “Total Expenses” — item under Vendor, amount under Amount, receipt date in the Date column (A), note in Remarks (U). A SPACO ID is written in an unused column (V by default) so edits and deletes find the same line.'}
             </p>
             <div className="space-y-2">
               {status.branches.map((b) => {
