@@ -224,18 +224,28 @@ export default function OneDrivePage() {
     try { await adminApiFetch('/api/onedrive/disconnect', { method: 'POST' }); say('ok', zh ? '已中斷連接' : 'Disconnected'); await load(); }
     finally { setBusy(null); }
   }
+  /** 「立即同步」: one request reads ~2 files inside Vercel's 60 s, so keep
+   *  calling while the server says files are still waiting (≤ 8 rounds). */
   async function syncNow() {
     setBusy('sync'); setSyncResult(null);
+    let processed = 0; let queued = 0; let seen = 0; let failed = 0; let remaining = 0;
     try {
-      const res = await adminApiFetch('/api/onedrive/sync', { method: 'POST' });
-      const d = await res.json();
-      if (!res.ok) throw new Error(d.error || res.statusText);
-      if (d.skipped) setSyncResult(zh ? `略過：${d.skipped}` : `Skipped: ${d.skipped}`);
-      else if (d.error) setSyncResult((zh ? '錯誤：' : 'Error: ') + d.error);
-      else setSyncResult(zh
-        ? `掃描 ${d.scan?.seen ?? 0} 項變動，新排隊 ${d.scan?.queued ?? 0} 個檔案，今次讀入 ${d.process?.processed ?? 0} 張單據${d.process?.errors?.length ? `，${d.process.errors.length} 個失敗` : ''}`
-        : `Scanned ${d.scan?.seen ?? 0} changes, queued ${d.scan?.queued ?? 0}, read ${d.process?.processed ?? 0} receipts${d.process?.errors?.length ? `, ${d.process.errors.length} failed` : ''}`);
-      await load();
+      for (let round = 1; round <= 8; round++) {
+        const res = await adminApiFetch('/api/onedrive/sync', { method: 'POST' });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || res.statusText);
+        if (d.skipped) { setSyncResult(zh ? `略過：${d.skipped}` : `Skipped: ${d.skipped}`); return; }
+        if (d.error) { setSyncResult((zh ? '錯誤：' : 'Error: ') + d.error); return; }
+        if (round === 1) { seen = d.scan?.seen ?? 0; queued = d.scan?.queued ?? 0; }
+        processed += d.process?.processed ?? 0; failed += d.process?.errors?.length ?? 0;
+        remaining = d.process?.remaining ?? 0;
+        setSyncResult(zh
+          ? `掃描 ${seen} 項變動，新排隊 ${queued} 個檔案，已讀入 ${processed} 張單據${failed ? `，${failed} 個失敗` : ''}${remaining ? `，仲有 ${remaining} 張讀緊…` : ''}`
+          : `Scanned ${seen} changes, queued ${queued}, read ${processed} receipts${failed ? `, ${failed} failed` : ''}${remaining ? `, ${remaining} still to go…` : ''}`);
+        await load();
+        if (!remaining) break;
+      }
+      if (remaining) setSyncResult((s) => (s || '') + (zh ? '（其餘會喺 15 分鐘內自動繼續）' : ' (the rest continue automatically within 15 min)'));
     } catch (e) { setSyncResult((zh ? '錯誤：' : 'Error: ') + (e instanceof Error ? e.message : 'failed')); }
     finally { setBusy(null); }
   }

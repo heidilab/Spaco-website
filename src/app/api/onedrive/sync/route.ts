@@ -10,5 +10,5 @@ export const maxDuration = 60;
 export async function POST(req: Request) {
   const gate = await requireAdmin(req, 'staff');
   if (!gate.ok) return gate.res;
-  return NextResponse.json(await runReceiptIngest({ maxFiles: 4 }));
+  return NextResponse.json(await runReceiptIngest({ maxFiles: 4, budgetMs: 38_000 }));
 }

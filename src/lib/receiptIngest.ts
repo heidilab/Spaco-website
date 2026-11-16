@@ -17,7 +17,7 @@ import { adminDb } from './firebaseAdmin';
 import {
   GraphError, folderDelta, getItem, downloadContent, downloadThumbnailJpeg, displayPath,
   getReceiptsConfig, saveReceiptsConfig, getUsedRangeAddress, getTableRange, tableAddRow, tableDeleteRow,
-  readRange, writeCell, deleteSheetRow, listWorksheetNames, getUsedRange, clearRange, insertCellsDown, type DriveItem,
+  readRange, writeCell, deleteSheetRow, listWorksheetNames, getUsedRange, clearRange, insertCellsDown, getNumberFormat, type DriveItem,
 } from './msgraph';
 import {
   attachmentPlan, parseReceiptJson, buildReceiptExpense, findPossibleDuplicate, excelRowValues, tableRowArray,
@@ -150,6 +150,8 @@ export interface ProcessResult {
   processed: number;
   created: Array<{ id: string; item: string; amount: number; branchKey: string; flags: string[] }>;
   errors: string[];
+  /** Files still waiting after this run (time budget or maxFiles hit). */
+  remaining: number;
 }
 
 /** Branch for a file: walk up its parents (month sub-folder → year
@@ -174,27 +176,53 @@ const UNREADABLE: ParsedReceipt = {
   confidence: 'low', multipleReceipts: false, notes: 'Claude 無法讀出內容',
 };
 
-export async function processQueuedReceipts(maxFiles = 4, cfg?: OneDriveReceiptsConfig): Promise<ProcessResult> {
+/** Expense already made for this file (an earlier run timed out between
+ *  writing the row and marking the file done) — never read it twice. */
+async function existingExpenseForFile(f: ReceiptFileDoc): Promise<ExpenseRecord | null> {
+  if (f.expenseId) {
+    const d = await adminDb.collection('expenses').doc(f.expenseId).get();
+    if (d.exists) return { id: d.id, ...d.data() } as ExpenseRecord;
+  }
+  const q = await adminDb.collection('expenses').where('receipt.driveItemId', '==', f.id).limit(1).get();
+  return q.empty ? null : ({ id: q.docs[0].id, ...q.docs[0].data() } as ExpenseRecord);
+}
+
+/** Read up to `maxFiles` queued files, stopping early once `deadlineAt`
+ *  (ms epoch) is near — a Vercel function has 60 s, one receipt takes
+ *  ~15–20 s (Claude vision + Graph), so the caller hands over a budget
+ *  and the rest wait for the next click / cron tick. */
+export async function processQueuedReceipts(maxFiles = 4, cfg?: OneDriveReceiptsConfig, deadlineAt?: number): Promise<ProcessResult> {
   const config = cfg || await getReceiptsConfig();
-  const result: ProcessResult = { processed: 0, created: [], errors: [] };
+  const result: ProcessResult = { processed: 0, created: [], errors: [], remaining: 0 };
   const snap = await adminDb.collection(FILES).where('status', 'in', ['queued', 'error']).limit(50).get();
-  const docs = snap.docs
+  const all = snap.docs
     .map((d) => ({ id: d.id, ...d.data() } as ReceiptFileDoc))
     .filter((d) => !d.fileDeleted && (d.attempts || 0) < MAX_ATTEMPTS)
-    .sort((a, b) => (a.createdDateTime || '').localeCompare(b.createdDateTime || ''))
-    .slice(0, maxFiles);
+    .sort((a, b) => (a.createdDateTime || '').localeCompare(b.createdDateTime || ''));
+  const docs = all.slice(0, maxFiles);
+  result.remaining = all.length - docs.length;
   if (docs.length === 0) return result;
 
   const branches = await branchOptions();
   const branchName = (key: string) => branches.find((b) => b.key === key)?.zh || key;
   const parentCache = new Map<string, DriveItem>();
 
-  for (const f of docs) {
+  for (let i = 0; i < docs.length; i++) {
+    const f = docs[i];
+    if (deadlineAt && Date.now() > deadlineAt) { result.remaining += docs.length - i; break; }
     const ref = adminDb.collection(FILES).doc(f.id);
     try {
       const branchKey = await resolveBranch(f.parentId || '', config, parentCache);
       if (!branchKey) {
         await ref.set({ status: 'no_branch', processedAt: FieldValue.serverTimestamp() }, { merge: true });
+        continue;
+      }
+      const already = await existingExpenseForFile(f);
+      if (already) {
+        const excel = await syncExpenseToExcel(already, 'upsert', config, branchName(branchKey));
+        if (excel) await adminDb.collection('expenses').doc(already.id).set({ excel }, { merge: true });
+        await ref.set({ status: 'done', branchKey, expenseId: already.id, error: '', processedAt: FieldValue.serverTimestamp() }, { merge: true });
+        result.processed++;
         continue;
       }
       const plan = attachmentPlan({ name: f.name, size: f.size, mimeType: f.mimeType });
@@ -233,6 +261,9 @@ export async function processQueuedReceipts(maxFiles = 4, cfg?: OneDriveReceipts
       const docRef = adminDb.collection('expenses').doc();
       await docRef.set({ ...expense, receipt: { ...expense.receipt, extractedAt: FieldValue.serverTimestamp() }, createdAt: FieldValue.serverTimestamp() });
       const saved = { id: docRef.id, ...expense } as ExpenseRecord;
+      // Remember the row before the (slow) Excel step so a timeout here
+      // resumes with Excel only, never a second Claude read.
+      await ref.set({ expenseId: docRef.id, branchKey }, { merge: true });
       const excel = await syncExpenseToExcel(saved, 'upsert', config, branchName(branchKey));
       if (excel) await docRef.set({ excel }, { merge: true });
 
@@ -362,7 +393,12 @@ async function syncMonthSheet(row: ExpenseRecord, op: 'upsert' | 'delete', x: On
     await writeCell(x.itemId, sheet, `${A}${target}`, row.amount);
     if (D) {
       const serial = excelDateSerial(row.date);
-      if (serial !== null) await writeCell(x.itemId, sheet, `${D}${target}`, serial, 'd/m/yyyy;@');
+      if (serial !== null) {
+        // Her Date column is already date-formatted (long form in A); only
+        // a General cell gets a format so the serial never shows as 46342.
+        const fmt = await getNumberFormat(x.itemId, sheet, `${D}${target}`).catch(() => 'General');
+        await writeCell(x.itemId, sheet, `${D}${target}`, serial, fmt === 'General' ? 'd/m/yyyy;@' : undefined);
+      }
     }
     if (N) await writeCell(x.itemId, sheet, `${N}${target}`, (row.note || row.receipt?.summary || '').slice(0, 200));
     if (plan.foundRow === null) await writeCell(x.itemId, sheet, `${idColumn}${target}`, row.id);
@@ -458,15 +494,17 @@ export interface IngestSummary {
   error?: string;
 }
 
-export async function runReceiptIngest(opts: { maxFiles?: number } = {}): Promise<IngestSummary> {
+export async function runReceiptIngest(opts: { maxFiles?: number; budgetMs?: number } = {}): Promise<IngestSummary> {
+  const started = Date.now();
+  const deadlineAt = started + (opts.budgetMs ?? 40_000);
   const cfg = await getReceiptsConfig();
   if (cfg.branchFolders.length === 0) return { skipped: 'no branch folder chosen' };
   const summary: IngestSummary = {};
   try {
     summary.scan = await scanReceiptsFolder(cfg);
     const fresh = await getReceiptsConfig();
-    summary.process = await processQueuedReceipts(opts.maxFiles ?? 4, fresh);
-    summary.excelRetry = await resyncPendingExcel(fresh).catch(() => ({ retried: 0, fixed: 0 }));
+    summary.process = await processQueuedReceipts(opts.maxFiles ?? 4, fresh, deadlineAt);
+    if (Date.now() < deadlineAt) summary.excelRetry = await resyncPendingExcel(fresh).catch(() => ({ retried: 0, fixed: 0 }));
     const n = summary.process.created.length;
     if (n > 0) {
       const attention = summary.process.created.filter((c) => c.flags.length > 0).length;

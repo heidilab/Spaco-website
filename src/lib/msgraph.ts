@@ -365,6 +365,11 @@ export async function insertCellsDown(itemId: string, worksheet: string, address
   });
 }
 
+export async function getNumberFormat(itemId: string, worksheet: string, address: string): Promise<string> {
+  const r: { numberFormat: string[][] } = await graphFetch(`${ws(itemId, worksheet)}/range(address='${encodeURIComponent(address)}')?$select=numberFormat`);
+  return (r.numberFormat && r.numberFormat[0] && r.numberFormat[0][0]) || 'General';
+}
+
 export async function readRange(itemId: string, worksheet: string, address: string): Promise<unknown[][]> {
   const r: { values: unknown[][] } = await graphFetch(`${ws(itemId, worksheet)}/range(address='${encodeURIComponent(address)}')?$select=values`);
   return r.values || [];
