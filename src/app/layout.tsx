@@ -9,6 +9,13 @@ export const metadata: Metadata = {
   title: 'SPACO — Multifunctional Space',
   description: 'Premium self-service event spaces in Hong Kong',
   manifest: '/manifest.webmanifest',
+  // Meta Business Suite domain verification for spacohk.com (added 2026-11-18).
+  // Renders <meta name="facebook-domain-verification"> in <head> on every page.
+  verification: {
+    other: {
+      'facebook-domain-verification': '2x2lwuxrzhaqsdo4ekpausfzowl4g6',
+    },
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
