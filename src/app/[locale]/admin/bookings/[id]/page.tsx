@@ -28,6 +28,7 @@ import { useBookingRules } from '@/lib/bookingRulesClient';
 import { getBookingRules, pointsEarnedFor } from '@/lib/bookingRules';
 import { getDecorationById } from '@/lib/decorations';
 import CateringPickerModal, { type CateringSelection } from '@/components/booking/CateringPickerModal';
+import LinkMemberPanel from '@/components/admin/LinkMemberPanel';
 import HotpotSoupPicker from '@/components/booking/HotpotSoupPicker';
 import { shishaAddOnOptions, shishaOptionsChanged } from '@/lib/shishaOptions';
 import {
@@ -2724,6 +2725,24 @@ export default function AdminBookingDetailPage() {
             ) : (
               <p className="text-lg font-semibold">{memberName}</p>
             )}
+            {/* Guest booking (admin-created, userId null): the customer
+             *  pay-balance link is unreadable for EVERY account until the
+             *  booking is attached to a member, so offer the link tool
+             *  right here. */}
+            {!booking.userId && (
+              <LinkMemberPanel
+                bookingId={booking.id}
+                locale={locale}
+                staffUid={user?.uid}
+                initialSearch={booking.whatsappPhone || booking.customerEmail || ''}
+                onLinked={async (uid) => {
+                  const fresh = await getBooking(booking.id);
+                  if (fresh) setBooking(fresh);
+                  const p = await getUserProfile(uid).catch(() => null);
+                  if (p) setProfile(p as unknown as UserProfile);
+                }}
+              />
+            )}
             {memberEmail && (
               <a href={`mailto:${memberEmail}`} className="flex items-center gap-2 text-sm text-ink-soft hover:text-accent">
                 <Mail size={13} /> {memberEmail}
@@ -2993,6 +3012,10 @@ function OutstandingBalanceSection({
   const balance = booking.balanceDue ?? 0;
   const paidTotal = paidBase(booking);
   const owed = amountOwed(booking);
+  // Admin-created rows have userId null; Firestore rules + /api/kpay/checkout
+  // both require uid === userId, so the customer link can never work for
+  // them (Heidi 2026-11-19, #UhniHC6z).
+  const isGuest = !booking.userId;
   const [copied, setCopied] = useState<boolean>(false);
   const [settling, setSettling] = useState<boolean>(false);
   const [settleMsg, setSettleMsg] = useState<string | null>(null);
@@ -3160,7 +3183,15 @@ function OutstandingBalanceSection({
        *  has balanceDue 0 (its deposit link is the original payment page),
        *  so we hide the balance link there and steer admin to record the
        *  offline payment instead. */}
-      {balance > 0 && (
+      {balance > 0 && isGuest && (
+        <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 leading-relaxed">
+          {locale === 'zh'
+            ? '⚠️ 此單係手動開單，未綁定會員帳號。線上付款連結會顯示「無法讀取此預訂」，所以已隱藏。請收 FPS／銀行轉帳後用「已於線下付款」記錄；如客人想網上付款，先喺右邊「會員資料」連結佢個會員帳號。'
+            : '⚠️ Admin-created booking with no member account. The online pay link would show "Unable to access this booking", so it is hidden. Record the FPS / bank transfer with "Record offline payment", or link the customer\'s member account under "Member" first.'}
+        </div>
+      )}
+
+      {balance > 0 && !isGuest && (
       <div className="mb-3">
         <label className="block text-xs text-ink-soft mb-1 font-semibold">
           {locale === 'zh' ? '線上付款連結（可發送俾客人）' : 'Online payment link (send to customer)'}
@@ -3187,7 +3218,7 @@ function OutstandingBalanceSection({
       )}
 
       <div className="flex flex-wrap gap-2">
-        {balance > 0 && (whatsappHref ? (
+        {balance > 0 && !isGuest && (whatsappHref ? (
           <a
             href={whatsappHref}
             target="_blank"

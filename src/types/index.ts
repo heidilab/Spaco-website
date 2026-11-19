@@ -361,6 +361,11 @@ export interface BookingRecord {
   createdVia?: 'admin-direct';
   /** Staff uid that recorded an admin-direct booking. */
   createdBy?: string;
+  /** Set when staff links a guest (admin-created, userId null) booking to a
+   *  member account from /admin/bookings/[id] so the customer can open the
+   *  pay-balance link and see it under /my-bookings. */
+  memberLinkedAt?: unknown;
+  memberLinkedBy?: string;
   /** Manual override (HK$) for the auto-computed broker/platform
    *  commission on this booking — 行家 deals are negotiated per booking
    *  (Heidi 2026-09). Set from the 支出管理 page; wins over the rule. */

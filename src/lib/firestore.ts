@@ -107,6 +107,28 @@ export async function updateBookingStatus(id: string, status: string) {
   });
 }
 
+/**
+ * Attach a member account to a guest booking (admin-created rows carry
+ * userId null). Firestore rules only let `request.auth.uid == userId`
+ * read a booking, so until this is set the customer-facing pay-balance
+ * link fails with permission-denied for every account (Heidi 2026-11-19,
+ * #UhniHC6z Wan Chai). Refuses to re-point a booking that already has an
+ * owner — that would silently move it out of another member's history.
+ */
+export async function linkBookingToMember(bookingId: string, uid: string, staffUid?: string) {
+  const ref = doc(db, 'bookings', bookingId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('booking_not_found');
+  const current = (snap.data() as { userId?: string | null }).userId;
+  if (current) throw new Error('already_linked');
+  await updateDoc(ref, {
+    userId: uid,
+    memberLinkedAt: serverTimestamp(),
+    memberLinkedBy: staffUid || null,
+    updatedAt: serverTimestamp(),
+  });
+}
+
 /** Admin updates a member's phone — writes to the user profile AND
  *  cascades to every booking's whatsappPhone so the bookings list /
  *  detail / pay-balance flow all show the corrected number.
