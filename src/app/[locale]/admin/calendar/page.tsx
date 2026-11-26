@@ -18,6 +18,7 @@ import { loadAllVenues, venuesSnapshot } from '@/lib/venueRegistry';
 import { calendarFilterOptions, filterOption, filterVenueIds, isGroupFilter, preferredGcalRow } from '@/lib/calendarBranchFilter';
 import type { Venue } from '@/types';
 import { formatAddOnsForStaff } from '@/lib/pricing';
+import { bookingHoldStart, earlySetupNote } from '@/lib/earlySetup';
 import StaffRemarkEditor from '@/components/booking/StaffRemarkEditor';
 import {
   ChevronLeft, ChevronRight, Lock, Calendar, Eye, Truck, Trash2,
@@ -249,7 +250,8 @@ export default function AdminCalendarPage() {
           && b.status !== 'payment_not_completed'
           && (!b.isTest || isPreviewHost),
         )
-        .forEach((b) => items.push({ kind: 'booking', sortTime: b.startTime, data: b }));
+        // Hold from the 提早入場佈置 start when set-up hours were bought.
+        .forEach((b) => items.push({ kind: 'booking', sortTime: bookingHoldStart(b), data: b }));
 
       blockedSlots
         .filter((s) => s.date === date && s.reason === 'admin_block')
@@ -749,13 +751,8 @@ function SummaryItemTitle({ item, locale, userNames }: { item: DayItem; locale: 
     : (item.data as BlockedSlot).endTime
   }`;
   if (item.kind === 'booking') {
-    const setupH = item.data.earlySetupHours || 0;
-    const setupTag = setupH > 0 ? (() => {
-      const [h, m] = item.data.startTime.split(':').map(Number);
-      const t = Math.max(0, h * 60 + (m || 0) - setupH * 60);
-      const ss = `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
-      return <span className="text-amber-700"> · 🎈{ss}-{item.data.startTime} {locale === 'zh' ? '提早入場佈置' : 'early setup'}</span>;
-    })() : null;
+    const setupNote = earlySetupNote(item.data, locale);
+    const setupTag = setupNote ? <span className="text-amber-700"> · 🎈{setupNote}</span> : null;
     return <>{item.data.isTest ? '🧪 ' : ''}{timeRange}  <span className="font-semibold">{venueTag(item.data.venueId)}</span>  · {bookingIdent(item.data, userNames)}{item.data.guestCount > 0 ? `  · ${item.data.guestCount}p` : ''}{setupTag}</>;
   }
   if (item.kind === 'block') {

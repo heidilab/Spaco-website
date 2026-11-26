@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { venueHasNoElectronicLock } from '@/lib/venueLock';
 import { adminDiscountAmount } from '@/lib/bookingMoney';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { buildBookingConfirmationEmail, generateWhatsAppLink } from '@/lib/email';
@@ -66,7 +67,7 @@ export async function POST(req: NextRequest) {
       customerName: user.displayName || 'there',
       venueId: booking.venueId,
       venueName: venue?.name.zh || booking.venueId,
-      venueAddress: venue?.address.zh,
+      venueAddress: venue?.address.zh, noElectronicLock: venueHasNoElectronicLock(venue),
       date: booking.date,
       startTime: booking.startTime,
       endTime: booking.endTime,

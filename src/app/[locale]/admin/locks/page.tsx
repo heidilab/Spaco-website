@@ -27,11 +27,12 @@ interface LockRow { lockId: number; lockAlias: string; lockName: string; electri
 interface VenueRow {
   id: string; name: { zh: string; en: string }; branchKey: string; branchName: { zh: string; en: string }; roomLabel?: { zh?: string; en?: string };
   active: boolean; sortOrder: number; ttlockLockId: number | null; lockGuideUrl: string; lockConfirmKey: string;
+  noElectronicLock: boolean;
   inAccount: boolean | null; lockAlias: string | null; battery: number | null; hasGateway: boolean | null;
 }
 interface Upcoming {
   bookingId: string; date: string; startTime: string; endTime: string; venueId: string;
-  state: 'has-code' | 'email-pending' | 'revoke-failed' | 'no-code' | 'manual'; reason: string;
+  state: 'has-code' | 'email-pending' | 'revoke-failed' | 'no-code' | 'manual' | 'no-lock'; reason: string;
   passcodeValidFrom?: number; passcodeValidTo?: number; balanceDue: number;
 }
 interface Status {
@@ -191,9 +192,11 @@ export default function LocksPage() {
     'email-pending': { zh: '電郵未發', en: 'Email pending', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
     'revoke-failed': { zh: '刪除失敗', en: 'Revoke failed', cls: 'bg-rose-50 text-rose-700 border-rose-200' },
     'no-code': { zh: '未有密碼', en: 'No code', cls: 'bg-stone-100 text-stone-600 border-stone-200' },
+    'no-lock': { zh: '不使用電子門鎖', en: 'No electronic lock', cls: 'bg-stone-100 text-stone-600 border-stone-200' },
   };
   const REASON_TEXT: Record<string, { zh: string; en: string }> = {
     'no-lockid': { zh: '場地未設門鎖 ID（手動處理）', en: 'No lock ID (manual)' },
+    'no-electronic-lock': { zh: '場地不使用電子門鎖（唔會出密碼）', en: 'No electronic lock (no passcode)' },
     'window-not-open': { zh: '未到 48 小時', en: 'Window not open' },
     'balance-due': { zh: '未付清尾數', en: 'Balance due' },
     'booking-already-started': { zh: '已開場', en: 'Already started' },
@@ -273,7 +276,9 @@ export default function LocksPage() {
                       <span className="font-semibold text-sm">{venueLabel(v)}</span>
                       <span className="text-[10px] font-mono text-ink-soft">{v.id}</span>
                       {!v.active && <span className="chip text-[10px]">{zh ? '已落架' : 'Offline'}</span>}
-                      {v.ttlockLockId
+                      {v.noElectronicLock
+                        ? <span className="chip text-[10px] bg-stone-100 text-stone-600 border-stone-200">{zh ? '不使用電子門鎖' : 'No electronic lock'}</span>
+                        : v.ttlockLockId
                         ? v.inAccount === true
                           ? <span className="chip text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">✓ {zh ? '鎖喺帳戶內' : 'In account'}{v.lockAlias ? ` · ${v.lockAlias}` : ''}</span>
                           : v.inAccount === false
@@ -284,6 +289,9 @@ export default function LocksPage() {
                       {v.hasGateway === false && <span className="chip text-[10px] bg-rose-50 text-rose-700 border-rose-200">{zh ? '冇 gateway' : 'No gateway'}</span>}
                       {legacy && (legacy.lockId || legacy.guideUrl) && <span className="chip text-[10px] bg-amber-50 text-amber-700 border-amber-200" title={`ttlock_${v.id}: ${legacy.lockId ?? '—'}`}>{zh ? '有舊設定值' : 'Legacy slot'}</span>}
                     </div>
+                    {v.noElectronicLock ? (
+                      <p className="text-xs text-ink-soft">{zh ? '分店管理剔咗「不使用電子門鎖」— 呢個場地唔會生成密碼、唔會入 TTLock、唔會出「密碼未能發出」提示。要用返門鎖，去分店管理取消剔選。' : 'Marked “no electronic lock” in 分店管理 — no passcodes, no TTLock calls, no failure alerts. Untick it there to use a lock again.'}</p>
+                    ) : (
                     <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end">
                       <label className="block md:col-span-4">
                         <span className="text-[11px] font-semibold text-ink-soft">{zh ? '門鎖（由帳戶揀，或者填 ID）' : 'Lock (pick, or type the ID)'}</span>
@@ -314,6 +322,7 @@ export default function LocksPage() {
                         </button>
                       </div>
                     </div>
+                    )}
                     {t && <p className={`text-xs mt-2 ${t.ok ? 'text-emerald-700' : 'text-rose-700'}`}>{t.ok ? (zh ? '✓ 成功：已經加咗一個 10 分鐘嘅測試密碼並即時刪除' : '✓ OK: a 10-minute test code was added and deleted') : (zh ? `✗ 失敗：${t.error}` : `✗ Failed: ${t.error}`)}</p>}
                   </div>
                 );

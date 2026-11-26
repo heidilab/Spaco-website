@@ -3665,6 +3665,8 @@ interface LockPasscodePanelProps {
 
 function LockPasscodePanel({ booking, locale, onUpdated }: LockPasscodePanelProps) {
   const [hasTTLock, setHasTTLock] = useState<boolean | null>(null);   // null = unknown
+  // 分店管理「不使用電子門鎖」: no passcode is ever issued or asked for.
+  const [noLock, setNoLock] = useState(false);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -3680,7 +3682,9 @@ function LockPasscodePanel({ booking, locale, onUpdated }: LockPasscodePanelProp
         // 分店管理 first (the engine's primary source), legacy 系統設定 next —
         // a branch set up only in 分店管理 used to read as "manual" here.
         const { loadAllVenues } = await import('@/lib/venueRegistry');
-        const fromRegistry = parseInt(String((await loadAllVenues()).find((v) => v.id === booking.venueId)?.ttlockLockId || '').trim(), 10);
+        const registryVenue = (await loadAllVenues()).find((v) => v.id === booking.venueId);
+        if (registryVenue?.noElectronicLock === true) { if (!cancelled) { setNoLock(true); setHasTTLock(false); } return; }
+        const fromRegistry = parseInt(String(registryVenue?.ttlockLockId || '').trim(), 10);
         if (Number.isFinite(fromRegistry) && fromRegistry > 0) { if (!cancelled) setHasTTLock(true); return; }
         const cms = await getSiteContent('settings');
         const raw = (cms?.[`ttlock_${booking.venueId}`]?.zh
@@ -3775,7 +3779,10 @@ function LockPasscodePanel({ booking, locale, onUpdated }: LockPasscodePanelProp
       <h2 className="font-bold flex items-center gap-2">
         <KeyRound size={16} className="text-pink" />
         {locale === 'zh' ? '門鎖密碼' : 'Lock Passcode'}
-        {hasTTLock === false && (
+        {noLock && (
+          <span className="chip text-[10px] ml-1">{locale === 'zh' ? '不使用電子門鎖' : 'No electronic lock'}</span>
+        )}
+        {hasTTLock === false && !noLock && (
           <span className="chip text-[10px] ml-1">{locale === 'zh' ? '手動' : 'Manual'}</span>
         )}
         {hasTTLock === true && (
@@ -3834,6 +3841,12 @@ function LockPasscodePanel({ booking, locale, onUpdated }: LockPasscodePanelProp
             })()}
           </div>
         </div>
+      ) : noLock ? (
+        <p className="text-sm text-ink-soft">
+          {locale === 'zh'
+            ? '此場地喺分店管理剔咗「不使用電子門鎖」— 系統唔會生成或要求門鎖密碼，亦唔會出提示 email。'
+            : 'This space is marked “no electronic lock” in 分店管理 — no passcode is generated or requested, and no alerts are sent.'}
+        </p>
       ) : hasTTLock === true ? (
         <div className="space-y-3">
           <p className="text-sm text-ink-soft">

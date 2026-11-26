@@ -8,6 +8,7 @@ import { overlappingBookings, type OverlapBooking, type OverlapWindow } from '@/
 import { slotClashes, clashesNeedingConfirmation, type ClashSlot, type DirectBookingClash } from '@/lib/directBookingClashes';
 import { getVenueByIdServer, venuesSharingSpaceServer } from '@/lib/venueRegistryServer';
 import { gcalEventTitle } from '@/lib/googleCalendar';
+import { earlySetupHoursOf, setupWindowStart } from '@/lib/earlySetup';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -126,6 +127,14 @@ export async function POST(req: NextRequest) {
     : [{ date: date as string, start: toMin(startTime), end: toMin(endTime) }];
   // The order's own cleaning buffer (site review #15).
   checkWindows.push({ date: resolvedEndDate, start: toMin(endTime), end: toMin(bufferEnd) });
+  // 提早入場佈置 (2026-11-26): an offline order with set-up hours holds
+  // the room from the set-up start, like every other booking path.
+  const earlySetupHours = earlySetupHoursOf({ addOns: Array.isArray(addOns) ? addOns : [] });
+  const setupStart = earlySetupHours > 0 ? setupWindowStart(String(startTime), earlySetupHours) : null;
+  if (earlySetupHours > 0 && !setupStart) {
+    return NextResponse.json({ error: 'EARLY_SETUP_BEFORE_DAY' }, { status: 400 });
+  }
+  if (setupStart) checkWindows.push({ date: date as string, start: toMin(setupStart), end: toMin(startTime) });
 
   // Money derived through the shared module so balanceDue always agrees
   // with the rest of the system.
@@ -178,6 +187,7 @@ export async function POST(req: NextRequest) {
         ? [{ date: date as string, startTime, endTime: '23:59' }, { date: resolvedEndDate, startTime: '00:00', endTime }]
         : [{ date: date as string, startTime, endTime }];
       requestedWindows.push({ date: resolvedEndDate, startTime: endTime, endTime: bufferEnd });
+      if (setupStart) requestedWindows.push({ date: date as string, startTime: setupStart, endTime: startTime });
       const seen = new Set<string>();
       const bookingClashes = overlappingBookings(requestedWindows,
         candidateDocs.filter((d) => !seen.has(d.id) && seen.add(d.id)).map((d) => ({ id: d.id, ...(d.data() as Omit<OverlapBooking, 'id'>) })),
@@ -219,6 +229,7 @@ export async function POST(req: NextRequest) {
         childCount: childCount ?? 0,
         isWeekend: !!isWeekend,
         addOns: Array.isArray(addOns) ? addOns : [],
+        ...(earlySetupHours > 0 ? { earlySetupHours } : {}),
         hasBYOFood: !!hasBYOFood,
         pricing,
         ...(adminDiscount ? { adminDiscount } : {}),
@@ -252,6 +263,9 @@ export async function POST(req: NextRequest) {
       } else {
         addSlot({ venueId, date, startTime, endTime, reason: 'booking', bookingId });
         addSlot({ venueId, date, startTime: endTime, endTime: bufferEnd, reason: 'cleaning', bookingId });
+      }
+      if (setupStart) {
+        addSlot({ venueId, date, startTime: setupStart, endTime: startTime, reason: 'setup', bookingId });
       }
 
       for (const r of lockRefs) {

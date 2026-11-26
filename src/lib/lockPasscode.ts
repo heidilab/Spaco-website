@@ -24,6 +24,7 @@ import { resolveVenueServer, loadAllVenuesServer } from './venueRegistryServer';
 import { getSiteContent } from './content';
 import { buildLockPasscodeEmail, buildBalanceDueReminderEmail } from './email';
 import { lockConfirmKey } from './lockConfirmKey';
+import { venueHasNoElectronicLock } from './venueLock';
 import { sendAutomatedEmail } from './emailAutomations';
 import type { BookingRecord, UserProfile } from '@/types';
 
@@ -257,6 +258,12 @@ export async function processBookingForLockAccess(bookingId: string): Promise<Pr
     return { bookingId, action: 'skipped', reason: 'test-booking' };
   }
 
+  // 不使用電子門鎖 (分店管理, 2026-11-26): there is no door to program.
+  // Decided up front so the sweep never lists such a booking as a
+  // failure — no TTLock call, no「門鎖密碼未能發出」alert email. A balance
+  // still gets chased, just without the passcode promise.
+  const noElectronicLock = venueHasNoElectronicLock(await resolveVenueServer(b.venueId));
+
   const now = Date.now();
   const check = checkEligibility(b, now);
 
@@ -293,6 +300,7 @@ export async function processBookingForLockAccess(bookingId: string): Promise<Pr
         endDate:      b.endDate,
         balanceDue:   b.balanceDue ?? 0,
         whatsappLink: 'https://wa.me/85292823060',
+        noElectronicLock,
       });
       await sendAutomatedEmail({
         automationKey: 'balance_due_reminder',
@@ -313,6 +321,9 @@ export async function processBookingForLockAccess(bookingId: string): Promise<Pr
   }
 
   // ─── Branch B: Generate passcode + email ───
+  if (noElectronicLock) {
+    return { bookingId, action: 'skipped', reason: 'no-electronic-lock' };
+  }
   const lockId = await getLockIdForVenue(b.venueId);
   if (!lockId) {
     return {
@@ -489,7 +500,7 @@ export async function refreshPasscodeAfterTimeChange(bookingId: string): Promise
  */
 export async function upcomingLockReport(): Promise<Array<{
   bookingId: string; date: string; startTime: string; endTime: string; venueId: string;
-  state: 'has-code' | 'email-pending' | 'revoke-failed' | 'no-code' | 'manual';
+  state: 'has-code' | 'email-pending' | 'revoke-failed' | 'no-code' | 'manual' | 'no-lock';
   reason: string; passcodeValidFrom?: number; passcodeValidTo?: number; balanceDue: number;
 }>> {
   const todayMs = Date.now();
@@ -497,6 +508,7 @@ export async function upcomingLockReport(): Promise<Array<{
   const toYmd = ymdInHkt(todayMs + (PASSCODE_WINDOW_DAYS + 1) * 24 * 60 * 60 * 1000);
   const snap = await adminDb.collection('bookings').where('date', '>=', fromYmd).where('date', '<=', toYmd).get();
   const lockMap = await getVenueLockMap();
+  const venuesForLock = await loadAllVenuesServer().catch(() => []);
   const out: Awaited<ReturnType<typeof upcomingLockReport>> = [];
   for (const d of snap.docs) {
     const b = { id: d.id, ...d.data() } as BookingRecord;
@@ -507,6 +519,10 @@ export async function upcomingLockReport(): Promise<Array<{
     if (lp?.passcode) {
       const state = (lp as { revokeFailedAt?: unknown }).revokeFailedAt ? 'revoke-failed' : lp.source === 'manual' ? 'manual' : !lp.emailSentAt ? 'email-pending' : 'has-code';
       out.push({ ...base, state, reason: state, passcodeValidFrom: lp.validFrom, passcodeValidTo: lp.validTo });
+      continue;
+    }
+    if (venueHasNoElectronicLock(venuesForLock.find((v) => v.id === b.venueId))) {
+      out.push({ ...base, state: 'no-lock', reason: 'no-electronic-lock' });
       continue;
     }
     const check = checkEligibility(b, todayMs);

@@ -59,3 +59,20 @@ describe('editStaysWithinReservation — HART Room B 2026-11-06 re-save blocked 
     expect(editStaysWithinReservation({ ...held, startTime: '' }, { date: '2026-11-06', startTime: '19:00', endTime: '23:00' })).toBe(false);
   });
 });
+
+describe('bookingWindows — 提早入場佈置 holds the room before the start (2026-11-26)', () => {
+  it('a booking with one set-up hour also occupies the hour before its start', () => {
+    const existing = { id: 'x', venueId: 'sw21-main', date: '2026-12-06', startTime: '15:00', endTime: '20:00', status: 'confirmed', earlySetupHours: 1 };
+    const w = bookingWindows(existing);
+    expect(w).toContainEqual({ date: '2026-12-06', startTime: '14:00', endTime: '15:00' });
+    // A new booking ending at 14:00 collides through its own cleaning buffer (14:00–15:00).
+    const hit = overlappingBookings([{ date: '2026-12-06', startTime: '11:00', endTime: '14:00' }, { date: '2026-12-06', startTime: '14:00', endTime: '15:00' }], [existing], { production: true });
+    expect(hit.map((b) => b.id)).toEqual(['x']);
+    // Ending at 13:00 (buffer to 14:00) is fine.
+    expect(overlappingBookings([{ date: '2026-12-06', startTime: '10:00', endTime: '13:00' }, { date: '2026-12-06', startTime: '13:00', endTime: '14:00' }], [existing], { production: true })).toEqual([]);
+  });
+  it('without set-up hours nothing before the start is held', () => {
+    const w = bookingWindows({ date: '2026-12-06', startTime: '15:00', endTime: '20:00' });
+    expect(w.some((x) => x.startTime < '15:00')).toBe(false);
+  });
+});

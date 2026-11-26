@@ -42,6 +42,7 @@ export async function GET(req: NextRequest) {
       id: v.id, name: v.name, branchKey: v.branchKey || v.id, branchName: v.branchName || v.name, roomLabel: v.roomLabel,
       active: v.active !== false, sortOrder: v.sortOrder ?? 99,
       ttlockLockId: lockId, lockGuideUrl: v.lockGuideUrl || '', lockConfirmKey: v.lockConfirmKey || '',
+      noElectronicLock: v.noElectronicLock === true,
       inAccount: lockId ? !!lock : null,
       lockAlias: lock?.lockAlias || lock?.lockName || null,
       battery: lock?.electricQuantity ?? null,

@@ -6,6 +6,8 @@ import {
   sendStaffSupplierOrderNotification,
 } from '@/lib/emailAutomations';
 import { resolveVenueServer } from '@/lib/venueRegistryServer';
+import { venueHasNoElectronicLock } from '@/lib/venueLock';
+import { earlySetupHoursOf, setupWindowStart } from '@/lib/earlySetup';
 import { processBookingForLockAccess } from '@/lib/lockPasscode';
 import { pushBookingToCalendar, updateBookingOnCalendar } from '@/lib/googleCalendar';
 import { formatAddOnsForStaff } from '@/lib/pricing';
@@ -95,6 +97,12 @@ export async function restoreBlockedSlotsIfMissing(booking: BookingRecord): Prom
   } else {
     newSlot({ venueId: booking.venueId, date: booking.date, startTime: booking.startTime, endTime: booking.endTime, reason: 'booking', bookingId });
     newSlot({ venueId: booking.venueId, date: booking.date, startTime: booking.endTime, endTime: bufferEnd, reason: 'cleaning', bookingId });
+  }
+  // 提早入場佈置: the paid set-up hours hold the room before the start.
+  const setupHours = earlySetupHoursOf(booking);
+  const setupStart = setupHours > 0 ? setupWindowStart(booking.startTime, setupHours) : null;
+  if (setupStart) {
+    newSlot({ venueId: booking.venueId, date: booking.date, startTime: setupStart, endTime: booking.startTime, reason: 'setup', bookingId });
   }
   console.warn('[finalizeBooking] restored deleted blocked_slots for booking', bookingId);
   return true;
@@ -204,7 +212,7 @@ export async function finalizeConfirmedBooking(
           customerName: profile?.displayName || customerEmail.split('@')[0],
           venueId: booking.venueId,
           venueName,
-          venueAddress: venue?.address.zh,
+          venueAddress: venue?.address.zh, noElectronicLock: venueHasNoElectronicLock(venue),
           date: booking.date,
           startTime: booking.startTime,
           endTime: booking.endTime,

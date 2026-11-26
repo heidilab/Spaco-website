@@ -373,6 +373,9 @@ export function buildBookingConfirmationEmail(params: {
    *  shows a yellow "預訂已更新" banner at the top so the customer
    *  immediately knows what changed. */
   changes?: string[];
+  /** The venue has no electronic lock (分店管理「不使用電子門鎖」): leave
+   *  out every line that promises a door passcode. */
+  noElectronicLock?: boolean;
 }) {
   const peopleLine = (params.childCount ?? 0) > 0
     ? `${params.guestCount} 人 (${params.adultCount ?? params.guestCount} 成人 + ${params.childCount} 小童)`
@@ -384,7 +387,7 @@ export function buildBookingConfirmationEmail(params: {
     ? `<div style="background: #FFF7E6; border-left: 4px solid #F59E0B; border-radius: 12px; padding: 14px 18px; margin: 0 0 18px;">
          <p style="margin: 0 0 4px; font-weight: 700; color: #92400E; font-size: 13px;">⏰ 未找清尾數 HK$${params.balanceDue!.toLocaleString()}</p>
          <p style="margin: 0; font-size: 12px; color: #78350F; line-height: 1.5;">
-           請於活動前 2 日（${params.balanceDueDate || '活動前 2 日'}）找清尾數，系統先會自動發送門鎖密碼。
+           請於活動前 2 日（${params.balanceDueDate || '活動前 2 日'}）找清尾數${params.noElectronicLock ? '' : '，系統先會自動發送門鎖密碼'}。
          </p>
        </div>`
     : '';
@@ -467,7 +470,7 @@ export function buildBookingConfirmationEmail(params: {
         <div style="background: white; padding: 24px; border-radius: 20px; margin-bottom: 16px;">
           <p style="margin: 0 0 10px; font-weight: 700; color: ${EMAIL_INK}; font-size: 14px;">📅 接住點？</p>
           <ul style="margin: 0; padding-left: 18px; color: #555; font-size: 13px; line-height: 1.8;">
-            <li>場地門鎖密碼會喺活動前 <strong>1–2 日</strong> 自動 email 畀你${(params.balanceDue ?? 0) > 0 ? '（前提係尾數已找清）' : ''}</li>
+            ${params.noElectronicLock ? '' : `<li>場地門鎖密碼會喺活動前 <strong>1–2 日</strong> 自動 email 畀你${(params.balanceDue ?? 0) > 0 ? '（前提係尾數已找清）' : ''}</li>`}
             <li>BBQ／火鍋／Shisha 等 add-ons 已落 order 畀供應商，活動當日會送到場</li>
             <li>有任何問題隨時 WhatsApp 我哋</li>
           </ul>
@@ -1121,9 +1124,14 @@ export function buildBalanceDueReminderEmail(params: {
   endDate?: string;
   balanceDue: number;
   whatsappLink: string;
+  /** No electronic lock at this venue: chase the balance without
+   *  promising a passcode. */
+  noElectronicLock?: boolean;
 }) {
   return {
-    subject: `⏰ SPACO 尾數提醒 — 請盡快找清以收取門鎖密碼`,
+    subject: params.noElectronicLock
+      ? `⏰ SPACO 尾數提醒 — 請於活動前 2 日找清`
+      : `⏰ SPACO 尾數提醒 — 請盡快找清以收取門鎖密碼`,
     html: `
       <div style="font-family: ${EMAIL_FONT}; max-width: 600px; margin: 0 auto; background: ${EMAIL_BG}; padding: 40px 20px;">
         ${emailHeader('尾數提醒 · BALANCE REMINDER')}
@@ -1131,7 +1139,7 @@ export function buildBalanceDueReminderEmail(params: {
         <div style="background: white; padding: 32px; border-radius: 20px; margin-bottom: 16px;">
           <p style="margin: 0 0 14px; font-size: 16px; color: ${EMAIL_INK};">Hi ${params.customerName},</p>
           <p style="margin: 0 0 22px; color: #666; line-height: 1.7;">
-            你嘅活動將喺 <strong>${params.date} ${params.startTime}</strong> 開始。根據條款需要喺活動前 2 日找清尾數，<strong>系統先會自動發送門鎖密碼</strong>。
+            你嘅活動將喺 <strong>${params.date} ${params.startTime}</strong> 開始。根據條款需要喺活動前 2 日找清尾數${params.noElectronicLock ? '' : '，<strong>系統先會自動發送門鎖密碼</strong>'}。
           </p>
 
           <!-- Balance hero -->
@@ -1150,7 +1158,7 @@ export function buildBalanceDueReminderEmail(params: {
         </div>
 
         <div style="background: white; padding: 24px; border-radius: 20px; text-align: center; margin-bottom: 16px;">
-          <p style="margin: 0 0 14px; font-size: 14px; color: #666; line-height: 1.7;">完成付款後，請 WhatsApp 通知我哋，<br>系統會即刻發送門鎖密碼畀你 ✅</p>
+          <p style="margin: 0 0 14px; font-size: 14px; color: #666; line-height: 1.7;">完成付款後，請 WhatsApp 通知我哋${params.noElectronicLock ? ' ✅' : '，<br>系統會即刻發送門鎖密碼畀你 ✅'}</p>
           <a href="${params.whatsappLink}" style="display: inline-block; background: #25D366; color: white; padding: 12px 28px; border-radius: 999px; text-decoration: none; font-weight: 600; font-size: 14px;">
             💬 WhatsApp 通知付款
           </a>

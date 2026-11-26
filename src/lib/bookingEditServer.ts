@@ -31,6 +31,7 @@ import { getHoliday } from './hkHolidays';
 import { bookingWindows, editStaysWithinReservation, overlappingBookings, windowsOverlap, type OverlapBooking, type OverlapWindow } from './bookingOverlap';
 import { settlementPlan } from './settlementPlan';
 import { refreshPasscodeAfterTimeChange } from './lockPasscode';
+import { venueHasNoElectronicLock } from './venueLock';
 import { buildBookingConfirmationEmail, generateWhatsAppLink } from './email';
 import { sendAutomatedEmail } from './emailAutomations';
 import { updateBookingOnCalendar, pushBookingToCalendar } from './googleCalendar';
@@ -389,7 +390,7 @@ export async function followUpAfterEdit(
     const whatsappNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || '85292823060';
     const tpl = buildBookingConfirmationEmail({
       customerName: profile?.displayName || fresh.customerName || (customerEmail ? customerEmail.split('@')[0] : '客人'),
-      venueId: fresh.venueId, venueName, venueAddress: venue?.address.zh,
+      venueId: fresh.venueId, venueName, venueAddress: venue?.address.zh, noElectronicLock: venueHasNoElectronicLock(venue),
       date: fresh.date, startTime: fresh.startTime, endTime: fresh.endTime, endDate: fresh.endDate,
       guestCount: fresh.guestCount, adultCount: fresh.adultCount, childCount: fresh.childCount,
       subtotal: fresh.pricing.subtotal, deposit: fresh.pricing.deposit, securityDeposit: fresh.pricing.securityDeposit,

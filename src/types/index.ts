@@ -54,6 +54,10 @@ export interface Venue {
   /** Key that confirms a passcode on this door's keypad: '#' (default) or
    *  '🔔' (the Wan Chai keypad). */
   lockConfirmKey?: string;
+  /** 不使用電子門鎖 (2026-11-26): this space has no TTLock / keypad door.
+   *  The passcode engine skips it — no TTLock call, no「密碼未能發出」
+   *  alert, and the customer emails stop promising a passcode. */
+  noElectronicLock?: boolean;
   /** Free-text facilities list shown on the branch page (one per line).
    *  Migrated from 內容管理/分店資料 2026-08. */
   amenitiesText?: { zh?: string; en?: string };

@@ -484,6 +484,14 @@ export default function AdminVenuesPage() {
                         <label className={labelCls}>{locale === 'zh' ? 'BBQ 標準套餐每位 $' : 'BBQ std $/head'}</label>
                         <input type="number" value={r.bbqStandardPrice ?? 158} onChange={(e) => setRoom(i, { bbqStandardPrice: Math.max(0, parseInt(e.target.value, 10) || 0) })} className={inputCls} />
                       </div>
+                      <label className="flex items-start gap-2 text-sm md:col-span-2">
+                        <input type="checkbox" checked={r.noElectronicLock === true} onChange={(e) => setRoom(i, { noElectronicLock: e.target.checked })} className="accent-accent mt-0.5" />
+                        <span>
+                          {locale === 'zh' ? '不使用電子門鎖' : 'No electronic lock'}
+                          <span className="block text-[11px] text-ink-soft">{locale === 'zh' ? '剔咗之後：唔會入 TTLock、唔會自動出密碼、唔會出「門鎖密碼未能發出」提示 email，確認 email 亦唔會提密碼。' : 'When ticked: no TTLock calls, no passcodes, no “passcode could not be issued” alerts, and the customer emails stop mentioning a passcode.'}</span>
+                        </span>
+                      </label>
+                      {r.noElectronicLock !== true && (<>
                       <div>
                         <label className={labelCls}>TTLock {locale === 'zh' ? '門鎖 ID（呢個場地嘅門）' : 'lock ID'}</label>
                         {/* '' (not undefined) so clearing the field really removes the id on save. */}
@@ -501,6 +509,7 @@ export default function AdminVenuesPage() {
                         <label className={labelCls}>{locale === 'zh' ? '門鎖指引圖網址（密碼電郵會附上）' : 'Door-guide image URL (in the passcode email)'}</label>
                         <input value={r.lockGuideUrl || ''} onChange={(e) => setRoom(i, { lockGuideUrl: e.target.value.trim() })} placeholder="https://…" className={`${inputCls} font-mono text-xs`} />
                       </div>
+                      </>)}
                       <label className="flex items-center gap-2 text-sm mt-5">
                         <input type="checkbox" checked={r.active !== false} onChange={(e) => setRoom(i, { active: e.target.checked })} className="accent-accent" />
                         {locale === 'zh' ? '上架（接受預訂）' : 'Live (bookable)'}

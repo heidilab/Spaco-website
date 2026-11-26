@@ -7,6 +7,9 @@ import {
 } from '@/lib/pricing';
 import type { BookingRecord, AddOnOptions } from '@/types';
 import { venuesSharingSpaceServer, getVenueByIdServer } from '@/lib/venueRegistryServer';
+import { updateBookingOnCalendar } from '@/lib/googleCalendar';
+import { refreshPasscodeAfterTimeChange } from '@/lib/lockPasscode';
+import { getPublicOrigin } from '@/lib/kpay';
 
 export const runtime = 'nodejs';
 
@@ -160,6 +163,26 @@ export async function POST(req: NextRequest) {
     }
     console.error('[/api/admin/package-addons]', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+
+  // The held window moved with the set-up hours (2026-11-26): move the
+  // Google Calendar event (start + 「提早入場佈置」 note) and the door
+  // passcode window along with it. Best-effort — the add-on is saved.
+  if (setupChanged) {
+    try {
+      const fresh = await bookingRef.get();
+      const fb = { id: bookingId, ...(fresh.data() as BookingRecord) };
+      let customerName: string | undefined = fb.customerName;
+      if (fb.userId) {
+        const u = await adminDb.collection('users').doc(fb.userId).get();
+        customerName = (u.data() as { displayName?: string } | undefined)?.displayName || customerName;
+      }
+      await updateBookingOnCalendar(`${getPublicOrigin(req.nextUrl.origin)}/api/google/callback`, { booking: fb, customerName });
+    } catch (err) {
+      console.warn('[package-addons] gcal update failed (non-fatal):', err);
+    }
+    try { await refreshPasscodeAfterTimeChange(bookingId); }
+    catch (err) { console.warn('[package-addons] passcode refresh failed (non-fatal):', err); }
   }
 
   return NextResponse.json({

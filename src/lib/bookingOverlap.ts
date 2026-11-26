@@ -44,6 +44,14 @@ export function bookingWindows(b: OverlapBooking): OverlapWindow[] {
     windows.push({ date: b.date, startTime: b.startTime, endTime: b.endTime });
   }
   windows.push({ date: endDate, startTime: b.endTime, endTime: bufferEnd });
+  // 提早入場佈置: paid set-up hours hold the room before the start, on
+  // the first day (matching the `setup` blocked_slot the booking creates).
+  const setupHours = Math.max(0, Math.min(3, Math.floor(b.earlySetupHours || 0)));
+  const setupStartMin = toMin(b.startTime) - setupHours * 60;
+  if (setupHours > 0 && setupStartMin >= 0) {
+    const setupStart = `${String(Math.floor(setupStartMin / 60)).padStart(2, '0')}:${String(setupStartMin % 60).padStart(2, '0')}`;
+    windows.push({ date: b.date, startTime: setupStart, endTime: b.startTime });
+  }
   return windows;
 }
 
