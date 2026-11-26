@@ -1,8 +1,11 @@
 # 不使用電子門鎖 + 提早入場佈置 hold rule — 2026-11-26
 
-Branch `fix/no-lock-early-setup` (from `origin/main` d70ed51). Preview on
-`spaco-test.vercel.app` once pushed to `claude/bold-goldberg-7zkepd`;
-production only after Heidi's approval.
+Branch `fix/no-lock-early-setup` (from `origin/main` d70ed51), commits
+e4e7daa + f539244. Previewed on `spaco-test.vercel.app`; Heidi approved the
+release on 2026-11-26 and `main` was fast-forwarded to f539244. Production
+deployment `dpl_2WMFu76p3hHzbv5XonWZ2CeqHBVP` is READY on spacohk.com
+(657 tests passed in the Vercel build). The `noElectronicLock` flag was not
+set on any venue at release time; Heidi ticks it per venue in 分店管理.
 
 ## 1. 分店管理 →「不使用電子門鎖」
 
