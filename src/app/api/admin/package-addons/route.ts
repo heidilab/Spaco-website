@@ -171,7 +171,7 @@ export async function POST(req: NextRequest) {
   if (setupChanged) {
     try {
       const fresh = await bookingRef.get();
-      const fb = { id: bookingId, ...(fresh.data() as BookingRecord) };
+      const fb = { ...(fresh.data() as BookingRecord), id: bookingId };
       let customerName: string | undefined = fb.customerName;
       if (fb.userId) {
         const u = await adminDb.collection('users').doc(fb.userId).get();
